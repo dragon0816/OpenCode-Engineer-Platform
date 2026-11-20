@@ -1,0 +1,25 @@
+{
+  "tag": "v2.3.2",
+  "commit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+  "client": {
+    "package": "@opencode/client",
+    "version": "2.3.2",
+    "integrity": "sha512-zwlR1Q0MQxpLJU4tILaaNyHrexNQpTbquy4Lv4i5lwkSba5MMuhK0tsPmGhyLIrqAyY+sY1qI75dOzOpsCJK7Q=="
+  },
+  "openapi": {
+    "path": "packages/protocol/openapi.json",
+    "gitBlob": "1e241a9bfa20e8766834c70e9b7b2dc9bf318c70",
+    "sha256": "bc152825b9b65224bfc56bddefcdd8f44b50e7f1d1541f741ae017aa791478ba"
+  },
+  "windowsX64": {
+    "asset": "opencode-windows-x64.zip",
+    "sha256": "8ad59f1992a0594d8bd72b5ed3be1f5bfffcd9d1756853eec7e5d3141c25be1f",
+    "binarySha256": "5d52d86e2c3fd2c4d51cefc893f64c9ee66bc2e9535332195802f7c646b2a3a3"
+  },
+  "supplementalLinuxX64": {
+    "asset": "opencode-linux-x64.tar.gz",
+    "sha256": "563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0",
+    "binarySha256": "e6543f6e5c39c40971ba38afd1819ac852c29ac735b5a89065d3d148d47f27ad",
+    "nodeImage": "docker.io/library/node@sha256:e484ae3f1e3c378021c967fd42254f343c302a9263e412280eac32bf5bca7008"
+  }
+}
