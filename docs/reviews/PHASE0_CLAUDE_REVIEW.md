@@ -31,3 +31,13 @@
 ## 其他
 - `.phase0/`（約 732 MB，已被 `.gitignore`）因執行政策拒絕遞迴刪除而保留；可由 owner 手動刪除，`fetch-pins.ps1` 可重建。
 - 之後每次 commit 前仍需 `npm run scan`。
+
+---
+## Re-review after fix round 1 (HEAD `31f63b0`, Claude Code, scoped)
+- 重跑：lint 23 檔 exit 0；typecheck exit 0；build exit 0；`npm test` **5 pass / 0 fail / 0 skip**（原 4，新增 1）；scan 56 檔 hits 0。
+- 全歷史以真實金鑰與 gateway 主機比對：0 命中。tracked 檔中無裸私網 IP。
+- 測試未被放寬：`phase0.test.ts` +19/-1；forced 探測反而改為更窄的範圍檢查（僅限已核准 alias、單一 forced 回合、重複 forced 呼叫會被拒絕並計數）。
+- **I-1 / I-2 / I-3：接受為已修復**（I-1 為開發者證據：兩 alias 完整 forced turn 各 6.124 s / 3.961 s、各 1 次工具呼叫；我未重跑真 gateway）。
+- **新發現（Important，記入 Phase 1，非 Phase 0 阻擋）**：I-1 的做法是由本機 relay 在 follow-up 步驟把 `tool_choice` 改成 `none`。這代表 **OpenCode 靜態 model 設定的 `tool_choice` 每一步都會重送，無法單靠設定做到「只強制首步」**。Phase 1 的 Knowledge Ask / 工具強制不可依賴 model 層靜態設定；需改採 OEP 端 per-request 控制（relay 或入口層），並在 v2 驗收中明列。
+- 仍未審：`opencode-probe.ts` 全文、Windows Job Object 程式、附件 probe、pin hash/來源。建議另派獨立 Codex reviewer。
+- **Gate 仍未通過**：O-1（key scope/egress/retention）、O-2（500/400 根因）、O-3（隔離 Windows VM）、O-4（D08 oracle）為 owner/基礎設施阻擋，非程式缺陷。
