@@ -45,3 +45,37 @@ Phase 0 gate 維持 **未通過**。不降低 Windows、Gateway 與獨立 review
 - I-3　`--network bridge` 限於 Phase 0 Gateway probe。Phase 1 加入 relay-only 出口設計及 Windows VM 正反例驗收。此輪只記錄設計。 [S5](validation/p0-s5-security.md) · [v2 出口修訂](IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)
 
 O-1 至 O-4 維持未結，Phase 0 gate 未通過。本輪修正待獨立複核。 [Claude Code 首輪審查](reviews/PHASE0_CLAUDE_REVIEW.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+
+## 2026-11-21　Phase 0 待辦責任分派
+
+- O-1　Gateway 管理員負責提交受限 key、egress 與 retention 證據。
+- O-2　Gateway 管理員負責說明無 key 回 HTTP 500、錯 key 回 HTTP 400 的根因及預期認證行為。
+- O-3　Owner 指定「use GPT dots to test」。此為 owner 指定環境，細節待釐清（owner-named environment, details pending clarification）。Windows 11 x64、隔離條件、原生 OpenCode、睡眠及登出均待驗，阻擋狀態維持。
+- O-4　Owner 親自核定 D08 合成 SOP／PDF 與逐格 oracle。 [Oracle 填寫範本](validation/d08-oracle.template.md)
+
+O-1 至 O-4 維持未結與原 gate 狀態。提交清單見 [HANDOFF](HANDOFF.md#phase-0-owner-checklist)。
+
+## 2026-11-21　Owner 核准 Phase 0 gate 修訂
+
+Owner 在對話選擇「照我的建議放寬」。此修訂取代原 v2 的 O-1 至 O-4 全部結清門檻，原標準及驗收歷史保留。
+
+- O-1／O-2 為 Gateway 管理員負責的 **TRACKED KNOWN RISKS**，尚未通過。Gateway 只用於合成資料 spike，憑證不得寫入 repo、log 或 trace，保留去敏與 secret scan。OEP 將每個非 2xx 視為失敗。新 relay 的真憑證限 HTTPS。
+- O-3a 在這台 Windows 11 x64 主機做原生基本測試。使用獨立的暫存 profile/data、密碼及 `127.0.0.1`，在 Job Object 中運行固定的 v2.3.2，驗證啟動、認證、mock relay session/prompt、SSE、IPv4/IPv6 listeners、正常停止與無殘留。
+- O-3b 睡眠／喚醒、登出／再登入延期追蹤，尚未通過。「GPT dots」是 owner 指定而細節待釐清的環境，未確認為 Windows VM。
+- O-4 由 owner 親自核定。Phase 0 提供合成 SOP／PDF、預期 XLSX 與逐格 oracle 草案。核定是 Phase 1 E2E 驗收門檻。 [D08 草案](validation/d08-oracle.md)
+
+新 gate 須同時有 R-1 至 R-9 與 4 項 Minor 修正及反例、由 Claude 安排的獨立複核無未結 Critical／Important，以及 O-3a 通過。三項皆滿足才可記錄 **conditionally passed**。 [v2 修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
+
+## 2026-11-21　Owner 免除 O-3b 真實 OS 驗證
+
+O-3b 狀態為 **WAIVED by owner – not tested**。Owner 已免除睡眠／喚醒及登出／再登入測試。O-3b 無 GPT dots、VM 或 Hyper-V 工作，也無 PASS 證據。
+
+D06 的登入常駐、登出暫停、睡眠恢復對帳、24 小時補跑、RPO ≤24 小時及 RTO ≤30 分鐘均為 **UNVERIFIED** 設計假設。Phase 4 保留啟動／恢復對帳實作，以模擬時鐘跳躍、終止程序與重啟做單元及整合驗收。結果僅驗證模擬條件，無真實 OS 睡眠或登出證據。使用者文件須寫明，在 owner 於真實使用中驗證前，OEP 對跨真實 OS 睡眠／登出的排程正確性無保證。
+
+Phase 0 修訂後的三項 gate 條件維持。R-1 至 R-9 與 4 項 Minor 修正及反例、乾淨的獨立複核和 O-3a 通過齊備後才記錄 **conditionally passed**。 [v2 修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
+
+## 2026-11-21　Owner 核定 O-4 最小 D08 smoke oracle
+
+Owner 明確回覆「O-4 OK」。核定 `Readings` 的 `A1:C3` 和 `Run` 的 `A1:B2`，共 13 格，精確相等，容差 0，僅用合成資料，禁止公式及額外工作表。Owner 核閱 Markdown SOP 與 oracle；核定以 PDF 抽取結果與兩者一致、逐格與核定雜湊測試通過為條件。O-4 不再開放。更改核定值或規則需事先取得新的 owner 核准。 [核定內容與 SHA-256](validation/d08-oracle.md)
+
+用途限最小管線接線 smoke。含計算的多步驟 oracle 是可另案選擇的 Phase 1 工作，本輪未建立。Phase 0 gate 仍待獨立複核。
