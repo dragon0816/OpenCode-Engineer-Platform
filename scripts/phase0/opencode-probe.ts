@@ -8,7 +8,7 @@ import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { candidateAliases, mockAliases, startModelProbe, tokenFor, workingAliases } from './model-probe.ts';
+import { candidateAliases, forcedChoice, mockAliases, startModelProbe, tokenFor, workingAliases } from './model-probe.ts';
 import { listen, pause, send, sse, until } from './probe-http.ts';
 
 const binary = '/work/.phase0/assets/linux/opencode';
@@ -46,7 +46,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
           return [
             [id, model],
             ...(workingAliases.includes(id) ? [
-              [`${id}-forced`, { ...model, body: { tool_choice: { type: 'function', function: { name: 'fixture_lookup' } }, parallel_tool_calls: true } }],
+              [`${id}-forced`, { ...model, body: { tool_choice: forcedChoice, parallel_tool_calls: true } }],
               [`${id}-none`, { ...model, body: { tool_choice: 'none' } }],
               [`${id}-schema`, { ...model, body: { tool_choice: 'none', response_format: { type: 'json_schema', json_schema: { name: 'phase_zero', strict: true, schema: { type: 'object', properties: { code: { type: 'string', enum: ['VIOLET-92'] } }, required: ['code'], additionalProperties: false } } } } }],
             ] : []),
@@ -115,13 +115,13 @@ async function turn(server: Server, model: string, text: string, files?: Session
   try {
     await client.session.prompt({ sessionID, text, files }, callOptions());
     const outcome = await waitForTurn(client, sessionID, timeout);
-    const messages = await client.message.list({ sessionID, type: 'assistant' }, callOptions());
-    const lines = messages.data.filter((message) => message.type === 'assistant').flatMap((message) =>
+    const messages = await client.message.list({ sessionID, type: 'assistant', order: 'asc' }, callOptions());
+    const assistantText = messages.data.filter((message) => message.type === 'assistant').map((message) =>
       message.content.flatMap((part) => part.type === 'text' ? [part.text] : []));
-    return { outcome, transcript: lines.join('\n') };
+    return { outcome, transcript: assistantText.flat().join('\n'), finalText: assistantText.at(-1)?.join('') ?? '' };
   } catch {
     await client.session.interrupt({ sessionID }, callOptions()).catch(() => {});
-    return { outcome: 'deadline-or-error', transcript: '' };
+    return { outcome: 'deadline-or-error', transcript: '', finalText: '' };
   }
 }
 
@@ -338,10 +338,24 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
       let result: Awaited<ReturnType<typeof turn>>;
       let ok: boolean;
       if (test === 'forced') {
-        result = await turn(server, `${model}-forced`, 'Use the fixture tool for the north slot.');
-        const observed = probe.traces.slice(from).find((trace) => typeof trace.choice === 'object' && trace.status === 200);
-        ok = typeof observed?.choice === 'object' && observed.parallel && observed.calls.length > 0 && probe.toolRuns.slice(toolFrom).some((run) => run.slot === 'north' && run.valid);
-        report('S2-forced-wire', { alias: model, ok, stoppedRepeatedForcedCall: probe.traces.slice(from).some((trace) => trace.status === 409), outcome: result.outcome });
+        const deadlineMs = 35_000;
+        const started = performance.now();
+        const { result: completed, steps } = await probe.forcedTurn(model, () => turn(server, `${model}-forced`,
+          'Call the fixture lookup tool once for the north slot. After receiving its result, reply with only the returned token.', undefined, deadlineMs));
+        const elapsedMs = Math.ceil(performance.now() - started);
+        const traces = probe.traces.slice(from);
+        const fixtureCalls = probe.toolRuns.slice(toolFrom);
+        const firstForced = !!steps.first?.parallel && steps.first.finish === 'tool_calls';
+        const toolResultReturned = steps.followUp?.choice === 'none' && steps.followUp.status === 200 &&
+          steps.followUp.streaming && steps.followUp.done && steps.followUp.finish === 'stop';
+        const finalTextMatched = completed.finalText.trim() === tokenFor.get('north');
+        ok = firstForced && toolResultReturned && finalTextMatched && completed.outcome === 'succeeded' &&
+          elapsedMs <= deadlineMs && steps.rejected === 0 && validCalls(traces, ['north']) &&
+          fixtureCalls.length === 1 && fixtureCalls[0].slot === 'north' && fixtureCalls[0].valid;
+        report('S2-forced-turn', { alias: model, ok, outcome: completed.outcome, elapsedMs, deadlineMs,
+          firstForced, toolResultReturned, finalTextMatched, fixtureCalls: fixtureCalls.length,
+          modelCalls: traces.reduce((count, trace) => count + trace.calls.length, 0), rejected: steps.rejected });
+        if (!ok) process.exitCode = 1;
         continue;
       } else if (test === 'none') {
         result = await turn(server, `${model}-none`, 'Do not call tools. Reply exactly READY-P0.');

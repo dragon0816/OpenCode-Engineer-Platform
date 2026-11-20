@@ -51,3 +51,14 @@ pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode gateway-capabilitie
 2. 每個核准 alias 透過相同 OpenCode provider 送一次最短合成 nonce，逐一檢查 model ID、最終狀態、回傳值與延遲。所需工具、schema 與附件能力保留獨立的通過證據及驗證日期。變更 provider、alias 或 pin 時重新驗證相關能力。
 3. 分類 `model unavailable`、`credential rejected`、`rate limited`、`upstream error`、`timeout` 與 `protocol mismatch`。400 從端點及安全分類判別，無憑證 500 保留為異常，未知錯誤不得自動當作成功。
 4. 必備 alias 未通過時阻止相應工作，顯示具體原因與下一次重檢時點。明確 allowlist 內的重試做有界 backoff，避免每個 UI reload 重燒配額。預設無 fallback。只保存公開 alias 或去敏指標、狀態、時間、耗時、經核准的 correlation 值。
+
+## 2026-11-21　修正第 1 輪重測
+
+以 `pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode gateway-capabilities` 重跑固定版 OpenCode。Phase 0 relay 只讓同一合成回合的第一個選工具請求帶 forced `tool_choice`。收到唯一且相符的 `tool_call_id` 和合成工具結果後，第二步對 Gateway 送 `tool_choice: none`。後續重複選工具請求會被拒絕。驗收要求兩次串流完成、一次工具執行、OpenCode 保存正確最終 assistant 文字，且總耗時未超過 35 秒。逾時或任何一項檢查失敗會使指令以非零退出。上方原測 FAIL 保留供追溯。
+
+```json
+{"test":"S2-forced-turn","alias":"gpt-5.4-mini","ok":true,"outcome":"succeeded","elapsedMs":6124,"deadlineMs":35000,"firstForced":true,"toolResultReturned":true,"finalTextMatched":true,"fixtureCalls":1,"modelCalls":1,"rejected":0}
+{"test":"S2-forced-turn","alias":"claude-haiku-4-5-20251001","ok":true,"outcome":"succeeded","elapsedMs":3961,"deadlineMs":35000,"firstForced":true,"toolResultReturned":true,"finalTextMatched":true,"fixtureCalls":1,"modelCalls":1,"rejected":0}
+```
+
+指令 exit 0。兩個 alias 的 `none`、`schema`、`tool-failure`、`image`、`pdf` 共 10 項也通過，均為 HTTP 200、`succeeded`。診斷重現 `liveness:200, modelsValid:200, modelsNone:500, modelsWrong:400`。Key scope 與 500／400 根因仍未驗證，S2 gate 仍未通過。

@@ -4,6 +4,7 @@ import { listen, jsonInput, pause, send, sse } from './probe-http.ts';
 export const workingAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'];
 export const candidateAliases = ['qwen-36-27b', 'gemma-4-31b', 'gpt-5.5', 'gpt-5.6', 'claude-sonnet-5', 'claude-opus-5'];
 export const tokenFor = new Map([['north', 'AMBER-812'], ['south', 'INDIGO-416']]);
+export const forcedChoice = { type: 'function', function: { name: 'fixture_lookup' } };
 const faults = new Map([['auth401', 401], ['forbidden403', 403], ['limited429', 429], ['server503', 503], ['long400', 400]]);
 export const mockAliases = ['probe-model', 'slow-model', ...faults.keys()];
 
@@ -17,12 +18,37 @@ type Request = {
   parallel_tool_calls?: boolean;
   response_format?: { type?: string };
 };
-type ToolDelta = { index: number; id?: string; function?: { arguments?: string } };
-type Call = { id: string; args: string; fragments: number };
+type ToolDelta = { index: number; id?: string; function?: { name?: string; arguments?: string } };
+type Call = { id: string; name: string; args: string; fragments: number };
 export type Trace = {
   model: string; status: number; streaming: boolean; calls: Call[]; returned: string[]; done: boolean;
-  choice: unknown; parallel: boolean; format?: string; toolCount: number; modelMissing?: boolean;
+  choice: unknown; parallel: boolean; format?: string; toolCount: number; modelMissing?: boolean; finish?: string;
 };
+type ForcedSteps = { model: string; first?: Trace; followUp?: Trace; rejected: number };
+
+function isFixtureChoice(choice: unknown): boolean {
+  const option = choice as { type?: string; function?: { name?: string } } | null | undefined;
+  return option?.type === forcedChoice.type && option.function?.name === forcedChoice.function.name;
+}
+
+function applyForcedStep(body: Request, trace: Trace, steps: ForcedSteps): boolean {
+  if (body.model !== steps.model || !body.tools?.some((tool) => tool.function?.name === forcedChoice.function.name)) return false;
+  if (!steps.first && trace.returned.length === 0) {
+    steps.first = trace;
+    return true;
+  }
+  const first = steps.first;
+  const call = first?.calls[0];
+  const results = body.messages?.filter((message) => message.role === 'tool');
+  const expected = tokenFor.get('north')!;
+  if (steps.followUp || !first?.done || first.calls.length !== 1 || !call?.id || call.name !== forcedChoice.function.name ||
+      results?.length !== 1 || results[0].tool_call_id !== call.id || !JSON.stringify(results[0].content)?.includes(expected)) return false;
+
+  // The isolated OpenCode model sets the choice on every request; release it only after the matching fixture result.
+  body.tool_choice = trace.choice = 'none';
+  steps.followUp = trace;
+  return true;
+}
 
 function failure(response: ServerResponse, status: number) {
   send(response, status, { error: { message: `Synthetic probe transport status ${status}`, type: 'probe_status' } });
@@ -69,13 +95,18 @@ async function forwardStream(upstream: Response, response: ServerResponse, trace
   const calls = new Map<number, Call>();
   for await (const frame of sse(upstream.body)) {
     const data = redact(frame);
-    if (data === '[DONE]') trace.done = true;
-    else {
-      const event = JSON.parse(data) as { error?: unknown; choices?: Array<{ delta?: { tool_calls?: ToolDelta[] } }> };
+    if (data === '[DONE]') {
+      trace.calls = [...calls.values()];
+      trace.done = true;
+    } else {
+      const event = JSON.parse(data) as { error?: unknown; choices?: Array<{ delta?: { tool_calls?: ToolDelta[] }; finish_reason?: string | null }> };
       if (event.error) throw new Error('upstream stream error');
-      for (const part of event.choices?.[0]?.delta?.tool_calls ?? []) {
-        const call = calls.get(part.index) ?? { id: '', args: '', fragments: 0 };
+      const choice = event.choices?.[0];
+      if (choice?.finish_reason) trace.finish = choice.finish_reason;
+      for (const part of choice?.delta?.tool_calls ?? []) {
+        const call = calls.get(part.index) ?? { id: '', name: '', args: '', fragments: 0 };
         if (part.id) call.id = part.id;
+        if (part.function?.name) call.name += part.function.name;
         if (part.function?.arguments) {
           call.args += part.function.arguments;
           call.fragments++;
@@ -94,7 +125,7 @@ export async function startModelProbe(gateway?: GatewayInput) {
   const traces: Trace[] = [];
   const toolRuns: Array<{ slot: string; valid: boolean }> = [];
   let requests = 0;
-  const forcedVisited = new Set<string>();
+  let forcedSteps: ForcedSteps | undefined;
   const allowedModels = new Set([...workingAliases, ...candidateAliases]);
   const endpoint = await listen(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/v1/chat/completions') return send(response, 404);
@@ -121,12 +152,11 @@ export async function startModelProbe(gateway?: GatewayInput) {
       }
       return;
     }
-    if (typeof body.tool_choice === 'object' && body.tool_choice !== null) {
-      if (forcedVisited.has(model)) {
-        trace.status = 409;
-        return failure(response, 409);
-      }
-      forcedVisited.add(model);
+    if (typeof body.tool_choice === 'object' && body.tool_choice !== null &&
+        (!forcedSteps || !isFixtureChoice(body.tool_choice) || !applyForcedStep(body, trace, forcedSteps))) {
+      if (forcedSteps) forcedSteps.rejected++;
+      trace.status = 409;
+      return failure(response, 409);
     }
     if (!allowedModels.has(model) || ++requests > 60) {
       trace.status = 403;
@@ -171,6 +201,16 @@ export async function startModelProbe(gateway?: GatewayInput) {
 
   return {
     endpoint, mcp, traces, toolRuns,
+    async forcedTurn<T>(model: string, run: () => Promise<T>) {
+      if (forcedSteps || !workingAliases.includes(model)) throw new Error('invalid forced probe scope');
+      const steps: ForcedSteps = { model, rejected: 0 };
+      forcedSteps = steps;
+      try {
+        return { result: await run(), steps };
+      } finally {
+        forcedSteps = undefined;
+      }
+    },
     async gatewayDiagnostics() {
       if (!gatewayConnection) throw new Error('gateway mode required');
       const cases = [
