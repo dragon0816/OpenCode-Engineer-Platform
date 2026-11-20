@@ -1,10 +1,28 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { inspectStagedFile, maxUploadBytes, uploadPolicy } from './attachment-probe.ts';
 import { evaluate, fixture } from './knowledge-baseline.ts';
 import { sse } from './probe-http.ts';
+
+test('secret scan detects private IPv4 with or without a scheme or port using no runtime values', async () => {
+  const moduleUrl = pathToFileURL(resolve('scripts/phase0/secret-scan.mjs')).href;
+  const { detect }: { detect: (text: string) => string[] } = await import(moduleUrl);
+  // Build synthetic addresses at runtime so a repository scan still rejects literal addresses in source files.
+  const ip = (...octets: number[]) => octets.join('.');
+  for (const sample of [
+    `bind=${ip(10, 0, 0, 0)}`, `[${ip(10, 255, 255, 255)}:4000]`, `${ip(172, 16, 0, 0)}:443`,
+    `"${ip(172, 31, 255, 255)}"`, `host ${ip(192, 168, 0, 1)}.`, `http://${ip(192, 168, 255, 255)}:8080/path`,
+  ]) assert.deepEqual(detect(sample), ['private IPv4']);
+
+  for (const sample of [
+    ip(172, 15, 255, 255), ip(172, 32, 0, 0), ip(192, 169, 0, 1), ip(127, 0, 0, 1),
+    ip(203, 0, 113, 5), ip(110, 1, 2, 3), ip(10, 256, 0, 1), `${ip(10, 1, 2, 3)}.example`,
+    ip(1, 10, 1, 2, 3), `address-${ip(10, 1, 2, 3).replaceAll('.', '-')}`,
+  ]) assert.deepEqual(detect(sample), []);
+});
 
 test('knowledge fixture retains all four annotated classes and deterministic recall', () => {
   const result = evaluate(readFileSync(fixture), 2);
