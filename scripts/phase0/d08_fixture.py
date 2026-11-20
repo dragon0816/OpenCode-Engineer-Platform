@@ -1,4 +1,4 @@
-"""Reproduce the synthetic D08 approval draft and verify its materialized cells."""
+"""Reproduce the synthetic D08 smoke fixture and verify its materialized cells."""
 
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ from attachment_fixtures import pdf, stable_workbook
 
 ROOT = Path('tests/fixtures/d08')
 PDF_LINES = [
-    'D08 synthetic procedure XD-01 - proposal only',
+    'D08 synthetic procedure XD-01 - minimal smoke',
     'Create exactly two sheets in this order: Readings, Run. No formulas.',
     'Readings A1:C1 (text): Sample | Voltage | Passed',
     'Readings A2:C2: SYN-A (text) | 1.25 V (decimal) | TRUE (boolean)',
@@ -44,7 +44,7 @@ def main():
                 value = sheet[location].value
                 if type(value) is not types[cell['type']] or value != cell['value']:
                     raise ValueError('Cell differs from the proposed oracle')
-        print('D08 draft: 2 sheets, 13 exact cells, approval pending.')
+        print('D08 smoke fixture: 2 sheets, 13 exact cells.')
     finally:
         actual.close()
 
