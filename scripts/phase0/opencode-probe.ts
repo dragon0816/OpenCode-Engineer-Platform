@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { candidateAliases, forcedChoice, mockAliases, startModelProbe, tokenFor, workingAliases } from './model-probe.ts';
 import { listen, pause, send, sse, until } from './probe-http.ts';
+import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
 
 const binary = '/work/.phase0/assets/linux/opencode';
 const providerID = 'oep-phase-zero';
@@ -142,12 +143,14 @@ async function contract(server: Server, probe: Probe) {
   const effect = (await pending).effect;
   const cleared = (await client.permission.list({ sessionID }, callOptions())).length === 0;
   report('S1-client', { create: !!ids.id, prompt: !!admitted.id, active, interrupt: interrupted, permission: effect, cleared });
+  check('S1-client', { create: !!ids.id, prompt: !!admitted.id, active, interrupt: interrupted === 'interrupted', permission: effect === 'ask', cleared });
 }
 
 async function automation(server: Server, probe: Probe, root: string) {
   const off = await fetch(`${server.url}/api/experimental/automation?directory=${encodeURIComponent(server.directory)}`, { headers: { authorization: server.auth }, signal: AbortSignal.timeout(5000) });
   report('S1-automation-off', { status: off.status });
   await off.body?.cancel();
+  check('S1-automation-off', { status: off.status === 403 });
   await server.stop();
   let enabled = await startOpenCode(probe, root, true);
   try {
@@ -167,6 +170,7 @@ async function automation(server: Server, probe: Probe, root: string) {
     await pause(1200);
     const stable = await enabled.client.experimental.automation.get({ automationID: schedule.id }, callOptions());
     report('S1-automation-on', { first: observed.runCount, after: stable.runCount, status: stable.status, outcome: stable.lastOutcome });
+    check('S1-automation-on', { first: observed.runCount === 1, after: stable.runCount === 1, status: stable.status === 'done', outcome: stable.lastOutcome === 'fired' });
   } finally { await enabled.stop(); }
 }
 
@@ -175,17 +179,23 @@ async function reconnection(server: Server) {
   const a = await createSession(server, 'slow-model');
   const b = await createSession(server, 'slow-model');
   const owned = new Set([a.id]);
-  let captured = 0;
+  const audit = reconnectionAudit(a.id);
+  const operations: string[] = [];
+  const submit = (sessionID: string, label: string) => {
+    const id = `msg_${randomBytes(12).toString('hex')}`;
+    operations.push(id);
+    return audit.send(id, () => client.session.prompt({ sessionID, id, text: label }, callOptions()));
+  };
   let foreignDropped = 0;
-  let foreignExposed = 0;
   const projected = new Set<string>();
   const seenReplies = new Set<string>();
-  const subscribe = () => {
+  const subscribe = (deadline = AbortSignal.timeout(5000)) => {
     const abort = new AbortController();
+    const signal = AbortSignal.any([abort.signal, deadline]);
     const connected = Promise.withResolvers<void>();
     const completed = (async () => {
       try {
-        const response = await fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal: abort.signal });
+        const response = await fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal });
         if (!response.ok || !response.body) throw new Error('SSE response');
         for await (const data of sse(response.body)) {
           const event = JSON.parse(data) as { type: string; data?: { sessionID?: string } };
@@ -194,13 +204,12 @@ async function reconnection(server: Server) {
           const owner = event.data?.sessionID;
           if (!owner) continue;
           if (!owned.has(owner)) { foreignDropped++; continue; }
-          if (owner !== a.id) foreignExposed++;
-          captured++;
+          audit.receive(JSON.stringify({ sessionID: owner }));
         }
       } catch { if (!abort.signal.aborted) throw new Error('event connection'); }
     })();
     void completed.catch(connected.reject);
-    return { ready: Promise.race([connected.promise, pause(5000).then(() => { throw new Error('connect deadline'); })]), close: () => abort.abort(), completed };
+    return { ready: connected.promise, close: () => abort.abort(), completed };
   };
 
   const elapsed: number[] = [];
@@ -209,28 +218,31 @@ async function reconnection(server: Server) {
     try {
       await pre.ready;
       const previous = foreignDropped;
-      await client.session.prompt({ sessionID: b.id, text: `Synthetic B ${cycle}` }, callOptions());
+      await submit(b.id, `Synthetic B ${cycle}`);
       await until(async () => foreignDropped > previous || undefined, 4000);
-      const capturedBefore = captured;
-      await client.session.prompt({ sessionID: a.id, text: `Synthetic A ${cycle}` }, callOptions());
-      await until(async () => captured > capturedBefore || undefined, 4000);
+      const capturedBefore = audit.captured;
+      await submit(a.id, `Synthetic A ${cycle}`);
+      await until(async () => audit.captured > capturedBefore || undefined, 4000);
     } catch {
-      report('S4-cycle-failed', { cycle, stage: 'subscribe-and-submit', captured, foreignDropped });
+      report('S4-cycle-failed', { cycle, stage: 'subscribe-and-submit', captured: audit.captured, foreignDropped });
       throw new Error('subscribe-and-submit');
     } finally { pre.close(); await pre.completed; }
     await until(async () => (await client.message.list({ sessionID: a.id, type: 'assistant' }, callOptions()))
       .data.some((message) => message.type === 'assistant' && message.time.completed && !seenReplies.has(message.id)) || undefined);
     const started = performance.now();
-    const replay = subscribe();
+    const deadline = AbortSignal.timeout(5000);
+    const replay = subscribe(deadline);
     try {
       await replay.ready;
-      const session = await client.session.get({ sessionID: a.id }, callOptions());
-      const history = await client.message.list({ sessionID: a.id, type: 'user' }, callOptions());
-      const inbox = await client.session.inbox.list({ sessionID: a.id }, callOptions());
-      await client.permission.list({ sessionID: a.id }, callOptions());
-      const replies = await client.message.list({ sessionID: a.id, type: 'assistant' }, callOptions());
+      const options = { signal: deadline };
+      const [session, history, inbox, permissions, replies] = await Promise.all([
+        client.session.get({ sessionID: a.id }, options), client.message.list({ sessionID: a.id, type: 'user' }, options),
+        client.session.inbox.list({ sessionID: a.id }, options), client.permission.list({ sessionID: a.id }, options),
+        client.message.list({ sessionID: a.id, type: 'assistant' }, options),
+      ]);
+      deadline.throwIfAborted();
       for (const message of replies.data) seenReplies.add(message.id);
-      if (session.outcome !== 'succeeded' || inbox.length !== 0 || history.data.length !== cycle) {
+      if (session.outcome !== 'succeeded' || inbox.length !== 0 || history.data.length !== cycle || permissions.length !== 0) {
         report('S4-cycle-failed', { cycle, stage: 'reconciliation', outcome: session.outcome, inbox: inbox.length, messages: history.data.length });
         throw new Error('reconciliation');
       }
@@ -238,7 +250,9 @@ async function reconnection(server: Server) {
       elapsed.push(Math.round(performance.now() - started));
     } finally { replay.close(); await replay.completed; }
   }
-  report('S4-disconnect', { elapsed, captured, foreignDropped, foreignExposed, durableUniqueSubmissions: projected.size, duplicateSubmissions: elapsed.length - projected.size });
+  const observed = audit.verify(operations, elapsed);
+  check('S4', { filtered: foreignDropped >= 3, delivered: audit.captured >= 3, durable: projected.size === 3 });
+  report('S4-disconnect', { elapsed, captured: audit.captured, foreignDropped, durableUniqueSubmissions: projected.size, ...observed });
 }
 
 async function security(server: Server) {
@@ -279,7 +293,9 @@ async function security(server: Server) {
       const fields = line.trim().split(/\s+/);
       return fields[1]?.endsWith(`:${new URL(server.url).port && Number(new URL(server.url).port).toString(16).toUpperCase()}`) && fields[3] === '0A';
     });
-    report('S5-loopback', { bind: row?.includes('0100007F:') ?? false, noAuth: noAuth.status, authenticated: allowed.status, upstreamLocalhostCors: cors === 'http://localhost:9911', proxy: good.status, badHost, badOrigin: badOrigin.status, missingCsrf: missingCsrf.status, noSession: noSession.status, passwordVisible: browserView.includes(server.auth) || browserView.includes(Buffer.from(server.auth.slice(6), 'base64').toString().slice(9)) });
+    const evidence = { bind: row?.includes('0100007F:') ?? false, noAuth: noAuth.status, authenticated: allowed.status, upstreamLocalhostCors: cors === 'http://localhost:9911', proxy: good.status, badHost, badOrigin: badOrigin.status, missingCsrf: missingCsrf.status, noSession: noSession.status, passwordVisible: browserView.includes(server.auth) || browserView.includes(Buffer.from(server.auth.slice(6), 'base64').toString().slice(9)) };
+    report('S5-loopback', evidence);
+    verifySecurity(evidence);
   } finally { proxy.close(); }
 }
 
@@ -312,14 +328,20 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
   let maxStreak = 0;
   let fragmented = 0;
   let parallel = 0;
-  if (!capabilitiesOnly && healthy.length) for (let run = 0; run < 20; run++) {
-    const model = healthy[run % healthy.length];
+  const runs = new Map(workingAliases.map((alias) => [alias, [] as boolean[]]));
+  if (!capabilitiesOnly) for (let run = 0; run < 20; run++) {
+    const model = workingAliases[run % workingAliases.length];
+    if (!healthy.includes(model)) continue;
     const slots = run % 4 < 2 ? ['north', 'south'] : ['south'];
     const start = probe.traces.length;
     const startTools = probe.toolRuns.length;
     const result = await turn(server, model, `Call the fixture lookup tool for ${slots.join(' and ')} in the same tool step. After results, reply only with the returned token(s).`);
     const traces = probe.traces.slice(start);
-    const ok = result.outcome === 'succeeded' && validCalls(traces, slots) && slots.every((slot) => result.transcript.includes(tokenFor.get(slot)!)) && probe.toolRuns.slice(startTools).length === slots.length;
+    const executed = probe.toolRuns.slice(startTools);
+    const ok = result.outcome === 'succeeded' && validCalls(traces, slots) &&
+      verifyToolAnswer(traces, result.finalText, slots.map((slot) => tokenFor.get(slot)!)) &&
+      executed.every((call) => call.valid) && executed.map((call) => call.slot).sort().join(',') === slots.join(',');
+    runs.get(model)!.push(ok);
     fragmented += Number(ok && traces.some((trace) => trace.calls.some((call) => call.fragments > 1)));
     parallel += Number(ok && slots.length > 1);
     streak = ok ? streak + 1 : 0;
@@ -327,7 +349,9 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
     report('S2-tool-turn', { run: run + 1, alias: model, ok, outcome: result.outcome, status: traces.at(-1)?.status ?? null, calls: traces[0]?.calls.length ?? 0, fixtureCalls: probe.toolRuns.length - startTools });
   }
   if (!capabilitiesOnly) {
-    report('S2-tool-summary', { maxStreak, fragmented, parallel });
+    report('S2-tool-summary', { maxStreak, fragmented, parallel, runs: Object.fromEntries([...runs].map(([alias, results]) => [alias, results.filter(Boolean).length])) });
+    verifyAliasRuns(workingAliases, new Set(healthy), runs);
+    check('S2', { consecutive: maxStreak === 20, fragmented: fragmented > 0, parallel: parallel === 10 });
     return;
   }
 
@@ -381,6 +405,7 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
         ok = result.transcript.includes(expected);
       }
       report('S2-capability', { alias: model, capability: test, ok: ok && result.outcome === 'succeeded', outcome: result.outcome, status: probe.traces.at(from)?.status ?? null });
+      if (!ok || result.outcome !== 'succeeded' || probe.traces.at(from)?.status !== 200) process.exitCode = 1;
     }
   }
 }
@@ -390,12 +415,19 @@ async function failures(server: Server, probe: Probe) {
     const from = probe.traces.length;
     const { outcome } = await turn(server, model, 'Reply with the synthetic marker.', undefined, 8000);
     const traces = probe.traces.slice(from);
-    report('S2-injected-status', { fault: model, outcome, statuses: [...new Set(traces.map((trace) => trace.status))], attempts: traces.length, fallback: traces.some((trace) => trace.model !== model) });
+    const statuses = [...new Set(traces.map((trace) => trace.status))];
+    const fallback = traces.some((trace) => trace.model !== model);
+    report('S2-injected-status', { fault: model, outcome, statuses, attempts: traces.length, fallback });
+    const status = Number(model.slice(-3));
+    const retryable = status === 429 || status === 503;
+    check('S2-injected-status', { statuses: statuses.length === 1 && statuses[0] === status, fallback: !fallback,
+      attempts: retryable ? traces.length >= 2 : traces.length === 1, outcome: outcome === (retryable ? 'deadline-or-error' : 'failed') });
   }
   const from = probe.traces.length;
   const { outcome } = await turn(server, 'slow-model', 'Wait for the local synthetic delay.', undefined, 300);
   const requested = probe.traces.slice(from).some((trace) => trace.model === 'slow-model');
   report('S2-injected-deadline', { outcome, requested, deadlineMs: 300 });
+  check('S2-injected-deadline', { requested, outcome: outcome === 'deadline-or-error' });
 }
 
 async function main() {
@@ -419,6 +451,8 @@ async function main() {
       step = 'gateway-status';
       const { status, listed } = await probe.gatewayDiagnostics();
       report('S2-diagnostics', status);
+      if (status.liveness !== 200 || status.modelsValid !== 200 ||
+          ![401, 403].includes(Number(status.modelsNone)) || ![401, 403].includes(Number(status.modelsWrong))) process.exitCode = 1;
       step = 'gateway-model';
       await gateway(server, probe, listed, mode === 'gateway-capabilities');
     } else {

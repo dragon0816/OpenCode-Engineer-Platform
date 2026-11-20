@@ -6,6 +6,47 @@ import { pathToFileURL } from 'node:url';
 import { inspectStagedFile, maxUploadBytes, uploadPolicy } from './attachment-probe.ts';
 import { evaluate, fixture } from './knowledge-baseline.ts';
 import { sse } from './probe-http.ts';
+import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
+import type { Trace } from './model-probe.ts';
+
+test('probe assertions reject incomplete contracts, unhealthy aliases and incorrect tool answers', () => {
+  for (const field of ['create', 'prompt', 'active', 'interrupt', 'permission', 'cleared', 'first', 'after', 'status', 'outcome']) {
+    assert.throws(() => check('contract', { [field]: false }), new RegExp(field));
+  }
+  const aliases = ['a', 'b'];
+  const ten = new Map(aliases.map((alias) => [alias, Array<boolean>(10).fill(true)]));
+  assert.doesNotThrow(() => verifyAliasRuns(aliases, new Set(aliases), ten));
+  assert.throws(() => verifyAliasRuns(aliases, new Set(['a']), ten), /healthy/);
+  assert.throws(() => verifyAliasRuns(aliases, new Set(aliases), new Map([['a', ten.get('a')!]])), /tenTurns/);
+  ten.get('b')![0] = false;
+  assert.throws(() => verifyAliasRuns(aliases, new Set(aliases), ten), /allPassed/);
+  const trace = { calls: [{ name: 'fixture_lookup' }] } as Trace;
+  assert.equal(verifyToolAnswer([trace], 'TOKEN', ['TOKEN']), true);
+  assert.equal(verifyToolAnswer([trace], 'wrong', ['TOKEN']), false);
+  trace.calls[0].name = 'unexpected';
+  assert.equal(verifyToolAnswer([trace], 'TOKEN', ['TOKEN']), false);
+});
+
+test('every security observable can fail the S5 probe', () => {
+  const expected = { bind: true, noAuth: 401, authenticated: 200, upstreamLocalhostCors: true, proxy: 200,
+    badHost: 403, badOrigin: 403, missingCsrf: 403, noSession: 401, passwordVisible: false };
+  assert.doesNotThrow(() => verifySecurity(expected));
+  for (const [key, value] of Object.entries(expected)) {
+    assert.throws(() => verifySecurity({ ...expected, [key]: typeof value === 'boolean' ? !value : 418 }), /S5/);
+  }
+});
+
+test('the receiver detects foreign delivery and the sender detects duplicate submissions under a shared deadline', async () => {
+  const audit = reconnectionAudit('a');
+  await audit.send('operation', async () => {});
+  audit.receive('{"sessionID":"a"}');
+  assert.doesNotThrow(() => audit.verify(['operation'], [3, 5, 8]));
+  assert.throws(() => audit.verify(['operation'], [3, 5, 5001]), /reconnectDeadline/);
+  await audit.send('operation', async () => {});
+  assert.throws(() => audit.verify(['operation'], [3, 5, 8]), /sender/);
+  audit.receive('{"sessionID":"b"}');
+  assert.throws(() => audit.verify(['operation'], [3, 5, 8]), /receiver/);
+});
 
 test('secret scan detects private IPv4 with or without a scheme or port using no runtime values', async () => {
   const moduleUrl = pathToFileURL(resolve('scripts/phase0/secret-scan.mjs')).href;
