@@ -178,3 +178,12 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 3. 由 Claude Code 獨立 review diff 和驗收。Claude 不可用時，必須由獨立 Codex review delegate 讀 diff 並驗證，在報告記錄 reviewer 身分並明寫「reviewer 為獨立 Codex delegate，並非 Claude Code」。開發者自審不得代替。
 4. 開發者修正失敗項，再跑相關測試，原 reviewer 或同等獨立 reviewer 核對修正與重新驗證結果。
 5. phase gate 需全部必備門檻通過、阻擋問題結清、驗收文件齊備及 review 結論可追溯，才結束分支並開始下一 phase。仍需 owner 裁決的例外回到相應 ADR／決策。計畫未宣稱任一開發 phase 已開始或已通過。
+
+## 2026-11-21　Phase 0 實測修訂
+
+此節追加實測結果及執行解讀。Stage 4 已核准原 v2 與 D01–D09，Stage 5 的 Phase 0 有實作證據，gate 未通過。原驗收門檻續用。 [Decision 紀錄](DECISIONS.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+
+- S1、S4、S5、S6　Windows x64 ZIP／binary pin 為已驗靜態證據。臨時 Linux 容器取得同 tag 的 CLI／API、Automation、SSE 和 proxy 實測。Windows 原生執行仍須隔離 VM，原生 OpenCode listener、Job Object、睡眠／喚醒及登出／再登入須補證。S4 三次實際斷線已錄，另留 upstream overflow 待驗。Automation 繼續預設關閉。
+- S2　依 owner 此輪指定使用 `OEP_LITELLM_BASE_URL`／`OEP_LITELLM_API_KEY` 的程序或 User scope。實測 liveness 和有效憑證清單 200，無憑證清單 500、錯誤憑證 400。管理員須證實 key scope、認證語意、異常根因、retention／egress 及 fallback。禁止使用已知 master key，禁止探測管理端點。
+- S2、S3　候選 alias 上線前須以同一路徑做最小健康 probe，listing 無法確認可用性。選定 aliases 20 次串流工具／往返達標，PNG 和 PDF 各辨識通過。永久 forced `tool_choice` 有重複工具風險，規劃須在同一受控 turn 只限定首步，待另行驗證。401／403／429／5xx、timeout、長輸入和 fallback 的合成證據依 [S2](validation/p0-s2-gateway.md) 的範圍採用，真端行為仍待證。
+- Phase 0 probes 及合成 fixtures 納入版本控制，下載物、臨時 profile 與轉換輸出留於 `.phase0/` 或隔離容器的短暫檔案系統。D08 核定屬資料審核，Phase 1 才建 SOP→XLSX oracle 與 E2E。

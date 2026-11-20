@@ -1,6 +1,6 @@
 # OEP 階段與任務清單
 
-日期 2026-11-21（Asia/Taipei）。「完成」表示該文件已交付或個別 gate 已由證據驗收。Stage 5 的 Phase 0 執行中。 [v2 計畫與各 Phase 驗收](IMPLEMENTATION_PLAN_V2.md)
+日期 2026-11-21（Asia/Taipei）。Stage 5 已完成 Phase 0 probes 與報告，gate **未通過**。下一 phase 待阻擋項、owner 及獨立審查。 [v2 計畫與各 Phase 驗收](IMPLEMENTATION_PLAN_V2.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
 
 ## Stage 1–4　審查與開工核准
 
@@ -13,14 +13,15 @@
 
 ### Phase 0　驗證假設
 
-- [ ] S1　OpenCode binary/client/OpenAPI pin、API/Automation 契約。
-- [ ] S2　LiteLLM scoped key 與 aliases，真實工具、結構化輸出、錯誤和媒體。
-- [ ] S3　PNG/PDF/XLSX 模態、有界轉換與附件限制。
-- [ ] S4　SSE 斷線後狀態收斂、隔離和重送。
-- [ ] S5　loopback、password、proxy、Origin/Host/CSRF。
-- [ ] S6　Windows supervisor、Job Object、睡眠、登出和路徑。
-- [ ] S7　授權、provenance、secret scan。
-- [ ] 鎖 48 題知識合成集與字詞匹配基線，留存七份 spike 證據及 reviewer 通過。
+- [ ] S1　版本、client、OpenAPI hash 已驗，容器 API 五類與 Automation 通過。原生 Windows OpenCode CLI／API 待隔離 VM。 [S1](validation/p0-s1-version.md)
+- [ ] S2　實際 Gateway 經 OpenCode 達 20 連續工具回合，schema 與 PNG/PDF 通過。憑證 scope、認證異常、forced 回合、真故障矩陣待結。 [S2](validation/p0-s2-gateway.md)
+- [x] S3　合成附件有界轉換、逐格 oracle、Windows junction／路徑與入口限制通過。模型側證據取同一組 S2 容器 probe。 [S3](validation/p0-s3-attachments.md)
+- [ ] S4　隔離容器三次斷線收斂達標。原生 Windows 時序與 upstream overflow 待驗。 [S4](validation/p0-s4-sse.md)
+- [ ] S5　隔離容器的 auth、loopback、proxy、Origin／Host／CSRF 已驗。原生 Windows OpenCode listener 仍待驗。 [S5](validation/p0-s5-security.md)
+- [ ] S6　原生 Windows 合成 Job Object 正常／強制清除通過。OpenCode 程序樹、私有 VM 睡眠、登出與恢復待驗。 [S6](validation/p0-s6-windows.md)
+- [x] S7　已列授權、provenance、MIT、secret scan 和 hook，公開 CI 執行待允許推送的時機。 [S7](validation/p0-s7-licensing.md)
+- [x] 固定 48 題知識合成集、Recall@5、延遲與七份 probe 報告。 [基線](validation/p0-knowledge-baseline.md)
+- [ ] Gate　Claude Code 獨立 review 和阻擋項關閉，確認通過後才開 Phase 1。
 
 ### Phase 1　Runtime 與 SOP→XLSX
 

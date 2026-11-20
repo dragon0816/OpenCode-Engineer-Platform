@@ -21,7 +21,7 @@
 | Node.js／npm | `24.14.1`／`11.11.0` | [Node.js 官方發行](https://nodejs.org/dist/v24.14.1/) | Node MIT 與內含第三方 notices，npm CLI Artistic-2.0；既有環境，本輪不附帶 |
 | CPython | `3.12.7` | [Python 官方發行](https://www.python.org/downloads/release/python-3127/) | PSF 與內含組件授權；既有環境，本輪不附帶 |
 | Podman 與官方 Node 映像 | `5.4.0`，映像 digest 見 `config/opencode.pin.json` | [Podman](https://github.com/containers/podman) · [Node 官方映像](https://hub.docker.com/_/node) | Podman Apache-2.0，Node/Debian 映像沿用其各組件授權；僅驗證環境，排除重新分發 |
-| Windows／PowerShell | Windows 11 x64 25H2 build 26200、PowerShell 7 | [Windows](https://www.microsoft.com/windows/) · [PowerShell](https://github.com/PowerShell/PowerShell) | Windows 由主機授權，PowerShell MIT 與第三方 notices。既有環境，本輪不附帶 |
+| Windows／PowerShell | Windows 11 x64 25H2 build 26200、PowerShell 7.6.10 | [Windows](https://www.microsoft.com/windows/) · [PowerShell](https://github.com/PowerShell/PowerShell) | Windows 由主機授權，PowerShell MIT 與第三方 notices。既有環境，本輪不附帶 |
 | GitHub Actions | `actions/checkout@v6`、`actions/setup-node@v6` | [checkout](https://github.com/actions/checkout/tree/v6) · [setup-node](https://github.com/actions/setup-node/tree/v6) | MIT，CI 遠端使用，不複製到 repo |
 | 公司 Gateway 與測試憑證 | Owner 授權的 Phase 0 測試介面 | 私有，Key scope 與保留策略待確認 | 沒有分發授權，排除位址、憑證、原始回應及服務設定 |
 

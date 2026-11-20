@@ -16,7 +16,7 @@ pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode gateway-capabilitie
 | 無憑證／錯誤憑證的模型清單 | FAIL，分別重現 500／400，不符預期的明確認證拒絕。Gateway 管理員仍需對帳根因 |
 | `gpt-5.4-mini`、`claude-haiku-4-5-20251001` | PASS，兩者最小健康 probe HTTP 200，完成且回正確合成短碼 |
 | `qwen-36-27b`、`gemma-4-31b` | FAIL，兩者明列於 models，OpenCode 實際呼叫回 HTTP 400 `Model not found`。排除於啟用清單 |
-| `gpt-5.5`、`gpt-5.6`、`claude-sonnet-5`、`claude-opus-5` | PASS，只測每一 alias 的最小文字健康。未宣告工具、schema 與媒體能力 |
+| `gpt-5.5`、`gpt-5.6`、`claude-sonnet-5`、`claude-opus-5` | PASS，只測每一 alias 的最小文字健康。Probe 共用的暫時能力設定不是啟用核准，工具、schema 與媒體 **UNVERIFIED** |
 | 20 次連續工具回合 | PASS，第二輪交替兩 alias，各 10 次。20 次從 streamed deltas 重組參數，解析合法 JSON，核對唯一 ID、下一個請求的 tool-result IDs 及最終答案。10 次同一步含 2 個工具 calls |
 | `tool_choice: none`、JSON Schema、失敗工具回報 | PASS，兩個 alias 均驗證 provider payload，工具未執行、結果經固定 JSON schema 欄位／值核對、失敗工具以可辨識結果回報 |
 | forced `tool_choice`／`parallel_tool_calls: true` | PASS，兩者首個強制請求帶明確工具名與參數並實際執行 fixture。FAIL，固定 model `body` 會持續套用至下一步。probe 攔住第二次 forced admission，沒有完成自然終止的 forced turn |

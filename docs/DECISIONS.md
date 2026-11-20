@@ -28,3 +28,12 @@ Owner 回覆「接受所有建議預設並開工」。以 Asia/Taipei 日期記�
 - D09　固定 OpenCode v2.3.2 binary、client、OpenAPI hash，採獨立 OEP Web，通用 Automation 預設關閉。
 
 Phase 0 僅提交 probes、報告、合成 fixtures 與 repo hygiene。所謂一次性 probe 指實際執行狀態與下載檔存於 worktree 內隔離且忽略的 `.phase0/`，可重現腳本納入版本控制。下載與靜態檢查可先完成，任何 OpenCode 執行須在隔離環境內進行，與工作目錄或停用 tools 分開驗證。
+
+## 2026-11-21　Phase 0 觀察、解讀與 gate 阻擋
+
+- ADR-001、002、003、006、014、017　Windows 安裝包及規格 pin 通過。此主機無可用的私有 Windows VM，OpenCode 只在固定 Linux 容器執行，以唯讀 worktree、獨立暫存 profile、loopback 和密碼補取契約證據。Windows 原生 OpenCode 的版本、API、SSE、listener 和 Job Object 行為保留 **UNVERIFIED**。實體主機的 Node 合成 Job 測試可獨立採信。睡眠／登出僅在私有 VM 執行。Automation 以 flag 測到單次漏跑，MVP 繼續關閉。
+- ADR-002、013、015　透過固定 OpenCode 測得兩個已選 alias 的 20 個連續成功工具回合。兩個已列出的候選 alias 回 400，不可啟用。`/v1/models` 的無憑證 500／錯誤憑證 400 仍不符合認證驗收，需管理員對帳並證實該 key 為受限可撤銷 key。固定 model 層 `tool_choice` 會跨工具步重複套用，故 forced 首次呼叫通過，但完整自然終止的 forced turn 仍失敗。候選 alias 的單句健康證據不能核准工具或媒體。長輸入、429、5xx、timeout 採合成注入，真服務行為保留 **UNVERIFIED**。
+- ADR-005、014　附件入口拒絕客戶直接提供 URI，只有 probe 可用自己的合成 bytes 建立 URI。S4 三次斷線達標。將 v2 的「斷線／overflow」保守解讀為另列 upstream overflow 證據，實際 overflow 仍未驗。受控轉換及單一 proxy 都是 spike。
+- ADR-004、007、012、015、016　合成 48 題固定且測得文字檢索指標，owner 尚須另行核對 D08 的 SOP 與 oracle。本輪不上真資料。AEP 維持唯讀參考，新增程式與合成資料依 D01 採 MIT。
+
+Phase 0 gate 維持 **未通過**。不降低 Windows、Gateway 與獨立 review 的門檻。 [v2 Phase 0 修訂](IMPLEMENTATION_PLAN_V2.md#2026-11-21phase-0-實測修訂) · [完整 gate 證據](reviews/PHASE0_GATE_REPORT.md)

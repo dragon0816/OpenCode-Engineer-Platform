@@ -137,3 +137,7 @@
 - **決策** 每登入使用者一個 supervisor，瀏覽器關閉後常駐，launcher 停止或登出後暫停。支援登入後選擇自啟。由 Job Object 控制自身程序樹，驗證抗 crash。恢復時按 UTC 加 IANA timezone 對帳，一次性工作於 24 小時內補一次，週期工作只補最新有效 slot，過期記狀態並允許 Run Now。
 - **暫不採用方案** 機器層 service／Task Scheduler 跨登出，或自動追補所有歷史 slot。
 - **後果** 睡眠及登出期間不提供即時執行，工作狀態透明，使用者可重跑。Windows VM 必須實測，RPO/RTO 建議為 24 小時／30 分鐘。 [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+
+## 2026-11-21　Stage 4 核准與 Phase 0 實測補記
+
+Owner 已按 D03、D04、D06 核准 ADR-004、007、017 的原建議。ADR-001 的 Windows 三重 pin 已補下載驗證，Windows 執行驗收未結。ADR-002、005、006、013、014、015、017 的證據與限制以追加紀錄為準。 [決策紀錄](DECISIONS.md) · [v2 修訂](IMPLEMENTATION_PLAN_V2.md#2026-11-21phase-0-實測修訂)
