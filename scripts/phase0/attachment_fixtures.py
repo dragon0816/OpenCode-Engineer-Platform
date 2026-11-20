@@ -49,7 +49,7 @@ def png(width, height, pixels):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(scanlines)) + chunk(b"IEND", b"")
 
 
-def pdf(width, height, pixels=None):
+def pdf(width, height, pixels=None, *, lines=None):
     def stream(properties, payload):
         return b"<< " + properties + f" /Length {len(payload)} >>\nstream\n".encode() + payload + b"\nendstream"
 
@@ -61,7 +61,14 @@ def pdf(width, height, pixels=None):
         props = f"/Type /XObject /Subtype /Image /Width {width} /Height {height} /BitsPerComponent 8 /ColorSpace /DeviceGray /Filter /FlateDecode"
         objects.append(stream(props.encode(), zlib.compress(pixels)))
     else:
-        objects.append(stream(b"", b"BT /F1 18 Tf 20 35 Td (PRINT-2746) Tj ET"))
+        payload = b"BT /F1 18 Tf 20 35 Td (PRINT-2746) Tj ET"
+        if lines is not None:
+            def literal(line):
+                return line.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+
+            text = ' T* '.join(f'({literal(line)}) Tj' for line in lines)
+            payload = f'BT /F1 10 Tf 14 TL 24 {height - 30} Td {text} ET'.encode('ascii')
+        objects.append(stream(b"", payload))
         objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     result = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -85,6 +92,10 @@ def workbook():
     notes = book.create_sheet("Notes")
     for row in [["Code", "Comment"], ["R1", "合成資料"], ["R2", "a,b"]]:
         notes.append(row)
+    return stable_workbook(book)
+
+
+def stable_workbook(book):
     original = io.BytesIO()
     book.save(original)
     stable = io.BytesIO()

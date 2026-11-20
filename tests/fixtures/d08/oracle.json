@@ -1,0 +1,31 @@
+{
+  "status": "proposed-awaiting-owner-approval",
+  "syntheticOnly": true,
+  "sheets": [
+    {
+      "name": "Readings",
+      "range": "A1:C3",
+      "cells": {
+        "A1": { "type": "text", "value": "Sample" },
+        "B1": { "type": "text", "value": "Voltage" },
+        "C1": { "type": "text", "value": "Passed" },
+        "A2": { "type": "text", "value": "SYN-A" },
+        "B2": { "type": "decimal", "value": 1.25, "absoluteTolerance": 0, "unit": "V" },
+        "C2": { "type": "boolean", "value": true },
+        "A3": { "type": "text", "value": "SYN-B" },
+        "B3": { "type": "decimal", "value": 0.75, "absoluteTolerance": 0, "unit": "V" },
+        "C3": { "type": "boolean", "value": false }
+      }
+    },
+    {
+      "name": "Run",
+      "range": "A1:B2",
+      "cells": {
+        "A1": { "type": "text", "value": "Run ID" },
+        "B1": { "type": "text", "value": "Count" },
+        "A2": { "type": "text", "value": "SYN-D08-01" },
+        "B2": { "type": "integer", "value": 2, "absoluteTolerance": 0 }
+      }
+    }
+  ]
+}
