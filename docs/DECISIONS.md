@@ -37,3 +37,11 @@ Phase 0 僅提交 probes、報告、合成 fixtures 與 repo hygiene。所謂一
 - ADR-004、007、012、015、016　合成 48 題固定且測得文字檢索指標，owner 尚須另行核對 D08 的 SOP 與 oracle。本輪不上真資料。AEP 維持唯讀參考，新增程式與合成資料依 D01 採 MIT。
 
 Phase 0 gate 維持 **未通過**。不降低 Windows、Gateway 與獨立 review 的門檻。 [v2 Phase 0 修訂](IMPLEMENTATION_PLAN_V2.md#2026-11-21phase-0-實測修訂) · [完整 gate 證據](reviews/PHASE0_GATE_REPORT.md)
+
+## 2026-11-21　Phase 0 審查修正第 1 輪
+
+- I-1　Phase 0 relay 只在合成回合首步轉送 forced `tool_choice`，比對唯一工具結果後改用 `none`。兩個 alias 各完整跑完一次。原 FAIL 及本輪結果一併保留。 [S2](validation/p0-s2-gateway.md)
+- I-2　Secret scan 加入 RFC 1918 IPv4 規則，涵蓋無 scheme 和帶 port 的位址，獨立於程序環境值。合成正反例隨 Phase 0 驗證。
+- I-3　`--network bridge` 限於 Phase 0 Gateway probe。Phase 1 加入 relay-only 出口設計及 Windows VM 正反例驗收。此輪只記錄設計。 [S5](validation/p0-s5-security.md) · [v2 出口修訂](IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)
+
+O-1 至 O-4 維持未結，Phase 0 gate 未通過。本輪修正待獨立複核。 [Claude Code 首輪審查](reviews/PHASE0_CLAUDE_REVIEW.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)

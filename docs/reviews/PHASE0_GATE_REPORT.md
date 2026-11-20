@@ -80,3 +80,23 @@
 | 交付 commit | Record the blocked Phase 0 gate and handoff |
 
 `git diff --stat 60bbe88..HEAD` 涵蓋 45 檔、`+2082`／`-19`，含 4 個合成二進位 fixtures。報告以外為 44 檔、`+2000`／`-19`。用 `git log 60bbe88..HEAD` 查看交付 commit SHA。Repo Git 預設信箱有公司網域，本輪使用 Codex noreply 建立本地 commits，含指定 co-author trailer。確認 probe 容器均已停止並採 `--rm`。執行政策回 `blocked by policy`，拒絕遞迴清理已核對的 `.phase0/`，因此暫存的公開下載物與合成產物保留於 Git 忽略區，測試憑證僅用記憶體。
+
+## 2026-11-21　修正第 1 輪（fix round 1）
+
+Claude Code 首輪限定範圍審查已記錄於 `11a18ee`。審查重跑 lint、typecheck、test、scan，並檢查歷史與 `.phase0/` 的憑證外洩，均與其報告相符。本輪只處理 I-1 至 I-3，開發者重測完成，修正待獨立複核。上文保留初版 gate 的結果及時點。 [Claude Code 審查](PHASE0_CLAUDE_REVIEW.md)
+
+| 項目 | 本輪驗收 | 證據 |
+|---|---|---|
+| I-1　完整 forced turn | PASS | `pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode gateway-capabilities` exit 0。`gpt-5.4-mini` 6,124 ms，`claude-haiku-4-5-20251001` 3,961 ms，均少於 35 秒。各首步 forced、回傳相符工具結果、最終文字相符、工具執行 1 次、重複 0。其他 10 項 capability 均 HTTP 200、`succeeded`。原 FAIL 保留。本輪初次試跑也曾因局部變數遮蔽在送出模型 completion 前失敗，修正型別錯誤後重跑通過。 [S2 完整輸出](../validation/p0-s2-gateway.md) |
+| I-2　裸私網 IPv4 掃描 | PASS | `npm test` 驗證 `10/8`、`172.16/12`、`192.168/16` 的正反例，含有無 port、CIDR 邊界與無效 octet。清除程序內的 Gateway 變數後，`npm run scan` 仍正常執行。 |
+| I-3　出口邊界與驗收 | PASS（文件） | 明記 `--network bridge` 只用於 Phase 0，Phase 1 的 relay-only 設計涵蓋 OpenCode 與子程序隔離、relay 個別出站規則、正向串接、直連與旁路拒絕。Phase 1 實作及驗收尚未開始。 [S5](../validation/p0-s5-security.md) · [v2 出口修訂](../IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance) |
+
+| 命令 | 本輪實際輸出 |
+|---|---|
+| `npm run lint` | `Checked 23 source and configuration files.`，exit 0 |
+| `npm run typecheck` | `tsc --noEmit`，exit 0 |
+| `npm test` | 5 passed、0 failed、0 skipped |
+| `npm run build` | `tsc --outDir .phase0/build`，exit 0、6 支 JS |
+| `npm run scan`（清除 Gateway 程序環境值） | `mode:tree, files:56, hits:0`，exit 0 |
+
+**Gate 仍未通過，Phase 1 未開始。** O-1 受限 key scope、egress／retention，O-2 認證回應 500／400 的根因，O-3 隔離 Windows 11 x64 VM 的原生 OpenCode、睡眠與登出，O-4 D08 合成 SOP/PDF 與 cell oracle 核定均待 owner／基礎設施。此次診斷再次量到 `liveness:200, modelsValid:200, modelsNone:500, modelsWrong:400`，其餘首輪未完成的驗收仍列於上文。
