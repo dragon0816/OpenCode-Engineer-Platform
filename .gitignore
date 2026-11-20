@@ -1,0 +1,12 @@
+.phase0/
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+*.log
+*.pem
+*.key
+*.pfx
+*.p12

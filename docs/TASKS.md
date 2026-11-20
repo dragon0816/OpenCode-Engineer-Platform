@@ -1,15 +1,15 @@
 # OEP 階段與任務清單
 
-日期 2026-11-21（Asia/Taipei）。「完成」表示該文件已交付或個別 gate 已由證據驗收。Stage 5 的所有 Phase 尚待啟動。 [v2 計畫與各 Phase 驗收](IMPLEMENTATION_PLAN_V2.md)
+日期 2026-11-21（Asia/Taipei）。「完成」表示該文件已交付或個別 gate 已由證據驗收。Stage 5 的 Phase 0 執行中。 [v2 計畫與各 Phase 驗收](IMPLEMENTATION_PLAN_V2.md)
 
 ## Stage 1–4　審查與開工核准
 
 - [x] Stage 1　Claude Code 與 Codex 完成獨立審查。
 - [x] Stage 2　Codex 完整審查 Claude 兩份報告並回查固定版原始碼。Claude 只交叉讀了 Codex §A、§G、§H，§B–§F 未讀。
 - [x] Stage 3　完成審查對照、ADR、v2、AEP gap、任務、決策與交接。
-- [ ] Stage 4　owner 回覆確認 v2，裁決 D01–D09 或明確接受預設。狀態為待核准。
+- [x] Stage 4　owner 回覆「接受所有建議預設並開工」，確認 v2 與 D01–D09。 [核准紀錄](DECISIONS.md#2026-11-21stage-4-核准與-phase-0-開工)
 
-## Stage 5　開發（待 Stage 4 核准）
+## Stage 5　開發
 
 ### Phase 0　驗證假設
 
