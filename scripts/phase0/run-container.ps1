@@ -1,11 +1,11 @@
-param([ValidateSet('contract', 'gateway', 'gateway-capabilities')] [string] $Mode = 'contract')
+param([ValidateSet('contract', 'contract-relay', 'gateway', 'gateway-capabilities')] [string] $Mode = 'contract')
 $ErrorActionPreference = 'Stop'
 $pin = Get-Content -Raw config/opencode.pin.json | ConvertFrom-Json
 $binary = (Get-FileHash -Algorithm SHA256 .phase0/assets/linux/opencode).Hash
 if ($binary -ne $pin.supplementalLinuxX64.binarySha256) { throw 'Binary validation failed.' }
 $network = 'none'
 $inputData = '{}'
-if ($Mode -ne 'contract') {
+if ($Mode -in 'gateway', 'gateway-capabilities') {
     $network = 'bridge'
     $values = @{}
     foreach ($name in 'OEP_LITELLM_BASE_URL','OEP_LITELLM_API_KEY') {

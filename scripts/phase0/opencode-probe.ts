@@ -8,9 +8,11 @@ import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { candidateAliases, forcedChoice, mockAliases, startModelProbe, tokenFor, workingAliases } from './model-probe.ts';
+import { candidateAliases, fixtureGateway, forcedChoice, mockAliases, startModelProbe, syntheticMarker, tokenFor, workingAliases } from './model-probe.ts';
+import { redactFields } from './probe-redaction.ts';
 import { listen, pause, send, sse, until } from './probe-http.ts';
 import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
+import { onlyExpectedListener, ownerCheckedFetch, processListeners } from './probe-listeners.ts';
 
 const binary = '/work/.phase0/assets/linux/opencode';
 const providerID = 'oep-phase-zero';
@@ -41,7 +43,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
       [providerID]: {
         package: '@opencode/ai/providers/openai-compatible',
         name: 'Phase Zero',
-        settings: { baseURL: `${probe.endpoint.url}/v1`, apiKey: 'loopback-placeholder' },
+        settings: { baseURL: `${probe.endpoint.url}/v1`, apiKey: probe.apiKey },
         models: Object.fromEntries(models.flatMap((id) => {
           const model = { modelID: id, capabilities: { tools: true, input: ['text', 'image', 'pdf'], output: ['text'] }, limit: { context: 32000, output: 256 } };
           return [
@@ -78,7 +80,10 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
       await stopped;
     }
   };
-  const client = OpenCode.make({ baseUrl: url, headers: { authorization: auth } });
+  const listeners = () => child.pid && child.exitCode === null && child.signalCode === null ? processListeners(child.pid) : [];
+  const ownsListener = () => onlyExpectedListener(listeners(), port);
+  const guardedFetch = ownerCheckedFetch(url, ownsListener);
+  const client = OpenCode.make({ baseUrl: url, headers: { authorization: auth }, fetch: guardedFetch });
   try {
     const version = await until(async () => {
       if (child.exitCode !== null) throw new Error('server exited');
@@ -89,7 +94,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
         return info.version;
       } catch { return undefined; }
     });
-    return { client, version, stop, url, directory, auth };
+    return { client, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
   } catch (error) {
     await stop();
     throw error;
@@ -147,7 +152,7 @@ async function contract(server: Server, probe: Probe) {
 }
 
 async function automation(server: Server, probe: Probe, root: string) {
-  const off = await fetch(`${server.url}/api/experimental/automation?directory=${encodeURIComponent(server.directory)}`, { headers: { authorization: server.auth }, signal: AbortSignal.timeout(5000) });
+  const off = await server.fetch(`${server.url}/api/experimental/automation?directory=${encodeURIComponent(server.directory)}`, { headers: { authorization: server.auth }, signal: AbortSignal.timeout(5000) });
   report('S1-automation-off', { status: off.status });
   await off.body?.cancel();
   check('S1-automation-off', { status: off.status === 403 });
@@ -180,12 +185,11 @@ async function reconnection(server: Server) {
   const b = await createSession(server, 'slow-model');
   const owned = new Set([a.id]);
   const audit = reconnectionAudit(a.id);
-  const operations: string[] = [];
-  const submit = (sessionID: string, label: string) => {
-    const id = `msg_${randomBytes(12).toString('hex')}`;
-    operations.push(id);
-    return audit.send(id, () => client.session.prompt({ sessionID, id, text: label }, callOptions()));
-  };
+  const operation = (sessionID: string, text: string) => ({ id: `msg_${randomBytes(12).toString('hex')}`, sessionID, text });
+  const plan = Array.from({ length: 3 }, (_, index) => ({
+    a: operation(a.id, `Synthetic A ${index + 1}`), b: operation(b.id, `Synthetic B ${index + 1}`),
+  }));
+  const submit = (planned: ReturnType<typeof operation>) => audit.send(planned.id, () => client.session.prompt(planned, callOptions()));
   let foreignDropped = 0;
   const projected = new Set<string>();
   const seenReplies = new Set<string>();
@@ -195,7 +199,7 @@ async function reconnection(server: Server) {
     const connected = Promise.withResolvers<void>();
     const completed = (async () => {
       try {
-        const response = await fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal });
+        const response = await server.fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal });
         if (!response.ok || !response.body) throw new Error('SSE response');
         for await (const data of sse(response.body)) {
           const event = JSON.parse(data) as { type: string; data?: { sessionID?: string } };
@@ -218,10 +222,10 @@ async function reconnection(server: Server) {
     try {
       await pre.ready;
       const previous = foreignDropped;
-      await submit(b.id, `Synthetic B ${cycle}`);
+      await submit(plan[cycle - 1].b);
       await until(async () => foreignDropped > previous || undefined, 4000);
       const capturedBefore = audit.captured;
-      await submit(a.id, `Synthetic A ${cycle}`);
+      await submit(plan[cycle - 1].a);
       await until(async () => audit.captured > capturedBefore || undefined, 4000);
     } catch {
       report('S4-cycle-failed', { cycle, stage: 'subscribe-and-submit', captured: audit.captured, foreignDropped });
@@ -250,13 +254,13 @@ async function reconnection(server: Server) {
       elapsed.push(Math.round(performance.now() - started));
     } finally { replay.close(); await replay.completed; }
   }
-  const observed = audit.verify(operations, elapsed);
+  const observed = audit.verify(plan.flatMap((cycle) => [cycle.a.id, cycle.b.id]), elapsed);
   check('S4', { filtered: foreignDropped >= 3, delivered: audit.captured >= 3, durable: projected.size === 3 });
   report('S4-disconnect', { elapsed, captured: audit.captured, foreignDropped, durableUniqueSubmissions: projected.size, ...observed });
 }
 
 async function security(server: Server) {
-  const get = (url: string, headers?: HeadersInit) => fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+  const get = (url: string, headers?: HeadersInit) => server.fetch(url, { headers, signal: AbortSignal.timeout(5000) });
   const api = `${server.url}/api/session`;
   const noAuth = await get(api);
   const allowed = await get(api, { authorization: server.auth, origin: 'http://localhost:9911' });
@@ -275,7 +279,7 @@ async function security(server: Server) {
   });
   try {
     const headers = { origin: proxy.url, cookie: `oep=${webSession}`, 'x-csrf-token': csrf };
-    const post = (override: Record<string, string>) => fetch(`${proxy.url}/status`, { method: 'POST', headers: { ...headers, ...override }, signal: AbortSignal.timeout(5000) });
+    const post = (override: Record<string, string>) => fetch(`${proxy.url}/status`, { method: 'POST', headers: { ...headers, ...override }, signal: AbortSignal.timeout(5000), redirect: 'error' });
     const badHostStatus = new Promise<number>((resolve, reject) => {
       const request = httpRequest(`${proxy.url}/status`, { method: 'POST', headers: { ...headers, host: 'foreign.invalid' }, timeout: 5000 }, (response) => {
         response.resume();
@@ -289,11 +293,8 @@ async function security(server: Server) {
     ]);
     const browserView = (await good.text()) + JSON.stringify([...good.headers]);
     await Promise.all([badOrigin.body?.cancel(), missingCsrf.body?.cancel(), noSession.body?.cancel()]);
-    const row = execFileSync('cat', ['/proc/net/tcp'], { encoding: 'utf8' }).split('\n').find((line) => {
-      const fields = line.trim().split(/\s+/);
-      return fields[1]?.endsWith(`:${new URL(server.url).port && Number(new URL(server.url).port).toString(16).toUpperCase()}`) && fields[3] === '0A';
-    });
-    const evidence = { bind: row?.includes('0100007F:') ?? false, noAuth: noAuth.status, authenticated: allowed.status, upstreamLocalhostCors: cors === 'http://localhost:9911', proxy: good.status, badHost, badOrigin: badOrigin.status, missingCsrf: missingCsrf.status, noSession: noSession.status, passwordVisible: browserView.includes(server.auth) || browserView.includes(Buffer.from(server.auth.slice(6), 'base64').toString().slice(9)) };
+    const listeners = server.listeners();
+    const evidence = { bind: server.ownsListener(), ipv4Listeners: listeners.filter((row) => row.family === 4).length, ipv6Listeners: listeners.filter((row) => row.family === 6).length, noAuth: noAuth.status, authenticated: allowed.status, upstreamLocalhostCors: cors === 'http://localhost:9911', proxy: good.status, badHost, badOrigin: badOrigin.status, missingCsrf: missingCsrf.status, noSession: noSession.status, passwordVisible: browserView.includes(server.auth) || browserView.includes(Buffer.from(server.auth.slice(6), 'base64').toString().slice(9)) };
     report('S5-loopback', evidence);
     verifySecurity(evidence);
   } finally { proxy.close(); }
@@ -312,13 +313,20 @@ function validCalls(traces: Probe['traces'], slots: string[]) {
   } catch { return false; }
 }
 
-async function gateway(server: Server, probe: Probe, listed: Set<string>, capabilitiesOnly: boolean) {
+async function gateway(server: Server, probe: Probe, listed: Set<string>, capabilitiesOnly: boolean, fixtureOnly = false) {
+  const scopedTurn = async (model: string, mode: 'forced' | 'none' | 'default', prompt: string, files?: SessionPromptInput['files']) => {
+    const scope = probe.openTurn(model, mode, 35_000);
+    const variant = mode === 'forced' ? `${model}-forced` : mode === 'none' ? `${model}-none` : model;
+    try {
+      return { result: await turn(server, variant, `${prompt}\n${scope.nonce}`, files), steps: scope.steps };
+    } finally { scope.close(); }
+  };
   const healthy: string[] = capabilitiesOnly ? [...workingAliases] : [];
   if (!capabilitiesOnly) for (const model of [...workingAliases, ...candidateAliases].filter((name) => listed.has(name) || workingAliases.includes(name))) {
     const before = probe.traces.length;
-    const result = await turn(server, model, 'Reply only with READY-P0. Do not call tools.');
+    const { result } = await scopedTurn(model, 'default', 'Reply only with READY-P0. Do not call tools.');
     const traces = probe.traces.slice(before);
-    const ok = result.outcome === 'succeeded' && result.transcript.includes('READY-P0') && traces.length === 1 && traces[0].status === 200;
+    const ok = result.outcome === 'succeeded' && result.finalText.trim() === 'READY-P0' && traces.length === 1 && traces[0].status === 200;
     if (ok && workingAliases.includes(model)) healthy.push(model);
     report('S2-health', { alias: model, ok, status: traces.at(-1)?.status ?? null, modelMissing: traces.at(-1)?.modelMissing ?? false, outcome: result.outcome });
   }
@@ -335,7 +343,7 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
     const slots = run % 4 < 2 ? ['north', 'south'] : ['south'];
     const start = probe.traces.length;
     const startTools = probe.toolRuns.length;
-    const result = await turn(server, model, `Call the fixture lookup tool for ${slots.join(' and ')} in the same tool step. After results, reply only with the returned token(s).`);
+    const { result } = await scopedTurn(model, 'default', `Call the fixture lookup tool for ${slots.join(' and ')} in the same tool step. After results, reply only with the returned tokens separated by spaces.`);
     const traces = probe.traces.slice(start);
     const executed = probe.toolRuns.slice(startTools);
     const ok = result.outcome === 'succeeded' && validCalls(traces, slots) &&
@@ -357,6 +365,7 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
 
   for (const model of healthy) {
     for (const test of ['forced', 'none', 'schema', 'tool-failure', 'image', 'pdf'] as const) {
+      if (fixtureOnly && test !== 'forced') continue;
       const from = probe.traces.length;
       const toolFrom = probe.toolRuns.length;
       let result: Awaited<ReturnType<typeof turn>>;
@@ -364,8 +373,8 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
       if (test === 'forced') {
         const deadlineMs = 35_000;
         const started = performance.now();
-        const { result: completed, steps } = await probe.forcedTurn(model, () => turn(server, `${model}-forced`,
-          'Call the fixture lookup tool once for the north slot. After receiving its result, reply with only the returned token.', undefined, deadlineMs));
+        const { result: completed, steps } = await scopedTurn(model, 'forced',
+          'Call the fixture lookup tool once for the north slot. After receiving its result, reply with only the returned token.');
         const elapsedMs = Math.ceil(performance.now() - started);
         const traces = probe.traces.slice(from);
         const fixtureCalls = probe.toolRuns.slice(toolFrom);
@@ -382,27 +391,30 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
         if (!ok) process.exitCode = 1;
         continue;
       } else if (test === 'none') {
-        result = await turn(server, `${model}-none`, 'Do not call tools. Reply exactly READY-P0.');
-        ok = probe.traces.at(from)?.choice === 'none' && result.transcript.includes('READY-P0') && probe.toolRuns.length === toolFrom;
+        ({ result } = await scopedTurn(model, 'none', 'Do not call tools. Reply exactly READY-P0.'));
+        ok = probe.traces.at(from)?.choice === 'none' && result.finalText.trim() === 'READY-P0' && probe.toolRuns.length === toolFrom;
       } else if (test === 'schema') {
-        result = await turn(server, `${model}-schema`, 'Emit JSON with the sole key code and value VIOLET-92.');
+        const scope = probe.openTurn(model, 'none', 35_000);
+        try { result = await turn(server, `${model}-schema`, `Emit JSON with the sole key code and value VIOLET-92.\n${scope.nonce}`); }
+        finally { scope.close(); }
         let schemaValid = false;
         try {
-          const decoded: unknown = JSON.parse(result.transcript);
+          const decoded: unknown = JSON.parse(result.finalText);
           schemaValid = typeof decoded === 'object' && decoded !== null && Object.keys(decoded).length === 1 &&
             'code' in decoded && decoded.code === 'VIOLET-92';
         } catch { /* A non-JSON response fails the schema check. */ }
         ok = probe.traces.at(from)?.format === 'json_schema' && schemaValid;
       } else if (test === 'tool-failure') {
-        result = await turn(server, model, 'Call the fixture lookup tool for slot missing exactly once, then report the failure marker verbatim.');
-        ok = probe.toolRuns.slice(toolFrom).some((run) => !run.valid) && result.transcript.includes('SYNTHETIC_TOOL_FAILURE');
+        ({ result } = await scopedTurn(model, 'default', 'Call the fixture lookup tool for slot missing exactly once, then report the failure marker verbatim.'));
+        const runs = probe.toolRuns.slice(toolFrom);
+        ok = runs.length === 1 && runs[0].slot === 'missing' && !runs[0].valid && result.finalText.trim() === 'SYNTHETIC_TOOL_FAILURE';
       } else {
         const name = test === 'image' ? 'marker.png' : 'marker.pdf';
         const mime = test === 'image' ? 'image/png' : 'application/pdf';
         const expected = test === 'image' ? 'ORBIT-7349' : 'PRINT-2746';
         const bytes = readFileSync(`/work/tests/fixtures/attachments/${name}`);
-        result = await turn(server, model, 'Return only the exact visible code in this synthetic attachment.', [{ uri: `data:${mime};base64,${bytes.toString('base64')}`, name }]);
-        ok = result.transcript.includes(expected);
+        ({ result } = await scopedTurn(model, 'default', 'Return only the exact visible code in this synthetic attachment.', [{ uri: `data:${mime};base64,${bytes.toString('base64')}`, name }]));
+        ok = result.finalText.trim() === expected;
       }
       report('S2-capability', { alias: model, capability: test, ok: ok && result.outcome === 'succeeded', outcome: result.outcome, status: probe.traces.at(from)?.status ?? null });
       if (!ok || result.outcome !== 'succeeded' || probe.traces.at(from)?.status !== 200) process.exitCode = 1;
@@ -432,19 +444,21 @@ async function failures(server: Server, probe: Probe) {
 
 async function main() {
   const mode = process.argv[2];
-  if (process.platform !== 'linux' || !['contract', 'gateway', 'gateway-capabilities'].includes(mode)) throw new Error('isolated runner required');
-  const gatewayMode = mode !== 'contract';
+  if (process.platform !== 'linux' || !['contract', 'contract-relay', 'gateway', 'gateway-capabilities'].includes(mode)) throw new Error('isolated runner required');
+  const gatewayMode = mode === 'gateway' || mode === 'gateway-capabilities';
+  const fixtureRelay = mode === 'contract-relay';
   const stdin = readFileSync(0, 'utf8');
   const root = mkdtempSync('/tmp/oep-p0-');
   const version = execFileSync(binary, ['--version'], { cwd: root, encoding: 'utf8', env: { HOME: root, OPENCODE_TEST_HOME: root, PATH: '/usr/bin:/bin' }, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   report('S1-cli', { version: version === 'opencode v2.3.2' ? '2.3.2' : 'unexpected', platform: process.platform });
   if (version !== 'opencode v2.3.2') throw new Error('pinned version');
   let step = 'setup';
-  const probe = await startModelProbe(gatewayMode ? JSON.parse(stdin) : undefined);
+  const redact = redactFields([syntheticMarker]);
+  const probe = await startModelProbe(gatewayMode ? JSON.parse(stdin) : undefined, fixtureRelay ? { request: fixtureGateway, redact } : undefined);
   let server: Server | undefined;
   try {
     step = 'readiness';
-    server = await startOpenCode(probe, root, false, gatewayMode ? [...workingAliases, ...candidateAliases, ...mockAliases] : mockAliases);
+    server = await startOpenCode(probe, root, false, gatewayMode || fixtureRelay ? [...workingAliases, ...candidateAliases, ...mockAliases] : mockAliases);
     report('S1-api', { version: server.version === '2.3.2' ? '2.3.2' : 'unexpected' });
     if (server.version !== '2.3.2') throw new Error('pinned version');
     if (gatewayMode) {
@@ -455,6 +469,18 @@ async function main() {
           ![401, 403].includes(Number(status.modelsNone)) || ![401, 403].includes(Number(status.modelsWrong))) process.exitCode = 1;
       step = 'gateway-model';
       await gateway(server, probe, listed, mode === 'gateway-capabilities');
+    } else if (fixtureRelay) {
+      step = 'synthetic-relay';
+      await gateway(server, probe, new Set(), false, true);
+      await gateway(server, probe, new Set(), true, true);
+      const model = workingAliases[0];
+      const scope = probe.openTurn(model, 'default', 10_000);
+      try {
+        const result = await turn(server, model, `Read the redaction fixture.\n${scope.nonce}`, undefined, 10_000);
+        const masked = result.transcript === '[redacted]' && result.finalText === '[redacted]';
+        report('S2-redacted-transcript', { masked, outcome: result.outcome });
+        check('S2-redaction', { masked, succeeded: result.outcome === 'succeeded' });
+      } finally { scope.close(); }
     } else {
       const checks = [['client', () => contract(server!, probe)], ['failures', () => failures(server!, probe)],
         ['sse', () => reconnection(server!)], ['security', () => security(server!)], ['automation', () => automation(server!, probe, root)]] as const;
@@ -472,4 +498,7 @@ async function main() {
   }
 }
 
-main().catch(() => { report('probe-failed', { step: 'setup' }); process.exitCode = 1; });
+main().catch((error: unknown) => {
+  report('probe-failed', { step: 'setup', ...(error instanceof Error && error.message === 'gateway requires HTTPS' ? { reason: 'gateway requires HTTPS' } : {}) });
+  process.exitCode = 1;
+});
