@@ -187,3 +187,11 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 - S2　依 owner 此輪指定使用 `OEP_LITELLM_BASE_URL`／`OEP_LITELLM_API_KEY` 的程序或 User scope。實測 liveness 和有效憑證清單 200，無憑證清單 500、錯誤憑證 400。管理員須證實 key scope、認證語意、異常根因、retention／egress 及 fallback。禁止使用已知 master key，禁止探測管理端點。
 - S2、S3　候選 alias 上線前須以同一路徑做最小健康 probe，listing 無法確認可用性。選定 aliases 20 次串流工具／往返達標，PNG 和 PDF 各辨識通過。永久 forced `tool_choice` 有重複工具風險，規劃須在同一受控 turn 只限定首步，待另行驗證。401／403／429／5xx、timeout、長輸入和 fallback 的合成證據依 [S2](validation/p0-s2-gateway.md) 的範圍採用，真端行為仍待證。
 - Phase 0 probes 及合成 fixtures 納入版本控制，下載物、臨時 profile 與轉換輸出留於 `.phase0/` 或隔離容器的短暫檔案系統。D08 核定屬資料審核，Phase 1 才建 SOP→XLSX oracle 與 E2E。
+
+<a id="phase-1-egress-acceptance"></a>
+
+## 2026-11-21　Phase 1 模型出口設計與驗收補充
+
+Phase 0 測試容器的 `--network bridge` 限於一次性 Gateway probe。Phase 1 設計採 relay-only。OpenCode 與其子程序置於隔離的 Windows VM 網路。私有虛擬交換器只連 host relay，停用 NAT、IP forwarding 與對一般網路的預設路由。VM 網路政策只放行 loopback 及 relay 的固定 IP／port。Host relay 持有受限 key，透過獨立程序的預設拒絕 Windows 過濾規則，僅連設定核准的 Gateway 目的位址及 port。Relay 固定 API 路徑及模型 allowlist、拒絕 redirect，Gateway 位址或解析結果變更時須先更新核准規則。保留去敏的允許／拒絕證據。
+
+Phase 1 驗收須於目標 Windows 11 x64 VM 以合成資料測通 OpenCode→relay→核准 Gateway。由同一隔離環境中的 OpenCode 及測試子程序，分別嘗試直接連 Gateway、其他 LAN／公網目的地，及透過 relay 請求非核准路徑或 redirect。所有負例須在建立對外連線或轉送請求前拒絕，並用防火牆／relay 計數驗證沒有旁路或替代 provider。拒絕網路規則、移除 relay 或撤回 allowlist 後，工作須明確失敗。執行時不得以 Phase 0 bridge 取代這些限制。 [S5 測試出口邊界](validation/p0-s5-security.md)

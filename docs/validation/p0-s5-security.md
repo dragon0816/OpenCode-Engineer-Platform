@@ -9,3 +9,9 @@
 受保護的 `/api/session` 驗證了 401/200。上游允許另一個 `localhost` port 的 CORS。一次性 proxy 針對受保護的同源操作驗確切 Host、Origin、session cookie 和 CSRF token，對瀏覽器可見的 JSON／headers 檢查 upstream Authorization 與明文密碼，皆未出現。錯誤 Host 用明確送出 `Host` 的原生 Node HTTP client，因一般 `fetch` 會代填合法 host。
 
 原生 Windows OpenCode 與 proxy 的 `Get-NetTCPConnection` 驗證為 **UNVERIFIED**。S6 在同一 Windows 主機用 `Get-NetTCPConnection` 查到獨立的 Job Object 合成 worker 僅在 `127.0.0.1`，這是 Windows listener 輔證。 [S6](p0-s6-windows.md)
+
+## Phase 0 限定的 Gateway 出口
+
+`contract` 使用 `--network none`。`gateway` 與 `gateway-capabilities` 為 Phase 0 一次性實測，使用 `--network bridge` 讓 relay 能連私有測試 Gateway。此 bridge 允許容器對外連線。Loopback、無 port publish、金鑰只交 relay 和 provider allowlist 限定了服務入口或應用行為，容器網路本身沒有出口 allowlist。
+
+Phase 1 的 Windows runtime 需以網路隔離強制 OpenCode 與其子程序只走受控 relay，再由 relay 連核准的 Gateway。須在隔離 Windows VM 驗證正反例，驗收見 [v2 Phase 1 出口修訂](../IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)。
