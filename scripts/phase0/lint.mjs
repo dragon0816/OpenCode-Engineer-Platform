@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-const supported = /(?:\.(?:mjs|ts|py|ps1|json|yml|txt)|\/pre-commit)$/;
+const supported = /(?:\.(?:mjs|ts|py|ps1|cs|json|yml|txt)|\/pre-commit)$/;
 let checked = 0;
 for (const file of files.filter((name) => supported.test(name))) {
   const source = readFileSync(file, 'utf8');
