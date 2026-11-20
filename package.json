@@ -1,0 +1,17 @@
+{
+  "name": "oep-phase-zero",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "lint": "node scripts/phase0/lint.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test scripts/phase0/*.test.ts",
+    "build": "tsc --outDir .phase0/build",
+    "scan": "node scripts/phase0/secret-scan.mjs --tree"
+  },
+  "dependencies": { "@opencode/client": "2.3.2" },
+  "devDependencies": { "@types/node": "24.12.4", "typescript": "6.0.3" }
+}

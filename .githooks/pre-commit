@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node scripts/phase0/secret-scan.mjs --staged
