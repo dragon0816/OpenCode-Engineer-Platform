@@ -1,40 +1,39 @@
-# AEP Feature Gap Analysis (Preliminary)
+# AEP 功能差距分析
 
-Source: https://github.com/dragon0816/agentic-engineering-platform
+日期 2026-11-21（Asia/Taipei）。比對 AEP 固定快照 `c9961b2d0d66eef3892375213ce305883ebde960`。以下路徑相對於該提交。`implemented` 表示找到程式路徑，`design-only` 指該項文件提案，`UNVERIFIED` 為缺少可證實的實作或執行結果。OEP 的 Keep/Adapt/Replace/Remove 分別表示保留功能、按新邊界調整、換用另一實作、移出首版。所有取捨是 v2 設計，不授予複製 AEP 內容的權利。 [AEP 固定快照](https://github.com/dragon0816/agentic-engineering-platform/tree/c9961b2d0d66eef3892375213ce305883ebde960) · [交叉審查](reviews/CODEX_CROSS_REVIEW.md)
 
-This is a targeted review of code/documents, **not** a complete audit or proof of deployed behavior. The implementation team must verify status in the current repository.
+| 功能 | 固定版驗證狀態 | AEP 精確路徑 | OEP 決策及剩餘驗證 |
+|---|---|---|---|
+| Agent harness／session | implemented | `src/agent/gateway.py`、`src/host_runtime/web.py`、`src/harness/workspace.py` | **Replace**。OpenCode 接手執行與 session，OEP 驗證 mapping、agent/permission 選擇、斷線和接單對帳。 |
+| Skills／MCP／tools | implemented | `src/agent/skills.py`、`src/host_runtime/mcp_servers.py`、`src/integrations/mcp_client.py` | **Replace**。採原生 OpenCode Skills/MCP，以最小 OEP 領域介面接入。 |
+| SOP→workflow→Excel 成功 | UNVERIFIED（歷史案例僅文件） | `docs/phases/FEATURE_PLUGIN_ASSESSMENT_20261113.md`、`src/agent/turn_effects.py`、`tests/test_turn_effects.py` | **Keep** 工作流程，新增當次 exit/receipt/hash 和 openpyxl oracle。AEP per-turn 去重屬 implemented，歷史假成功修正與案例重現 UNVERIFIED。 |
+| BI Knowledge plugin、Host 耦合 | implemented | `feature_plugins/bi_knowledge/plugin.json`、`feature_plugins/bi_knowledge/python/aep_bi/feature.py`、`scripts/build_bi_knowledge_plugin.py`、`src/host_runtime/features.py`、`src/knowledge/repo/repository.py` | **Replace** AEP Plugin/Host contract。保留領域行為，以明確 schema、服務與測試重新實作。獨立可攜性未驗。 |
+| BI ingest／staging／人工審核 | implemented | `docs/phases/BI_INGEST.md` §12、`feature_plugins/bi_knowledge/python/aep_bi/cards/staging.py`、`feature_plugins/bi_knowledge/python/aep_bi/cards/runs.py`、`feature_plugins/bi_knowledge/python/aep_bi/cards/store.py`、`tests/test_bi_ingest_runs.py` | **Adapt**。保留 schema 版本、候選、evidence 與人工批准。擴充跨 blob/DB 故障恢復測試。真模型未重跑。 |
+| BI Vault／來源版本／發布 | implemented | `docs/phases/BI_VAULT.md` §11、`feature_plugins/bi_knowledge/python/aep_bi/cards/vault.py`、`tests/test_bi_vault.py`、`tests/test_bi_publish_vault.py` | **Adapt**。讀取已發布快照，保留 provenance、revision 與回退。共享 vault 併發、真實資料移轉 UNVERIFIED。 |
+| BI Vault 的指定外部備份／發布端 | design-only（該文件中待 owner 的 V6 子項） | `docs/phases/BI_VAULT.md` §11 V6 | **Remove**。首版用 OEP 一致備份與本機發布。這一列只判讀文件提案，未窮盡後續部署。 |
+| BI schema／擷取方法試跑 | implemented | `docs/phases/BI_INGEST.md` §9、§12、`feature_plugins/bi_knowledge/python/aep_bi/cards/methods.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_schema_agent.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_skill_agent.py` | **Adapt**。Phase 3b 保留明確 schema 版本、核准及 evidence 規則，延後 agent 輔助的 Session A/B 試跑及方法比較。 |
+| BI Vault 搜尋 | implemented | `feature_plugins/bi_knowledge/python/aep_bi/cards/search_index.py`、`feature_plugins/bi_knowledge/python/aep_bi/cards/quality.py`、`tests/test_bi_query_retrieval.py` | **Adapt**。先 FTS5、繁中詞法與料號。未重跑 Recall、延遲與索引覆蓋。 |
+| Knowledge Asking／`bi__query` | implemented（工具和部分具名入口） | `src/capabilities/knowledge_query/handlers.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_cards_tools.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_bench.py`、`tests/test_vault_asking_e2e.py` | **Adapt**。OEP 明確 Ask 先檢索、驗證同次 evidence。聊天 MCP 共用 verifier 且工具選擇 best-effort。AEP 全部入口的強制範圍 UNVERIFIED。 |
+| LLM Wiki | implemented | `feature_plugins/llm_wiki/plugin.json`、`feature_plugins/llm_wiki/python/aep_wiki/feature.py`、`feature_plugins/llm_wiki/python/aep_wiki/knowledge/sandbox.py`、`feature_plugins/llm_wiki/python/aep_wiki/knowledge/pipeline.py`、`feature_plugins/llm_wiki/python/aep_wiki/knowledge/conflicts.py`、`feature_plugins/llm_wiki/python/aep_wiki/host/knowledge_publish.py`、`scripts/build_llm_wiki_plugin.py`、`tests/test_wiki_feature_characterization.py` | **Adapt**。獨立 migration、sandbox、來源、版本與人工發布。驗證草稿不進檢索，首版對版本衝突拒絕並請人工處理，延後自動 merge。 |
+| Telegram collector | implemented | `src/channels/telegram_collect.py`、`tests/test_telegram_collect.py` | **Adapt**。保留專責收件、身份映射與先接單，OEP 新增 durable inbox＋cursor 同交易及 job 冪等。AEP crash／hook 例外推論未重現。 |
+| Telegram Main | implemented | `src/host_runtime/telegram_loop.py`、`src/channels/telegram.py`、`tests/test_telegram_ingress.py` | **Adapt**。兩 bot 分開憑證、狀態與 session，Main general chat 及明確 Ask，待真 bot smoke。 |
+| BI Inbox、連結／檔案、補件 | implemented | `feature_plugins/bi_knowledge/python/aep_bi/inbox/api.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/bot.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/domains.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/fetch.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/page.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/process.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/runtime.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/store.py`、`tests/test_bi_inbox.py` | **Adapt**。保留來源、domain、待審及收件反饋。OEP 僅取核准且可公開存取的來源，受阻保留連結並人工補件。延後收件撤回指令與發布後分析更新。真實社群成功率／授權 UNVERIFIED。 |
+| Ingest 定時與提醒 | implemented | `feature_plugins/bi_knowledge/python/aep_bi/inbox/scheduler.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/store.py`、`feature_plugins/bi_knowledge/python/aep_bi/inbox/runtime.py`、`src/host_runtime/schedule_loop.py`、`tests/test_bi_inbox.py` | **Adapt**。OEP 自有 BI job ledger，立即、定時、Run Now 共用 claim。OpenCode Automation 實驗性且無獨立 Run Now，首版關閉。Windows 漏跑待驗證。 |
+| 通用工作排程 | implemented | `src/host_runtime/schedule_loop.py`、`src/host_runtime/schedule_web.py`、`src/host_runtime/schedule_worker.py`、`tests/test_it_schedule_execution.py` | **Remove** 首版。通用定時 prompt 將來可評估 OpenCode Automation。 |
+| Web GUI | implemented | `src/host_runtime/web_page.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_page.py`、`feature_plugins/llm_wiki/python/aep_wiki/host/wiki_page.py` | **Replace**。三頁以 Python 嵌入 HTML/CSS/JS，強耦合 Host routes。OEP 自建同源 Web。 |
+| BI Dashboard 分析 | implemented | `feature_plugins/bi_knowledge/python/aep_bi/host/bi_cards_api.py`、`feature_plugins/bi_knowledge/python/aep_bi/host/bi_page.py`、`tests/test_bi_query_analyses.py` | **Remove** 首版進階分析，空間先給審核與 metadata 概覽。分析功能保留範圍由 D05 定。 |
+| `bi_overview` metadata 模組 | implemented | `feature_plugins/bi_overview/manifest.json`、`feature_plugins/bi_overview/worker/aep_plugin_bi_overview/reader.py`、`feature_plugins/bi_overview/worker/aep_plugin_bi_overview/worker.py`、`tests/test_bi_overview_integration.py`、`docs/phases/FEATURE_PLUGIN_BI_ACCEPTANCE_20261115.md` | **Adapt**。唯讀列版本、schema、資料量與可用性。該文驗收結果未重跑。metadata 不作問答證據。 |
+| 上傳圖片、PDF、XLSX | implemented（AEP 程式路徑） | `src/host_runtime/attachments.py`、`src/host_runtime/attachment_documents.py`、`tests/test_telegram_attachments.py` | **Adapt**。OEP 驗證 workspace/配額/MIME，XLSX 受控轉文字與 locator。真實 Gateway 媒體及 AEP E2E UNVERIFIED。 |
+| Knowledge benchmark | implemented（harness 與評分程式） | `benchmarks/knowledge_v1/README.md`、`benchmarks/knowledge_v1/run.py`、`benchmarks/knowledge_v1/evidence.py`、`benchmarks/knowledge_v1/judge.py`、`benchmarks/knowledge_v1/reference_grade.py`、`benchmarks/knowledge_v1/selftest.py` | **Adapt**。僅參考方法，自製合成 gold set，逐 claim 評估。曾有來源路徑 fallback。既有成績、題庫可重用與可比性 UNVERIFIED。 |
+| Windows Bridge | implemented（工具註冊／橋接路徑） | `src/host_runtime/bridge_tools.py`、`src/host_runtime/assistant_bridge.py`、`docs/phases/PRODUCTIZATION_3_EXTENSIONS_AND_APPS.md` | **Remove** 首版延後，若有經核准需求再評估 OpenCode MCP/Tool。Windows 部署未重跑。 |
+| 授權、背景資料與保密 | UNVERIFIED（可重用權） | 固定提交根目錄無 `LICENSE` 或 `COPYING`，`packages/hermes-skill-pack/NOTICE.md` 與 `packages/hermes-skill-pack/skills/vendor/hermes-xlsx/LICENSE` 個別存在，Git tree 有 `.env/README.md`、`.env/example.yaml` | **Remove** AEP 原始碼、真資料、fixture、trace 與設定的直接重用。逐項盤點授權，環境檔內容未讀。 [AEP metadata](https://api.github.com/repos/dragon0816/agentic-engineering-platform) |
 
-| Area | AEP evidence | OEP decision / remaining verification |
-|---|---|---|
-| Agent harness / sessions | AEP custom runtime | Replace with OpenCode; compare reliability |
-| Skills / MCP / Tools | Existing registries | Use native OpenCode where possible |
-| SOP→workflow→Excel | Historical false-success case | Critical runtime benchmark |
-| BI Plugin | `scripts/build_bi_knowledge_plugin.py` | AEP-specific Plugin API; extract services, build adapter |
-| BI Ingest | `docs/phases/BI_INGEST.md` | Preserve staging, schema, evidence, review, atomic commit |
-| BI Vault / Search | `docs/phases/BI_VAULT.md` | Design contains unimplemented proposals; verify current indexing |
-| BI Knowledge Asking | `bi__query` referenced in BI docs | Enforce retrieval and citation verification |
-| LLM Wiki | `scripts/build_llm_wiki_plugin.py` | Adapt existing wiki pipeline and provenance |
-| Telegram Collection Bots | `src/channels/telegram_collect.py` | Reuse bot mapping, durable cursors, hooks where appropriate |
-| Telegram Main Bot | `src/host_runtime/telegram_loop.py` | Adapt to OpenCode agent/session routing |
-| Ingest scheduling | User requirement | Immediate, scheduled and Run Now; verify native scheduling |
-| Web GUI | `src/host_runtime/web_page.py` | Decide reuse vs fresh frontend |
-| Image/file upload | Not yet verified end-to-end | Safe workspace, attachments and analysis |
-| Plugin boundaries | `docs/phases/FEATURE_PLUGIN_ASSESSMENT_20261113.md` | Host coupling is significant; dependency audit needed |
-| Knowledge benchmark | `benchmarks/knowledge_v1/` and proposals | Add gold-answer retrieval/grounding tests |
-| Windows Bridge | Existing AEP extensions | Optional MCP/Tool integration; defer initial PoC |
+## 尚待 OEP 驗證
 
-## Gaps and risks to resolve
-1. OpenCode ↔ LiteLLM compatibility and model tool calls.
-2. Plugin portability and Host Runtime dependency graph.
-3. Retrieval enforcement, evidence ranking and source citations.
-4. Telegram Bot → Agent/Session isolation and durable scheduling.
-5. Browser attachment upload and event streaming.
-6. Data migration, provenance, backup, rollback and confidentiality.
-7. Distinguish implemented Dashboard/Benchmark from draft specs.
+- Phase 0/1 驗證 pinned OpenCode API、LiteLLM tool call 與模態、Windows 維運與產物 oracle。
+- Phase 2 驗本機 API、檔案路徑、SSE 狀態收斂及安全邊界。
+- Phase 3a/3b 以合成資料驗遷移、provenance、發布及還原。AEP `BI_INGEST.md` §12 和 `BI_VAULT.md` §11 含已完成紀錄，仍依個別原始碼及測試驗證實際行為。
+- Phase 4 驗 Telegram at-least-once、工作 claim、Windows 漏跑、來源擷取與合規策略。
+- Phase 5 驗分發授權、SBOM、備份回復、升級與回退。
 
-## Evidence references
-- https://github.com/dragon0816/agentic-engineering-platform/blob/main/docs/phases/BI_INGEST.md
-- https://github.com/dragon0816/agentic-engineering-platform/blob/main/docs/phases/BI_VAULT.md
-- https://github.com/dragon0816/agentic-engineering-platform/blob/main/docs/phases/FEATURE_PLUGIN_ASSESSMENT_20261113.md
-- https://github.com/dragon0816/agentic-engineering-platform/blob/main/src/channels/telegram_collect.py
-- https://github.com/dragon0816/agentic-engineering-platform/blob/main/scripts/build_bi_knowledge_plugin.py
+本輪為讀碼、文件與 metadata 審查。沒有啟動 AEP 或 OpenCode，也沒有對公司 Gateway 或 Telegram 送出請求。 [v2 計畫](IMPLEMENTATION_PLAN_V2.md) · [ADR](ARCHITECTURE_DECISIONS.md)
