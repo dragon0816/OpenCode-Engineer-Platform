@@ -35,6 +35,13 @@ public sealed class PhaseZeroJob : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfoEx
+    {
+        public StartupInfo Startup;
+        public IntPtr Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct ProcessInfo
     {
         public IntPtr Process, Thread;
@@ -46,11 +53,18 @@ public sealed class PhaseZeroJob : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits data, uint size);
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    private static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, uint flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value,
+        IntPtr size, IntPtr previousValue, IntPtr returnSize);
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr information, uint size, IntPtr returned);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcess(string executable, StringBuilder command, IntPtr processAttributes,
         IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
-        ref StartupInfo startup, out ProcessInfo process);
+        ref StartupInfoEx startup, out ProcessInfo process);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -75,29 +89,68 @@ public sealed class PhaseZeroJob : IDisposable
         }
     }
 
-    public uint Start(string executable, string script, string directory)
+    public uint Start(string executable, string script, string directory, bool resume)
     {
-        const uint CreateSuspendedNoWindow = 0x08000004;
-        var startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfo)) };
+        const uint CreateSuspendedNoWindowExtended = 0x08080004;
+        const int JobListAttribute = 0x0002000D;
+        IntPtr size = IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+        if (size == IntPtr.Zero) throw new Win32Exception();
+        IntPtr list = Marshal.AllocHGlobal(size);
+        IntPtr jobValue = IntPtr.Zero;
+        bool initialized = false;
         var command = new StringBuilder("\"" + executable + "\" \"" + script + "\"");
-        ProcessInfo process;
-        if (!CreateProcess(executable, command, IntPtr.Zero, IntPtr.Zero, false, CreateSuspendedNoWindow,
-            IntPtr.Zero, directory, ref startup, out process)) throw new Win32Exception();
         try
         {
-            if (!AssignProcessToJobObject(job, process.Process) || ResumeThread(process.Thread) == uint.MaxValue)
+            initialized = InitializeProcThreadAttributeList(list, 1, 0, ref size);
+            if (!initialized) throw new Win32Exception();
+            jobValue = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobValue, job);
+            if (!UpdateProcThreadAttribute(list, 0, new IntPtr(JobListAttribute), jobValue, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception();
+            var startup = new StartupInfoEx { Startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfoEx)) }, Attributes = list };
+            ProcessInfo process;
+            if (!CreateProcess(executable, command, IntPtr.Zero, IntPtr.Zero, false, CreateSuspendedNoWindowExtended,
+                IntPtr.Zero, directory, ref startup, out process)) throw new Win32Exception();
+            try
             {
-                int error = Marshal.GetLastWin32Error();
-                TerminateProcess(process.Process, 1);
-                throw new Win32Exception(error);
+                if (resume && ResumeThread(process.Thread) == uint.MaxValue)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    TerminateProcess(process.Process, 1);
+                    throw new Win32Exception(error);
+                }
+                return process.ProcessId;
             }
-            return process.ProcessId;
+            finally
+            {
+                CloseHandle(process.Thread);
+                CloseHandle(process.Process);
+            }
         }
         finally
         {
-            CloseHandle(process.Thread);
-            CloseHandle(process.Process);
+            if (initialized) DeleteProcThreadAttributeList(list);
+            Marshal.FreeHGlobal(jobValue);
+            Marshal.FreeHGlobal(list);
         }
+    }
+
+    public uint[] Members()
+    {
+        const int BasicProcessIdList = 3;
+        int size = 8 + 32 * IntPtr.Size;
+        IntPtr data = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(job, BasicProcessIdList, data, (uint)size, IntPtr.Zero)) throw new Win32Exception();
+            int count = Marshal.ReadInt32(data, 4);
+            if (count > 32 || count != Marshal.ReadInt32(data)) throw new InvalidOperationException("Incomplete job membership");
+            var ids = new uint[count];
+            for (int i = 0; i < count; i++) ids[i] = (uint)Marshal.ReadIntPtr(data, 8 + i * IntPtr.Size).ToInt64();
+            return ids;
+        }
+        finally { Marshal.FreeHGlobal(data); }
     }
 
     public void Dispose()
