@@ -40,6 +40,7 @@ const assets = new Map([
   ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
   ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
+  ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
   ['/knowledge-quality.js', ['src/knowledge-quality.js', 'text/javascript; charset=utf-8']],
@@ -282,6 +283,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       return;
     }
     if (path === '/api/settings/mcp/custom') {
+      let changedId: string | undefined;
       if (method === 'POST') {
         const input = await body(request);
         const existing = store.customMcpServers().find(({ id }) => id === input.id);
@@ -319,6 +321,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
               throw new Error('設定已變更，請重新載入。');
             }
             store.saveCustomMcp(definition);
+            changedId = id;
           } catch (error) {
             const message = (error as Error).message;
             throw new HttpError(400, /^[\u3400-\u9fff]/.test(message) ? message : '無法儲存伺服器設定。');
@@ -335,6 +338,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
           JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
       });
       send(response, 200, {
+        changedId,
         restartRequired: servers.some((server) => !matches(server)) ||
           applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
         servers: servers.map((server) => ({

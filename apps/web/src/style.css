@@ -470,3 +470,40 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #quality-questions li { margin-block: 6px; }
 #quality-editor { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
 #knowledge-demo-status { min-width: 0; }
+
+.mcp-toolbar, .mcp-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mcp-toolbar { justify-content: space-between; margin-block: 16px 8px; }
+.mcp-toolbar h3, .mcp-card h4 { margin: 0; }
+.mcp-card, .mcp-restart {
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-block: 8px;
+  background: var(--surface); overflow-wrap: anywhere;
+}
+.mcp-card > p, .mcp-restart p { margin: 6px 0; }
+.mcp-badges { margin-block: 6px; }
+.mcp-restart { background: var(--selected); }
+.mcp-result:not(:empty) { border-top: 1px solid var(--line); margin-top: 8px; }
+.mcp-result p { margin: 4px 0; }
+#mcp-editor {
+  color: inherit; background: var(--surface); border: 1px solid var(--settings-control-border);
+  border-radius: 10px; padding: 16px; width: min(580px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+}
+#mcp-editor::backdrop { background: #101b22a6; }
+#mcp-form h3 { margin-block: 0 8px; }
+#mcp-form fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; }
+#mcp-form fieldset p { margin: 0 0 8px; }
+#mcp-form label { display: block; margin-block: 6px; }
+#mcp-form :is(input:not([type="checkbox"]), textarea, select) {
+  display: block; width: 100%; color: inherit; background: var(--surface);
+}
+.mcp-credential, .mcp-timeouts { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: end; }
+.mcp-credential label, .mcp-timeouts label { flex: 1 1 120px; min-width: 0; }
+#mcp-form-status:empty, #mcp-status:empty { display: none; }
+
+#mcp-form input:not([type="checkbox"]) {
+  font: inherit; min-height: 36px; border: 1px solid var(--settings-control-border);
+  border-radius: 6px; padding: 4px 8px;
+}
+.mcp-secret { flex-basis: 100%; }
+.mcp-timeout-details { margin-block: 10px; }
+.mcp-timeout-details summary { cursor: pointer; }

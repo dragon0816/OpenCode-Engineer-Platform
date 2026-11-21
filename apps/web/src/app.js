@@ -3,6 +3,7 @@ import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
+import { bindMcpSettings } from './mcp-settings.js';
 import { loadJobSummary } from './jobs.js';
 
 const find = (id) => document.getElementById(id);
@@ -1219,7 +1220,10 @@ const settingsView = find('settings-view');
 const settingsEntry = find('open-settings');
 const settingsSections = [...find('settings-nav').querySelectorAll('button')];
 
+const loadCustomMcp = bindMcpSettings(() => projects);
+
 async function loadMcpSettings() {
+  void loadCustomMcp();
   const status = find('mcp-knowledge-status');
   status.textContent = '正在讀取連線狀態…';
   find('mcp-knowledge-tools').hidden = true;
