@@ -37,6 +37,7 @@
     "test:backup": "node --disable-warning=ExperimentalWarning --test tests/e2e/backup-restore.test.ts",
     "test:release:determinism": "node --test scripts/release/determinism.test.mjs",
     "test:compliance": "node --test scripts/release/compliance.test.mjs",
+    "test:release:bundled": "node --disable-warning=ExperimentalWarning --test tests/e2e/bundled-release.test.ts",
     "test:upgrade": "node --disable-warning=ExperimentalWarning --test tests/e2e/upgrade-rollback.test.ts"
   },
   "dependencies": {
