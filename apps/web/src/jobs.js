@@ -53,8 +53,10 @@ function render(status) {
   const settings = document.createElement('div');
   const domain = field(settings, '領域', status.domain || 'telegram');
   const origins = field(settings, '核准 HTTPS 來源（每行一個）', status.origins.join('\n'), true);
+  const target = field(settings, '目標 BI 知識庫 ID（選填）', status.target);
+  settings.append(node('p', '留空時，每筆收件建立獨立知識庫草稿。設定目標後，UTF-8 來源會送至模型產生待審提案，須由人工批准與發布。'));
   settings.append(button('儲存收件設定', () => update({
-    action: 'configure', domain: domain.value, origins: origins.value.split(/\s+/).filter(Boolean),
+    action: 'configure', domain: domain.value, origins: origins.value.split(/\s+/).filter(Boolean), target: target.value.trim(),
   })));
   inbox.append(settings);
   const filter = document.createElement('select');
@@ -70,7 +72,8 @@ function render(status) {
     sources.replaceChildren(node('p', `${matches.length} 筆`));
     for (const source of matches) {
       const item = document.createElement('details');
-      item.append(node('summary', `#${source.id} · ${source.domain} · ${labels[source.state]}`), node('p', source.ref));
+      item.append(node('summary', `#${source.id} · ${source.domain} · ${labels[source.state]}`), node('p', source.ref),
+        node('p', source.target ? '目標知識庫 ' + source.target : '獨立收件'));
       if (source.reason) item.append(node('p', source.reason));
       if (source.hasFile) {
         const download = node('a', '下載來源');
@@ -102,9 +105,18 @@ function render(status) {
     const unresolved = document.createElement('details');
     unresolved.append(node('summary', '需核對的通知'));
     for (const row of status.unresolvedDelivery) {
-      unresolved.append(node('p', `${row.bot} · ${row.id} · ${labels[row.state]} · 嘗試 ${row.attempts} 次`));
+      const line = node('p', `${row.bot} · ${row.id} · ${labels[row.state]} · 嘗試 ${row.attempts} 次 `);
+      if (row.state === 'indeterminate') line.append(button('手動重送', () => {
+        if (window.confirm('原通知可能已送達。重送可能產生重複訊息，仍要重送嗎？')) {
+          void update({ action: 'resend', bot: row.bot, id: row.id });
+        }
+      }));
+      unresolved.append(line);
     }
     jobs.append(unresolved);
+  }
+  for (const row of status.failedIntakes) {
+    jobs.append(node('p', `${row.bot} 收件 #${row.id} · 處理失敗 · 嘗試 ${row.attempts} 次 · ${new Date(row.firstSeen).toLocaleString('zh-TW')}`));
   }
 
   const schedules = section('每日排程');

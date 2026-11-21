@@ -112,7 +112,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     if (path === '/api/jobs') {
       if (method === 'POST') {
         const input = await body(request);
-        try { telegram.action(input); }
+        try { await telegram.action(input); }
         catch { throw new HttpError(422, '無法更新工作。請檢查參數及狀態。'); }
       }
       send(response, 200, telegram.status());

@@ -327,6 +327,10 @@ export class KnowledgeStore {
     return this.db.prepare('SELECT completed FROM ingest_jobs WHERE id=?').get(key(id))?.completed === 1;
   }
 
+  hasReview(id: string, vault: string) {
+    return Boolean(this.db.prepare('SELECT 1 FROM reviews WHERE id=? AND vault=?').get(key(id), key(vault)));
+  }
+
   biStatus() {
     return this.db.prepare(`SELECT j.id,j.expires,j.completed,r.status AS review_status
       FROM ingest_jobs j LEFT JOIN ingest_effects e ON e.job=j.id

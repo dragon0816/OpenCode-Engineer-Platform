@@ -171,3 +171,10 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - Keep a send with unknown delivery in the outbox for reconciliation. Retry an explicit rate limit using the server delay. Preserve BI publication intents and use their review IDs as outbox keys.
 - Use a local date and configured time as the daily occurrence identity. Run Now uses the same key, so a repeated DST minute and overlapping triggers share the BI effect.
 - Keep downloaded binary originals and blocked public URLs in the inbox. UTF-8 supplements let an owner stage a review without enabling automatic model use.
+
+## Phase 4 Technical Lead follow-up
+
+- Store inbox first-seen time and processing attempts. Stop after 120 seconds from the first attempt or 20 attempts. Commands have a separate lane. Preserve failed updates and create their replies in the same transaction.
+- Long poll for 25 seconds per bot. Saved inbox processing and outbox delivery run independently of that request.
+- Treat a configured active BI target as owner authorization for the existing model proposal flow. Preserve the target per intake. Exact-source quote validation and human approval still apply.
+- Allow the owner to resend an uncertain notification from the work view after confirming the duplicate risk.

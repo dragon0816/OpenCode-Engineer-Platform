@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { proposeReview } from '../http/review.ts';
 import { extname } from 'node:path';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { readApprovedLink } from '../../../../packages/knowledge/src/bi/link-intake.ts';
@@ -12,6 +13,10 @@ import type { TelegramApi } from './poller.ts';
 
 const extensions = new Set(['.txt', '.md', '.csv', '.png', '.jpg', '.jpeg', '.pdf', '.xlsx']);
 const textExtensions = new Set(['.txt', '.md', '.csv']);
+function turnId(update: number) {
+  const hex = createHash('sha256').update('telegram-main-' + update).digest('hex').slice(0, 32);
+  return hex.replace(/^(........)(....)(....)(....)(............)$/, '$1-$2-$3-$4-$5');
+}
 
 export class TelegramRouter {
   private readonly inbox: TelegramInbox;
@@ -19,6 +24,7 @@ export class TelegramRouter {
   private readonly chat: ChatService;
   private readonly sessions: WebStore;
   private readonly biApi?: TelegramApi;
+  private readonly staging = new Map<number, Promise<void>>();
 
   constructor(inbox: TelegramInbox, runtime: Runtime, chat: ChatService, sessions: WebStore, biApi?: TelegramApi) {
     this.inbox = inbox;
@@ -30,8 +36,12 @@ export class TelegramRouter {
       CREATE TABLE IF NOT EXISTS bi_sources(id INTEGER PRIMARY KEY, ref TEXT NOT NULL, state TEXT NOT NULL,
       reason TEXT NOT NULL, bytes BLOB, domain TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS bi_config(name TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-    if (!inbox.db.prepare('PRAGMA table_info(bi_sources)').all().some((column) => column.name === 'supplement')) {
+    const columns = inbox.db.prepare('PRAGMA table_info(bi_sources)').all();
+    if (!columns.some((column) => column.name === 'supplement')) {
       inbox.db.exec('ALTER TABLE bi_sources ADD COLUMN supplement BLOB');
+    }
+    if (!columns.some((column) => column.name === 'target')) {
+      inbox.db.exec("ALTER TABLE bi_sources ADD COLUMN target TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -39,7 +49,7 @@ export class TelegramRouter {
     return String(this.inbox.db.prepare('SELECT value FROM bi_config WHERE name=?').get(name)?.value ?? '');
   }
 
-  configure(domain: unknown, origins: unknown) {
+  configure(domain: unknown, origins: unknown, target: unknown = '') {
     const name = key(domain);
     if (name.length > 60 || !Array.isArray(origins) || origins.length > 30) throw new Error('Invalid inbox settings');
     const approved = origins.map((origin) => {
@@ -47,10 +57,15 @@ export class TelegramRouter {
       if (url.protocol !== 'https:' || url.origin !== origin) throw new Error('Invalid approved source');
       return url.origin;
     });
+    const vault = target === '' ? '' : key(target);
+    if (vault && this.runtime.knowledge?.reviewStore.reviewBase(vault).vault?.kind !== 'bi') {
+      throw new Error('Expected an active BI vault');
+    }
     this.inbox.transaction(() => {
       const save = this.inbox.db.prepare('INSERT INTO bi_config VALUES (?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value');
       save.run('domain', name);
       save.run('origins', JSON.stringify(approved));
+      save.run('target', vault);
     });
   }
 
@@ -78,14 +93,23 @@ export class TelegramRouter {
     const db = this.inbox.db;
     const binding = db.prepare('SELECT session FROM telegram_sessions WHERE topic=?').get(row.topic);
     let session = this.sessions.sessions().find(({ id }) => id === binding?.session);
+    if (session) {
+      const previous = this.sessions.turns(session.id).at(-1);
+      if (previous && previous.state !== 'verified' && previous.state !== 'failed') {
+        const failed = db.prepare("SELECT id FROM inbox WHERE bot='main' AND topic=? AND lane='work' AND failed=1")
+          .all(row.topic);
+        if (failed.some(({ id }) => previous.id === turnId(Number(id)))) session = undefined;
+      }
+    }
     if (!session) {
       session = await this.chat.create('inspector');
+      signal.throwIfAborted();
       db.prepare('INSERT OR REPLACE INTO telegram_sessions VALUES (?,?)').run(row.topic, session.id);
     }
-    const hex = createHash('sha256').update('telegram-main-' + row.id).digest('hex').slice(0, 32);
-    const id = hex.replace(/^(........)(....)(....)(....)(............)$/, '$1-$2-$3-$4-$5');
+    const id = turnId(row.id);
     this.chat.submit(session, { id, text, attachments: [], workbook: false });
     const state = await this.chat.state(session);
+    signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);
     if (run?.state === 'failed') return '對話未完成，請在工作台確認服務狀態。';
     if (run?.state !== 'verified') return undefined;
@@ -104,6 +128,7 @@ export class TelegramRouter {
     const db = this.inbox.db;
     let existing = db.prepare('SELECT state FROM bi_sources WHERE id=?').get(id);
     if (!existing) {
+      const target = this.config('target');
       const file = message.document ?? message.photo?.at(-1);
       const text = message.text?.trim() ?? '';
       const ref = file ? (message.document ? message.document.file_name ?? 'attachment' : 'photo.jpg').slice(0, 200) :
@@ -130,27 +155,37 @@ export class TelegramRouter {
         state = 'blocked';
         reason = '無法讀取來源。請確認核准來源或上傳 UTF-8 補件。';
       }
-      db.prepare('INSERT OR IGNORE INTO bi_sources(id,ref,state,reason,bytes,domain) VALUES (?,?,?,?,?,?)')
-        .run(id, ref, state, reason, bytes, this.config('domain') || 'telegram');
+      signal.throwIfAborted();
+      db.prepare('INSERT OR IGNORE INTO bi_sources(id,ref,state,reason,bytes,domain,target) VALUES (?,?,?,?,?,?,?)')
+        .run(id, ref, state, reason, bytes, this.config('domain') || 'telegram', target);
       existing = { state };
     }
-    if (existing.state === 'ready') this.stage(id);
+    if (existing.state === 'ready') await this.stage(id, signal);
+    signal.throwIfAborted();
     const status = db.prepare('SELECT state FROM bi_sources WHERE id=?').get(id)?.state;
     if (status === 'ready') return undefined;
     return status === 'awaiting_review' ? `收件 ${id} 已送審。` : `收件 ${id} 需要補件，請開啟工作台。`;
   }
 
-  supplement(id: number, text: unknown) {
+  supplement(id: number, text: unknown, signal: AbortSignal) {
     if (typeof text !== 'string' || !text.trim() || text.length > 100_000 || !Number.isSafeInteger(id)) {
       throw new Error('Invalid supplement');
     }
     const result = this.inbox.db.prepare("UPDATE bi_sources SET supplement=?,state='ready',reason='' WHERE id=? AND state='blocked'")
       .run(Buffer.from(text), id);
     if (!result.changes) throw new Error('Source unavailable');
-    this.stage(id);
+    return this.stage(id, signal);
   }
 
-  stage(id: number) {
+  stage(id: number, signal: AbortSignal) {
+    const pending = this.staging.get(id);
+    if (pending) return pending;
+    const task = this.stageSource(id, signal).finally(() => this.staging.delete(id));
+    this.staging.set(id, task);
+    return task;
+  }
+
+  private async stageSource(id: number, signal: AbortSignal) {
     const db = this.inbox.db;
     const source = db.prepare("SELECT * FROM bi_sources WHERE id=? AND state='ready'").get(id);
     const store = this.runtime.knowledge?.reviewStore;
@@ -158,8 +193,27 @@ export class TelegramRouter {
     const job = 'telegram-bi-' + id;
     const vault = `intake-${source.domain}-${id}`;
     try {
+      signal.throwIfAborted();
       const text = new TextDecoder('utf-8', { fatal: true }).decode((source.supplement ?? source.bytes) as Uint8Array);
       if (!text.trim() || text.length > 100_000) throw new Error('Invalid UTF-8 source');
+      if (source.target) {
+        const target = String(source.target);
+        if (!store.hasReview(job, target)) {
+          const base = store.reviewBase(target);
+          const bytes = Buffer.from(text);
+          const hash = createHash('sha256').update(bytes).digest('hex');
+          store.uploadReviewSource(hash, bytes);
+          const result = await proposeReview(store, { id: job, vault: target, parent: base.parent,
+            schema: base.schema.sha256, sha256: hash, ref: source.ref }, this.runtime.knowledge!.propose, signal);
+          if ('rejected' in result) {
+            db.prepare("UPDATE bi_sources SET state='blocked',reason=? WHERE id=?")
+              .run('提案缺少可核對的原文引文，請補件後再試。', id);
+            return;
+          }
+        }
+        db.prepare("UPDATE bi_sources SET state='awaiting_review' WHERE id=?").run(id);
+        return;
+      }
       const schema = store.installReviewSchema(vault, 'telegram-intake', '1', ['content']);
       store.enqueueBi(job, {
         vault: { id: vault, kind: 'bi', title: 'Telegram 收件 ' + id }, schema: schema.sha256,
@@ -172,7 +226,9 @@ export class TelegramRouter {
       store.runBi(job);
       if (store.biCompleted(job)) db.prepare("UPDATE bi_sources SET state='awaiting_review' WHERE id=?").run(id);
     } catch {
-      db.prepare("UPDATE bi_sources SET state='blocked',reason='請提供可審核的 UTF-8 文字。' WHERE id=?").run(id);
+      if (signal.aborted) return;
+      db.prepare("UPDATE bi_sources SET state='blocked',reason=? WHERE id=?")
+        .run(source.target ? '無法產生提案。請確認目標知識庫、模型及 UTF-8 補件。' : '請提供可審核的 UTF-8 文字。', id);
     }
   }
 }

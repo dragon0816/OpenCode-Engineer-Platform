@@ -17,12 +17,16 @@ if (mode === 'before') {
   const store = new KnowledgeStore(knowledge);
   const runtime = { knowledge: { reviewStore: store } } as unknown as Runtime;
   const router = new TelegramRouter(inbox, runtime, undefined!, undefined!);
-  await router.handle(inbox.pending('bi')!, new AbortController().signal);
+  await router.handle(inbox.next('bi', 'work', Date.now())!, new AbortController().signal);
 } else if (mode === 'send') {
   inbox.notify('bi', 'crash-send', 0, 'Synthetic unknown delivery');
   inbox.db.exec("UPDATE outbox SET state='sending' WHERE bot='bi'");
 } else if (mode === 'schedule') {
   const store = new KnowledgeStore(knowledge);
   new BiScheduler(inbox.db, store).reconcile(Number(process.argv[5]));
+} else if (mode === 'attempt') {
+  const now = Number(process.argv[5]);
+  const row = inbox.next('main', 'work', now)!;
+  inbox.attempt(row, now, now + 6000);
 }
 process.exit(79);

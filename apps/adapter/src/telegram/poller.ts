@@ -1,4 +1,9 @@
-import type { Bot, Intake, TelegramInbox, Update } from './inbox.ts';
+import type { Bot, Intake, Lane, TelegramInbox, Update } from './inbox.ts';
+
+export const workDeadline = 120_000;
+export const maxWorkAttempts = 20;
+const retryInterval = 6000;
+const pollSeconds = 25;
 
 class TelegramError extends Error {
   readonly status: number;
@@ -26,7 +31,7 @@ export class TelegramApi {
     try {
       const response = await fetch(this.base + '/bot' + this.token + '/' + method, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-        redirect: 'error', signal: AbortSignal.any([stop, AbortSignal.timeout(this.timeout)]),
+        redirect: 'error', signal: AbortSignal.any([stop, AbortSignal.timeout(method === 'getUpdates' ? 35_000 : this.timeout)]),
       });
       const data = await response.json();
       if (!response.ok || data.ok !== true) {
@@ -69,7 +74,9 @@ export class TelegramApi {
 export class TelegramPoller {
   private pollDue = 0;
   private failures = 0;
-  private busy = false;
+  private polling = false;
+  private sending = false;
+  private readonly lanes = new Set<Lane>();
 
   readonly bot: Bot;
   private readonly owner: string;
@@ -85,41 +92,63 @@ export class TelegramPoller {
     this.handle = handle;
   }
 
-  async step(signal: AbortSignal, now = Date.now()) {
-    if (this.busy || signal.aborted) return;
-    this.busy = true;
+  async poll(signal: AbortSignal, clock = Date.now) {
+    if (this.polling || signal.aborted || clock() < this.pollDue) return;
+    this.polling = true;
     try {
-      if (now >= this.pollDue) {
-        try {
-          const updates = await this.api.call<Update[]>('getUpdates', {
-            offset: this.inbox.offset(this.bot), timeout: 0, allowed_updates: ['message'],
-          }, signal);
-          this.inbox.admit(this.bot, this.owner, updates);
-          this.failures = 0;
-        } catch (error) {
-          this.pollDue = now + delay(error, ++this.failures);
-        }
-      }
-      if (signal.aborted) return;
-      const row = this.inbox.pending(this.bot);
-      try {
-        if (row) {
-          const result = await this.handle(row, signal);
-          if (result !== undefined) this.inbox.complete(row, result);
-        }
-      } finally {
-        if (!signal.aborted && now >= this.pollDue) await this.send(signal, now);
-      }
+      const updates = await this.api.call<Update[]>('getUpdates', {
+        offset: this.inbox.offset(this.bot), timeout: pollSeconds, allowed_updates: ['message'],
+      }, signal);
+      this.inbox.admit(this.bot, this.owner, updates, clock());
+      this.failures = 0;
+    } catch (error) {
+      this.pollDue = clock() + delay(error, ++this.failures);
     } finally {
-      this.busy = false;
+      this.polling = false;
     }
   }
 
-  private async send(signal: AbortSignal, now: number) {
+  async process(lane: Lane, signal: AbortSignal, clock = Date.now) {
+    if (this.lanes.has(lane) || signal.aborted) return;
+    const now = clock();
+    const row = this.inbox.next(this.bot, lane, now);
+    if (!row) return;
+    const deadline = (row.started ?? now) + workDeadline;
+    const fail = () => this.inbox.complete(row, `更新 ${row.id} 未能在期限內處理。已保留原始收件，請在工作台核對後再試。`, true);
+    if (now >= deadline || row.attempts >= maxWorkAttempts) { fail(); return; }
+    this.lanes.add(lane);
+    try {
+      this.inbox.attempt(row, now, Math.min(deadline, now + retryInterval));
+      const budget = AbortSignal.timeout(deadline - now);
+      const attemptSignal = AbortSignal.any([signal, budget]);
+      let result: string | undefined;
+      let release!: () => void;
+      const interrupted = new Promise<undefined>((resolve) => { release = () => resolve(undefined); });
+      attemptSignal.addEventListener('abort', release, { once: true });
+      try { result = await Promise.race([this.handle(row, attemptSignal), interrupted]); }
+      catch { /* The persisted attempt and retry time cover handler failures and restarts. */ }
+      finally { attemptSignal.removeEventListener('abort', release); }
+      if (signal.aborted) return;
+      if (budget.aborted || clock() >= deadline) fail();
+      else if (result !== undefined) this.inbox.complete(row, result);
+      else if (row.attempts + 1 >= maxWorkAttempts) fail();
+    } finally {
+      this.lanes.delete(lane);
+    }
+  }
+
+  async deliver(signal: AbortSignal, clock = Date.now) {
+    if (this.sending || signal.aborted || clock() < this.pollDue) return;
+    this.sending = true;
+    try { await this.send(signal, clock); }
+    finally { this.sending = false; }
+  }
+
+  private async send(signal: AbortSignal, clock: () => number) {
     const db = this.inbox.db;
     const row = db.prepare(`UPDATE outbox SET state='sending', attempts=attempts+1 WHERE bot=? AND id=(
       SELECT id FROM outbox WHERE bot=? AND state='pending' ORDER BY rowid LIMIT 1)
-      AND due<=? RETURNING id, topic, text, attempts`).get(this.bot, this.bot, now);
+      AND due<=? RETURNING id, topic, text, attempts`).get(this.bot, this.bot, clock());
     if (!row) return;
     let state = 'sent';
     let due = 0;
@@ -132,7 +161,7 @@ export class TelegramPoller {
       if (!(error instanceof TelegramError) || error.status === 0 || error.status >= 500) state = 'indeterminate';
       else if (error.status === 429) {
         state = 'pending';
-        due = now + delay(error, Number(row.attempts));
+        due = clock() + delay(error, Number(row.attempts));
       } else state = 'failed';
     }
     db.prepare("UPDATE outbox SET state=?,due=? WHERE bot=? AND id=? AND state='sending'")

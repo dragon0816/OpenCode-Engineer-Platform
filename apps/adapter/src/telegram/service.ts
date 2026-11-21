@@ -60,20 +60,25 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     })] : []),
   ];
   const active = new Map<string, Promise<void>>();
+  function launch(id: string, work: () => Promise<void>) {
+    if (active.has(id)) return;
+    const task = work().catch(() => {}).finally(() => active.delete(id));
+    active.set(id, task);
+  }
 
   function tick() {
     try {
       scheduler?.reconcile();
-      const ready = inbox.db.prepare("SELECT id FROM bi_sources WHERE state='ready'").all();
-      for (const row of ready) router.stage(Number(row.id));
+      const ready = inbox.db.prepare("SELECT id FROM bi_sources WHERE state='ready' AND supplement IS NOT NULL ORDER BY id LIMIT 1").get();
+      if (ready) launch('supplement', () => router.stage(Number(ready.id), stop.signal));
       knowledge?.reconcileBi();
       if (biApi) inbox.notifyReviews(knowledge?.reconciliation().intents ?? []);
     } catch { /* Persisted work remains available to the next cycle. */ }
     for (const poller of pollers) {
-      if (!active.has(poller.bot)) {
-        const run = poller.step(stop.signal).catch(() => {}).finally(() => active.delete(poller.bot));
-        active.set(poller.bot, run);
-      }
+      launch(poller.bot + '-poll', () => poller.poll(stop.signal));
+      launch(poller.bot + '-work', () => poller.process('work', stop.signal));
+      launch(poller.bot + '-command', () => poller.process('command', stop.signal));
+      launch(poller.bot + '-send', () => poller.deliver(stop.signal));
     }
   }
 
@@ -84,11 +89,13 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     status() {
       return {
         main: Boolean(mainApi), bi: Boolean(biApi),
-        domain: router.config('domain'), origins: JSON.parse(router.config('origins') || '[]'),
-        sources: inbox.db.prepare('SELECT id,ref,state,reason,domain,bytes IS NOT NULL AS hasFile FROM bi_sources ORDER BY id DESC LIMIT 200').all(),
+        domain: router.config('domain'), origins: JSON.parse(router.config('origins') || '[]'), target: router.config('target'),
+        sources: inbox.db.prepare('SELECT id,ref,state,reason,domain,target,bytes IS NOT NULL AS hasFile FROM bi_sources ORDER BY id DESC LIMIT 200').all(),
         delivery: inbox.db.prepare('SELECT bot,state,COUNT(*) AS count FROM outbox GROUP BY bot,state').all(),
         unresolvedDelivery: inbox.db.prepare(`SELECT bot,id,state,attempts FROM outbox
           WHERE state IN ('indeterminate','failed') ORDER BY rowid DESC LIMIT 200`).all(),
+        failedIntakes: inbox.db.prepare(`SELECT bot,id,attempts,firstSeen FROM inbox
+          WHERE failed=1 ORDER BY firstSeen DESC LIMIT 200`).all(),
         jobs: knowledge?.biStatus() ?? [],
         ...scheduler?.list(),
       };
@@ -98,8 +105,9 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     },
     action(input: Record<string, unknown>) {
       switch (input.action) {
-        case 'configure': router.configure(input.domain, input.origins); break;
-        case 'supplement': router.supplement(Number(input.id), input.text); break;
+        case 'configure': router.configure(input.domain, input.origins, input.target); break;
+        case 'supplement': return router.supplement(Number(input.id), input.text, stop.signal);
+        case 'resend': inbox.resend(input.bot, input.id); break;
         case 'schedule': scheduler?.save(String(input.id), String(input.zone), String(input.time), input.candidate as Candidate); break;
         case 'state': scheduler?.state(String(input.id), input.state); break;
         case 'runNow': scheduler?.runNow(String(input.id)); break;
