@@ -95,6 +95,7 @@ try {
             $destination = Entry-OEP $stage $relative
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
             [IO.File]::Copy((Entry-OEP $sourcePath $relative), $destination)
+            if ($relative -match '\.(?:ps1|vbs)$') { Unblock-File -LiteralPath $destination }
         }
         Verify-OEP $stage $manifest.files $manifestName
         if ((Hash-OEP (Join-Path $stage $manifestName)) -ne $manifestHash) { Fail-OEP '發行清單在複製時變更。' }

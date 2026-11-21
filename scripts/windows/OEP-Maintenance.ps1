@@ -122,7 +122,7 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
     if ($env:OEP_MAINTENANCE_TEST -eq '1') { return }
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $start = Join-Path $Target 'scripts/windows/Start-OEP.ps1'
-    $arguments = "-NoProfile -WindowStyle Hidden -File ""$start"" -DataRoot ""$DataRoot"""
+    $arguments = "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File ""$start"" -DataRoot ""$DataRoot"""
     $links = @(Links-OEP)
     $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $links) {

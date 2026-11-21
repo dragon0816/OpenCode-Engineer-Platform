@@ -15,7 +15,7 @@ try {
     if (!$PSCmdlet.ShouldProcess('OEP', '登記每日備份')) { return }
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $scriptPath = Join-Path $PSScriptRoot 'Backup-OEP.ps1'
-    $args = "-NoProfile -NonInteractive -WindowStyle Hidden -File ""$scriptPath"" -DataRoot ""$DataRoot"" -Destination ""$Destination"" -KeepLast $KeepLast"
+    $args = "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File ""$scriptPath"" -DataRoot ""$DataRoot"" -Destination ""$Destination"" -KeepLast $KeepLast"
     $action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'pwsh.exe') -Argument $args
     $trigger = New-ScheduledTaskTrigger -Daily -At ([DateTime]::ParseExact($At, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture))
     $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
