@@ -73,12 +73,12 @@ try {
         let artifact: { path: string; sha256: string } | undefined;
         let failure: string | undefined;
         try {
-          const previous = await page.evaluate<string>("document.querySelector('#sessions').value");
+          const previous = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
           await page.evaluate(`document.querySelector('#agent').value = ${JSON.stringify(item.agent)};
             document.querySelector('#new-session').click()`);
-          await page.ready(`document.querySelector('#sessions').value !== ${JSON.stringify(previous)} &&
+          await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session !== ${JSON.stringify(previous)} &&
             !document.querySelector('#pick').disabled`);
-          sessionID = await page.evaluate<string>("document.querySelector('#sessions').value");
+          sessionID = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
           if (item.name === 'marker.pdf') {
             const source = readFileSync(asset(item.name)).toString('base64');
             await page.evaluate(`(() => {
@@ -108,7 +108,7 @@ try {
             toolEvents = await page.evaluate<boolean>("document.querySelector('#activity').textContent.includes('工具完成')");
             assert.ok(toolEvents, 'Tool completion did not reach the browser');
             const manifest = await page.evaluate<{ bytes: number; sha256: string }>(`(async () => {
-              const response = await fetch('/api/sessions/' + document.querySelector('#sessions').value + '/state');
+              const response = await fetch('/api/sessions/' + document.querySelector('[aria-current=true]')?.dataset.session + '/state');
               return (await response.json()).runs.at(-1).artifact;
             })()`);
             await page.evaluate("document.querySelector('#artifacts a').click()");
@@ -133,10 +133,10 @@ try {
         }
       }
       if (!real) {
-        const selected = await page.evaluate<string>("document.querySelector('#sessions').value");
+        const selected = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
         await page.evaluate(`
           window.prompt = () => '合成會話';
-          document.querySelector('#rename-session').click();
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=rename]').click();
         `);
         await page.ready("document.querySelector('#session-title').textContent === '合成會話'");
         await page.evaluate(`
@@ -144,7 +144,7 @@ try {
           search.value = '合成會話';
           search.dispatchEvent(new Event('input'));
         `);
-        assert.equal(await page.evaluate("document.querySelectorAll('#sessions option').length"), 2);
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), 1);
         await page.evaluate(`
           const theme = document.querySelector('#theme');
           theme.value = 'dark';
@@ -162,17 +162,54 @@ try {
         await page.ready("document.querySelector('#assistant-name').value === '合成助理'");
         assert.equal(await page.evaluate("document.querySelector('#assistant-introduction').value"), '測試簡介');
         assert.equal(await page.evaluate("document.querySelector('#assistant-instructions').value"), '使用繁體中文');
-        await page.ready(`document.querySelector('#sessions').value === ${JSON.stringify(selected)} &&
+        await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session === ${JSON.stringify(selected)} &&
           document.documentElement.dataset.theme === 'dark' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
         await page.evaluate(`
           window.confirm = () => false;
-          document.querySelector('#remove-session').click();
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
         `);
-        assert.equal(await page.evaluate("document.querySelector('#sessions').value"), selected);
+        assert.equal(await page.evaluate("document.querySelector('[aria-current=true]')?.dataset.session"), selected);
+        await page.evaluate("document.querySelector('#new-session-secondary').click()");
+        await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session &&
+          document.querySelector('[aria-current=true]').dataset.session !== ${JSON.stringify(selected)} &&
+          !document.querySelector('#pick').disabled`);
+        const other = await page.evaluate<string>("document.querySelector('[aria-current=true]').dataset.session");
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), 1);
+        await page.ready("document.querySelector('#attachments').querySelectorAll('input').length === 0");
+        assert.equal(await page.evaluate("document.querySelector('#artifacts').querySelectorAll('a').length"), 0);
+        const isolation = await page.evaluate<number[]>(`(async () => {
+          const first = '/api/projects/default/sessions/';
+          const second = '/api/projects/secondary/sessions/';
+          const primary = ${JSON.stringify(selected)};
+          const secondary = ${JSON.stringify(other)};
+          const bootstrap = await fetch('/api/bootstrap').then(response => response.json());
+          const request = (path, options) => fetch(path, options).then(response => response.status);
+          const state = await fetch(first + primary + '/state').then(response => response.json());
+          const run = state.runs.at(-1).id;
+          return Promise.all([
+            request(first + secondary + '/state'),
+            request(second + primary + '/state'),
+            request(second + primary + '/events'),
+            request(second + primary + '/artifacts/' + run),
+            request(second + primary + '/attachments', {
+              method: 'POST', headers: { 'X-OEP-CSRF': bootstrap.csrf }, body: 'synthetic',
+            }),
+          ]);
+        })()`);
+        assert.deepEqual(isolation, [404, 404, 404, 404, 404]);
+        await page.evaluate("document.querySelector('.project h2 button').click()");
+        await page.ready(`document.querySelector('[data-session="' + ${JSON.stringify(selected)} + '"]') !== null`);
+        await page.evaluate(`document.querySelector('[data-session="' + ${JSON.stringify(selected)} + '"]').click()`);
+        await page.ready("document.querySelector('#session-title').textContent === '合成會話'");
         for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
           await page.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
           assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
+          if (layout === 'narrow') {
+            await page.ready("document.querySelector('#session-sidebar').hidden");
+            await page.evaluate("document.querySelector('#toggle-sidebar').click()");
+            assert.equal(await page.evaluate("document.querySelector('#session-sidebar').hidden"), false);
+          }
           for (const theme of ['light', 'dark']) {
             await page.evaluate(`(() => {
               const theme = document.querySelector('#theme');
@@ -185,13 +222,14 @@ try {
         }
         await page.evaluate(`
           window.confirm = () => true;
-          document.querySelector('#remove-session').click();
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
         `);
-        await page.ready(`!Array.from(document.querySelector('#sessions').options)
-          .some((option) => option.value === ${JSON.stringify(selected)})`);
+        await page.ready(`!Array.from(document.querySelectorAll('#sessions [data-session]'))
+          .some((option) => option.dataset.session === ${JSON.stringify(selected)})`);
         assert.equal(await page.evaluate(`fetch('/api/sessions/' + ${JSON.stringify(selected)} + '/state')
           .then((response) => response.status)`), 404);
-        assert.equal(await page.evaluate("document.querySelectorAll('#sessions option').length"), cases.length);
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), cases.length - 1);
+        assert.equal(await page.evaluate("fetch('/api/projects/secondary/sessions').then(r => r.json()).then(rows => rows.length)"), 1);
       }
       await page.evaluate("document.querySelector('#stop').click()");
       await page.ready("document.querySelector('#connection').textContent === '服務已停止'");

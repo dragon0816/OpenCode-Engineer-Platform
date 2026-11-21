@@ -6,7 +6,10 @@ const find = (id) => document.getElementById(id);
 const model = find('model');
 const sessions = find('sessions');
 const agent = find('agent');
-const create = find('new-session');
+let projects = [];
+let project = 'default';
+let projectBusy = false;
+const sessionPath = (id) => `/api/projects/${project}/sessions${id ? '/' + id : ''}`;
 const pick = find('pick');
 const fileInput = find('file-input');
 const drop = find('drop');
@@ -50,7 +53,6 @@ function showError(error) {
 }
 
 function setControls() {
-  find('rename-session').disabled = find('remove-session').disabled = !current || stopped;
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
   send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
@@ -114,7 +116,7 @@ function render(context) {
   for (const run of state.runs.filter((run) => run.artifact).reverse()) {
     const entry = node('li');
     const link = node('a', run.artifact.name);
-    link.href = `/api/sessions/${id}/artifacts/${run.id}`;
+    link.href = `${sessionPath(id)}/artifacts/${run.id}`;
     link.download = run.artifact.name;
     entry.append(link, node('small', new Date(run.createdAt).toLocaleTimeString('zh-Hant')));
     artifactList.append(entry);
@@ -131,7 +133,7 @@ function refresh(context) {
     context.timer = undefined;
     context.refreshing = true;
     try {
-      const state = await request(`/api/sessions/${context.id}/state`, { signal: context.abort.signal });
+      const state = await request(`${context.path}/state`, { signal: context.abort.signal });
       if (current !== context || stopped) return;
       context.state = state;
       render(context);
@@ -161,10 +163,10 @@ function select(id) {
     prompt.value = '';
     showError();
     setControls();
+    renderSessions();
     return;
   }
-  localStorage.setItem('oep.activeSession', id);
-  sessions.value = id;
+  localStorage.setItem(`oep.activeSession.${project}`, id);
   sessionTitle.textContent = sessionLabel(session);
   const draft = drafts.get(id);
   prompt.value = draft?.text ?? '';
@@ -177,9 +179,11 @@ function select(id) {
   uploadStatus.textContent = '';
   showError();
   if (!selections.has(id)) selections.set(id, new Set());
-  const events = new EventSource(`/api/sessions/${id}/events`);
-  const context = { id, abort: new AbortController(), events, selected: selections.get(id) };
+  const path = sessionPath(id);
+  const events = new EventSource(`${path}/events`);
+  const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
     connection.textContent = '已連線';
@@ -208,17 +212,68 @@ function addSession(session) {
   knownSessions.set(session.id, session);
 }
 
+function sessionButton(label, action) {
+  const button = node('button', label);
+  button.type = 'button';
+  button.disabled = stopped || projectBusy;
+  button.addEventListener('click', action);
+  return button;
+}
+
 function renderSessions() {
   const query = find('session-search').value.trim().toLocaleLowerCase();
-  sessions.replaceChildren(new Option(query ? '選擇搜尋結果' : '選擇會話', ''));
-  sessions.firstElementChild.disabled = true;
-  for (const session of knownSessions.values()) {
-    const label = sessionLabel(session);
-    if (label.toLocaleLowerCase().includes(query)) sessions.add(new Option(label, session.id));
+  sessions.replaceChildren();
+  for (const entry of projects) {
+    const section = node('section', undefined, 'project');
+    const heading = node('h2');
+    const projectButton = sessionButton(entry.title, () => changeProject(entry.id));
+    projectButton.setAttribute('aria-expanded', String(entry.id === project));
+    heading.append(projectButton);
+    section.append(heading);
+    const create = sessionButton('新增會話', () => createSession(entry.id));
+    create.id = entry.id === 'default' ? 'new-session' : 'new-session-secondary';
+    create.setAttribute('aria-label', `${entry.title}新增會話`);
+    section.append(create);
+    sessions.append(section);
+    if (entry.id !== project) continue;
+    const list = node('ul', undefined, 'session-list');
+    for (const session of knownSessions.values()) {
+      const label = sessionLabel(session);
+      if (!label.toLocaleLowerCase().includes(query)) continue;
+      const row = node('li');
+      const link = sessionButton(label, () => {
+        select(session.id);
+        if (narrowNavigation.matches) setSidebar(false);
+        prompt.focus();
+      });
+      link.dataset.session = session.id;
+      if (current?.id === session.id) link.setAttribute('aria-current', 'true');
+      const menu = node('details');
+      const summary = node('summary', '⋯');
+      summary.setAttribute('aria-label', `${label}的會話操作`);
+      const rename = sessionButton('重新命名', () => renameSession(session));
+      const remove = sessionButton('刪除', () => removeSession(session));
+      rename.dataset.action = 'rename';
+      remove.dataset.action = 'remove';
+      menu.append(summary, rename, remove);
+      row.append(link, menu);
+      list.append(row);
+    }
+    section.append(list);
+    if (!list.children.length) section.append(node('p', query ? '找不到符合的會話' : '尚無會話'));
   }
-  sessions.disabled = sessions.length === 1;
-  sessions.value = current?.id ?? '';
-  if (sessions.selectedIndex < 0) sessions.selectedIndex = 0;
+}
+
+async function switchProject(id) {
+  if (id === project) return;
+  const entries = await request(`/api/projects/${id}/sessions`);
+  select();
+  project = id;
+  knownSessions.clear();
+  localStorage.setItem('oep.activeProject', id);
+  for (const entry of entries) addSession(entry);
+  const saved = localStorage.getItem(`oep.activeSession.${project}`);
+  select(knownSessions.has(saved) ? saved : entries.at(-1)?.id);
 }
 
 async function upload(files) {
@@ -235,7 +290,7 @@ async function upload(files) {
     if (file.size > 20 * 1024 * 1024) { failures.push(`${file.name} · 單檔最多 20 MiB。`); continue; }
     uploadStatus.textContent = `上傳中 · ${file.name}`;
     try {
-      const result = await request(`/api/sessions/${context.id}/attachments`, { file });
+      const result = await request(`${context.path}/attachments`, { file });
       context.selected.add(result.id);
       succeeded++;
     } catch (error) { failures.push(`${file.name} · ${error.message}`); }
@@ -277,50 +332,80 @@ function applyTheme() {
 theme.addEventListener('change', applyTheme);
 applyTheme();
 
-find('toggle-sidebar').addEventListener('click', () => {
-  const sidebar = find('session-sidebar');
-  sidebar.hidden = !sidebar.hidden;
-  find('toggle-sidebar').setAttribute('aria-expanded', String(!sidebar.hidden));
+const narrowNavigation = matchMedia('(max-width: 540px)');
+const sidebarToggle = find('toggle-sidebar');
+function setSidebar(open) {
+  find('session-sidebar').hidden = !open;
+  sidebarToggle.setAttribute('aria-expanded', String(open));
+}
+setSidebar(!narrowNavigation.matches);
+narrowNavigation.addEventListener('change', () => setSidebar(!narrowNavigation.matches));
+sidebarToggle.addEventListener('click', () => setSidebar(find('session-sidebar').hidden));
+find('session-sidebar').addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  setSidebar(false);
+  sidebarToggle.focus();
 });
 find('session-search').addEventListener('input', renderSessions);
-find('rename-session').addEventListener('click', async () => {
-  const context = current;
-  const title = window.prompt('請輸入會話名稱', sessionLabel(knownSessions.get(context.id)));
+
+async function renameSession(session) {
+  const title = window.prompt('請輸入會話名稱', sessionLabel(session));
   if (title === null) return;
   try {
-    const renamed = await request(`/api/sessions/${context.id}/rename`, { data: { title } });
+    const renamed = await request(`${sessionPath(session.id)}/rename`, { data: { title } });
+    if (project !== session.project) return;
     addSession(renamed);
     renderSessions();
-    if (current === context) sessionTitle.textContent = sessionLabel(renamed);
+    if (current?.id === session.id) sessionTitle.textContent = sessionLabel(renamed);
+    sessions.querySelector(`[data-session="${session.id}"]`)?.focus();
   } catch (error) { showError(error); }
-});
-find('remove-session').addEventListener('click', async () => {
-  const context = current;
-  if (!window.confirm(`確定刪除「${sessionLabel(knownSessions.get(context.id))}」？`)) return;
+}
+
+async function removeSession(session) {
+  if (!window.confirm(`確定刪除「${sessionLabel(session)}」？`)) return;
   try {
-    await request(`/api/sessions/${context.id}/remove`, { data: {} });
-    knownSessions.delete(context.id);
-    if (current === context) select([...knownSessions.keys()].at(-1));
-    drafts.delete(context.id);
-    selections.delete(context.id);
-    submitted.delete(context.id);
+    await request(`${sessionPath(session.id)}/remove`, { data: {} });
+    drafts.delete(session.id);
+    selections.delete(session.id);
+    submitted.delete(session.id);
+    if (project !== session.project) return;
+    knownSessions.delete(session.id);
+    if (current?.id === session.id) select([...knownSessions.keys()].at(-1));
     renderSessions();
-    if (!current) create.focus();
+    (sessions.querySelector('[aria-current="true"]') ?? find('session-search')).focus();
   } catch (error) { showError(error); }
-});
-sessions.addEventListener('change', () => select(sessions.value));
-create.addEventListener('click', async () => {
-  create.disabled = true;
+}
+
+async function changeProject(id) {
+  if (projectBusy || stopped) return;
+  projectBusy = true;
+  try { await switchProject(id); }
+  catch (error) { showError(error); }
+  finally {
+    projectBusy = false;
+    renderSessions();
+    find('session-search').focus();
+  }
+}
+
+async function createSession(id) {
+  if (projectBusy || stopped) return;
+  projectBusy = true;
   showError();
   try {
-    const session = await request('/api/sessions', { data: { agent: agent.value } });
+    await switchProject(id);
+    const session = await request(sessionPath(), { data: { agent: agent.value } });
     addSession(session);
-    find("session-search").value = "";
-    renderSessions();
+    find('session-search').value = '';
     select(session.id);
+    if (narrowNavigation.matches) setSidebar(false);
   } catch (error) { showError(error); }
-  finally { create.disabled = stopped; }
-});
+  finally {
+    projectBusy = false;
+    renderSessions();
+    if (current) prompt.focus();
+  }
+}
 pick.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   void upload([...fileInput.files]);
@@ -354,7 +439,7 @@ find('composer').addEventListener('submit', async (event) => {
   showError();
   setControls();
   try {
-    await request(`/api/sessions/${context.id}/turns`, { data: { id, ...data } });
+    await request(`${context.path}/turns`, { data: { id, ...data } });
     submitted.delete(context.id);
     drafts.delete(context.id);
     if (!context.state?.runs.some((run) => run.id === id)) context.pendingID = id;
@@ -384,7 +469,8 @@ stop.addEventListener('click', async () => {
     current?.abort.abort();
     connection.textContent = '服務已停止';
     disableKnowledge?.();
-    agent.disabled = create.disabled = sessions.disabled = true;
+    agent.disabled = true;
+    renderSessions();
     setControls();
   } catch (error) {
     showError(error);
@@ -402,11 +488,15 @@ try {
     find('save-assistant').disabled = stopped;
   }).catch(() => { find('settings-status').textContent = '無法載入助理設定。'; });
   if (bootstrap.job.demo && bootstrap.job.state === 'awaiting_review') find('demo-job').hidden = false;
-  for (const session of bootstrap.sessions) addSession(session);
-  const saved = localStorage.getItem('oep.activeSession');
+  projects = bootstrap.projects;
+  const savedProject = localStorage.getItem('oep.activeProject');
+  if (projects.some(({ id }) => id === savedProject)) project = savedProject;
+  const entries = project === 'default' ? bootstrap.sessions : await request(sessionPath());
+  for (const session of entries) addSession(session);
+  const saved = localStorage.getItem(`oep.activeSession.${project}`) ?? localStorage.getItem('oep.activeSession');
   renderSessions();
-  if (bootstrap.sessions.length) select(knownSessions.has(saved) ? saved : bootstrap.sessions.at(-1).id);
-  agent.disabled = create.disabled = stop.disabled = false;
+  if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
+  agent.disabled = stop.disabled = false;
   if (bootstrap.knowledge) disableKnowledge = bindKnowledge();
 } catch (error) {
   connection.textContent = '尚未連線';

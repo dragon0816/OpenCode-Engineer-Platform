@@ -49,7 +49,7 @@
 
 | 來源與操作 | OEP 決策 | 位置 | 階段 | 驗收 |
 |---|---|---|---|---|
-| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 搜尋並重開指定會話。兩個 session 事件、模型或檔案不串台。 |
+| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。會話模型切換仍開放。[Chromium 驗收](../tests/e2e/web-browser.test.ts) |
 | W 私有、public 會話及 backend 驗證 | Replace（本機 OpenCode；D04 單使用者） | 左欄、設定／Runtime | 2b | 新會話走本機授權，拒絕未認證及非 loopback 請求。 |
 | W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 合成多回合串流可看開始與結束，重連事件不重複。 |
 | W 回覆指定輪次、複製、原因、評分、區段／摘要筆記 | Adapt to OpenCode | 訊息操作、筆記面板 | 2b | 在第二輪引用第一輪，保存評分與筆記並核對原輪定位。 |

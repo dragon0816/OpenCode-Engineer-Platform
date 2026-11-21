@@ -17,7 +17,7 @@ import { HttpError } from './http/errors.ts';
 import { WebEvents } from './http/events.ts';
 import { download, upload } from './http/files.ts';
 import { uuid } from './runs/attachments.ts';
-import { WebStore } from './runs/web-store.ts';
+import { projects, WebStore } from './runs/web-store.ts';
 import { checkDirectory } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 
@@ -71,10 +71,15 @@ function secureHeaders(response: ServerResponse) {
 
 export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false) {
   checkDirectory(root);
-  for (const name of ['sessions', 'model-work', 'artifacts']) {
-    const folder = join(root, name);
-    mkdirSync(folder, { recursive: true });
-    checkDirectory(folder);
+  for (const project of projects) {
+    const projectRoot = project.id === 'default' ? root : join(root, project.id);
+    mkdirSync(projectRoot, { recursive: true });
+    checkDirectory(projectRoot);
+    for (const name of ['sessions', 'model-work', 'artifacts']) {
+      const folder = join(projectRoot, name);
+      mkdirSync(folder, { recursive: true });
+      checkDirectory(folder);
+    }
   }
   const store = new WebStore(join(root, 'web.sqlite'));
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
@@ -88,7 +93,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
     auth.check(request);
-    const path = request.url ?? '';
+    let path = request.url ?? '';
     if (!path.startsWith('/') || path.startsWith('//') || /[?#\\%]/.test(path)) throw new HttpError(400, 'Invalid request path');
     const method = request.method;
     if (method !== 'GET' && method !== 'POST') throw new HttpError(405, 'Method not allowed');
@@ -106,7 +111,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
-        sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+        projects, sessions: [...sessions.values()].filter((session) => session.project === projects[0].id).map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
       return;
     }
     if (path === '/api/settings') {
@@ -199,10 +204,22 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 202, { state: 'stopping' });
       return;
     }
+    let project = projects[0].id as typeof projects[number]['id'];
+    if (path.startsWith('/api/projects/')) {
+      const [, , , projectID, ...rest] = path.split('/');
+      const match = projects.find(({ id }) => id === projectID);
+      if (!match || rest[0] !== 'sessions') throw new HttpError(404, '找不到專案。');
+      project = match.id;
+      path = '/api/' + rest.join('/');
+    }
+    if (path === '/api/sessions' && method === 'GET') {
+      send(response, 200, [...sessions.values()].filter((session) => session.project === project).map(publicSession));
+      return;
+    }
     if (path === '/api/sessions' && method === 'POST') {
       const { agent } = await body(request);
       if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'Select a supported agent');
-      const session = await chat.create(agent);
+      const session = await chat.create(agent, project);
       sessions.set(session.id, session);
       upstreamIDs.set(session.upstreamID, session.id);
       send(response, 201, publicSession(session));
@@ -210,7 +227,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     const [, key, group, id, resource, item, extra] = path.split('/');
     const session = key === 'api' && group === 'sessions' && uuid.test(id ?? '') ? sessions.get(id) : undefined;
-    if (!session || extra !== undefined) throw new HttpError(404, 'Route or session not found');
+    if (!session || session.project !== project || extra !== undefined) throw new HttpError(404, 'Route or session not found');
     if (method === 'GET' && resource === 'artifacts' && item && uuid.test(item)) {
       download(response, chat, session, item);
       return;

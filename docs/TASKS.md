@@ -118,3 +118,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 ## Phase 2b Slice 1
 
 - [ ] 完成工作台、日常設定、對話操作和專案隔離。部分實作與未驗項目見[驗收報告](reviews/PHASE2B_SLICE1_REPORT.md)。
+
+
+## Phase 2b Slice 1b 進度
+
+- [x] 專案側欄、會話清單與跨專案路由隔離。
+- [ ] 對話區、右側面板、設定及對話操作。詳見 [驗收記錄](reviews/PHASE2B_SLICE1B_REPORT.md)。

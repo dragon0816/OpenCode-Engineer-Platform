@@ -77,3 +77,8 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 2b Slice 1
 
 工作台與設定已有部分實作，完整驗收仍開放。分支為 `phase-2b/workbench-shell`。 [驗收報告](reviews/PHASE2B_SLICE1_REPORT.md)
+
+
+## Phase 2b Slice 1b 交接
+
+專案側欄與隔離在 `phase-2b/workbench-complete` 上交付。從對話區繼續，待辦與驗收範圍見 [驗收記錄](reviews/PHASE2B_SLICE1B_REPORT.md)。
