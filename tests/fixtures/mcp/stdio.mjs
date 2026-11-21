@@ -1,5 +1,14 @@
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
+const [digest, pidFile] = process.argv.slice(2);
+if (digest) {
+  const credential = process.env.SYNTHETIC_MCP;
+  if (!credential || createHash('sha256').update(credential).digest('hex') !== digest) process.exit(1);
+  process.stderr.write(credential);
+  writeFileSync(pidFile, String(process.pid));
+}
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
   if (message.id === undefined) continue;
