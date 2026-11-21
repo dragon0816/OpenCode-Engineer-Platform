@@ -7,7 +7,7 @@ export const sha256 = (value: string | Uint8Array) => createHash('sha256').updat
 
 export type Source = { id: string; ref: string; version: string; sha256?: string };
 export type Card = { id: string; type: string; key: string; title: string; version: string; fields: Record<string, unknown>;
-  fieldProvenance?: Record<string, unknown> };
+  fieldStates?: Record<string, unknown>; fieldProvenance?: Record<string, unknown> };
 export type Relationship = { from: string; to: string; kind: string; provenance?: Record<string, unknown> };
 export type SnapshotPassage = { id: string; sourceId: string; cardId?: string; locator: string; text: string; sha256: string };
 export type Snapshot = {
@@ -125,6 +125,7 @@ export function validateSnapshot(value: unknown): Snapshot {
     string(card.title, at);
     string(card.version, at);
     record(card.fields, at);
+    if (card.fieldStates !== undefined) record(card.fieldStates, at);
     if (card.fieldProvenance !== undefined) record(card.fieldProvenance, at);
   }
   for (const [index, value] of rows(input.relationships, 'relationships').entries()) {

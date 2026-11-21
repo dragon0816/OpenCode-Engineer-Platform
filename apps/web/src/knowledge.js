@@ -1,3 +1,4 @@
+import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
 
@@ -21,6 +22,7 @@ const messages = {
 };
 
 export function bindKnowledge() {
+  const browser = bindKnowledgeBrowser(() => refreshVaults());
   bindReview(find('knowledge-repository'), () => refreshVaults());
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
@@ -71,6 +73,7 @@ export function bindKnowledge() {
     const selected = models.get(vault.value);
     details.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);
+    browser.select(selected?.id);
     if (!selected) {
       status.textContent = '目前沒有已發布的快照。';
       controls();
@@ -80,6 +83,7 @@ export function bindKnowledge() {
       ['識別碼', selected.id], ...(selected.tag ? [['發布標籤', selected.tag]] : []),
       ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
+      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
     status.textContent = !selected.ready ? '索引目前無法查詢。' :
@@ -108,6 +112,7 @@ export function bindKnowledge() {
     loading?.abort();
     const active = loading = new AbortController();
     models.clear();
+    browser.select(undefined);
     vault.replaceChildren(new Option('載入中', ''));
     status.textContent = '正在讀取已發布版本。';
     details.replaceChildren();

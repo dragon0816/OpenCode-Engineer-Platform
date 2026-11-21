@@ -34,6 +34,7 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
+  ['/knowledge-browser.js', ['src/knowledge-browser.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
@@ -270,6 +271,24 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         }
         catch { throw new HttpError(422, '審核操作失敗。請重新整理並檢查版本、證據與審核狀態。'); }
       }
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/browse' && method === 'POST') {
+      const input = await body(request);
+      const { vault } = input;
+      if (typeof vault !== 'string' || vault.length > 192 ||
+          Object.values(input).some((value) => typeof value === 'string' && value.length > 500)) {
+        throw new HttpError(400, '請確認知識庫及查詢條件。');
+      }
+      const result = runtime.knowledge.reviewStore.browse(vault, input);
+      if (!result) throw new HttpError(404, '找不到可瀏覽的資料。');
+      send(response, 200, result);
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/rebuild' && method === 'POST') {
+      const { confirmed } = await body(request);
+      if (confirmed !== true) throw new HttpError(400, '請先確認重建索引。');
+      send(response, 200, { rebuilt: runtime.knowledge.reviewStore.rebuild() });
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {
