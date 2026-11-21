@@ -75,6 +75,7 @@ def validate_workbook(content):
 
     visited = {manifest}
     documents = {}
+    widths = {}
 
     def relationships(source):
         directory, basename = posixpath.split(source)
@@ -100,7 +101,7 @@ def validate_workbook(content):
             visited.add(name)
             children = relationships(name)
             if kind == DOC_REL + 'officeDocument':
-                validate_sheets(documents[name], children, documents)
+                widths.update(validate_sheets(documents[name], children, documents))
             elif children:
                 raise ValueError("unsupported nested parts")
         return linked
@@ -108,6 +109,7 @@ def validate_workbook(content):
     root_links = relationships('')
     if sum(kind == DOC_REL + 'officeDocument' for kind, _ in root_links.values()) != 1 or visited != parts.keys():
         raise ValueError("missing workbook or orphaned parts")
+    return widths
 
 
 def validate_sheets(workbook, links, documents):
@@ -117,18 +119,46 @@ def validate_sheets(workbook, links, documents):
     ids = [sheet.attrib.get(f'{{{DOC_REL[:-1]}}}id') for sheet in declared]
     if not 0 < len(ids) <= 4 or len(set(ids)) != len(ids) or set(ids) != sheets.keys():
         raise ValueError("worksheet graph mismatch")
-    for name in sheets.values():
-        worksheet = documents[name]
-        rows = worksheet.findall(f'{prefix}sheetData/{prefix}row')
-        if worksheet.tag != f'{prefix}worksheet' or len(rows) > 200:
+    widths = {}
+    for declaration, rel_id in zip(declared, ids):
+        worksheet = documents[sheets[rel_id]]
+        areas = worksheet.findall(f'{prefix}sheetData')
+        if worksheet.tag != f'{prefix}worksheet' or len(areas) != 1:
+            raise ValueError("invalid worksheet structure")
+        rows = list(areas[0])
+        if len(rows) > 200:
             raise ValueError("invalid worksheet or row limit")
+        if any(row.tag != f'{prefix}row' for row in rows) or list(worksheet.iter(f'{prefix}row')) != rows:
+            raise ValueError("row outside worksheet data")
+        validated_cells = []
+        previous_row = 0
+        width = 1
         for row in rows:
-            if not 1 <= int(row.attrib.get('r', '0')) <= 200:
+            row_number = int(row.attrib.get('r', '0'))
+            if not previous_row < row_number <= 200:
                 raise ValueError("row limit")
-            cells = row.findall(f'{prefix}c')
+            previous_row = row_number
+            # openpyxl parse_row consumes every child, regardless of its tag.
+            cells = list(row)
             if len(cells) > 24:
                 raise ValueError("column limit")
+            previous_column = 0
             for cell in cells:
-                locator = re.fullmatch(r'[A-X]([1-9][0-9]{0,2})', cell.attrib.get('r', ''))
-                if not locator or not 1 <= int(locator[1]) <= 200:
+                if cell.tag != f'{prefix}c':
+                    raise ValueError("non-cell child inside row")
+                locator = re.fullmatch(r'([A-X])([1-9][0-9]{0,2})', cell.attrib.get('r', ''))
+                if not locator or int(locator[2]) != row_number:
                     raise ValueError("cell locator limit")
+                column = ord(locator[1]) - ord('A') + 1
+                if column <= previous_column:
+                    raise ValueError("duplicate or unordered cell locator")
+                previous_column = column
+                width = max(width, column)
+            validated_cells.extend(cells)
+        if list(worksheet.iter(f'{prefix}c')) != validated_cells:
+            raise ValueError("cell outside worksheet row")
+        name = declaration.attrib.get('name')
+        if not name or name in widths:
+            raise ValueError("invalid worksheet name")
+        widths[name] = width
+    return widths

@@ -23,7 +23,7 @@ ORACLE = {
 
 
 def workbook_rows(content):
-    validate_workbook(content)
+    widths = validate_workbook(content)
     os.environ['OPENPYXL_LXML'] = 'False'
     os.environ['OPENPYXL_DEFUSEDXML'] = 'True'
     from openpyxl import load_workbook
@@ -40,7 +40,7 @@ def workbook_rows(content):
             # Reset worksheet dimensions so self-reported bounds cannot hide additional rows.
             sheet.reset_dimensions()
             table = []
-            for number, row in enumerate(sheet.iter_rows(), 1):
+            for number, row in enumerate(sheet.iter_rows(max_col=widths[sheet.title]), 1):
                 if number > 200 or len(row) > 24:
                     raise ValueError("row or column count")
                 if any(cell.data_type in {"f", "e"} for cell in row):

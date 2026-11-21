@@ -57,6 +57,28 @@ class AttachmentProbeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'locator'):
             validate_workbook(rewrite(wide))
 
+    def test_reject_all_rows_and_children_that_openpyxl_would_parse_outside_the_prechecked_shape(self):
+        from unittest.mock import patch
+
+        cases = [
+            (b'</sheetData>', b'</sheetData><row r="4"><c r="Y4"/></row>', 'row outside'),
+            (b'<c r="A1"', b'<alias r="Y1"', 'non-cell child'),
+            (b'</sheetData>', b'</sheetData><c r="A4"/>', 'cell outside'),
+            (b'<c r="A1"', b'<c r="A2"', 'locator limit'),
+        ]
+        for search, replacement, error in cases:
+            with self.subTest(error=error):
+                def transform(name, data):
+                    if name == 'xl/worksheets/sheet1.xml':
+                        data = data.replace(search, replacement, 1)
+                        if error == 'non-cell child':
+                            data = data.replace(b'</c>', b'</alias>', 1)
+                    return name, data
+
+                with patch('openpyxl.load_workbook', side_effect=AssertionError('preflight allowed allocation')):
+                    with self.assertRaisesRegex(ValueError, error):
+                        workbook_rows(rewrite(transform))
+
     def test_sheet_oracle_checks_actual_names_and_count_including_empty_sheet(self):
         original = (BASE / 'table.xlsx').read_bytes()
         self.assertEqual(list(workbook_rows(original)), list(ORACLE))
@@ -73,7 +95,9 @@ class AttachmentProbeTest(unittest.TestCase):
             workbook_rows(handle.getvalue())
 
     def test_staged_handle_rejects_hardlink_and_traversal(self):
-        with tempfile.TemporaryDirectory(dir=Path('.phase0').absolute(), prefix='staged-probe-test-') as temporary:
+        parent = Path('.phase0').absolute()
+        parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent, prefix='staged-probe-test-') as temporary:
             root = Path(temporary)
             origin = root / 'original.pdf'
             origin.write_bytes(b'synthetic')
