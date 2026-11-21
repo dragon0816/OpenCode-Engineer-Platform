@@ -1,6 +1,6 @@
 import { connect, request, RequestError } from './api.js';
 import { bindKnowledge } from './knowledge.js';
-import './jobs.js';
+import { loadJobSummary } from './jobs.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -296,7 +296,11 @@ function renderPanel(context) {
     artifactList.append(entry);
   }
   if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
-
+  const ledger = find('panel-runs');
+  ledger.replaceChildren(...state.runs.toReversed().map((run) =>
+    node('li', `${formatDate(run.createdAt)} · ${statuses[run.state] ?? '狀態未知'}`)));
+  if (!ledger.children.length) emptyList(ledger, '此會話尚無工作紀錄');
+  renderDiffChoices(context);
 }
 
 function formatDate(at) {
@@ -457,44 +461,113 @@ function readSheets(source, workbook) {
   return sheets;
 }
 
-function renderSheets(target, sheets) {
+function renderSheets(target, sheets, before = new Map(), lines = false) {
   const select = node('select');
   select.setAttribute('aria-label', '工作表');
-  select.hidden = sheets.has('CSV') && sheets.size === 1;
-  for (const name of sheets.keys()) {
+  select.hidden = sheets.size === 1 && (lines || sheets.has('CSV')) && before.size <= 1;
+  for (const name of new Set([...sheets.keys(), ...before.keys()])) {
     select.append(new Option(name, name));
   }
   const content = node('div');
   target.append(select, content);
   function renderSheet() {
     const rows = sheets.get(select.value) ?? [];
+    const prior = before.get(select.value) ?? [];
+    const diff = before.size > 0;
+    const length = Math.max(rows.length, prior.length);
     const table = node('table');
     const scroller = node('div', undefined, 'table-scroll');
     scroller.tabIndex = 0;
-    scroller.setAttribute('aria-label', '表格內容');
+    scroller.setAttribute('aria-label', lines ? '文字差異' : '表格內容');
     scroller.append(table);
     const tbody = table.createTBody();
     let index = 0;
+    let changes = 0;
+    for (let row = 0; diff && row < length; row++) {
+      const old = prior[row] ?? [];
+      const next = rows[row] ?? [];
+      for (let cell = 0; cell < Math.max(old.length, next.length); cell++) {
+        if ((old[cell] ?? '') !== (next[cell] ?? '')) changes++;
+      }
+    }
     const more = action('顯示更多', appendRows);
     function appendRows() {
-      const end = Math.min(index + 200, rows.length);
+      const end = Math.min(index + 200, length);
       for (; index < end; index++) {
         const tr = tbody.insertRow();
+        const beforeRow = prior[index] ?? [];
         const afterRow = rows[index] ?? [];
         const header = node('th', String(index + 1));
         header.scope = 'row';
         tr.append(header);
-        for (const cell of afterRow.slice(0, 100)) tr.insertCell().textContent = cell;
+        for (let cell = 0; cell < Math.min(100, Math.max(beforeRow.length, afterRow.length)); cell++) {
+          const old = beforeRow[cell] ?? '';
+          const next = afterRow[cell] ?? '';
+          const td = tr.insertCell();
+          if (diff && old !== next) {
+            td.className = 'changed-cell';
+            td.append(node('del', old || '（空白）'), node('ins', next || '（空白）'));
+          } else td.textContent = next;
+        }
       }
-      more.hidden = index >= rows.length;
+      more.hidden = index >= length;
     }
     content.replaceChildren();
+    if (diff) content.append(node('p', lines ? `${changes} 行有變更` : `這張工作表有 ${changes} 個儲存格有變更`));
     if (rows.some((row) => row.length > 100)) content.append(node('p', '預覽顯示前 100 欄。'));
     content.append(scroller, more);
     appendRows();
   }
   select.addEventListener('change', renderSheet);
   renderSheet();
+}
+
+function renderDiffChoices(context) {
+  const target = find('panel-diff');
+  const runs = context.state.runs.filter((run) => run.artifact);
+  const key = runs.map((run) => run.id).join(',');
+  if (context.diffKey === key) return;
+  context.diffKey = key;
+  target.replaceChildren();
+  const earlier = new Map();
+  const pairs = [];
+  for (const run of runs) {
+    const prior = earlier.get(run.artifact.name);
+    if (prior) pairs.unshift([prior, run]);
+    earlier.set(run.artifact.name, run);
+  }
+  if (!pairs.length) {
+    target.append(node('p', '此會話沒有可比較的產物版本。'));
+    return;
+  }
+  const choice = node('select');
+  choice.setAttribute('aria-label', '產物版本');
+  for (const [index, [, run]] of pairs.entries()) {
+    choice.append(new Option(`${run.artifact.name} · 版本 ${pairs.length - index + 1}`, String(index)));
+  }
+  const body = node('div', undefined, 'preview-body');
+  let controller;
+  async function compare() {
+    controller?.abort();
+    const abort = new AbortController();
+    controller = abort;
+    const [prior, run] = pairs[Number(choice.value)];
+    body.textContent = '正在比較版本…';
+    try {
+      const signal = AbortSignal.any([abort.signal, context.abort.signal]);
+      const [before, after] = await Promise.all([prior, run].map(async ({ id }) =>
+        (await previewResponse(`${context.path}/artifacts/${id}`, signal)).text()));
+      if (signal.aborted || !body.isConnected) return;
+      body.replaceChildren(node('small', `比較前 · ${formatDate(prior.createdAt)}`),
+        node('small', `比較後 · ${formatDate(run.createdAt)}`));
+      if (/\.xlsx$/i.test(run.artifact.name)) renderSheets(body, readSheets(after, true), readSheets(before, true));
+      else renderSheets(body, new Map([['文字', after.split(/\r?\n/).map((line) => [line])]]),
+        new Map([['文字', before.split(/\r?\n/).map((line) => [line])]]), true);
+    } catch {
+      if (!abort.signal.aborted) body.textContent = '無法比較這兩個版本。';
+    }
+  }
+  target.append(choice, action('比較版本', () => void compare()), body);
 }
 
 function refresh(context) {
@@ -531,6 +604,7 @@ function activatePanel(tab) {
     find(candidate.getAttribute('aria-controls')).hidden = !active;
   }
   if (current) localStorage.setItem(`oep.panel.${current.path}`, tab.id);
+  if (tab.id === 'tab-work') void loadJobSummary();
 }
 
 function setPanel(open) {
@@ -574,6 +648,8 @@ function select(id) {
   const session = knownSessions.get(id);
   current = undefined;
   closePreview();
+  find('panel-runs').replaceChildren();
+  find('panel-diff').replaceChildren();
   jump.hidden = true;
   if (!session) {
     sessionTitle.textContent = '對話';

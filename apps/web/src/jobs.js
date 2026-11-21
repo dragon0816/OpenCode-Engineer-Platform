@@ -169,3 +169,17 @@ open.addEventListener('click', () => {
 });
 
 find('open-knowledge').addEventListener('click', () => { view.hidden = true; });
+export async function loadJobSummary() {
+  const summary = find('panel-jobs');
+  summary.textContent = '正在載入工作與排程…';
+  try {
+    const status = await request('/api/jobs');
+    const counts = (rows) => {
+      const totals = new Map();
+      for (const row of rows) totals.set(row.state, (totals.get(row.state) ?? 0) + (row.count ?? 1));
+      return [...totals].map(([state, count]) => `${labels[state] ?? '其他狀態'} ${count} 筆`).join('、') || '無';
+    };
+    summary.textContent = `BI 工作：${counts(status.jobs)}。排程：${counts(status.schedules ?? [])}。`;
+  } catch { summary.textContent = '目前無法讀取 BI 工作與排程。'; }
+}
+find('panel-jobs-link').addEventListener('click', () => open.click());

@@ -310,6 +310,7 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #close-files { display: none; }
 .panel-header { display: flex; align-items: flex-start; gap: 6px; }
 .panel-header [role="tablist"] { flex: 1; }
+#panel-diff > select { margin-right: 6px; margin-bottom: 4px; }
 .files:not([hidden]) { display: flex; flex-direction: column; max-height: 83dvh; }
 .files [role="tabpanel"] { overflow: auto; padding: 3px; }
 @media (max-width: 900px) {
@@ -326,6 +327,8 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .files table { border-collapse: collapse; width: 100%; }
 .files :is(th, td) { border: 1px solid var(--line); padding: 4px 7px; min-width: 2rem; }
 .files select { max-width: 100%; }
+.changed-cell { background: var(--selected); outline: 2px solid currentColor; outline-offset: -2px; }
+.changed-cell :is(del, ins) { display: block; }
 @media (min-width: 901px) {
   main { grid-template-columns: minmax(155px, 215px) minmax(300px, 1fr) minmax(240px, 330px); }
 }
