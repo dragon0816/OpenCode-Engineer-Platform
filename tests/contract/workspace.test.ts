@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import { AttachmentService, convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
+import { failRun, finishWorkbook, verifyWorkbookReceipt } from '../../apps/adapter/src/runs/excel.ts';
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
@@ -145,4 +146,23 @@ test('invalid model workbook JSON produces no downloadable file', async () => {
   writeFileSync(scopedPath(root, workbookInput(run.id)), '[{"name":"Notes","rows":[["A"]}]');
   await assert.rejects(publishWorkbook(output, root, run), /invalid workbook JSON/);
   assert.deepEqual(readdirSync(output), []);
+});
+
+test('Phase 1 workbook consumers preserve a cancelled terminal run', async () => {
+  const root = directory();
+  const ledger = new Ledger(join(root, 'runs.sqlite'));
+  try {
+    const id = 'cancelled-workbook';
+    ledger.create({ id, workspace: root, mode: 'synthetic', state: 'accepted', createdAt: 1, retries: 0, errors: [] });
+    ledger.change(id, 'running');
+    ledger.change(id, 'background');
+    const cancelled = ledger.change(id, 'cancelled', { finishedAt: 2 });
+    const receipt = { runID: id, programSha256: 'synthetic', startedAt: 1, finishedAt: 2,
+      exitCode: 0, signal: null, stdout: '', stderr: '' };
+    assert.deepEqual(await finishWorkbook(ledger, id), cancelled);
+    assert.deepEqual(verifyWorkbookReceipt(ledger, id, receipt), cancelled);
+    assert.deepEqual(failRun(ledger, id, 'late failure'), cancelled);
+    assert.throws(() => ledger.change(id, 'verified'));
+    assert.deepEqual(ledger.get(id), cancelled);
+  } finally { ledger.close(); }
 });

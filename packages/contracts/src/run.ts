@@ -1,4 +1,4 @@
-export type RunState = 'accepted' | 'running' | 'awaiting_permission' | 'background' | 'failed' | 'indeterminate' | 'verified';
+export type RunState = 'accepted' | 'running' | 'awaiting_permission' | 'background' | 'failed' | 'indeterminate' | 'verified' | 'cancelled';
 
 export type FileIdentity = { device: string; inode: string; created: string; modified: string; changed: string; bytes: number; sha256: string };
 export type FileDigest = { path: string; sha256: string; bytes: number; identity?: FileIdentity };

@@ -95,7 +95,7 @@ export class TelegramRouter {
     let session = this.sessions.sessions().find(({ id }) => id === binding?.session);
     if (session) {
       const previous = this.sessions.turns(session.id).at(-1);
-      if (previous && previous.state !== 'verified' && previous.state !== 'failed') {
+      if (previous && previous.state !== 'verified' && previous.state !== 'failed' && previous.state !== 'cancelled') {
         const failed = db.prepare("SELECT id FROM inbox WHERE bot='main' AND topic=? AND lane='work' AND failed=1")
           .all(row.topic);
         if (failed.some(({ id }) => previous.id === turnId(Number(id)))) session = undefined;
@@ -111,6 +111,7 @@ export class TelegramRouter {
     const state = await this.chat.state(session);
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);
+    if (run?.state === 'cancelled') return '對話已停止。';
     if (run?.state === 'failed') return '對話未完成，請在工作台確認服務狀態。';
     if (run?.state !== 'verified') return undefined;
     if (!state.messages) return undefined;

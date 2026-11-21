@@ -11,7 +11,7 @@ export const workbookName = 'output.xlsx';
 export const workbookLimit = 256 * 1024;
 export const workbookInput = (runID: string) => `generated/${runID}.json`;
 
-export async function publishWorkbook(root: string, workspace: string, run: RunRecord) {
+export async function publishWorkbook(root: string, workspace: string, run: RunRecord, signal?: AbortSignal) {
   const startedAt = Date.now();
   const source = workbookInput(run.id);
   const input = openWorkspaceFile(workspace, source, 64 * 1024);
@@ -21,6 +21,7 @@ export async function publishWorkbook(root: string, workspace: string, run: RunR
   catch { throw new HttpError(422, 'The model wrote invalid workbook JSON. Try the workbook request again'); }
   const bytes = workbook(sheets);
   await convertWorkbook(Buffer.from(bytes));
+  signal?.throwIfAborted();
 
   checkDirectory(root);
   const folder = scopedPath(root, run.id);

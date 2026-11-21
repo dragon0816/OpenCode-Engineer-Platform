@@ -4,19 +4,23 @@ import { sse } from '../../../../scripts/phase0/probe-http.ts';
 import type { Endpoint } from '../opencode/client.ts';
 
 const activity = new Map([
-  ['session.execution.started', 'working'], ['session.execution.succeeded', 'refresh'],
-  ['session.execution.failed', 'refresh'], ['session.execution.interrupted', 'refresh'],
-  ['session.step.first-token', 'responding'], ['session.text.ended', 'refresh'],
+  ['session.execution.started', 'working'], ['session.execution.succeeded', 'finished'],
+  ['session.execution.failed', 'failed'], ['session.execution.interrupted', 'interrupted'],
+  ['session.step.first-token', 'responding'], ['session.text.delta', 'refresh'], ['session.text.ended', 'refresh'],
   ['session.tool.input.started', 'tool-started'], ['session.tool.called', 'tool-running'],
   ['session.tool.success', 'tool-completed'], ['session.tool.failed', 'tool-failed'],
   ['session.retry.scheduled', 'recovering'], ['permission.asked', 'permission'],
   ['session.message.content.updated', 'refresh'],
 ]);
 
+const cardKinds = new Set(['working', 'responding', 'recovering', 'permission', 'finished', 'failed', 'interrupted']);
+type ActivityCard = { id: string; kind: string; createdAt: number };
+
 const toolNames = new Set(['write', 'edit', 'read']);
 
 export class WebEvents {
   private readonly subscribers = new Map<ServerResponse, string>();
+  private readonly history = new Map<string, Map<string, ActivityCard>>();
   private readonly stop = new AbortController();
   private readonly work: Promise<void>;
   private readonly heartbeats: NodeJS.Timeout;
@@ -48,6 +52,20 @@ export class WebEvents {
     }
   }
 
+  cards(sessionID: string) { return [...(this.history.get(sessionID)?.values() ?? [])]; }
+
+  forget(sessionID: string) { this.history.delete(sessionID); }
+
+  private record(sessionID: string, card: ActivityCard) {
+    const cards = this.history.get(sessionID) ?? new Map<string, ActivityCard>();
+    cards.set(card.id, card);
+    if (cards.size > 60) {
+      const oldest = cards.keys().next();
+      if (!oldest.done) cards.delete(oldest.value);
+    }
+    this.history.set(sessionID, cards);
+  }
+
   async close() {
     this.stop.abort();
     clearInterval(this.heartbeats);
@@ -68,7 +86,7 @@ export class WebEvents {
           throw new Error('Upstream event subscription failed');
         }
         for await (const frame of sse(response.body, connection)) {
-          const event = JSON.parse(frame) as { type: string; data?: { sessionID?: string; name?: string } };
+          const event = JSON.parse(frame) as { id?: string; created?: number; type: string; data?: { sessionID?: string; name?: string } };
           if (event.type === 'server.connected') {
             clearTimeout(deadline);
             this.notify();
@@ -76,7 +94,12 @@ export class WebEvents {
           const kind = activity.get(event.type);
           const sessionID = event.data?.sessionID && publicSessionID(event.data.sessionID);
           const tool = event.data?.name;
-          if (sessionID && kind) this.notify(sessionID, kind, tool && toolNames.has(tool) ? tool : undefined);
+          if (sessionID && kind) {
+            if (event.id && event.created && cardKinds.has(kind)) this.record(sessionID, {
+              id: event.id, kind, createdAt: event.created,
+            });
+            this.notify(sessionID, kind, tool && toolNames.has(tool) ? tool : undefined);
+          }
         }
       } catch { /* Reconnect and have clients reread the durable projection. */ }
       finally { clearTimeout(deadline); connect.abort(); }

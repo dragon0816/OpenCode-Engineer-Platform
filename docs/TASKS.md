@@ -124,3 +124,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 專案側欄、會話清單與跨專案路由隔離。
 - [ ] 對話區、右側面板、設定及對話操作。詳見 [驗收記錄](reviews/PHASE2B_SLICE1B_REPORT.md)。
+
+## Phase 2b Slice 2A 進度
+
+- [x] 緊湊側欄、鍵盤列選單、安全 Markdown、工具卡、單回合停止，以及取消工作簿的帳本驗收。
+- [ ] 驗收逐 token 顯示、SSE 斷線遺漏活動補齊、執行中工具取消與完整對比稽核。 [Slice 2A 驗收](reviews/PHASE2B_SLICE2A_REPORT.md)

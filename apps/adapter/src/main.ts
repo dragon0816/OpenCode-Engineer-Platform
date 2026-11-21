@@ -243,17 +243,18 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         session.title = title;
       } else {
         const latest = store.turns(id).at(-1);
-        if (latest && latest.state !== 'verified' && latest.state !== 'failed') {
+        if (latest && latest.state !== 'verified' && latest.state !== 'failed' && latest.state !== 'cancelled') {
           throw new HttpError(409, '請等這次處理結束後再刪除會話。');
         }
         store.hideSession(id);
         sessions.delete(id);
+        events.forget(id);
         upstreamIDs.delete(session.upstreamID);
       }
       send(response, 200, publicSession(session));
       return;
     }
-    if (method === 'GET' && resource === 'state') send(response, 200, await chat.state(session));
+    if (method === 'GET' && resource === 'state') send(response, 200, { ...await chat.state(session), activity: events.cards(id) });
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'attachments') {
       const attachment = await upload(request, chat, session);
@@ -263,6 +264,11 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const input = parseTurn(await body(request));
       if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
       send(response, 202, chat.submit(session, input));
+    }
+    else if (method === 'POST' && resource === 'cancel-turn') {
+      const input = await body(request);
+      if (typeof input.id !== 'string' || !uuid.test(input.id)) throw new HttpError(400, '回合識別碼無效。');
+      send(response, 200, await chat.cancel(session, input.id));
     }
     else throw new HttpError(404, 'Route not found');
   }

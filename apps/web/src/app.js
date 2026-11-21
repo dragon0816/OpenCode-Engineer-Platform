@@ -15,6 +15,7 @@ const fileInput = find('file-input');
 const drop = find('drop');
 const prompt = find('prompt');
 const send = find('send');
+const cancelTurn = find('cancel-turn');
 const workbook = find('workbook');
 const stop = find('stop');
 const messages = find('messages');
@@ -29,12 +30,12 @@ const notice = find('error');
 const labels = { inspector: '資料分析', workbook: 'Excel 工作表' };
 const statuses = {
   accepted: '已接收，等待執行', running: '助理處理中', awaiting_permission: '正在檢查工具權限',
-  background: '正在產生並驗證工作簿', indeterminate: '正在核對未確定的結果', failed: '這次處理未完成', verified: '已完成',
+  background: '正在產生並驗證工作簿', indeterminate: '正在核對未確定的結果', failed: '這次處理未完成', verified: '已完成', cancelled: '已停止這次處理',
 };
 const eventLabels = {
   working: '開始處理', responding: '模型開始回覆', 'tool-started': '準備使用工具', 'tool-running': '工具執行中',
   'tool-completed': '工具完成', 'tool-failed': '工具未完成', recovering: '模型正在重試',
-  permission: '正在檢查工具權限',
+  permission: '正在檢查工具權限', finished: '處理完成', failed: '處理失敗', interrupted: '處理已停止',
 };
 const activeStates = new Set(['accepted', 'running', 'awaiting_permission', 'background', 'indeterminate']);
 const knownSessions = new Map();
@@ -52,7 +53,16 @@ function showError(error) {
   notice.hidden = !error;
 }
 
+function runningID(context) {
+  const latest = context?.state?.runs.at(-1);
+  return context?.pendingID ?? (activeStates.has(latest?.state) && latest.state !== 'indeterminate' ? latest.id : undefined);
+}
+
 function setControls() {
+  const cancellable = !stopped && Boolean(runningID(current));
+  send.hidden = cancellable;
+  cancelTurn.hidden = !cancellable;
+  cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
   send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
@@ -70,28 +80,184 @@ function emptyList(element, text) {
   element.replaceChildren(node('li', text, 'empty'));
 }
 
+const relative = new Intl.RelativeTimeFormat('zh-Hant', { numeric: 'auto' });
+function relativeTime(timestamp) {
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  const sameDay = new Date(timestamp).toDateString() === new Date().toDateString();
+  if (!sameDay) {
+    const day = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    return relative.format((day(new Date(timestamp)) - day(new Date())) / 86400000, 'day');
+  }
+  if (minutes < 1) return '剛剛';
+  if (minutes < 60) return `${minutes} 分鐘前`;
+  return relative.format(-Math.floor(minutes / 60), 'hour');
+}
+
 function sessionLabel(session) {
-  if (session.title) return session.title;
-  const timestamp = new Intl.DateTimeFormat('zh-Hant', { dateStyle: 'short', timeStyle: 'short' }).format(session.createdAt);
-  return `${labels[session.agent]} · ${timestamp}`;
+  return session.title || `${labels[session.agent]} · ${relativeTime(session.createdAt)}`;
+}
+
+function bindRowMenu(menu, trigger, actions) {
+  const close = () => { menu.open = false; trigger.focus(); };
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (menu.open) close();
+    else { menu.open = true; actions[0].focus(); }
+  });
+  menu.addEventListener('toggle', () => {
+    if (!menu.open) return;
+    for (const other of sessions.querySelectorAll('details[open]')) {
+      if (other !== menu) other.open = false;
+    }
+    actions[0].focus();
+  });
+  for (const action of actions) action.addEventListener('click', close);
+  menu.addEventListener('keydown', (event) => {
+    if (!menu.open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    } else if (['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault();
+      actions[document.activeElement === actions[0] ? 1 : 0].focus();
+    }
+  });
+}
+
+const jump = find('jump-latest');
+const atBottom = () => messages.scrollHeight - messages.clientHeight - messages.scrollTop <= 24;
+messages.addEventListener('scroll', () => { jump.hidden = atBottom(); });
+jump.addEventListener('click', () => { messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
+
+function appendMarkdown(target, text) {
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
+  const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((value) => value.trim());
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i++];
+    if (line.startsWith('```')) {
+      const block = [];
+      while (i < lines.length && !lines[i].startsWith('```')) block.push(lines[i++]);
+      if (i < lines.length) i++;
+      const value = block.join('\n');
+      const section = node('div', '', 'code-block');
+      const copy = sessionButton('複製程式碼', async () => {
+        try { await navigator.clipboard.writeText(value); copy.textContent = '已複製'; }
+        catch { copy.textContent = '無法複製'; }
+      });
+      const pre = node('pre');
+      pre.append(node('code', value));
+      section.append(copy, pre);
+      target.append(section);
+    } else if (/^#{1,6} /.test(line)) {
+      const count = line.indexOf(' ');
+      target.append(node(`h${Math.min(count + 1, 6)}`, line.slice(count + 1)));
+    } else if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
+      const ordered = /^\s*\d+\. /.test(line);
+      const pattern = ordered ? /^\s*\d+\. / : /^\s*[-*+] /;
+      const list = node(ordered ? 'ol' : 'ul');
+      list.append(node('li', line.replace(pattern, '')));
+      while (i < lines.length && pattern.test(lines[i])) list.append(node('li', lines[i++].replace(pattern, '')));
+      target.append(list);
+    } else if (line.includes('|') && i < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i]) && cells(lines[i]).every((value) => /^:?-{3,}:?$/.test(value))) {
+      i++;
+      const wrapper = node('div', '', 'message-table');
+      const table = node('table');
+      const head = table.createTHead().insertRow();
+      head.append(...cells(line).map((value) => node('th', value)));
+      const body = table.createTBody();
+      while (i < lines.length && lines[i].includes('|')) {
+        body.insertRow().append(...cells(lines[i++]).map((value) => node('td', value)));
+      }
+      wrapper.append(table);
+      target.append(wrapper);
+    } else if (line.trim()) {
+      target.append(node('p', line));
+    }
+  }
+}
+
+function toolCard(tool, previous) {
+  const card = previous ?? node('details', '', 'tool-card');
+  if (!previous) {
+    card.dataset.tool = tool.id;
+    card.append(node('summary'), node('div', '', 'tool-details'));
+  }
+  const duration = Math.max(0, (tool.finishedAt ?? Date.now()) - tool.startedAt);
+  const status = { running: '執行中', done: '完成', failed: '失敗', cancelled: '已停止' }[tool.status];
+  card.dataset.status = tool.status;
+  card.firstElementChild.textContent = `${tool.name} · ${status} · ${(duration / 1000).toFixed(1)} 秒`;
+  const fields = card.lastElementChild;
+  const signature = JSON.stringify([tool.input, tool.output]);
+  if (fields.dataset.signature === signature) return card;
+  fields.dataset.signature = signature;
+  fields.replaceChildren();
+  for (const [label, value] of [['輸入', tool.input], ['輸出', tool.output]]) {
+    fields.append(node('strong', label));
+    const excerpt = node('pre', value ? value.slice(0, 800) : '—');
+    fields.append(excerpt);
+    if (value.length > 800) {
+      const toggle = sessionButton('顯示全部', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        toggle.textContent = expanded ? '顯示全部' : '收合內容';
+        excerpt.textContent = expanded ? value.slice(0, 800) : value;
+      });
+      toggle.setAttribute('aria-expanded', 'false');
+      fields.append(toggle);
+    }
+  }
+  return card;
 }
 
 function render(context) {
   const { state, selected, id } = context;
   if (state.messages) {
-    const previous = messages.lastElementChild?.dataset.id;
+    const follow = !context.renderedMessages || atBottom();
+    const offset = messages.scrollTop;
+    const previous = new Map([...messages.querySelectorAll('.tool-card')].map((card) => [card.dataset.tool, card]));
+    const eventCards = new Map([...messages.querySelectorAll('.event-card')].map((card) => [card.dataset.event, card]));
+    const activity = [...(state.activity ?? [])].sort((left, right) => left.createdAt - right.createdAt);
+    let eventIndex = 0;
+    const appendEvents = (through) => {
+      while (eventIndex < activity.length && activity[eventIndex].createdAt <= through) {
+        const event = activity[eventIndex++];
+        const card = eventCards.get(event.id) ?? node('details', '', 'event-card');
+        if (!card.dataset.event) {
+          card.dataset.event = event.id;
+          card.append(node('summary', eventLabels[event.kind]), node('time', new Date(event.createdAt).toLocaleString('zh-Hant')));
+        }
+        fragment.append(card);
+      }
+    };
+    const focused = messages.contains(document.activeElement) ? document.activeElement : undefined;
     const fragment = document.createDocumentFragment();
     for (const item of state.messages) {
+      appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
-      entry.append(node('strong', item.role === 'user' ? '你' : labels[state.session.agent]), node('p', item.text));
+      const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
+      if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
+      entry.append(role);
+      if (item.role === 'assistant') appendMarkdown(entry, item.text);
+      else entry.append(node('p', item.text));
+      for (const tool of item.tools ?? []) entry.append(toolCard(tool, previous.get(tool.id)));
       fragment.append(entry);
     }
+    appendEvents(Infinity);
     messages.replaceChildren(fragment);
+    if (focused?.isConnected) focused.focus({ preventScroll: true });
     if (!state.messages.length) messages.append(node('p', '上傳附件或直接輸入訊息。', 'empty'));
-    else if (previous !== state.messages.at(-1)?.id) messages.scrollTop = messages.scrollHeight;
+    messages.scrollTop = follow ? messages.scrollHeight : offset;
+    jump.hidden = atBottom();
+    context.renderedMessages = true;
   }
   const latest = state.runs.at(-1);
+  const row = sessions.querySelector(`[data-session="${id}"]`);
+  const phase = activeStates.has(latest?.state) ? 'running' : latest?.state === 'failed' ? 'failed' : '';
+  context.phase = phase;
+  if (row) row.dataset.phase = phase;
   if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) context.pendingID = undefined;
   progress.textContent = latest ? statuses[latest.state] : '等待訊息';
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
@@ -152,6 +318,7 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  jump.hidden = true;
   if (!session) {
     sessionTitle.textContent = '對話';
     progress.textContent = '從左側新增會話後即可開始。';
@@ -220,33 +387,46 @@ function sessionButton(label, action) {
   return button;
 }
 
+let collapsedProject;
 function renderSessions() {
   const query = find('session-search').value.trim().toLocaleLowerCase();
+  find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
   for (const entry of projects) {
     const section = node('section', undefined, 'project');
-    const heading = node('h2');
-    const projectButton = sessionButton(entry.title, () => changeProject(entry.id));
-    projectButton.setAttribute('aria-expanded', String(entry.id === project));
+    const heading = node('h2', '', 'project-heading');
+    const expanded = entry.id === project && collapsedProject !== entry.id;
+    const projectButton = sessionButton(entry.title, () => {
+      if (entry.id !== project) { collapsedProject = undefined; void changeProject(entry.id); return; }
+      collapsedProject = expanded ? entry.id : undefined;
+      renderSessions();
+      sessions.querySelector(`[data-project="${entry.id}"]`)?.focus();
+    });
+    projectButton.setAttribute('aria-expanded', String(expanded));
+    projectButton.dataset.project = entry.id;
     heading.append(projectButton);
     section.append(heading);
-    const create = sessionButton('新增會話', () => createSession(entry.id));
+    const create = sessionButton('+', () => { collapsedProject = undefined; return createSession(entry.id); });
     create.id = entry.id === 'default' ? 'new-session' : 'new-session-secondary';
     create.setAttribute('aria-label', `${entry.title}新增會話`);
-    section.append(create);
+    heading.append(create);
     sessions.append(section);
-    if (entry.id !== project) continue;
+    if (!expanded) continue;
     const list = node('ul', undefined, 'session-list');
     for (const session of knownSessions.values()) {
       const label = sessionLabel(session);
       if (!label.toLocaleLowerCase().includes(query)) continue;
       const row = node('li');
-      const link = sessionButton(label, () => {
+      const link = sessionButton(undefined, () => {
         select(session.id);
         if (narrowNavigation.matches) setSidebar(false);
         prompt.focus();
       });
+      link.title = label;
+      link.append(node('span', session.title || labels[session.agent], 'session-name'),
+        node('time', relativeTime(session.createdAt)));
       link.dataset.session = session.id;
+      if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
       const summary = node('summary', '⋯');
@@ -256,6 +436,7 @@ function renderSessions() {
       rename.dataset.action = 'rename';
       remove.dataset.action = 'remove';
       menu.append(summary, rename, remove);
+      bindRowMenu(menu, summary, [rename, remove]);
       row.append(link, menu);
       list.append(row);
     }
@@ -347,6 +528,16 @@ find('session-sidebar').addEventListener('keydown', (event) => {
   sidebarToggle.focus();
 });
 find('session-search').addEventListener('input', renderSessions);
+find('clear-session-search').addEventListener('click', () => {
+  find('session-search').value = '';
+  renderSessions();
+  find('session-search').focus();
+});
+document.addEventListener('click', (event) => {
+  for (const menu of sessions.querySelectorAll('details[open]')) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
+});
 
 async function renameSession(session) {
   const title = window.prompt('請輸入會話名稱', sessionLabel(session));
@@ -425,6 +616,17 @@ drop.addEventListener('drop', (event) => {
   drop.classList.remove('dragging');
   void upload([...event.dataTransfer.files]);
 });
+prompt.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (!send.disabled) find('composer').requestSubmit(send);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !event.defaultPrevented && !find('chat-view').hidden && !prompt.disabled) {
+    find('shortcuts').open = false;
+    prompt.focus();
+  }
+});
 find('composer').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (send.disabled || !prompt.value.trim()) return;
@@ -458,6 +660,33 @@ find('composer').addEventListener('submit', async (event) => {
     sending = false;
     setControls();
     refresh(context);
+  }
+});
+cancelTurn.addEventListener('click', async () => {
+  const context = current;
+  const id = runningID(context);
+  if (!id || context.cancelling) return;
+  context.cancelling = true;
+  setControls();
+  try {
+    const run = await request(`${context.path}/cancel-turn`, { data: { id } });
+    if (current === context && context.state) {
+      context.state.runs = [...context.state.runs.filter((prior) => prior.id !== id), run];
+      render(context);
+      prompt.focus();
+    }
+  } catch (error) {
+    if (current === context) showError(error);
+  } finally {
+    context.cancelling = false;
+    setControls();
+    refresh(context);
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.shiftKey && event.code === 'KeyS' && !cancelTurn.hidden && !find('chat-view').hidden) {
+    event.preventDefault();
+    cancelTurn.click();
   }
 });
 stop.addEventListener('click', async () => {
