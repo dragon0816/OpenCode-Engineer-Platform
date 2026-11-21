@@ -479,10 +479,32 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           const state = await (await api.get(`/api/sessions/${disabled.id}/state`)).json();
           return state.messages.some((entry: { text: string }) => entry.text === 'Knowledge tool unavailable') || undefined;
         }, 15_000);
-        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: '', toolbox: true })).status, 200);
         await browser.evaluate("document.querySelector('#open-chat').click()");
         assert.equal(await browser.evaluate("document.querySelector('#chat-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'open-chat');
+        await browser.evaluate("document.querySelector('#open-settings').click()");
+        await browser.evaluate("document.querySelector('[data-section=mcp]').click()");
+        await ready("document.querySelector('#mcp-knowledge-status').textContent === '已停用'");
+        assert.equal(await browser.evaluate("document.querySelector('#mcp-knowledge-tools').hidden"), false);
+        if (process.env.OEP_MCP_SCREENSHOTS === '1') {
+          for (const theme of ['light', 'dark']) {
+            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
+              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+              await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'; window.scrollTo(0, 0)`);
+              const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+              writeFileSync(join('docs', 'validation', 'gui', `slice4a-mcp-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));
+            }
+          }
+          await browser.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 900, deviceScaleFactor: 1, mobile: false });
+          await browser.evaluate("delete document.documentElement.dataset.theme");
+        }
+        await browser.evaluate("document.querySelector('#mcp-open-knowledge-settings').focus()");
+        await browser.command('Input.dispatchKeyEvent', {
+          type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r',
+        });
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        assert.equal(await browser.evaluate("document.activeElement.id"), 'knowledge-toolbox');
+        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: '', toolbox: true })).status, 200);
       } finally { await browser.close(); }
       const noEvidence = await api.post('/api/knowledge/ask', { vault, question: 'SYN-404' });
       assert.equal((await noEvidence.json()).reason, 'no-evidence');
