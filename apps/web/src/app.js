@@ -662,6 +662,7 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
   closePreview();
   find('panel-runs').replaceChildren();
   find('panel-diff').replaceChildren();
@@ -960,6 +961,7 @@ function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
   aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? []);
   sessionAlias.disabled = !session || !modelSettings || stopped;
+  if (modelSettings) model.textContent = `模型 ${session?.alias ?? modelSettings.defaultAlias}`;
 }
 function applyModel(value, draft = value.defaultAlias) {
   modelSettings = value;
@@ -1334,7 +1336,21 @@ try {
   model.textContent = `模型 ${bootstrap.alias}`;
   request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
   request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
-  find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
+  request('/api/settings/runtime').then((runtime) => {
+    const configured = (value) => value ? '已設定' : '未設定';
+    find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
+    const details = find('runtime-details');
+    for (const [name, value] of [
+      ['OpenCode 固定版本', runtime.pin], ['執行版本', runtime.version], ['提交雜湊', runtime.commit],
+      ['介面雜湊', runtime.openapi], ['Windows 執行檔雜湊', runtime.binary], ['用戶端雜湊', runtime.client],
+      ['階段 3 知識庫', configured(runtime.knowledgeConfigured)], ['階段 4 Telegram', configured(runtime.telegramConfigured)],
+    ]) {
+      const detail = node('dd');
+      if (name.startsWith('階段')) detail.append(node('span', value, 'runtime-badge'));
+      else detail.textContent = value;
+      details.append(node('dt', name), detail);
+    }
+  }).catch(() => { find('runtime-status').textContent = '無法載入執行環境。'; });
   request('/api/settings/appearance').then((appearance) => {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;

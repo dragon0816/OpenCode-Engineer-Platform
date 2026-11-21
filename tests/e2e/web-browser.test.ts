@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
+import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
@@ -36,9 +37,22 @@ const sheets = [
   { name: 'Notes', rows: [['Code', 'Comment'], ['R1', '合成資料'], ['R2', 'a,b']] },
 ];
 let slowStarted = false;
+const pinged: string[] = [];
+const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
+const syntheticKey = randomUUID();
+const syntheticURL = 'http://example.invalid/v1';
 const synthetic: typeof fetch = async (_target, init) => {
   const { model, messages } = JSON.parse(String(init?.body)) as WireRequest;
   const user = JSON.stringify(messages.findLast((message) => message.role === 'user')?.content);
+  if (user.includes('Reply with exactly OEP-READY.')) {
+    assert.equal(messages.length, 1);
+    pinged.push(model);
+    return Response.json({ choices: [{ message: { role: 'assistant', content: 'OEP-READY' }, finish_reason: 'stop' }] });
+  }
+  if (user.includes('SYNTHETIC_TOOL_LIMIT')) {
+    assert.equal(model, gatewayAliases[1]);
+    return completion(model, toolCall(0, 'call_limit', 'write', { path: 'synthetic.txt', content: 'sample' }), 'tool_calls');
+  }
   if (user.includes('SYNTHETIC_SLOW_TURN')) {
     slowStarted = true;
     await new Promise<void>((resolve) => {
@@ -67,7 +81,7 @@ const synthetic: typeof fetch = async (_target, init) => {
 
 console.log(JSON.stringify({ browser: real ? 'real' : 'synthetic', audit }));
 const runtime = await startRuntime(audit, real ? undefined : {
-  url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-browser', fetch: synthetic, isolatedJob: true,
+  url: syntheticURL, key: syntheticKey, alias: aliases[0], aliases, fetch: synthetic, isolatedJob: true,
 }, profile);
 try {
   const stopping = Promise.withResolvers<void>();
@@ -266,6 +280,125 @@ try {
           const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
           writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
         };
+        await page.ready("!document.querySelector('#recheck-model').disabled && !document.querySelector('#save-limits').disabled");
+        assert.deepEqual([...pinged].sort(), [...aliases].sort());
+        await page.ready(`document.querySelector('#runtime-details').textContent.includes('v2.3.2') &&
+          document.querySelector('#runtime-agent').textContent.includes('Excel 工作表')`);
+        const avatarBytes = readFileSync(asset('marker.png'));
+        const oversized = Buffer.from(avatarBytes);
+        oversized.writeUInt32BE(1025, 16);
+        const apiChecks = await page.evaluate<{ statuses: number[]; visible: string }>(`(async () => {
+          const { csrf } = await fetch('/api/bootstrap').then(response => response.json());
+          const post = (path, data) => fetch(path, { method: 'POST', headers: {
+            'Content-Type': 'application/json', 'X-OEP-CSRF': csrf,
+          }, body: JSON.stringify(data) }).then(response => response.status);
+          const session = '/api/sessions/' + ${JSON.stringify(selected)};
+          const appearance = '/api/settings/appearance';
+          const statuses = [];
+          for (const avatar of [btoa('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), btoa('bad signature'),
+              ${JSON.stringify(oversized.toString('base64'))}, btoa('A'.repeat(91 * 1024)), ${JSON.stringify(avatarBytes.toString('base64'))}]) {
+            statuses.push(await post(appearance, { theme: 'dark', density: 'compact', avatar }));
+          }
+          statuses.push(await post('/api/settings', { name: ${JSON.stringify(syntheticKey)}, introduction: '', instructions: '' }));
+          statuses.push(await post('/api/settings/model', { alias: 'unknown-synthetic-alias' }));
+          statuses.push(await post(session + '/model', { alias: 'unknown-synthetic-alias' }));
+          statuses.push(await post('/api/settings/limits', { recentMessages: -1, historyBytes: 0, toolCalls: 0, timeoutSeconds: 5 }));
+          const responses = await Promise.all(['', '/appearance', '/avatar', '/model', '/limits', '/runtime']
+            .map(suffix => fetch('/api/settings' + suffix).then(response => response.text())));
+          return { statuses, visible: responses.join(' ') + document.documentElement.outerHTML };
+        })()`);
+        assert.deepEqual(apiChecks.statuses, [400, 400, 400, 400, 200, 400, 400, 400, 400]);
+        for (const marker of [syntheticKey, syntheticURL, 'example.invalid']) assert.equal(apiChecks.visible.includes(marker), false);
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('.sidebar-assistant img')?.naturalWidth > 0 && document.querySelector('#messages .assistant-avatar img')?.naturalWidth > 0");
+        await page.evaluate("document.querySelector('#avatar-reset').click(); document.querySelector('#appearance-settings').requestSubmit()");
+        await page.ready("document.querySelector('#appearance-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
+        await page.evaluate("document.querySelector('#recheck-model').click()");
+        await page.ready("document.querySelector('#model-settings-status').textContent === '已重新檢查'");
+        assert.deepEqual(pinged.slice(2).sort(), [...aliases].sort());
+        const traces = ['health.jsonl', 'gateway.jsonl', 'web-turns.jsonl'].map((name) =>
+          readFileSync(join(audit, name), 'utf8')).join(' ');
+        for (const marker of [syntheticKey, syntheticURL, 'example.invalid']) assert.equal(traces.includes(marker), false);
+        await page.evaluate("document.querySelector('#recheck-model').click()");
+        await page.ready("document.querySelector('#model-settings-status').textContent.includes('30 秒')");
+        await page.evaluate(`
+          document.querySelector('#default-alias').value = ${JSON.stringify(gatewayAliases[1])};
+          document.querySelector('#model-settings').requestSubmit();
+          document.querySelector('#session-alias').value = ${JSON.stringify(gatewayAliases[1])};
+          document.querySelector('#session-alias').dispatchEvent(new Event('change'));
+        `);
+        await page.ready("document.querySelector('#session-model-status').textContent === '模型已切換' && document.querySelector('#model-settings-status').textContent === '已儲存'");
+        await page.evaluate(`
+          document.querySelector('#limit-toolCalls').value = '0';
+          document.querySelector('#limit-timeoutSeconds').value = '5';
+          document.querySelector('#limits-settings').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#limits-status').textContent === '已儲存'");
+        await page.command('Page.reload');
+        await page.ready(`document.querySelector('#session-alias').value === ${JSON.stringify(gatewayAliases[1])} &&
+          document.querySelector('#default-alias').value === ${JSON.stringify(gatewayAliases[1])} &&
+          document.querySelector('#limit-toolCalls')?.value === '0' && document.querySelector('#limit-timeoutSeconds')?.value === '5'`);
+        for (const [prompt, status] of [['SYNTHETIC_TOOL_LIMIT', '工具呼叫次數上限'], ['SYNTHETIC_SLOW_TURN', '回合時限']]) {
+          await page.ready("!document.querySelector('#send').disabled");
+          await page.evaluate(`
+            document.querySelector('#prompt').value = ${JSON.stringify(prompt)};
+            document.querySelector('#composer').requestSubmit();
+          `);
+          await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(status)})`);
+        }
+        slowStarted = false;
+        await page.evaluate(`
+          document.querySelector('#limit-toolCalls').value = '24';
+          document.querySelector('#limit-timeoutSeconds').value = '105';
+          document.querySelector('#limits-settings').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#limits-status').textContent === '已儲存'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: ',', code: 'Comma', modifiers: 2, windowsVirtualKeyCode: 188 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ',', code: 'Comma', modifiers: 2, windowsVirtualKeyCode: 188 });
+        await page.ready("document.activeElement.id === 'settings-title'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.ready("document.activeElement.id === 'close-settings'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.ready("document.activeElement.dataset.section === 'assistant'");
+        await page.evaluate(`
+          window.confirm = () => false;
+          document.querySelector('#assistant-name').value = '未儲存的名稱';
+          document.querySelector('[data-section=appearance]').click();
+        `);
+        assert.equal(await page.evaluate("document.querySelector('#settings-appearance').hidden"), true);
+        await page.evaluate("window.confirm = () => true");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.ready("document.activeElement.dataset.section === 'appearance'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', text: ' ', windowsVirtualKeyCode: 32 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+        await page.ready("!document.querySelector('#settings-appearance').hidden");
+        assert.equal(await page.evaluate("document.querySelector('#assistant-name').value"), '合成助理');
+        for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const theme of ['light', 'dark']) {
+            await page.evaluate(`
+              document.querySelector('#appearance-status').textContent = '';
+              document.querySelector('#theme').value = ${JSON.stringify(theme)};
+              document.querySelector('#appearance-settings').requestSubmit();
+            `);
+            await page.ready("document.querySelector('#appearance-status').textContent === '已儲存'");
+            for (const section of ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations']) {
+              await page.evaluate(`(() => {
+                const sectionButton = document.querySelector('[data-section="${section}"]');
+                sectionButton.click();
+                sectionButton.focus();
+                window.scrollTo(0, 0);
+              })()`);
+              assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+              await capture(`settings-${section}-${theme}-${layout}`);
+            }
+          }
+        }
+        await page.evaluate("document.querySelector('#open-chat').click()");
+        await page.command('Emulation.clearDeviceMetricsOverride');
         const captureLayouts = async (running: boolean) => {
           for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
             await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
@@ -324,7 +457,7 @@ try {
         await page.ready("document.querySelector('#progress').textContent === '已停止這次處理' && !document.querySelector('#send').disabled");
         const ledger = new DatabaseSync(join(root, 'web.sqlite'), { readOnly: true });
         try {
-          const row = ledger.prepare("SELECT record FROM runs WHERE state = 'cancelled'").get();
+          const row = ledger.prepare("SELECT record FROM runs WHERE state = 'cancelled' AND json_extract(record, '$.mode') = 'web-workbook'").get();
           assert.ok(row);
           const run = JSON.parse(String(row.record));
           assert.equal(run.mode, 'web-workbook');

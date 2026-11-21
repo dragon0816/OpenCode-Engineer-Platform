@@ -367,10 +367,18 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #limit-fields small { color: var(--muted); }
 #session-alias { max-width: 100%; }
 
-#settings-view { min-height: 440px; align-self: start; padding: 20px; }
+#settings-view { --settings-control-border: #667985; min-height: 440px; align-self: start; padding: 20px; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
 .settings-heading h1 { margin: 0; }
-.settings-content form p[role="status"]:empty { display: none; }
+:root[data-theme="dark"] #settings-view { --settings-control-border: #829eac; }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] #settings-view { --settings-control-border: #829eac; }
+}
+#settings-view :is(button, input:not([type="file"], [type="checkbox"]), textarea, select):enabled {
+  border: 1px solid var(--settings-control-border);
+}
+#settings-view #settings-nav button[aria-current="page"] { border-color: var(--link); background: var(--selected); }
+#limit-fields input { background: var(--surface); color: inherit; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
 #default-alias { max-width: 100%; }
 #limit-fields input { width: min(100%, 12ch); font: inherit; }
@@ -378,3 +386,5 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 @media (max-width: 540px) {
   #settings-view { min-height: 0; padding: 14px; }
 }
+
+.runtime-badge { display: inline-block; padding: 1px 8px; border: 1px solid var(--line); border-radius: 12px; }

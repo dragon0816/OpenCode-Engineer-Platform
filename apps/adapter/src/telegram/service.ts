@@ -86,6 +86,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   timer.unref();
   tick();
   return {
+    configured: () => Boolean(mainApi || biApi),
     status() {
       return {
         main: Boolean(mainApi), bi: Boolean(biApi),

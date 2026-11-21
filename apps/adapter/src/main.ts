@@ -191,6 +191,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { values: store.turnLimits(), fields: turnLimitFields });
       return;
     }
+    if (path === '/api/settings/runtime' && method === 'GET') {
+      const pin = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
+      send(response, 200, { pin: pin.tag, version: runtime.version, compatible: runtime.version === pin.tag.slice(1),
+        commit: pin.commit.slice(0, 12), openapi: pin.openapi.sha256.slice(0, 12),
+        binary: pin.windowsX64.binarySha256.slice(0, 12),
+        client: pin.client.integrity.slice(7, 19), health: 'ready',
+        knowledgeConfigured: Boolean(runtime.knowledge), telegramConfigured: telegram.configured() });
+      return;
+    }
     if (path === '/api/jobs') {
       if (method === 'POST') {
         const input = await body(request);
