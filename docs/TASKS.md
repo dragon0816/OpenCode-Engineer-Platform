@@ -35,7 +35,7 @@
 
 - [ ] S4　跨客戶端／路徑的重複送件計數。
 - [x] S4　已收到連線和開始事件後由客戶端切斷，再重連對帳。上游 overflow 仍待驗。
-- [x] S2　合成供應方核對工具成功／失敗回傳的內容、call ID 與形狀。真 Gateway 路徑仍待驗。
+- [x] S2　合成供應方核對工具成功／失敗回傳的內容、call ID 與形狀。真 Gateway 已驗成功寫檔與 PDF，完整錯誤契約仍待驗。
 - [ ] S4／S2　teardown 跳過清理、`SyntaxError` 轉 502 後 exit 0、遺失原始原因。
 - [ ] S6　Job supervisor 遇 worker `null` 退出碼的失敗處理。
 - [ ] Minor　Git 文件區分兩把設定鎖。
@@ -46,10 +46,12 @@
 
 - [x] 管理監督程序、OpenCode client/session mapping 與權限。原生 Windows 測試通過。
 - [x] 兩個並行 session 隔離、SSE 重連對帳、relay 合成錯誤契約及 evidence stub 通過。
-- [ ] 通過真 Gateway 的啟動健康檢查、工具／媒體與錯誤契約。兩個核准 alias 本輪皆未收到 HTTP 回應。
+- [x] 真 Gateway 的兩個核准 alias 均通過啟動健康檢查，實際完成 OpenCode 工具呼叫及 PDF→XLSX。
+- [ ] 真 Gateway 的獨立圖片附件與完整錯誤契約維持 **UNVERIFIED**。
 - [ ] 在 Windows VM 驗證 OpenCode 及子程序只能透過受限 relay 連核准 Gateway，完成旁路負例。 [出口驗收](IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)
 - [x] 完成 run／receipt／manifest。合成 SOP→XLSX 連續 5/5、13 格逐格相等，9 類故障注入假成功 0。
-- [ ] 真模型 SOP→XLSX 連續 5/5。啟動健康檢查受阻時，Excel 真回合數為 0。
+- [x] 真模型 SOP→XLSX 連續 5/5。GPT 補跑與 Haiku 各有同輪連續 5 筆。合計 23 筆普通跑次，19 筆成功全部各驗 13 格，4 筆逾時相關失敗均留存。 [真模型重測](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
+- [x] 真模式故障注入以 Haiku 完成，1 個控制組通過，7 個負例全部判失敗，假成功 0。 [故障證據](reviews/PHASE1_GATE_REPORT.md#真模式故障驗收--phase1-uw6xyz)
 - [x] 提交 Phase 1 gate 報告及原始紀錄位置。 [Gate 報告](reviews/PHASE1_GATE_REPORT.md)
 - [ ] Claude Code 安排一次獨立複核，Phase 1 gate 仍未通過。
 

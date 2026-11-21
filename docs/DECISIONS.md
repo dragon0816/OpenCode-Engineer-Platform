@@ -102,3 +102,9 @@ Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明
 - 每次 Excel campaign 建獨立 OpenCode profile，且每次 run 新建 workspace 與 session。OpenCode 執行檔案工具，模型寫出 `program.js`。OEP 的 Node 工作程序提供固定 `writeWorkbook` 介面執行產物步驟，並以 SQLite 留存狀態、收據及 SHA-256。此工作程序只用於合成 PoC。
 - 直接使用 D08 核定資料、逐格 JSON 與 13 格精確相等規則。五回合交替餵 Markdown 與 PDF，驗證實際送件、工具寫檔及獨立 openpyxl 核對。合成供應方結果單獨保留。 [D08 核定](validation/d08-oracle.md)
 - 本輪採實體 Windows 11 x64 檢查 launcher、relay 與 agent 層的檔案權限。v2 的目標 VM、網路出口和防火牆旁路驗收維持 **UNVERIFIED**。 [驗收紀錄](reviews/PHASE1_GATE_REPORT.md)
+
+## 2026-11-21　Gateway 恢復後的真模型重測
+
+- 以各 alias 的啟動 nonce 為准入條件。若完整的 HTTP 200 回覆沒有可用內容，保留該次為失敗，啟動檢查最多以新 session 重試一次。一般驗收的空回覆若未產生程式，記為該回合失敗並重算連勝。每次送件仍使用各自 durable ID，不重送同一 ID。
+- 每個通過健康檢查的 alias 交替跑 D08 Markdown 與 PDF，最多九筆，達到實際連續五筆即停止。故障驗收先讓真模型寫程式並保留原檔與雜湊，再於各 run 的工作目錄注入故障。
+- 每次保留 relay 與上游 HTTP 狀態、可見輸出的類型、各請求延遲及 Gateway 有回傳的 token 用量。完整空回覆與未完成的串流有各自的紀錄。測試 Gateway 維持先前核准的 LAN 明文 HTTP，憑證在該段傳輸未加密。 [重測證據](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
