@@ -15,6 +15,7 @@ const fileInput = find('file-input');
 const drop = find('drop');
 const prompt = find('prompt');
 const send = find('send');
+const cancelTurn = find('cancel-turn');
 const workbook = find('workbook');
 const stop = find('stop');
 const messages = find('messages');
@@ -29,12 +30,12 @@ const notice = find('error');
 const labels = { inspector: '資料分析', workbook: 'Excel 工作表' };
 const statuses = {
   accepted: '已接收，等待執行', running: '助理處理中', awaiting_permission: '正在檢查工具權限',
-  background: '正在產生並驗證工作簿', indeterminate: '正在核對未確定的結果', failed: '這次處理未完成', verified: '已完成',
+  background: '正在產生並驗證工作簿', indeterminate: '正在核對未確定的結果', failed: '這次處理未完成', verified: '已完成', cancelled: '已停止這次處理',
 };
 const eventLabels = {
   working: '開始處理', responding: '模型開始回覆', 'tool-started': '準備使用工具', 'tool-running': '工具執行中',
   'tool-completed': '工具完成', 'tool-failed': '工具未完成', recovering: '模型正在重試',
-  permission: '正在檢查工具權限',
+  permission: '正在檢查工具權限', finished: '處理完成', failed: '處理失敗', interrupted: '處理已停止',
 };
 const activeStates = new Set(['accepted', 'running', 'awaiting_permission', 'background', 'indeterminate']);
 const knownSessions = new Map();
@@ -52,7 +53,16 @@ function showError(error) {
   notice.hidden = !error;
 }
 
+function runningID(context) {
+  const latest = context?.state?.runs.at(-1);
+  return context?.pendingID ?? (activeStates.has(latest?.state) && latest.state !== 'indeterminate' ? latest.id : undefined);
+}
+
 function setControls() {
+  const cancellable = !stopped && Boolean(runningID(current));
+  send.hidden = cancellable;
+  cancelTurn.hidden = !cancellable;
+  cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
   send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
@@ -89,6 +99,12 @@ function sessionLabel(session) {
 
 function bindRowMenu(menu, trigger, actions) {
   const close = () => { menu.open = false; trigger.focus(); };
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (menu.open) close();
+    else { menu.open = true; actions[0].focus(); }
+  });
   menu.addEventListener('toggle', () => {
     if (!menu.open) return;
     for (const other of sessions.querySelectorAll('details[open]')) {
@@ -138,8 +154,9 @@ function appendMarkdown(target, text) {
       const count = line.indexOf(' ');
       target.append(node(`h${Math.min(count + 1, 6)}`, line.slice(count + 1)));
     } else if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
-      const pattern = /^\s*\d+\. /.test(line) ? /^\s*\d+\. / : /^\s*[-*+] /;
-      const list = node(pattern.source.includes('\\d') ? 'ol' : 'ul');
+      const ordered = /^\s*\d+\. /.test(line);
+      const pattern = ordered ? /^\s*\d+\. / : /^\s*[-*+] /;
+      const list = node(ordered ? 'ol' : 'ul');
       list.append(node('li', line.replace(pattern, '')));
       while (i < lines.length && pattern.test(lines[i])) list.append(node('li', lines[i++].replace(pattern, '')));
       target.append(list);
@@ -200,9 +217,24 @@ function render(context) {
     const follow = !context.renderedMessages || atBottom();
     const offset = messages.scrollTop;
     const previous = new Map([...messages.querySelectorAll('.tool-card')].map((card) => [card.dataset.tool, card]));
+    const eventCards = new Map([...messages.querySelectorAll('.event-card')].map((card) => [card.dataset.event, card]));
+    const activity = [...(state.activity ?? [])].sort((left, right) => left.createdAt - right.createdAt);
+    let eventIndex = 0;
+    const appendEvents = (through) => {
+      while (eventIndex < activity.length && activity[eventIndex].createdAt <= through) {
+        const event = activity[eventIndex++];
+        const card = eventCards.get(event.id) ?? node('details', '', 'event-card');
+        if (!card.dataset.event) {
+          card.dataset.event = event.id;
+          card.append(node('summary', eventLabels[event.kind]), node('time', new Date(event.createdAt).toLocaleString('zh-Hant')));
+        }
+        fragment.append(card);
+      }
+    };
     const focused = messages.contains(document.activeElement) ? document.activeElement : undefined;
     const fragment = document.createDocumentFragment();
     for (const item of state.messages) {
+      appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
       const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
@@ -213,6 +245,7 @@ function render(context) {
       for (const tool of item.tools ?? []) entry.append(toolCard(tool, previous.get(tool.id)));
       fragment.append(entry);
     }
+    appendEvents(Infinity);
     messages.replaceChildren(fragment);
     if (focused?.isConnected) focused.focus({ preventScroll: true });
     if (!state.messages.length) messages.append(node('p', '上傳附件或直接輸入訊息。', 'empty'));
@@ -221,6 +254,10 @@ function render(context) {
     context.renderedMessages = true;
   }
   const latest = state.runs.at(-1);
+  const row = sessions.querySelector(`[data-session="${id}"]`);
+  const phase = activeStates.has(latest?.state) ? 'running' : latest?.state === 'failed' ? 'failed' : '';
+  context.phase = phase;
+  if (row) row.dataset.phase = phase;
   if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) context.pendingID = undefined;
   progress.textContent = latest ? statuses[latest.state] : '等待訊息';
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
@@ -389,6 +426,7 @@ function renderSessions() {
       link.append(node('span', session.title || labels[session.agent], 'session-name'),
         node('time', relativeTime(session.createdAt)));
       link.dataset.session = session.id;
+      if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
       const summary = node('summary', '⋯');
@@ -622,6 +660,33 @@ find('composer').addEventListener('submit', async (event) => {
     sending = false;
     setControls();
     refresh(context);
+  }
+});
+cancelTurn.addEventListener('click', async () => {
+  const context = current;
+  const id = runningID(context);
+  if (!id || context.cancelling) return;
+  context.cancelling = true;
+  setControls();
+  try {
+    const run = await request(`${context.path}/cancel-turn`, { data: { id } });
+    if (current === context && context.state) {
+      context.state.runs = [...context.state.runs.filter((prior) => prior.id !== id), run];
+      render(context);
+      prompt.focus();
+    }
+  } catch (error) {
+    if (current === context) showError(error);
+  } finally {
+    context.cancelling = false;
+    setControls();
+    refresh(context);
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.shiftKey && event.code === 'KeyS' && !cancelTurn.hidden && !find('chat-view').hidden) {
+    event.preventDefault();
+    cancelTurn.click();
   }
 });
 stop.addEventListener('click', async () => {

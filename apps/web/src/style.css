@@ -256,3 +256,37 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .tool-card summary { padding: 8px 10px; font-size: .875rem; overflow-wrap: anywhere; }
 .tool-details { border-top: 1px solid var(--line); padding: 10px; min-width: 0; }
 .tool-details pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--assistant); }
+
+#new-session { margin: 0; color: var(--link); background: var(--surface); border-color: transparent; }
+.navigation { align-self: stretch; }
+#session-sidebar > #model { margin-block: 6px 12px; }
+.session-list button[data-phase="running"]::before, .session-list button[data-phase="failed"]::before {
+  content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--link);
+}
+.session-list button[data-phase="failed"]::before { background: #c55144; }
+#cancel-turn { background: #852f2b; border-color: #852f2b; color: white; }
+#session-title { overflow-wrap: anywhere; }
+
+#new-session { width: 32px; flex: none; }
+#session-search::placeholder, #prompt::placeholder { color: var(--muted); opacity: 1; }
+#session-sidebar .job span { color: var(--muted); }
+.message ul, .message ol { padding-inline-start: 1.5em; }
+@media (max-width: 540px) {
+  .messages { max-height: 46vh; padding: 12px; }
+  #composer { padding: 10px 14px; }
+  .navigation { padding: 8px 12px; }
+  #toggle-sidebar { margin: 0; }
+}
+
+.event-card { width: fit-content; max-width: 100%; margin-block: 0 8px; color: var(--muted); font-size: .8rem; }
+.event-card summary { padding: 2px 6px; border-radius: 5px; }
+.event-card time { display: block; padding: 2px 6px 4px; }
+
+.navigation { display: flex; flex-direction: column; }
+#session-sidebar:not([hidden]) { flex: 1; min-height: 0; }
+.message li { display: list-item; padding-block: 0; }
+.tool-details pre { font-size: .8rem; line-height: 1.45; }
+@media (min-width: 541px) {
+  #toggle-sidebar[aria-expanded="true"]:not(:focus) { display: none; }
+  .messages { max-height: max(320px, 50vh); }
+}

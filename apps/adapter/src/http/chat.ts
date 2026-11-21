@@ -11,6 +11,7 @@ import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookInput, workbookLimit, workbookName } from '../runs/web-workbook.ts';
+import { until } from '../../../../scripts/phase0/probe-http.ts';
 import { HttpError } from './errors.ts';
 
 export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean };
@@ -18,7 +19,7 @@ const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 
 const separator = (id: string) => `\n\n[OEP attachment and output instructions for ${id}]\n`;
 
 type ToolCard = {
-  id: string; name: string; status: 'running' | 'done' | 'failed'; startedAt: number; finishedAt?: number;
+  id: string; name: string; status: 'running' | 'done' | 'failed' | 'cancelled'; startedAt: number; finishedAt?: number;
   input: string; output: string;
 };
 
@@ -39,7 +40,7 @@ function toolText(value: unknown, redact: (text: string) => string): string {
 }
 
 export function publicRun(run: RunRecord) {
-  return { id: run.id, state: run.state, createdAt: run.createdAt, error: run.errors.at(-1),
+  return { id: run.id, state: run.state, createdAt: run.createdAt, error: run.errors.at(-1), finishedAt: run.finishedAt,
     artifact: run.state === 'verified' && run.artifact
       ? { name: workbookName, bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
@@ -57,6 +58,7 @@ export class ChatService {
   private readonly notify: (sessionID: string) => void;
   private readonly stop = new AbortController();
   private readonly recovering = new Set<string>();
+  private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private queue = Promise.resolve();
 
   constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void) {
@@ -116,9 +118,11 @@ export class ChatService {
         pending ? client.session.active(call()) : undefined,
       ]);
       const runByMessage = new Map(runs.map((run) => [run.submissionID, run.id]));
+      let turn: RunRecord | undefined;
       messages = data.reverse().flatMap((message): NonNullable<typeof messages> => {
         if (message.type === 'user') {
           const runID = runByMessage.get(message.id);
+          turn = runs.find((run) => run.id === runID);
           const text = runID ? message.text.split(separator(runID))[0] : message.text;
           return [{ id: message.id, role: 'user', text: this.runtime.redact(text), createdAt: message.time?.created }];
         }
@@ -127,9 +131,11 @@ export class ChatService {
         const tools = message.content.flatMap((part): ToolCard[] => {
           if (part.type !== 'tool') return [];
           const state = part.state;
-          const status = state.status === 'completed' ? 'done' : state.status === 'error' ? 'failed' : 'running';
+          const unfinished = state.status === 'streaming' || state.status === 'running';
+          const status = state.status === 'completed' ? 'done' : turn?.state === 'cancelled' && (unfinished || !part.time.completed)
+            ? 'cancelled' : unfinished ? 'running' : 'failed';
           return [{ id: part.id, name: toolText(part.name, this.runtime.redact), status,
-            startedAt: part.time.created, finishedAt: part.time.completed,
+            startedAt: part.time.created, finishedAt: part.time.completed ?? (status === 'cancelled' ? turn?.finishedAt : undefined),
             input: toolText(state.input, this.runtime.redact),
             output: toolText('content' in state && state.content ? state.content.flatMap((entry) => entry.type === 'text' ? [entry.text] : []) :
               'error' in state ? state.error : undefined, this.runtime.redact) }];
@@ -170,17 +176,38 @@ export class ChatService {
     this.store.saveTurn(session.id, run, hash);
     this.notify(session.id);
     const preferences = this.store.preferences();
-    this.queue = this.queue.then(() => this.execute(session, run, input, preferences)).catch(() => {
+    this.queue = this.queue.then(async () => {
+      if (this.store.get(run.id).state === 'cancelled') return;
+      const stop = new AbortController();
+      const done = this.execute(session, run, input, preferences, stop.signal);
+      this.executing.set(run.id, { stop, done });
+      try { await done; }
+      finally { this.executing.delete(run.id); }
+    }).catch(() => {
       console.error('OEP failed to record a web turn');
     });
     return publicRun(run);
   }
 
-  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>) {
+  async cancel(session: WebSession, id: string) {
+    const run = this.store.turn(session.id, id)?.run;
+    if (!run) throw new HttpError(404, '找不到回合。');
+    const execution = this.executing.get(id);
+    if (execution && active.has(run.state)) {
+      execution.stop.abort();
+      await execution.done;
+    } else if (run.state === 'accepted') {
+      this.store.change(id, 'cancelled', { finishedAt: Date.now() });
+      this.notify(session.id);
+    }
+    return publicRun(this.store.get(id));
+  }
+
+  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>, cancelled: AbortSignal) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
-    let state: 'verified' | 'failed' | 'indeterminate' = 'failed';
+    let state: 'verified' | 'failed' | 'indeterminate' | 'cancelled' = 'failed';
     let error: string | undefined;
     let sent = false;
     let result: Partial<RunRecord> = {};
@@ -208,14 +235,17 @@ export class ChatService {
       ].filter(Boolean).join('\n') : '';
       const additional = [parts.text, output, assistant].filter(Boolean).join('\n\n');
       const text = additional ? input.text + separator(run.id) + additional : input.text;
+      cancelled.throwIfAborted();
       update('running');
       sent = true;
       this.recovering.add(run.id);
       const admission = await submitOnce(client, { sessionID, id: run.submissionID!, text, files: parts.files });
+      cancelled.throwIfAborted();
       if (admission === 'indeterminate') throw new Error('Uncertain admission');
-      const outcome = await waitForOutcome(client, sessionID, update, 105_000, this.stop.signal, run.submissionID);
+      const outcome = await waitForOutcome(client, sessionID, update, 105_000, AbortSignal.any([this.stop.signal, cancelled]), run.submissionID);
       const count = await submissionCount(client, sessionID, run.submissionID!);
       if (count.inbox !== 0 || count.messages !== 1) throw new Error('Unexpected durable submission count');
+      cancelled.throwIfAborted();
       sent = false;
       const calls = this.runtime.gatewaySince(cursor);
       const replied = async () => {
@@ -230,14 +260,16 @@ export class ChatService {
         else if (calls.length && calls.every((call) => call.output === 'empty')) error = 'The model returned an empty response. Try again';
         else error = 'The model request failed. Try again when the service is available';
       } else {
+        cancelled.throwIfAborted();
         if (input.workbook) {
           update('background');
-          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run);
+          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run, cancelled);
         }
         state = 'verified';
       }
     } catch (reason) {
-      if (sent) {
+      if (cancelled.aborted) state = 'cancelled';
+      else if (sent) {
         state = 'indeterminate';
         error = this.runtime.gatewaySince(cursor).some((call) => call.error === 'timeout')
           ? 'The model gateway timed out. OEP requested cancellation and will check the session'
@@ -251,6 +283,22 @@ export class ChatService {
     if (input.workbook) {
       try { await client.session.update({ sessionID, permissions: [] }, call()); }
       catch { /* Every subsequent workbook-agent turn explicitly replaces its permission set before admission. */ }
+    }
+    if (cancelled.aborted) {
+      state = 'cancelled';
+      error = undefined;
+      result = {};
+      if (sent) {
+        try {
+          await client.session.interrupt({ sessionID }, call());
+          const count = await submissionCount(client, sessionID, run.submissionID!);
+          if (count.inbox) await client.session.inbox.cancel({ sessionID, inboxID: run.submissionID! }, call());
+          await until(async (signal) => (await client.session.active({ signal }))[sessionID] ? undefined : true, 5_000);
+        } catch {
+          state = 'indeterminate';
+          error = '暫時無法確認這次處理是否已停止，正在核對。';
+        }
+      }
     }
     const modelCalls = this.runtime.gatewaySince(cursor);
     try {

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
+import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
@@ -33,9 +35,19 @@ const sheets = [
   { name: '量測', rows: [['Item', 'Limit', 'Enabled'], ['SYN-48B', 12.5, true], ['SYN-61A', 0, false]] },
   { name: 'Notes', rows: [['Code', 'Comment'], ['R1', '合成資料'], ['R2', 'a,b']] },
 ];
+let slowStarted = false;
 const synthetic: typeof fetch = async (_target, init) => {
   const { model, messages } = JSON.parse(String(init?.body)) as WireRequest;
-  const user = JSON.stringify(messages.find((message) => message.role === 'user')?.content);
+  const user = JSON.stringify(messages.findLast((message) => message.role === 'user')?.content);
+  if (user.includes('SYNTHETIC_SLOW_TURN')) {
+    slowStarted = true;
+    await new Promise<void>((resolve) => {
+      const signal = init?.signal;
+      const timeout = setTimeout(resolve, 12_000);
+      signal?.addEventListener('abort', () => { clearTimeout(timeout); resolve(); }, { once: true });
+    });
+    return completion(model, [{ role: 'assistant', content: '合成慢速回覆' }], 'stop');
+  }
   const item = cases.find((item) => user.includes(item.prompt));
   assert.ok(item);
   if (item.agent === 'workbook') {
@@ -43,10 +55,12 @@ const synthetic: typeof fetch = async (_target, init) => {
     const path = user.match(/generated\/[a-f\d-]+\.json/)?.[0];
     assert.ok(path);
     if (!messages.some((message) => message.role === 'tool')) {
-      return completion(model, toolCall(0, 'call_browser_xlsx', 'write', { path, content: JSON.stringify(sheets) }), 'tool_calls');
+      return completion(model, toolCall(0, 'call_browser_xlsx', 'write', { path, content: JSON.stringify(sheets), note: 'token: sample-hidden-value', outside: 'Z:/synthetic/private.txt' }), 'tool_calls');
     }
   } else assert.ok(user.includes(readFileSync(asset(item.name)).toString('base64')));
-  return completion(model, [{ role: 'assistant', content: item.expected }], 'stop');
+  return completion(model, [{ role: 'assistant', content: item.agent === 'workbook'
+    ? '# 合成量測摘要\n- 讀取工作表\n- 建立合成結果\n\n| 項目 | 數值 |\n| --- | --- |\n| SYN-48B | 12.5 |\n\n```text\nSYN-48B\n```\n<script>window.injected=1</script><img src=x onerror=window.injected=1> [測試](javascript:alert(1))'
+    : item.expected }], 'stop');
 };
 
 console.log(JSON.stringify({ browser: real ? 'real' : 'synthetic', audit }));
@@ -133,7 +147,41 @@ try {
         }
       }
       if (!real) {
+        await page.ready("document.querySelector('.tool-card[data-status=done]')");
+        assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
+        await page.evaluate("document.querySelector('.tool-card summary').click()");
+        assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), true);
+        assert.equal(await page.evaluate("/sample-hidden-value|Z:\\/synthetic/.test(document.querySelector('.tool-details').textContent)"), false);
+        assert.equal(await page.evaluate("!!document.querySelector('#messages table') && !!document.querySelector('#messages pre code')"), true);
+        assert.equal(await page.evaluate("!window.injected && !document.querySelector('#messages script, #messages img, #messages a[href^=javascript]')"), true);
+        await page.evaluate("document.querySelector('.tool-card summary').click()");
+        await page.command('Page.reload');
+        await page.ready("document.querySelectorAll('.tool-card').length === 1");
+        await page.command('Network.enable');
+        const network = { latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
+        await page.command('Network.emulateNetworkConditions', { ...network, offline: true });
+        await page.command('Network.emulateNetworkConditions', { ...network, offline: false });
+        await page.ready("document.querySelector('#connection').textContent === '已連線'");
+        assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
+        assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), false);
+        await page.evaluate("document.querySelector('[aria-current=true]').nextElementSibling.querySelector('summary').focus()");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await page.ready("document.activeElement.dataset.action === 'rename'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.ready("document.activeElement.dataset.action === 'remove'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await page.ready("document.activeElement.tagName === 'SUMMARY' && !document.activeElement.parentElement.open");
+        assert.equal(await page.evaluate("document.querySelector('[aria-current=true] time').textContent === '剛剛'"), true);
         const selected = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
+        const longTitle = '合成量測報告與工作表輸出驗證'.repeat(4);
+        await page.evaluate(`window.prompt = () => ${JSON.stringify(longTitle)};
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=rename]').click()`);
+        await page.ready(`document.querySelector('#session-title').textContent === ${JSON.stringify(longTitle)}`);
+        assert.equal(await page.evaluate(`(() => {
+          const title = document.querySelector('[aria-current=true] .session-name');
+          return title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === 'ellipsis';
+        })()`), true);
         await page.evaluate(`
           window.prompt = () => '合成會話';
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=rename]').click();
@@ -145,6 +193,8 @@ try {
           search.dispatchEvent(new Event('input'));
         `);
         assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), 1);
+        await page.evaluate("document.querySelector('#clear-session-search').click()");
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), cases.length);
         await page.evaluate(`
           const theme = document.querySelector('#theme');
           theme.value = 'dark';
@@ -202,24 +252,86 @@ try {
         await page.ready(`document.querySelector('[data-session="' + ${JSON.stringify(selected)} + '"]') !== null`);
         await page.evaluate(`document.querySelector('[data-session="' + ${JSON.stringify(selected)} + '"]').click()`);
         await page.ready("document.querySelector('#session-title').textContent === '合成會話'");
-        for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-          await page.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
-          assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
-          if (layout === 'narrow') {
-            await page.ready("document.querySelector('#session-sidebar').hidden");
-            await page.evaluate("document.querySelector('#toggle-sidebar').click()");
-            assert.equal(await page.evaluate("document.querySelector('#session-sidebar').hidden"), false);
+        await page.ready("document.querySelector('.tool-card')");
+        const capture = async (name: string) => {
+          await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+          writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
+        };
+        const captureLayouts = async (running: boolean) => {
+          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+            assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
+            if (layout === 'narrow') await page.ready("matchMedia('(max-width: 540px)').matches && document.querySelector('#session-sidebar').hidden");
+            for (const theme of ['light', 'dark']) {
+              await page.evaluate(`(() => {
+                const theme = document.querySelector('#theme');
+                theme.value = ${JSON.stringify(theme)};
+                theme.dispatchEvent(new Event('change'));
+              })()`);
+              if (running) {
+                await page.evaluate("document.querySelector('#messages').scrollTop = document.querySelector('#messages').scrollHeight; window.scrollTo(0, 0)");
+                await capture(`running-${theme}-${layout}`);
+              } else {
+                if (layout === 'narrow') {
+                  await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
+                  await page.ready("!document.querySelector('#session-sidebar').hidden");
+                }
+                await capture(`workbench-${theme}-${layout}`);
+                if (layout === 'narrow') {
+                  await page.evaluate("if (!document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
+                  await page.ready("document.querySelector('#session-sidebar').hidden");
+                }
+                await page.evaluate(`(() => {
+                  const pane = document.querySelector('#messages');
+                  const card = document.querySelector('.tool-card');
+                  pane.scrollTop += card.getBoundingClientRect().top - pane.getBoundingClientRect().top - 110;
+                  window.scrollTo(0, 0);
+                })()`);
+                await capture(`conversation-${theme}-${layout}`);
+                await page.evaluate(`(() => {
+                  const pane = document.querySelector('#messages');
+                  const card = document.querySelector('.tool-card');
+                  card.open = true;
+                  pane.scrollTop += card.getBoundingClientRect().top - pane.getBoundingClientRect().top - 5;
+                  window.scrollTo(0, 0);
+                })()`);
+                await capture(`tools-expanded-${theme}-${layout}`);
+                await page.evaluate("document.querySelector('.tool-card').open = false; window.scrollTo(0, 0)");
+              }
+            }
           }
-          for (const theme of ['light', 'dark']) {
-            await page.evaluate(`(() => {
-              const theme = document.querySelector('#theme');
-              theme.value = ${JSON.stringify(theme)};
-              theme.dispatchEvent(new Event('change'));
-            })()`);
-            const screenshot = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
-            writeFileSync(join(audit, `workbench-${theme}-${layout}.png`), Buffer.from(screenshot.data, 'base64'));
-          }
-        }
+        };
+        await captureLayouts(false);
+        await page.evaluate(`(() => {
+          document.querySelector('#prompt').value = 'SYNTHETIC_SLOW_TURN';
+          document.querySelector('#workbook').checked = true;
+          document.querySelector('#composer').requestSubmit();
+        })()`);
+        await until(async () => slowStarted || undefined, 8_000);
+        await page.ready("!document.querySelector('#cancel-turn').hidden && document.querySelector('#send').hidden");
+        await captureLayouts(true);
+        await page.evaluate("document.querySelector('#cancel-turn').click(); document.querySelector('#cancel-turn').click()");
+        await page.ready("document.querySelector('#progress').textContent === '已停止這次處理' && !document.querySelector('#send').disabled");
+        const ledger = new DatabaseSync(join(root, 'web.sqlite'), { readOnly: true });
+        try {
+          const row = ledger.prepare("SELECT record FROM runs WHERE state = 'cancelled'").get();
+          assert.ok(row);
+          const run = JSON.parse(String(row.record));
+          assert.equal(run.mode, 'web-workbook');
+          assert.equal(run.artifact, undefined);
+          assert.equal((await runtime.client.session.get({ sessionID: run.sessionID }, call())).outcome, 'interrupted');
+          const response = await page.evaluate(`(async () => {
+            const root = '/api/sessions/' + ${JSON.stringify(selected)};
+            const { csrf } = await fetch('/api/bootstrap').then(r => r.json());
+            const cancel = await fetch(root + '/cancel-turn', { method: 'POST', headers: { 'Content-Type': 'application/json',
+              'X-OEP-CSRF': csrf }, body: JSON.stringify({ id: ${JSON.stringify(run.id)} }) }).then(r => r.json());
+            const download = await fetch(root + '/artifacts/' + ${JSON.stringify(run.id)});
+            return [cancel.state, download.status];
+          })()`);
+          assert.deepEqual(response, ['cancelled', 404]);
+        } finally { ledger.close(); }
+        await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
           window.confirm = () => true;
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();

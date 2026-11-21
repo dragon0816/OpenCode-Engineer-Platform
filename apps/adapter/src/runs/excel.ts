@@ -26,6 +26,7 @@ export function newRun(ledger: Ledger, root: string, mode: string, alias?: strin
 
 export function failRun(ledger: Ledger, id: string, reason: string) {
   const previous = ledger.get(id);
+  if (previous.state === 'cancelled') return previous;
   return ledger.change(id, 'failed', { errors: [...previous.errors, reason], finishedAt: Date.now() });
 }
 
@@ -35,6 +36,7 @@ export function rawRecord(root: string, run: RunRecord) {
 
 export async function finishWorkbook(ledger: Ledger, id: string, redact = (value: string) => value) {
   const run = ledger.get(id);
+  if (run.state === 'cancelled') return run;
   let program: ReturnType<typeof localFile>;
   try { program = localFile(run.workspace, 'program.js', 16 * 1024); }
   catch { return failRun(ledger, id, 'Generated program missing or invalid'); }
@@ -44,6 +46,8 @@ export async function finishWorkbook(ledger: Ledger, id: string, redact = (value
 }
 
 export function verifyWorkbookReceipt(ledger: Ledger, id: string, receipt: NonNullable<RunRecord['receipt']>) {
+  const run = ledger.get(id);
+  if (run.state === 'cancelled') return run;
   const ready = ledger.change(id, 'running', { receipt });
   let artifact: ReturnType<typeof localFile> | undefined;
   try { artifact = localFile(ready.workspace, 'output.xlsx', 256 * 1024); }

@@ -49,9 +49,10 @@
 
 | 來源與操作 | OEP 決策 | 位置 | 階段 | 驗收 |
 |---|---|---|---|---|
-| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。會話模型切換仍開放。[Chromium 驗收](../tests/e2e/web-browser.test.ts) |
+| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。緊湊會話列、鍵盤選單、搜尋與清除已驗收。會話模型切換仍開放。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
 | W 私有、public 會話及 backend 驗證 | Replace（本機 OpenCode；D04 單使用者） | 左欄、設定／Runtime | 2b | 新會話走本機授權，拒絕未認證及非 loopback 請求。 |
-| W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 合成多回合串流可看開始與結束，重連事件不重複。 |
+| W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 安全 Markdown、活動摘要與工具卡展收已驗。逐 token 顯示與 SSE 遺漏事件補齊仍開放。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
+| 停止對話回合 | Adapt to OpenCode | 輸入框 | 2b | 合成慢速 Excel 回合已驗停止、帳本、重複停止及產物拒絕。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
 | W 回覆指定輪次、複製、原因、評分、區段／摘要筆記 | Adapt to OpenCode | 訊息操作、筆記面板 | 2b | 在第二輪引用第一輪，保存評分與筆記並核對原輪定位。 |
 | W 附件、移除、下載、原文／表格／影像／HTML 預覽、Atlas embed | Adapt to OpenCode | 輸入框、檔案／產物面板 | 2／2b | 上傳逐格式預覽，驗下載 hash。HTML 隔離且外部 embed 需使用者明確開啟。 |
 | W Slash palette、直接指令及 action card 決定 | Adapt to OpenCode | 輸入框、對話卡 | 2b | 用鍵盤搜尋並執行允許指令，接受／拒絕卡片各一條。 |

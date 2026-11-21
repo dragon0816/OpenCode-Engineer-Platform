@@ -71,7 +71,7 @@ export async function chromium(profile: string) {
       return result.value;
     }
     return { command, evaluate, close,
-      ready: (expression: string, timeout = 12_000) => until(async () => await evaluate<boolean>(expression) || undefined, timeout),
+      ready: (expression: string, timeout = 12_000) => until(async () => await evaluate<boolean>(expression) || undefined, timeout).catch((cause) => { throw new Error('Browser condition timed out: ' + expression, { cause }); }),
     };
   } catch (error) {
     await close();

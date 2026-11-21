@@ -4,11 +4,12 @@ import { atRepo } from '../../../launcher/src/paths.ts';
 import type { RunRecord, RunState } from '../../../../packages/contracts/src/run.ts';
 
 const transitions: Record<RunState, RunState[]> = {
-  accepted: ['running', 'failed', 'indeterminate'],
-  running: ['running', 'awaiting_permission', 'background', 'failed', 'indeterminate', 'verified'],
-  awaiting_permission: ['running', 'failed', 'indeterminate'],
-  background: ['running', 'failed', 'indeterminate', 'verified'],
+  accepted: ['running', 'failed', 'cancelled', 'indeterminate'],
+  running: ['running', 'awaiting_permission', 'background', 'failed', 'cancelled', 'indeterminate', 'verified'],
+  awaiting_permission: ['running', 'failed', 'cancelled', 'indeterminate'],
+  background: ['running', 'failed', 'cancelled', 'indeterminate', 'verified'],
   indeterminate: ['running', 'failed'],
+  cancelled: [],
   failed: [],
   verified: [],
 };
