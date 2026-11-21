@@ -436,3 +436,37 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #remove-session-card::backdrop { background: rgb(0 0 0 / .4); }
 #session-notes { padding-inline-start: 0; list-style: none; }
 #session-notes li + li { margin-block-start: .75rem; }
+.knowledge-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 16px; }
+.knowledge-tabs [aria-selected="true"] { border-color: var(--blue); font-weight: 700; }
+#vault { max-width: 100%; }
+.knowledge-filters, .knowledge-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-block: 10px; }
+.knowledge-filters label { display: grid; gap: 4px; margin: 0; min-width: 0; }
+.knowledge-filters button { align-self: end; }
+.knowledge-filters select, .knowledge-filters input { min-width: 0; max-width: 100%; }
+#knowledge-cards { overflow-x: auto; }
+#knowledge-cards table { width: 100%; border-collapse: collapse; }
+#knowledge-cards th, #knowledge-cards td { text-align: start; border-bottom: 1px solid var(--line); padding: 6px; }
+#knowledge-cards td { overflow-wrap: anywhere; }
+#knowledge-cards th button { white-space: nowrap; }
+#knowledge-matches article { padding-block: 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+#knowledge-drawer {
+  position: fixed; inset: 0 0 0 auto; margin: 0; box-sizing: border-box;
+  height: 100%; max-height: 100%; width: min(540px, 100%); max-width: 100%;
+  border: 1px solid var(--line); color: inherit; background: var(--surface);
+  padding: 0 16px 16px; overflow-wrap: anywhere;
+}
+#knowledge-drawer::backdrop { background: rgb(0 0 0 / .45); }
+.knowledge-drawer-header {
+  position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px;
+}
+.knowledge-drawer-header h2 { margin-block: 12px; }
+#knowledge-drawer dd { margin-inline-start: 12px; }
+#knowledge-drawer blockquote { white-space: pre-wrap; margin-inline: 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--line); }
+#knowledge-cards { max-height: 360px; }
+.knowledge-results { overflow: auto; margin-block: 10px; }
+.knowledge-results td, .knowledge-results th { text-align: start; padding: 6px; border-bottom: 1px solid var(--line); }
+#quality-questions { max-height: 330px; overflow: auto; }
+#quality-questions li { margin-block: 6px; }
+#quality-editor { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+#knowledge-demo-status { min-width: 0; }

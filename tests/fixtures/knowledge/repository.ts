@@ -31,7 +31,7 @@ function smallSnapshot(): Snapshot {
   };
 }
 
-function mirrorDatabase(path: string, snapshot: Snapshot, tag: string) {
+function mirrorDatabase(path: string, snapshot: Snapshot, tag: string, version: number) {
   const db = new DatabaseSync(path);
   try {
     db.exec(`
@@ -73,11 +73,14 @@ function mirrorDatabase(path: string, snapshot: Snapshot, tag: string) {
     }
     insertEvidence.run(snapshot.passages.length + 1, first.id, 'field-x', 'source-b', 'Source B', '{}', '',
       'quote', 'reference-blank', 'context_only');
+    db.exec(`PRAGMA user_version=${version}`);
+    if (version === 8) db.exec('DROP TABLE history; DROP TABLE relation_evidence; ALTER TABLE fields DROP COLUMN ref;');
+    if (version === 9) db.exec('ALTER TABLE fields DROP COLUMN at; ALTER TABLE evidence DROP COLUMN stance;');
     return evidenceIds;
   } finally { db.close(); }
 }
 
-export function syntheticRepository(root: string, options: { snapshot?: Snapshot; republish?: boolean; metadata?: boolean } = {}) {
+export function syntheticRepository(root: string, options: { snapshot?: Snapshot; republish?: boolean; metadata?: boolean; version?: 8 | 9 } = {}) {
   const snapshot = options.snapshot ?? smallSnapshot();
   const repo = snapshot.vault.id;
   const commits = new Map<string, string>();
@@ -108,7 +111,7 @@ export function syntheticRepository(root: string, options: { snapshot?: Snapshot
     commits.set(tag, commit);
     json(`commits/${author}/${seq}.json`, { ...record, id: commit });
     json(`tags/${tag}.json`, { format: 'aep.knowledge.tag/v1', name: tag, commit, by: author, at });
-    evidenceIds = mirrorDatabase(join(root, artifact(tag)), snapshot, tag);
+    evidenceIds = mirrorDatabase(join(root, artifact(tag)), snapshot, tag, options.version ?? 14);
   }
   const publish = (tag: string, clock: number, seq: number, extras: Record<string, unknown> = {}, by = author) => {
     const path = artifact(tag);

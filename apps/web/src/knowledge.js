@@ -1,3 +1,5 @@
+import { bindKnowledgeQuality } from './knowledge-quality.js';
+import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
 
@@ -21,7 +23,28 @@ const messages = {
 };
 
 export function bindKnowledge() {
-  bindReview(document.getElementById('knowledge-answer'), () => refreshVaults());
+  const browser = bindKnowledgeBrowser(() => refreshVaults());
+  const quality = bindKnowledgeQuality(browser.openPassage, messages);
+  bindReview(find('knowledge-repository'), () => refreshVaults());
+  const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
+  function selectTab(tab, focus = false) {
+    for (const item of tabs) {
+      const selected = item === tab;
+      item.setAttribute('aria-selected', String(selected));
+      item.tabIndex = selected ? 0 : -1;
+      find(item.getAttribute('aria-controls')).hidden = !selected;
+    }
+    if (focus) tab.focus();
+  }
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', (event) => {
+      const target = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: tabs.length - 1 }[event.key];
+      if (target === undefined) return;
+      event.preventDefault();
+      selectTab(tabs[(target + tabs.length) % tabs.length], true);
+    });
+  });
   const open = find('open-knowledge');
   const chat = find('open-chat');
   const vault = find('vault');
@@ -40,6 +63,20 @@ export function bindKnowledge() {
   let loading;
   let pending;
   let importing;
+  const demoLoad = find('knowledge-demo-load');
+  const demoRemove = find('knowledge-demo-remove');
+  async function demo(load) {
+    demoLoad.disabled = demoRemove.disabled = true;
+    const feedback = find('knowledge-demo-status');
+    try {
+      const { vault: id } = await request('/api/knowledge/demo', { data: { load, allowModel: find('demo-model-consent').checked } });
+      await refreshVaults(load ? id : vault.value);
+      feedback.textContent = load ? '已載入合成示範庫。' : '已移除合成示範庫。';
+    } catch (error) { feedback.textContent = error.message; }
+    finally { demoLoad.disabled = demoRemove.disabled = false; }
+  }
+  demoLoad.addEventListener('click', () => void demo(true));
+  demoRemove.addEventListener('click', () => void demo(false));
 
   function controls() {
     const selected = models.get(vault.value);
@@ -52,6 +89,9 @@ export function bindKnowledge() {
     answer.replaceChildren();
     const selected = models.get(vault.value);
     details.replaceChildren();
+    find('knowledge-overview-empty').hidden = Boolean(selected);
+    browser.select(selected?.id);
+    quality.select(selected);
     if (!selected) {
       status.textContent = '目前沒有已發布的快照。';
       controls();
@@ -61,6 +101,7 @@ export function bindKnowledge() {
       ['識別碼', selected.id], ...(selected.tag ? [['發布標籤', selected.tag]] : []),
       ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
+      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
     status.textContent = !selected.ready ? '索引目前無法查詢。' :
@@ -89,6 +130,8 @@ export function bindKnowledge() {
     loading?.abort();
     const active = loading = new AbortController();
     models.clear();
+    browser.select(undefined);
+    quality.select(undefined);
     vault.replaceChildren(new Option('載入中', ''));
     status.textContent = '正在讀取已發布版本。';
     details.replaceChildren();
@@ -98,8 +141,11 @@ export function bindKnowledge() {
       const { vaults } = await request('/api/knowledge/vaults', { signal: active.signal });
       if (active.signal.aborted) return;
       models = new Map(vaults.map((item) => [item.id, item]));
+      const hasDemo = models.has('oep-synthetic-demo');
+      demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
+      demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
-        new Option(`${item.title} · ${item.kind === 'bi' ? 'BI' : 'Wiki'}`, item.id)));
+        new Option(`${item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
       if (models.has(previous)) vault.value = previous;
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
@@ -170,11 +216,17 @@ export function bindKnowledge() {
       const box = label('article', '');
       box.className = 'message';
       box.append(label('h2', '答案'), label('p', result.answer));
-      answer.append(box, label('small', `發布版本 ${result.revision}`));
+      const selected = models.get(vault.value);
+      answer.append(box, label('small', [selected?.title, selected?.tag, `發布版本 ${result.revision}`].filter(Boolean).join(' · ')));
       for (const citation of result.citations) {
         const reference = label('details', '');
-        reference.append(label('summary', `${citation.source} · ${citation.locator}`),
-          label('blockquote', citation.context), label('small', `來源版本 ${citation.sourceVersion} · SHA-256 ${citation.sha256}`));
+        const trigger = label('summary', `${citation.source} · ${citation.locator}`);
+        trigger.setAttribute('aria-haspopup', 'dialog');
+        trigger.addEventListener('click', (event) => {
+          event.preventDefault();
+          browser.openPassage({ ...citation, text: citation.context }, citation.quote);
+        });
+        reference.append(trigger);
         answer.append(reference);
       }
     } catch {
@@ -199,6 +251,7 @@ export function bindKnowledge() {
       }
       vault.value = id;
       describe();
+      selectTab(find('knowledge-tab-ask'));
       question.value = text;
       if (!ask.disabled) find('knowledge-form').requestSubmit(ask);
     },

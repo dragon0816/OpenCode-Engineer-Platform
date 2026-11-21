@@ -309,6 +309,7 @@ function render(context) {
 
 function renderPanel(context) {
   const { state, selected, path } = context;
+  find('panel-tools').hidden = !state.session.tools?.includes('oep_knowledge_ask');
   const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
   if (context.fileKey === fileKey) return;
   context.fileKey = fileKey;
@@ -1185,6 +1186,35 @@ window.addEventListener('beforeunload', (event) => {
   event.returnValue = true;
 });
 
+const knowledgeSettings = find('knowledge-settings');
+const atlasInput = find('atlas-url');
+const atlasButton = find('open-atlas');
+const knowledgeSettingsStatus = find('knowledge-settings-status');
+let savedAtlas = '';
+function applyKnowledgeSettings({ atlasUrl, toolbox }) {
+  atlasInput.value = savedAtlas = atlasUrl;
+  find('knowledge-toolbox').checked = toolbox;
+  atlasButton.disabled = !savedAtlas;
+}
+async function loadKnowledgeSettings() {
+  try { applyKnowledgeSettings(await request('/api/settings/knowledge')); }
+  catch { knowledgeSettingsStatus.textContent = '無法讀取知識庫設定。'; }
+}
+knowledgeSettings.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    applyKnowledgeSettings(await request('/api/settings/knowledge', {
+      data: { atlasUrl: atlasInput.value, toolbox: find('knowledge-toolbox').checked },
+    }));
+    knowledgeSettingsStatus.textContent = '已儲存。';
+  } catch (error) { knowledgeSettingsStatus.textContent = error.message; }
+});
+atlasButton.addEventListener('click', () => {
+  if (savedAtlas && window.confirm('即將離開此頁並在新分頁開啟 Atlas。要繼續嗎？')) {
+    window.open(savedAtlas, '_blank', 'noopener,noreferrer');
+  }
+});
+
 const settingsView = find('settings-view');
 const settingsEntry = find('open-settings');
 const settingsSections = [...find('settings-nav').querySelectorAll('button')];
@@ -1193,6 +1223,7 @@ function showSettings() {
   for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
+  void loadKnowledgeSettings();
   settingsEntry.setAttribute('aria-current', 'page');
   if (narrowNavigation.matches) setSidebar(false);
   find('settings-title').focus();

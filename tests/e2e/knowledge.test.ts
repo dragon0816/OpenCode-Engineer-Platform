@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -11,6 +11,8 @@ import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
+import { canonical } from '../../packages/knowledge/src/snapshot.ts';
+import { largeKnowledgeFixture } from '../fixtures/knowledge/large.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
 import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
@@ -33,6 +35,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   let knowledgeCalls = 0;
   let rejectedCalls = 0;
   let toolResults = 0;
+  let benchmarkStarted = false;
   const synthetic: typeof fetch = async (_target, init) => {
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     if (!stream) {
@@ -42,6 +45,15 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.ok(passage);
         return Response.json({ choices: [{ message: { content: JSON.stringify({
           state: 'answer', citations: [{ passageID: passage.id, quote: '7.2 mm' }],
+        }) } }] });
+      }
+      if (user.question.startsWith('Benchmark')) {
+        if (user.question.includes('cancel')) {
+          benchmarkStarted = true;
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+        return Response.json({ choices: [{ message: { content: JSON.stringify({
+          state: 'answer', citations: [{ passageID: citationId, quote: '±0.8 dB' }],
         }) } }] });
       }
       assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), [citationId]);
@@ -128,57 +140,173 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'knowledge-title');
-        await browser.evaluate(`
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-build').click();
           document.querySelector('#knowledge-repository').open = true;
           document.querySelector('#knowledge-folder').value = ${JSON.stringify(repository)};
           document.querySelector('#knowledge-check-folder').click();
-        `);
+        }`);
         await ready("document.querySelector('#knowledge-repository-status').textContent.includes('已解析發布標籤')");
-        await browser.evaluate(`
+        await browser.evaluate(`{
           document.querySelector('#knowledge-model-consent').checked = true;
           document.querySelector('#knowledge-import-folder').click();
-        `);
+        }`);
         await ready("!document.querySelector('#knowledge-ask')?.disabled");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-repository-status').textContent"), /tag-a/);
         assert.match(await browser.evaluate<string>("document.querySelector('#vault-details').textContent"), /tag-a@/);
         assert.equal((await (await api.get('/api/knowledge/vaults')).json()).vaults[0]?.id, vault);
         context.diagnostic('Chromium checked and imported the repository, and the authenticated API exposed its active generation');
-        await browser.evaluate(`
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-ask').click();
           document.querySelector('#knowledge-question').value = ${JSON.stringify(question)};
           document.querySelector('#knowledge-ask').click();
-        `);
+        }`);
         await ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
-        await browser.evaluate(`
+        await browser.evaluate("document.querySelector('#knowledge-answer summary').click()");
+        await ready("document.querySelector('#knowledge-drawer').open && document.querySelector('#knowledge-drawer-body').textContent.includes('±0.8 dB')");
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await ready("!document.querySelector('#knowledge-drawer').open");
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-overview').click();
+          document.querySelector('#knowledge-fts input').value = 'SYN-48B';
+          document.querySelector('#knowledge-fts').requestSubmit();
+        }`);
+        await ready("document.querySelector('#knowledge-matches mark')?.textContent.includes('SYN')");
+        await ready("!document.querySelector('#knowledge-next').disabled");
+        await browser.evaluate("document.querySelector('#knowledge-next').click()");
+        await ready("document.querySelector('#knowledge-browser-status').textContent.includes('26')");
+        await browser.evaluate("document.querySelector('#knowledge-cards [data-sort=title]').click()");
+        await ready("document.querySelector('#knowledge-cards th[aria-sort=descending]')");
+        await browser.evaluate("document.querySelector('#knowledge-matches button').click()");
+        await ready("document.querySelector('#knowledge-drawer').open");
+        await browser.evaluate("document.querySelector('#knowledge-drawer-body button').click()");
+        await ready("document.querySelector('#knowledge-drawer-body blockquote')?.textContent.includes('±0.8 dB')");
+        if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
+          for (const theme of ['light', 'dark']) {
+            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
+              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+              await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'`);
+              for (const screen of ['drawer', 'overview', 'ask', 'quality', 'build']) {
+                await browser.evaluate(`{
+                  document.querySelector('#knowledge-drawer').close();
+                  document.querySelector('#knowledge-tab-${screen === 'drawer' ? 'overview' : screen}').click();
+                  document.querySelector('#knowledge-folder').value = 'C:/OEP/合成儲存庫';
+                  document.querySelector('#knowledge-title').scrollIntoView({ block: 'start' });
+                  window.scrollTo(0, 0);
+                  if ('${screen}' === 'drawer') document.querySelector('#knowledge-cards tbody button').click();
+                }`);
+                if (screen === 'drawer') await ready("document.querySelector('#knowledge-drawer-body h3')");
+                const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+                writeFileSync(join('docs', 'validation', 'gui', `slice3a-${screen}-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));
+              }
+            }
+          }
+          await browser.command('Emulation.clearDeviceMetricsOverride');
+        }
+        await browser.evaluate("document.querySelector('#knowledge-drawer').close(); document.querySelector('#knowledge-tab-ask').click()");
+        await browser.evaluate(`{
           document.querySelector('#knowledge-question').value = 'SYN-48B synthetic rejected question';
           document.querySelector('#knowledge-ask').click();
-        `);
+        }`);
         await ready("document.querySelector('#knowledge-status').textContent.includes('模型服務拒絕處理這個問題')");
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-status').textContent"),
           '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。');
         assert.equal(rejectedCalls, 1);
         await browser.evaluate("document.querySelector('#open-chat').click(); document.querySelector('#new-session').click()");
         await ready("!document.querySelector('#prompt').disabled");
-        await browser.evaluate(`
+        await browser.evaluate(`{
           document.querySelector('#prompt').value = ${JSON.stringify('/ask ' + vault + ' ' + question)};
           document.querySelector('#composer').requestSubmit();
-        `);
+        }`);
         await ready("document.querySelector('#knowledge-status').textContent.includes('引用已通過驗證')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
-        await browser.evaluate(`
+        await ready("document.querySelector('#vault').value === 'synthetic-bench' && !document.querySelector('#quality-actions').hidden && !document.querySelector('#vault').disabled");
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-quality').click();
+          const form = document.querySelector('#quality-add-set');
+          form.elements.name.value = '合成品質檢查';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-sets').value === '合成品質檢查'");
+        await browser.evaluate(`{
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration';
+          form.elements.answer.value = '±0.8 dB';
+          form.elements.passages.value = 'SYN-48B';
+          document.querySelector('#quality-find').click();
+        }`);
+        await ready("document.querySelector('#quality-matches button')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-matches button').click();
+          document.querySelector('#quality-editor').requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('Benchmark')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-question-list').open = true;
+          document.querySelector('#quality-questions button').click();
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration revised';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('revised')");
+        await browser.evaluate(`{
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'SYN-404 absent';
+          form.elements.kind.value = 'no-evidence';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelectorAll('#quality-questions li').length === 2");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('D03 通過')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-export').click();
+          const json = document.querySelector('#quality-json');
+          const questions = JSON.parse(json.value);
+          questions[0].answer = '合成錯誤答案';
+          json.value = JSON.stringify(questions);
+          document.querySelector('#quality-import').click();
+        }`);
+        await until(async () => {
+          const data = await (await api.post('/api/knowledge/benchmarks', { vault })).json();
+          return data.sets.some((entry: { questions: { answer: string }[] }) =>
+            entry.questions.some(({ answer }) => answer === '合成錯誤答案')) || undefined;
+        }, 5000);
+        await ready("!document.querySelector('#quality-actions').hidden && !document.querySelector('#quality-actions').inert && !document.querySelector('#quality-run').disabled");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('D03 未通過')");
+        await browser.evaluate("document.querySelector('#quality-results details').open = true");
+        assert.match(await browser.evaluate<string>("document.querySelector('#quality-results details').textContent"), /答案或引用與預期不符/);
+        await browser.evaluate("document.querySelector('#quality-results details button').click()");
+        await ready("document.querySelector('#knowledge-drawer').open && document.querySelector('#knowledge-drawer-body blockquote')?.textContent.includes('±0.8 dB')");
+        await browser.evaluate("document.querySelector('#knowledge-drawer').close()");
+        await browser.evaluate(`{
+          document.querySelector('#quality-questions button').click();
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration cancel';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('cancel')");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await until(() => Promise.resolve(benchmarkStarted || undefined), 5000);
+        await browser.evaluate("document.querySelector('#quality-stop').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('已取消')");
+
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-build').click();
           const reviewPanel = document.querySelector('#wiki-review');
           reviewPanel.open = true;
           const [reviewVault, reviewVersion] = reviewPanel.querySelectorAll('input');
           reviewVault.value = 'synthetic-wiki';
           reviewVersion.value = '1';
           [...reviewPanel.querySelectorAll('button')].find(button => button.textContent === '安裝 Schema 並建立草稿範本').click();
-        `);
+        }`);
         await ready("document.querySelector('#wiki-review details textarea').value.includes('synthetic-wiki')");
         const clickReview = (label: string) => browser.evaluate(
           `[...document.querySelectorAll('#wiki-review button')].find(element => element.textContent === ${JSON.stringify(label)}).click()`);
-        await browser.evaluate(`
+        await browser.evaluate(`{
           document.querySelector('#wiki-review textarea').value = 'Synthetic Wiki source.';
-        `);
+        }`);
         await clickReview('載入來源至草稿');
         await ready("document.querySelector('#wiki-review textarea[readonly]').value.includes('Synthetic Wiki')");
         await clickReview('送交審核');
@@ -196,7 +324,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           .some(({ id }: { id: string }) => id === 'synthetic-wiki'), 5000);
         const bi = (label: string) => browser.evaluate(
           `[...document.querySelectorAll('#ingest-review button')].find(element => element.textContent === ${JSON.stringify(label)}).click()`);
-        await browser.evaluate(`
+        await browser.evaluate(`{
           const panel = document.querySelector('#ingest-review');
           panel.open = true;
           const [vaultInput, version, fields] = panel.querySelectorAll('input');
@@ -204,19 +332,19 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           version.value = '1';
           fields.value = 'setting';
           panel.querySelector('textarea').value = 'Synthetic SYN-NEW calibration is 7.2 mm.';
-        `);
+        }`);
         await bi('安裝 Schema 並建立草稿範本');
         await ready("[...document.querySelectorAll('#ingest-review button')].some(button => button.textContent === '新增卡片')");
         await bi('載入來源至草稿');
         await bi('新增卡片');
-        await browser.evaluate(`
+        await browser.evaluate(`{
           const card = [...document.querySelectorAll('#ingest-review fieldset')].at(-1);
           const [title, setting] = card.querySelectorAll('input');
           title.value = 'Synthetic new calibration';
           setting.value = '7.2 mm';
           document.querySelector('#ingest-review textarea[readonly]').select();
           card.querySelector('button').click();
-        `);
+        }`);
         await bi('送交審核');
         await ready("document.querySelector('#ingest-review').textContent.includes('待審核')");
         await bi('比較版本與證據');
@@ -232,6 +360,126 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await bi('回復前一版本');
         await until(async () => (await (await api.get('/api/knowledge/vaults')).json()).vaults
           .some(({ id, tag }: { id: string; tag?: string }) => id === vault && tag === 'tag-a'), 5000);
+        const large = largeKnowledgeFixture();
+        runtime.knowledge!.reviewStore.import(large, Buffer.from(canonical(large)));
+        for (const [operation, input] of [
+          ['list', { offset: 1475 }],
+          ['filter', { sample: 'sample', type: 'odd', domain: 'Lab' }],
+          ['FTS', { query: 'calibration' }],
+        ] as const) {
+          const times = [];
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const started = performance.now();
+            const response = await api.post('/api/knowledge/browse', { vault: large.vault.id, ...input });
+            const data = await response.json();
+            times.push(performance.now() - started);
+            assert.equal(response.status, 200);
+            if (operation === 'FTS') assert.equal(data.passages.length, 25);
+            else {
+              assert.equal(data.cards.length, 25);
+              assert.equal(data.total, operation === 'list' ? 1500 : 750);
+            }
+          }
+          const slowest = Math.max(...times);
+          context.diagnostic(`1500-card HTTP ${operation} max ${slowest.toFixed(2)} ms`);
+          assert.ok(slowest < 200, operation + ' HTTP time exceeded 200 ms');
+        }
+        for (const version of [8, 9] as const) {
+          const { snapshot: variant } = goldFixture();
+          variant.vault = { ...variant.vault, id: 'synthetic-v' + version, title: '合成 SQLite ' + version };
+          for (const card of variant.cards) card.fields = { field: '合成欄位' };
+          const folder = join(root, 'variant-' + version);
+          syntheticRepository(folder, { snapshot: variant, version });
+          assert.equal((await api.post('/api/knowledge/import', { folder })).status, 200);
+        }
+        await browser.evaluate("document.querySelector('#open-chat').click(); document.querySelector('#open-knowledge').click()");
+        await ready("document.querySelector('#vault option[value=synthetic-large]')");
+        await browser.evaluate(`{
+          const vault = document.querySelector('#vault');
+          vault.value = 'synthetic-large';
+          vault.dispatchEvent(new Event('change'));
+          document.querySelector('#knowledge-tab-overview').click();
+          document.querySelector('#knowledge-tab-overview').focus();
+        }`);
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+        assert.equal(await browser.evaluate("document.activeElement.id"), 'knowledge-tab-ask');
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+        await ready("document.querySelector('#knowledge-browser-status').textContent.includes('1500')");
+        await browser.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 900, deviceScaleFactor: 1, mobile: false });
+        assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
+        await browser.command('Emulation.clearDeviceMetricsOverride');
+        await browser.evaluate("document.querySelector('#knowledge-cards tbody button').click()");
+        await ready("document.querySelector('#knowledge-drawer-body blockquote')?.textContent.includes('passage 0')");
+        await browser.evaluate("document.querySelector('#knowledge-drawer-body button').click()");
+        await ready("document.querySelector('#knowledge-drawer-title').textContent === 'Sample 1'");
+        await browser.evaluate("document.querySelector('#knowledge-drawer').close()");
+        await browser.evaluate(`{
+          const form = document.querySelector('#knowledge-filters');
+          form.elements.type.value = 'odd';
+          form.elements.sample.value = 'sample';
+          form.elements.domain.value = 'Lab';
+          form.elements.text.value = 'Sample';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#knowledge-browser-status').textContent.includes('750')");
+        await browser.evaluate("document.querySelector('#knowledge-cards [data-sort=title]').click()");
+        await ready("document.querySelector('#knowledge-cards tbody button')?.textContent === 'Sample 1499'");
+        await browser.evaluate("document.querySelector('#knowledge-next').click()");
+        await ready("document.querySelector('#knowledge-browser-status').textContent.includes('26–50')");
+        for (const version of [8, 9]) {
+          await browser.evaluate(`{
+            const vault = document.querySelector('#vault');
+            vault.value = 'synthetic-v${version}';
+            vault.dispatchEvent(new Event('change'));
+          }`);
+          await ready("document.querySelector('#knowledge-cards tbody button')");
+          await browser.evaluate("document.querySelector('#knowledge-cards tbody button').click()");
+          await ready("document.querySelector('#knowledge-drawer-body').textContent.includes('合成欄位')");
+          assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-drawer-body').textContent"), /欄位狀態無資料/);
+          await browser.evaluate("document.querySelector('#knowledge-drawer').close()");
+        }
+        await browser.evaluate(`{
+          window.confirm = () => true;
+          document.querySelector('#knowledge-rebuild').click();
+        }`);
+        await ready("document.querySelector('#knowledge-rebuild-status').textContent.includes('已重建')");
+        await browser.evaluate("document.querySelector('#knowledge-demo-load').click()");
+        await ready("document.querySelector('#vault').value === 'oep-synthetic-demo' && !document.querySelector('#knowledge-demo-remove').hidden");
+        await ready("document.querySelectorAll('#quality-questions li').length === 48");
+        assert.equal(await browser.evaluate("document.querySelector('#quality-editor').hidden"), true);
+        await browser.evaluate("document.querySelector('#knowledge-demo-remove').click()");
+        await ready("!document.querySelector('#vault option[value=oep-synthetic-demo]')");
+
+        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: 'http://atlas.example.invalid', toolbox: true })).status, 400);
+        await browser.evaluate(`{
+          document.querySelector('#open-settings').click();
+          document.querySelector('[data-section=integrations]').click();
+          window.atlasOpened = [];
+          window.open = (...args) => window.atlasOpened.push(args);
+        }`);
+        await ready("document.querySelector('#knowledge-toolbox').checked");
+        await browser.evaluate(`{
+          document.querySelector('#atlas-url').value = 'https://atlas.example.invalid/';
+          document.querySelector('#knowledge-toolbox').checked = false;
+          document.querySelector('#knowledge-settings').requestSubmit();
+        }`);
+        await ready("document.querySelector('#knowledge-settings-status').textContent === '已儲存。'");
+        assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
+        await browser.evaluate("window.confirm = () => false; document.querySelector('#open-atlas').click()");
+        assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
+        await browser.evaluate("window.confirm = () => true; document.querySelector('#open-atlas').click()");
+        assert.equal(await browser.evaluate("window.atlasOpened[0][0]"), 'https://atlas.example.invalid/');
+        const disabled = await (await api.post('/api/sessions', { agent: 'inspector' })).json();
+        assert.deepEqual(disabled.tools, []);
+        const accepted = await api.post(`/api/sessions/${disabled.id}/turns`, {
+          id: randomUUID(), text: 'Synthetic toolbox disabled probe', attachments: [], workbook: false,
+        });
+        assert.equal(accepted.status, 202);
+        await until(async () => {
+          const state = await (await api.get(`/api/sessions/${disabled.id}/state`)).json();
+          return state.messages.some((entry: { text: string }) => entry.text === 'Knowledge tool unavailable') || undefined;
+        }, 15_000);
+        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: '', toolbox: true })).status, 200);
         await browser.evaluate("document.querySelector('#open-chat').click()");
         assert.equal(await browser.evaluate("document.querySelector('#chat-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'open-chat');

@@ -6,12 +6,15 @@ import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
+import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
+import { benchmarkQuestions } from '../../../packages/knowledge/src/benchmark.ts';
+import { canonical, sha256 } from '../../../packages/knowledge/src/snapshot.ts';
 import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
 import { call } from './opencode/client.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
-import { providerID } from './opencode/gateway.ts';
+import { gatewayAliases, providerID } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
@@ -34,6 +37,8 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
+  ['/knowledge-quality.js', ['src/knowledge-quality.js', 'text/javascript; charset=utf-8']],
+  ['/knowledge-browser.js', ['src/knowledge-browser.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
@@ -108,6 +113,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   };
   let auth: LocalAuth;
 
+  let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
     auth.check(request);
@@ -224,6 +230,22 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { version, license, pin: tag, root });
       return;
     }
+    if (path === '/api/settings/knowledge') {
+      if (method === 'POST') {
+        const { atlasUrl, toolbox } = await body(request);
+        if (typeof atlasUrl !== 'string' || atlasUrl.length > 2048 || typeof toolbox !== 'boolean') {
+          throw new HttpError(400, '請檢查知識庫設定。');
+        }
+        const value = atlasUrl.trim();
+        const url = value ? URL.parse(value) : null;
+        if (value && (!url || !/^https:\/\//i.test(value) || url.username || url.password || /[\\\s]/.test(value))) {
+          throw new HttpError(400, '請輸入 HTTPS 網址。');
+        }
+        store.saveKnowledgeSettings(url?.href ?? '', toolbox);
+      }
+      send(response, 200, store.knowledgeSettings());
+      return;
+    }
     if (path === '/api/settings/runtime' && method === 'GET') {
       const pin = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
       send(response, 200, { pin: pin.tag, version: runtime.version, compatible: runtime.version === pin.tag.slice(1),
@@ -270,6 +292,97 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         }
         catch { throw new HttpError(422, '審核操作失敗。請重新整理並檢查版本、證據與審核狀態。'); }
       }
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/benchmarks' && method === 'POST') {
+      const { vault, name, questions } = await body(request);
+      if (typeof vault !== 'string') throw new HttpError(400, '請選擇知識庫。');
+      const knowledge = runtime.knowledge.reviewStore;
+      if (name !== undefined) {
+        const parsed = questions === null ? null : benchmarkQuestions(questions);
+        if (typeof name !== 'string' || !name.trim() || name.length > 80 || name === '合成標準題集' || parsed === undefined) {
+          throw new HttpError(400, '請檢查題集名稱及題目格式。');
+        }
+        knowledge.saveBenchmark(vault, name, parsed);
+      }
+      const sets = knowledge.benchmarkSets(vault);
+      if (!sets) throw new HttpError(404, '找不到此知識庫。');
+      send(response, 200, { aliases: gatewayAliases, sets: [
+        { name: '合成標準題集', questions: goldFixture().questions, builtIn: true }, ...sets,
+      ] });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/benchmark-question' && method === 'POST') {
+      const { vault, alias, name, id, revision } = await body(request);
+      const selectedAlias = gatewayAliases.find((item) => item === alias);
+      const knowledge = runtime.knowledge.reviewStore;
+      if (typeof vault !== 'string' || !selectedAlias) throw new HttpError(400, '請選擇知識庫與模型。');
+      const sets = knowledge.benchmarkSets(vault);
+      const questions = name === '合成標準題集' && vault === 'oep-synthetic-demo' ? goldFixture().questions :
+        sets?.find((set) => set.name === name)?.questions;
+      const item = questions?.find((question) => question.id === id);
+      const input = item && parseAsk({ vault, question: item.query });
+      const active = knowledge.overview().find((entry) => entry.id === vault);
+      if (!input || !active?.modelEnabled || active.revision !== revision) {
+        throw new HttpError(409, '請確認題集、發布版本及模型使用授權。');
+      }
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      if (benchmarksInFlight >= 2) throw new HttpError(429, '已有兩個題目正在執行。');
+      const start = performance.now();
+      const available = item.class === 'answerable' ? knowledge.retrieve(vault, item.query)?.passages ?? [] : [];
+      const recall = item.class === 'answerable' && item.evidence.length
+        ? item.evidence.filter((id) => available.some((passage) => passage.id === id)).length / item.evidence.length : null;
+      const benchmark = runtime.knowledge.benchmarks.get(selectedAlias)!;
+      benchmarksInFlight++;
+      const result = await benchmark.ask(input, AbortSignal.any([client.signal, AbortSignal.timeout(76_000)]))
+        .finally(() => { benchmarksInFlight--; });
+      if (response.destroyed) return;
+      const hits = result.state === 'verified' ? result.citations.map(({ passageID }) => passageID) : [];
+      const answerable = item.class === 'answerable';
+      const unsupported = result.state === 'verified' && (!answerable || hits.some((id) => !item.evidence.includes(id)));
+      const usable = result.state === 'verified' && answerable && !unsupported && Boolean(item.answer) &&
+        result.answer.toLowerCase().includes(item.answer!.toLowerCase()) && item.evidence.every((id) => hits.includes(id));
+      const snapshot = result.state === 'verified' && knowledge.snapshot(vault, result.revision);
+      const reproducible = result.state === 'verified' && snapshot ? result.citations.filter((citation) => {
+        const passage = snapshot.passages.find((row) => row.id === citation.passageID);
+        const source = snapshot.sources.find((row) => row.id === citation.sourceId);
+        return passage?.sourceId === source?.id && source?.ref === citation.source && source.version === citation.sourceVersion &&
+          passage?.sha256 === citation.sha256 && passage.locator === citation.locator && passage.text === citation.context &&
+          passage.text.includes(citation.quote);
+      }).length : 0;
+      const abstained = !answerable && result.state === 'abstain' && ['no-evidence', 'unsupported', 'invalid-citation'].includes(result.reason);
+      send(response, 200, { result, usable, abstained, unsupported, reproducible, recall, citations: hits.length, elapsedMs: Math.round(performance.now() - start) });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/demo' && method === 'POST') {
+      const { load, allowModel } = await body(request);
+      if (typeof load !== 'boolean') throw new HttpError(400, '請選擇載入或移除示範資料。');
+      const { snapshot } = goldFixture();
+      snapshot.vault = { ...snapshot.vault, id: 'oep-synthetic-demo', title: '知識庫示範（合成資料）' };
+      snapshot.schema.document.synthetic = true;
+      snapshot.schema.sha256 = sha256(canonical(snapshot.schema.document));
+      try { runtime.knowledge.reviewStore.setDemo(snapshot, load, allowModel === true); }
+      catch { throw new HttpError(409, '示範庫與現有資料衝突，請檢查已發布的版本。'); }
+      send(response, 200, { loaded: load, vault: snapshot.vault.id });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/browse' && method === 'POST') {
+      const input = await body(request);
+      const { vault } = input;
+      if (typeof vault !== 'string' || vault.length > 192 ||
+          Object.values(input).some((value) => typeof value === 'string' && value.length > 500)) {
+        throw new HttpError(400, '請確認知識庫及查詢條件。');
+      }
+      const result = runtime.knowledge.reviewStore.browse(vault, input);
+      if (!result) throw new HttpError(404, '找不到可瀏覽的資料。');
+      send(response, 200, result);
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/rebuild' && method === 'POST') {
+      const { confirmed } = await body(request);
+      if (confirmed !== true) throw new HttpError(400, '請先確認重建索引。');
+      send(response, 200, { rebuilt: runtime.knowledge.reviewStore.rebuild() });
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {

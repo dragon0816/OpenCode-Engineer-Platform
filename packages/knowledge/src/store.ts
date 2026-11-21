@@ -1,3 +1,5 @@
+import type { BenchmarkQuestion } from './benchmark.ts';
+import { browseSnapshot } from './browse.ts';
 import { randomUUID } from 'node:crypto';
 import { key, materialize, materializeChange, reviewSchema, sourceUploadLimit } from './ingest.ts';
 import type { Candidate, ChangeSet } from './ingest.ts';
@@ -7,6 +9,12 @@ import type { Passage } from '../../contracts/src/evidence.ts';
 import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './retrieval.ts';
 import { canonical, compareRepositoryPublications, digestPattern, string, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
+
+const benchmarksMigration = `
+  CREATE TABLE IF NOT EXISTS benchmark_sets (
+    vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
+  ) STRICT;
+`;
 
 const schema = `
   CREATE TABLE IF NOT EXISTS blobs (
@@ -57,6 +65,7 @@ export function manifest(snapshot: Snapshot, inputHash: string) {
 
 export class KnowledgeStore {
   private db: DatabaseSync;
+  private browser?: { hash: string; view: ReturnType<typeof browseSnapshot> };
   private activeFilter: string;
 
   constructor(path: string, readOnly = false) {
@@ -67,7 +76,7 @@ export class KnowledgeStore {
         this.db.exec('PRAGMA journal_mode=WAL');
         this.transaction(() => this.db.exec(`${schema} PRAGMA user_version=1;`));
       } else if (version !== 1) throw new Error('Unsupported knowledge database schema');
-      if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration));
+      if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration + benchmarksMigration));
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
     } catch (error) {
@@ -206,7 +215,13 @@ export class KnowledgeStore {
 
   installReviewSchema(vault: string, id: unknown, version: unknown, fields: unknown) {
     key(vault);
-    const schema = reviewSchema(id, version, fields);
+    const benchmarksMigration = `
+  CREATE TABLE IF NOT EXISTS benchmark_sets (
+    vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
+  ) STRICT;
+`;
+
+const schema = reviewSchema(id, version, fields);
     return this.transaction(() => {
       const body = canonical(schema);
       const previous = this.db.prepare('SELECT body FROM review_schemas WHERE vault=? AND version=?').get(vault, schema.version);
@@ -254,14 +269,26 @@ export class KnowledgeStore {
 
   reviewBase(vault: string) {
     const base = this.snapshot(key(vault));
-    const schema = this.reviewSchema(vault, base);
+    const benchmarksMigration = `
+  CREATE TABLE IF NOT EXISTS benchmark_sets (
+    vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
+  ) STRICT;
+`;
+
+const schema = this.reviewSchema(vault, base);
     return { vault: base?.vault, parent: base?.publication.revision ?? null, schema, cards: base?.cards ?? [],
       allowModel: this.publication(vault)?.allow_model === 1 };
   }
 
   private reviewSnapshot(input: Candidate | ChangeSet, revision: string, parent?: string) {
     const base = parent && 'parent' in input ? this.snapshot(input.vault.id, parent) : undefined;
-    const schema = this.reviewSchema(input.vault.id, base);
+    const benchmarksMigration = `
+  CREATE TABLE IF NOT EXISTS benchmark_sets (
+    vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
+  ) STRICT;
+`;
+
+const schema = this.reviewSchema(input.vault.id, base);
     return 'parent' in input
       ? materializeChange(input, base, schema, revision, (hash) => this.reviewSource(hash))
       : materialize(input, schema, revision, parent);
@@ -486,6 +513,61 @@ export class KnowledgeStore {
         ...(snapshot.repository && { tag: snapshot.repository.tag }),
         ready: publication.index_hash === publication.manifest_hash };
     });
+  }
+
+  benchmarkSets(vault: string) {
+    if (!this.publication(vault)) return;
+    return this.db.prepare('SELECT name, questions FROM benchmark_sets WHERE vault=? ORDER BY name').all(vault)
+      .map(({ name, questions }) => ({ name: String(name), questions: JSON.parse(String(questions)) as BenchmarkQuestion[], builtIn: false }));
+  }
+
+  saveBenchmark(vault: string, name: string, questions: BenchmarkQuestion[] | null) {
+    return this.transaction(() => {
+      if (!this.publication(vault)) throw new Error('Vault unavailable');
+      if (questions === null) this.db.prepare('DELETE FROM benchmark_sets WHERE vault=? AND name=?').run(vault, name);
+      else this.db.prepare('INSERT OR REPLACE INTO benchmark_sets VALUES (?, ?, ?)').run(vault, name, JSON.stringify(questions));
+    });
+  }
+
+  setDemo(snapshot: Snapshot, load: boolean, allowModel = false) {
+    return this.transaction(() => {
+      const vault = snapshot.vault.id;
+      const bytes = Buffer.from(canonical(snapshot));
+      const registered = this.db.prepare('SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication WHERE v.id=?')
+        .get(vault) as Publication | undefined;
+      if (registered && registered.manifest_hash !== sha256(bytes)) throw new Error('Demo vault collision');
+      if (load && registered) {
+        this.db.prepare('UPDATE publications SET allow_model=? WHERE id=?').run(Number(allowModel), registered.id);
+        this.activate(vault, registered.id);
+      } else if (load) this.writeSnapshot(snapshot, bytes, allowModel);
+      else if (registered) this.db.prepare('INSERT OR IGNORE INTO inactive_vaults VALUES (?)').run(vault);
+    });
+  }
+
+  browse(vault: string, input: Record<string, unknown>) {
+    const publication = this.publication(vault);
+    if (!publication) return undefined;
+    if (this.browser?.hash !== publication.manifest_hash) {
+      this.browser = { hash: publication.manifest_hash, view: browseSnapshot(this.readSnapshot(publication)) };
+    }
+    const { view } = this.browser;
+    if (typeof input.card === 'string') {
+      const detail = view.detail(input.card);
+      if (!detail) return undefined;
+      const revisions = this.db.prepare('SELECT revision, published_at FROM publications WHERE vault=? ORDER BY published_at DESC LIMIT 50').all(vault);
+      return { ...detail, revisions };
+    }
+    if (typeof input.query === 'string') {
+      const query = matchQuery(input.query);
+      const ready = publication.index_hash === publication.manifest_hash;
+      const matches = query && ready ? this.db.prepare(`
+        SELECT p.passage FROM passage_index JOIN passages p ON p.id=passage_index.rowid
+        WHERE passage_index MATCH ? AND p.publication=?
+        ORDER BY bm25(passage_index, 12, 8, 3, 1), p.passage LIMIT 25
+      `).all(query, publication.id) : [];
+      return { ready, passages: matches.map(({ passage }) => view.describePassage(String(passage))) };
+    }
+    return view.list(input);
   }
 
   retrieve(vault: string, question: string) {

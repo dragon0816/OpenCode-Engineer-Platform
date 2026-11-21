@@ -43,7 +43,7 @@
 | W Agent profile／Capability management | Adapt to OpenCode | 設定／助理與能力 | 2b | 顯示有效 agent、工具與 skill 狀態，停用後新回合不列該能力。 |
 | W、F Workflow 本機設定與動態參數 | Replace（OEP 工作參數與 OpenCode 指令） | 設定／工作，工作面板 | 4 | 同工作兩組本機設定各執行一次，參數與憑證參照各自生效。 |
 | W、V Web 麥克風及 Telegram 語音啟用／轉錄設定 | Adapt to OpenCode | 設定／輸入、Telegram | 2b／4 | 模擬有無授權與轉錄失敗，成功只填入輸入框或送至對應 bot。 [Slice 2D](reviews/PHASE2B_SLICE2D_REPORT.md) |
-| W、B BI query toolbox 開關、Atlas URL | Adapt to OpenCode（使用範圍受限的查詢工具與外部連結） | 設定／知識 | 2b | 開關後新會話工具清單隨之更新。外部連結須明確點擊才開啟。 |
+| W、B BI query toolbox 開關、Atlas URL | Adapt to OpenCode（使用範圍受限的查詢工具與外部連結） | 設定／知識 | 2b | Chromium 驗證新會話工具開關、HTTPS 驗證及開啟前確認。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
 | OEP 版本、資料目錄、固定 OpenCode 版本、授權與文件 | Keep | 設定／關於 | 2b | 驗證設定頁資訊。 [Slice 2D](reviews/PHASE2B_SLICE2D_REPORT.md) |
 
 ## Operations
@@ -68,17 +68,17 @@
 | W、M、G 名片辨識、更新去重、組織圖檢視及調整 | Adapt to OpenCode | 檔案、資料面板 | 3b | 合成名片更新同一 ID，組織圖重開反映核准關係。 |
 | W Tasks 更新、狀態、待確認變更 | Adapt to OpenCode | 左欄／工作與面板 | 3b／4 | 會話執行台帳與 BI 工作、排程摘要可從同一面板查閱。完整待審流程另行驗收。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | W、S 新增或編輯排程、批准／拒絕、時間／週期／IANA zone／參數、暫停／恢復／移除／Run Now／歷史 | Adapt to OpenCode | 左欄／排程 | 4 | 模擬漏跑、重啟、暫停與即時觸發競態，單 occurrence 最多一筆執行。 |
-| W、B、K 知識刷新、BI／Wiki 切換、庫／domain 選擇、Ask 與引用 | Adapt to OpenCode | 左欄／知識，Ask API／MCP | 3a | 選單限一庫，顯示版本、來源、evidence，偽造引文與跨庫版本須拒絕。 |
-| B、G 已發卡片概覽、類別／domain／sample 篩選、詳細資料及關係、全文查詢、重建索引 | Adapt to OpenCode | 知識／卡片、維護 CLI | 3a／2b | 3a 匯入後對帳 IDs、關係、版本、FTS 與恢復，2b 由頁面依條件瀏覽詳細卡片。 |
+| W、B、K 知識刷新、BI／Wiki 切換、庫／domain 選擇、Ask 與引用 | Adapt to OpenCode | 左欄／知識，Ask API／MCP | 3a | 已發布版本選單、問答及來源段落抽屜經 Chromium 驗證。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
+| B、G 已發卡片概覽、類別／domain／sample 篩選、詳細資料及關係、全文查詢、重建索引 | Adapt to OpenCode | 知識／卡片、維護 CLI | 3a／2b | Chromium 驗證 1,500 張合成卡片、分頁與排序、全文搜尋、證據與雙向關係、SQLite 8／9 及索引重建。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
 | B、G 新增 BI 庫／領域、機密分類、來源選檔／轉檔／預覽／移除、Markdown 草稿修訂 | Keep | 知識／BI 建置 | 3b | 合成檔進 staging，版本保留且未核准前查無資料。 |
 | B、G schema 建議／助理／草稿／差異／升級、skill 新增／編輯／匯入／匯出，Profile 與資料處理程式 | Adapt to OpenCode | 知識／建置設定 | 3b | 更新合成 schema、規則與 profile，驗不符版本及未授權執行均拒。 |
 | B 資料集新增、從 JSON 安裝 schema、安裝範例 schema | Adapt to OpenCode | 知識／建置設定 | 3b | 載入合成 schema 後只能對應其版本開啟資料集，畸形 JSON 無法安裝。 |
 | B、G Ingest 批次／停止、欄位／關係預覽、逐一／批次定案及修正 | Adapt to OpenCode | 知識／審核 | 3b | 中斷批次後重啟，核准範圍及來源定位可對帳。 |
-| B、K、G Benchmark 題目增改、AI 草擬、執行、逐題結果 | Adapt to OpenCode | 知識／品質 | 3a／3b | 3a 固定 gold set 可重跑。3b 保存合成題目後測試，錯題可展開原引文。 |
-| B、G Dashboard 查閱與篩選、AI 編寫 SQL、預覽、增改排序／套用 | Replace（D05 先做概覽，2b 提供已發布資料的固定唯讀查詢與排序；進階 SQL 作者功能依 D05 延後） | 知識／概覽 | 3a／2b | 3a 顯示正確版本、計數與狀態。2b 用固定查詢預覽合成資料、保存篩選與排序。 |
+| B、K、G Benchmark 題目增改、AI 草擬、執行、逐題結果 | Adapt to OpenCode | 知識／品質 | 3a／3b | 提供固定 48 題與每庫可編輯題集。Chromium 驗證編輯、執行、取消及 D03 結果。AI 草擬仍開放。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
+| B、G Dashboard 查閱與篩選、AI 編寫 SQL、預覽、增改排序／套用 | Replace（D05 先做概覽，2b 提供已發布資料的固定唯讀查詢與排序；進階 SQL 作者功能依 D05 延後） | 知識／概覽 | 3a／2b | Chromium 驗證 1,500 張合成卡片的固定唯讀預覽、分頁、篩選及排序。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
 | B、G 版本／分享 commit、push、tag、發布、加入／連線與衝突處理 | Replace（本機不可變快照匯入與 OEP 發布／回退；多人同步依 D05 延後） | 知識、維護 CLI | 3a／3b | 匯入兩版、回看各版證據。3b 必須經審核才能發佈，衝突保持原指標。 |
 | B Shared Platform 瀏覽／訂閱／同步資料集與組織可見性 | Omit-with-reason（依賴公司 Bridge 和組織權限，D04／D05） | 知識／整合說明 | 2b | 選擇本機已發布資料集時可讀同等摘要，過程沒有公司服務請求。 |
-| B、G 載入示範、Atlas 連結 | Adapt to OpenCode | 知識／概覽 | 2b | 可載入合成示範；Atlas 明確開啟後才離開本機頁。 |
+| B、G 載入示範、Atlas 連結 | Adapt to OpenCode | 知識／概覽 | 2b | Chromium 驗證合成庫載入與移除、Atlas HTTPS 驗證及確認後開啟。 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md) |
 | I、B、G BI Telegram inbox　領域綁定、收件、筆數、篩選、挑選來源、錯誤與補件 | Adapt to OpenCode（D07 單 BI bot 分流） | 知識／收件、設定 | 4 | 訊息重投仍只見一次，受阻連結保留原因和人工補件入口。 |
 | K Wiki 新建／加入與切換／捨棄 sandbox、擁有範圍、來源及題目資料夾 | Adapt to OpenCode | 知識／Wiki 建置 | 3b | 切換兩個 sandbox，捨棄其中一個後已發布版本與另一組草稿可讀。 |
 | K Wiki Pull、分類上傳、轉檔預覽／執行／停止 | Adapt to OpenCode | 知識／Wiki 建置 | 3b | 預覽和停止只影響 sandbox，完成時來源 hash 相符。 |

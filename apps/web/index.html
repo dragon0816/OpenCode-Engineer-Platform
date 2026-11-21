@@ -148,6 +148,17 @@
             <p id="runtime-agent"></p>
           </section>
           <section id="settings-integrations" hidden>
+            <h2>知識庫整合</h2>
+            <form id="knowledge-settings">
+              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用 BI 查詢工具</label>
+              <label for="atlas-url">Atlas 網址（選填）</label>
+              <input id="atlas-url" type="url" maxlength="2048">
+              <div class="settings-actions">
+                <button type="submit">儲存知識庫設定</button>
+                <button id="open-atlas" type="button" disabled>開啟 Atlas</button>
+              </div>
+              <p id="knowledge-settings-status" role="status"></p>
+            </form>
             <h2>整合說明</h2>
             <ul>
               <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
@@ -209,6 +220,109 @@
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
       </header>
       <div class="knowledge-body">
+        <label for="vault">已發布的知識庫</label>
+        <select id="vault" disabled><option value="">載入中</option></select>
+        <div class="knowledge-tabs" role="tablist" aria-label="知識庫功能">
+          <button type="button" role="tab" id="knowledge-tab-overview" aria-controls="knowledge-overview" aria-selected="true">概覽</button>
+          <button type="button" role="tab" id="knowledge-tab-ask" aria-controls="knowledge-ask-panel" aria-selected="false" tabindex="-1">問答</button>
+          <button type="button" role="tab" id="knowledge-tab-quality" aria-controls="knowledge-quality" aria-selected="false" tabindex="-1">品質</button>
+          <button type="button" role="tab" id="knowledge-tab-build" aria-controls="knowledge-build" aria-selected="false" tabindex="-1">建置</button>
+        </div>
+        <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
+          <dl id="vault-details"></dl>
+          <div class="knowledge-pager">
+            <button id="knowledge-demo-load" type="button">載入合成示範庫</button>
+            <button id="knowledge-demo-remove" type="button" hidden>移除合成示範庫</button>
+            <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將合成證據送至模型</label>
+            <span id="knowledge-demo-status" role="status"></span>
+          </div>
+          <p id="knowledge-overview-empty">請在「建置」匯入已發布的知識庫。</p>
+          <div id="knowledge-browser" hidden>
+            <h2>卡片預覽</h2>
+            <form id="knowledge-filters" class="knowledge-filters">
+              <label>卡片名稱或識別鍵 <input type="text" name="text" maxlength="500"></label>
+              <label>類型 <select name="type"><option value="">全部</option></select></label>
+              <label>分類 <select name="category"><option value="">全部</option></select></label>
+              <label>領域／資料夾 <select name="domain"><option value="">全部</option></select></label>
+              <label>資料 <select name="sample"><option value="">全部</option><option value="sample">示範資料</option><option value="regular">一般資料</option></select></label>
+              <button type="submit">篩選</button>
+            </form>
+            <div id="knowledge-cards" tabindex="0" role="region" aria-label="卡片預覽"></div>
+            <div class="knowledge-pager">
+              <button type="button" id="knowledge-prev" disabled>上一頁</button>
+              <button type="button" id="knowledge-next" disabled>下一頁</button>
+              <span id="knowledge-browser-status" role="status"></span>
+            </div>
+            <h2>段落全文搜尋</h2>
+            <form id="knowledge-fts" class="knowledge-filters">
+              <label>搜尋詞 <input type="text" name="query" maxlength="500" required></label>
+              <button type="submit">搜尋段落</button>
+            </form>
+            <div id="knowledge-matches" aria-live="polite"></div>
+            <details>
+              <summary>索引維護</summary>
+              <button type="button" id="knowledge-rebuild">重建索引</button>
+              <p id="knowledge-rebuild-status" role="status"></p>
+            </details>
+          </div>
+        </section>
+        <section id="knowledge-ask-panel" role="tabpanel" aria-labelledby="knowledge-tab-ask" hidden>
+        <p id="knowledge-status" role="status"></p>
+        <form id="knowledge-form">
+          <label for="knowledge-question">問題</label>
+          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
+          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
+        </form>
+        <div id="knowledge-answer" aria-live="polite"></div>
+        </section>
+        <section id="knowledge-quality" role="tabpanel" aria-labelledby="knowledge-tab-quality" tabindex="0" hidden>
+          <p id="quality-status" role="status">請選擇知識庫。</p>
+          <div id="quality-actions" hidden>
+            <div class="knowledge-filters">
+              <label>題集 <select id="quality-sets"></select></label>
+              <label>核准模型 <select id="quality-aliases"></select></label>
+              <button type="button" id="quality-run" disabled>執行題集</button>
+              <button type="button" id="quality-stop" disabled>取消執行</button>
+            </div>
+            <p id="quality-builtin-note" hidden>這組 48 道標準題可在授權模型使用的合成示範庫執行。</p>
+            <div id="quality-set-actions">
+              <form id="quality-add-set">
+                <label>新題集名稱 <input name="name" type="text" maxlength="80" required></label>
+                <button type="submit">新增題集</button>
+              </form>
+              <button type="button" id="quality-remove-set">刪除題集</button>
+              <details>
+                <summary>進階匯入與匯出</summary>
+                <label>從檔案載入 JSON <input id="quality-json-file" type="file" accept=".json,application/json"></label>
+                <label>題集 JSON<textarea id="quality-json" rows="5"></textarea></label>
+                <button type="button" id="quality-import">匯入並取代題目</button>
+                <button type="button" id="quality-export">匯出題集</button>
+              </details>
+            </div>
+            <div id="quality-results" class="knowledge-results" aria-live="polite"></div>
+            <details id="quality-question-list">
+              <summary>題目</summary>
+              <ol id="quality-questions"></ol>
+            </details>
+            <form id="quality-editor" hidden>
+              <h2>編輯題目</h2>
+              <label>問題 <textarea name="query" rows="2" required maxlength="500"></textarea></label>
+              <label>預期答案 <textarea name="answer" rows="2" maxlength="2000"></textarea></label>
+              <label>類別 <select name="kind">
+                <option value="answerable">可回答</option><option value="no-evidence">缺乏證據</option>
+                <option value="conflict">證據衝突</option><option value="injection">含注入指令</option>
+              </select></label>
+              <h3>預期證據</h3>
+              <div id="quality-evidence"></div>
+              <label>搜尋證據 <input type="text" name="passages" maxlength="500"></label>
+              <button type="button" id="quality-find">搜尋段落</button>
+              <ul id="quality-matches"></ul>
+              <button type="submit">儲存題目</button>
+              <button type="button" id="quality-new-question">新增另一題</button>
+            </form>
+          </div>
+        </section>
+        <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
         <details id="knowledge-repository">
           <summary>從儲存庫資料夾匯入</summary>
           <form id="knowledge-repository-form">
@@ -222,18 +336,16 @@
           </form>
           <p id="knowledge-repository-status" role="status"></p>
         </details>
-        <label for="vault">已發布的知識庫</label>
-        <select id="vault" disabled><option value="">載入中</option></select>
-        <dl id="vault-details"></dl>
-        <p id="knowledge-status" role="status"></p>
-        <form id="knowledge-form">
-          <label for="knowledge-question">問題</label>
-          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
-          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
-        </form>
-        <div id="knowledge-answer" aria-live="polite"></div>
+        </section>
       </div>
     </section>
+    <dialog id="knowledge-drawer" aria-labelledby="knowledge-drawer-title">
+      <header class="knowledge-drawer-header">
+        <h2 id="knowledge-drawer-title"></h2>
+        <form method="dialog"><button autofocus>關閉</button></form>
+      </header>
+      <div id="knowledge-drawer-body"></div>
+    </dialog>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
       <header><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
       <div class="knowledge-body" id="jobs-content"></div>
@@ -269,6 +381,10 @@
         <div id="file-preview"></div>
       </div>
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
+        <details id="panel-tools" hidden>
+          <summary>會話工具</summary>
+          <ul><li>BI 知識庫查詢</li></ul>
+        </details>
         <ul id="panel-runs"></ul>
         <p id="panel-jobs"></p>
         <button id="panel-jobs-link" type="button">開啟工作與排程</button>

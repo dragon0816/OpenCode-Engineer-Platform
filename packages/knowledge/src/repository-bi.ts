@@ -91,6 +91,17 @@ export function readBiSnapshot(db: DatabaseSync, file: string, identity: Identit
     const { card_id, field, value, ...provenance } = row;
     card.fieldProvenance![name] = provenance;
   }
+  const stateColumns = tables.get('field_states');
+  if (stateColumns?.includes('card_id') && stateColumns.includes('field')) {
+    for (const row of read('field_states', ['card_id', 'field'], ['state', 'status', 'reason', 'note', 'by', 'at'])) {
+      const { card_id, field, ...state } = row;
+      const card = cards.get(String(card_id));
+      if (card && Object.keys(state).length) {
+        card.fieldStates ??= Object.create(null) as Record<string, unknown>;
+        card.fieldStates[String(field)] = state;
+      }
+    }
+  }
   for (const row of read('relations', ['relation_id', 'from_card_id', 'relation_type', 'to_card_id'],
     ['status', 'origin', 'source_field', 'scope', 'note', 'by', 'at'])) {
     const { from_card_id, relation_type, to_card_id, ...provenance } = row;

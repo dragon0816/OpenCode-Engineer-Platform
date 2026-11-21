@@ -10,7 +10,7 @@ export const projects = [
 ] as const;
 export type ProjectID = typeof projects[number]['id'];
 
-export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null };
+export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null; knowledgeDisabled?: number };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
 
 export class WebStore extends Ledger {
@@ -69,6 +69,14 @@ export class WebStore extends Ledger {
       message_id TEXT NOT NULL,
       text TEXT NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_session_knowledge_disabled (
+      id TEXT PRIMARY KEY REFERENCES web_sessions(id)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_knowledge_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      atlas_url TEXT NOT NULL,
+      toolbox INTEGER NOT NULL CHECK(toolbox IN (0, 1))
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS web_appearance (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       theme TEXT NOT NULL,
@@ -76,6 +84,15 @@ export class WebStore extends Ledger {
       avatar BLOB,
       mime TEXT
     ) STRICT`);
+  }
+
+  knowledgeSettings() {
+    const row = this.db.prepare('SELECT atlas_url AS atlasUrl, toolbox FROM web_knowledge_settings WHERE id=1').get();
+    return { atlasUrl: String(row?.atlasUrl ?? ''), toolbox: row?.toolbox !== 0 };
+  }
+
+  saveKnowledgeSettings(atlasUrl: string, toolbox: boolean) {
+    this.db.prepare('INSERT OR REPLACE INTO web_knowledge_settings VALUES (1, ?, ?)').run(atlasUrl, Number(toolbox));
   }
 
   projectFolders() {
@@ -206,15 +223,17 @@ export class WebStore extends Ledger {
     this.transaction(() => {
       this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
         .run(session.id, session.upstreamID, session.agent, session.alias, session.createdAt);
+      if (session.knowledgeDisabled) this.db.prepare('INSERT INTO web_session_knowledge_disabled VALUES (?)').run(session.id);
       this.db.prepare('INSERT INTO web_session_project VALUES (?, ?)').run(session.id, session.project ?? 'default');
     });
   }
 
   sessions() {
     return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title,
-      COALESCE(p.project, 'default') AS project
+      COALESCE(p.project, 'default') AS project, k.id IS NOT NULL AS knowledgeDisabled
       FROM web_sessions s LEFT JOIN web_session_display d ON d.id = s.id
       LEFT JOIN web_session_project p ON p.id = s.id
+      LEFT JOIN web_session_knowledge_disabled k ON k.id = s.id
       WHERE COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
       .all() as WebSession[];
   }
