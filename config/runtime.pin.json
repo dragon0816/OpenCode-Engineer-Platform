@@ -1,0 +1,12 @@
+{
+  "node": {
+    "version": "24.14.1",
+    "archive": "node-v24.14.1-win-x64.zip",
+    "sha256": "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70"
+  },
+  "python": {
+    "version": "3.12.10",
+    "archive": "python-3.12.10-embed-amd64.zip",
+    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+  }
+}
