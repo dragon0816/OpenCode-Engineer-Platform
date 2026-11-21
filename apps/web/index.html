@@ -48,6 +48,7 @@
         <nav id="settings-nav" aria-label="設定分類">
           <button type="button" data-section="assistant" aria-current="page">助理</button>
           <button type="button" data-section="appearance">外觀</button>
+          <button type="button" data-section="model">模型</button>
           <button type="button" data-section="runtime">執行環境</button>
           <button type="button" data-section="integrations">整合說明</button>
         </nav>
@@ -89,6 +90,21 @@
               <p id="appearance-status" role="status"></p>
             </form>
           </section>
+          <section id="settings-model" hidden>
+            <h2>模型</h2>
+            <p>模型閘道是外部服務，請由維運端管理。OEP 不提供閘道管理操作。</p>
+            <p id="model-credentials"></p>
+            <ul id="model-health"></ul>
+            <form id="model-settings">
+              <label for="default-alias">新會話的預設模型</label>
+              <select id="default-alias" disabled></select>
+              <div class="settings-actions">
+                <button id="save-model" type="submit" disabled>儲存預設模型</button>
+                <button id="recheck-model" type="button" disabled>立即重新檢查</button>
+              </div>
+              <p id="model-settings-status" role="status"></p>
+            </form>
+          </section>
           <section id="settings-runtime" hidden>
             <h2>執行環境</h2>
             <p id="runtime-status"></p>
@@ -110,6 +126,9 @@
         <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>
         <h1 id="session-title">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
+        <label for="session-alias">會話模型</label>
+        <select id="session-alias" disabled></select>
+        <small id="session-model-status" role="status"></small>
       </header>
       <div id="error" role="alert" hidden></div>
       <div id="messages" class="messages" aria-label="訊息">

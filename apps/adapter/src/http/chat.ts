@@ -47,7 +47,7 @@ export function publicRun(run: RunRecord) {
 
 export function publicSession({ id, agent, alias, createdAt, title, project }: WebSession) { return { id, agent, alias, createdAt, project, ...(title ? { title } : {}) }; }
 
-type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
+type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -84,10 +84,10 @@ export class ChatService {
   workspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'sessions'), session.id); }
   private modelWorkspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'model-work'), session.id); }
 
-  async create(agent: Agent, project: ProjectID = 'default') {
+  async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias) {
     const id = randomUUID();
     const createdAt = Date.now();
-    const local = { id, project, agent, alias: this.runtime.alias, createdAt };
+    const local = { id, project, agent, alias, createdAt };
     const workspace = this.workspace(local);
     const modelWorkspace = this.modelWorkspace(local);
     checkDirectory(join(this.projectRoot(project), 'sessions'));
@@ -96,7 +96,7 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, this.runtime.alias, true);
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true);
     const session = { ...local, upstreamID };
     this.store.createSession(session);
     return session;
@@ -165,7 +165,7 @@ export class ChatService {
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'Message ID is unavailable');
     const prior = this.store.turns(session.id).at(-1);
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'A turn in this session is still pending');
-    if (session.alias !== this.runtime.alias) throw new HttpError(409, 'This session uses a different model. Create a session for the current model');
+    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(409, 'This session uses a different model. Create a session for the current model');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'Select the workbook agent to generate a workbook');
     for (const id of input.attachments) {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'Attachment not found in this session');

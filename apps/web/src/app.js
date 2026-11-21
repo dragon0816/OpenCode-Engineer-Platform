@@ -667,6 +667,7 @@ function select(id) {
   find('panel-diff').replaceChildren();
   jump.hidden = true;
   if (!session) {
+    updateSessionAlias();
     sessionTitle.textContent = '對話';
     progress.textContent = '從左側新增會話後即可開始。';
     messages.replaceChildren();
@@ -697,6 +698,8 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  find('session-model-status').textContent = '';
+  updateSessionAlias();
   activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
@@ -941,20 +944,83 @@ function appearanceDirty() {
   return savedAppearance && (theme.value !== savedAppearance.theme || density.value !== savedAppearance.density ||
     avatarReset || avatarFile.files.length > 0);
 }
+const defaultAlias = find('default-alias');
+const sessionAlias = find('session-alias');
+const modelStatus = find('model-settings-status');
+let modelSettings;
+function aliasOptions(select, selected, aliases) {
+  select.replaceChildren(...aliases.map(({ alias }) => {
+    const option = node('option', alias);
+    option.value = alias;
+    return option;
+  }));
+  select.value = selected ?? '';
+}
+function updateSessionAlias() {
+  const session = current && knownSessions.get(current.id);
+  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? []);
+  sessionAlias.disabled = !session || !modelSettings || stopped;
+}
+function applyModel(value, draft = value.defaultAlias) {
+  modelSettings = value;
+  aliasOptions(defaultAlias, draft, value.aliases);
+  find('model-credentials').textContent = value.credentialsConfigured ? '憑證已設定' : '憑證未設定';
+  find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
+    node('li', `${alias} · ${healthy ? '可用' : '無法通過檢查'}`)));
+  updateSessionAlias();
+  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
+}
+async function updateModel(recheck) {
+  const draft = defaultAlias.value;
+  if (!recheck) settingsSaving = true;
+  modelStatus.textContent = recheck ? '正在檢查…' : '正在儲存…';
+  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = true;
+  try {
+    const path = '/api/settings/model' + (recheck ? '/recheck' : '');
+    const value = await request(path, { data: recheck ? {} : { alias: draft } });
+    applyModel(value, recheck ? defaultAlias.value : undefined);
+    modelStatus.textContent = recheck ? '已重新檢查' : '已儲存';
+  } catch (error) {
+    modelStatus.textContent = error.status === 429 ? '請等候 30 秒再重新檢查。' : '無法更新模型設定。';
+    for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
+  } finally { if (!recheck) settingsSaving = false; }
+}
+find('model-settings').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!find('save-model').disabled) void updateModel(false);
+});
+find('recheck-model').addEventListener('click', () => void updateModel(true));
+sessionAlias.addEventListener('change', async () => {
+  const context = current;
+  const status = find('session-model-status');
+  if (!context) return;
+  sessionAlias.disabled = true;
+  try {
+    const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
+    knownSessions.set(session.id, session);
+    if (current === context) status.textContent = '模型已切換';
+  } catch (error) {
+    if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。';
+  } finally { if (current === context) updateSessionAlias(); }
+});
+function modelDirty() {
+  return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
+}
 function assistantDirty() {
   return savedAssistant !== undefined && savedAssistant !== JSON.stringify(assistantValues());
 }
 function discardSettings() {
   if (settingsSaving) return false;
-  if (!assistantDirty() && !appearanceDirty()) return true;
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty()) return true;
   if (!window.confirm('設定尚未儲存。要捨棄變更嗎？')) return false;
   if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
   if (appearanceDirty()) applyAppearance(savedAppearance);
-  find('settings-status').textContent = appearanceStatus.textContent = '';
+  if (modelDirty()) applyModel(modelSettings);
+  find('settings-status').textContent = appearanceStatus.textContent = modelStatus.textContent = '';
   return true;
 }
 window.addEventListener('beforeunload', (event) => {
-  if (!assistantDirty() && !appearanceDirty()) return;
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty()) return;
   event.preventDefault();
   event.returnValue = true;
 });
@@ -1210,6 +1276,7 @@ try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
   model.textContent = `模型 ${bootstrap.alias}`;
+  request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
   find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
   request('/api/settings/appearance').then((appearance) => {
     applyAppearance(appearance);

@@ -362,12 +362,14 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 :root[data-density="compact"] .message { padding-block: 5px; margin-block: 4px; }
 :root[data-density="compact"] .session-list li { padding-block: 1px; }
 
+#session-alias { max-width: 100%; }
 
 #settings-view { min-height: 440px; align-self: start; padding: 20px; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
 .settings-heading h1 { margin: 0; }
 .settings-content form p[role="status"]:empty { display: none; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+#default-alias { max-width: 100%; }
 #settings-integrations li { margin-bottom: 8px; }
 @media (max-width: 540px) {
   #settings-view { min-height: 0; padding: 14px; }

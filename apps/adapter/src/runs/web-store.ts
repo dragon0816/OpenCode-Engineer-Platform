@@ -34,6 +34,10 @@ export class WebStore extends Ledger {
       section TEXT NOT NULL,
       changed_at INTEGER NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_model_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      alias TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS web_appearance (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       theme TEXT NOT NULL,
@@ -75,6 +79,24 @@ export class WebStore extends Ledger {
           .run(image?.bytes ?? null, image?.mime ?? null);
       }
       this.auditSettings('appearance');
+    });
+  }
+
+  defaultAlias() {
+    return this.db.prepare('SELECT alias FROM web_model_settings WHERE id = 1').get()?.alias as string | undefined;
+  }
+
+  saveDefaultAlias(alias: string) {
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO web_model_settings VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET alias = excluded.alias').run(alias);
+      this.auditSettings('model');
+    });
+  }
+
+  saveSessionAlias(id: string, alias: string) {
+    this.transaction(() => {
+      this.db.prepare('UPDATE web_sessions SET alias = ? WHERE id = ?').run(alias, id);
+      this.auditSettings('session-model');
     });
   }
 

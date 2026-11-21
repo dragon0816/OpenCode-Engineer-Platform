@@ -7,6 +7,7 @@ import type { ModelCall } from '../../../../packages/contracts/src/run.ts';
 import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
 import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson } from '../../../../scripts/phase0/probe-redaction.ts';
 
+
 export const providerID = 'oep-relay';
 export const gatewayAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'] as const;
 export type GatewayTrace = ModelCall;
@@ -56,7 +57,7 @@ function observeCompletion(frames: unknown[]) {
 }
 
 export async function startGateway(options: {
-  url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch; web?: boolean;
+  url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch; web?: boolean; aliases?: readonly string[];
 }) {
   let configured: URL;
   try { configured = new URL(options.url); }
@@ -69,6 +70,21 @@ export async function startGateway(options: {
   const key = randomBytes(32).toString('hex');
   const redact = redactFields([options.key, options.url, configured.origin, configured.host, configured.hostname, key]);
   const credential = Buffer.from(`Bearer ${key}`);
+  const allowed = options.aliases ?? [options.alias];
+  async function ping(alias: string) {
+    if (!allowed.includes(alias)) return false;
+    try {
+      const response = await (options.fetch ?? fetch)(target, {
+        method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(8_000),
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${options.key}` },
+        body: JSON.stringify({ model: alias, messages: [{ role: 'user', content: 'Reply with exactly OEP-READY.' }],
+          stream: false, max_tokens: 16 }),
+      });
+      if (!response.ok) { await response.body?.cancel(); return false; }
+      const value = upstreamJson(await boundedUpstreamText(response)) as { choices?: unknown[] } | null;
+      return Boolean(value?.choices?.length && observeCompletion([value]).output === 'text');
+    } catch { return false; }
+  }
   let requests = 0;
   const outages = new Set<AbortController>();
   const server = createServer(async (request, response) => {
@@ -90,7 +106,7 @@ export async function startGateway(options: {
         let body: RequestBody | undefined;
         try { body = await jsonInput<RequestBody>(request, options.web ? 64 * 1024 * 1024 : undefined); }
         catch { status = 400; }
-        if (body?.model === options.alias && Array.isArray(body.messages)) {
+        if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
           const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(35_000)]);
           const upstream = await (options.fetch ?? fetch)(target, {
             method: 'POST', redirect: 'manual', signal,
@@ -134,7 +150,7 @@ export async function startGateway(options: {
     server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
   });
   return {
-    baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, key, redact,
+    baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, key, redact, ping,
     requestCursor: () => requests,
     close: () => new Promise<void>((resolve, reject) => {
       for (const request of outages) request.abort();

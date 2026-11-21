@@ -13,6 +13,9 @@ test('local API restricts routing, pairing, mutations, file intake and session o
   const secret = randomUUID();
   const runtime = {
     root, version: '2.3.2', alias: 'synthetic-api', gatewayCursor: () => 0, gatewaySince: () => [],
+    aliases: ['synthetic-api'],
+    aliasHealth: () => [{ alias: 'synthetic-api', healthy: true }],
+    checkAliases: async () => true,
     redact: (value: string) => value.replaceAll(secret, '[redacted]'),
     endpoint: { hidden: secret, request: async () => new Response(null, { status: 503 }) },
     client: {
@@ -63,6 +66,11 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     assert.equal((await post('/api/sessions', { agent: 'shell' })).status, 400);
     const bootstrap = await (await fetch(`${origin}/api/bootstrap`, { headers: { cookie } })).json();
     assert.equal(bootstrap.csrf, csrf);
+    assert.equal((await fetch(origin + '/api/settings/model')).status, 401);
+    assert.equal((await post('/api/settings/model', { alias: 'synthetic-api' }, { 'x-oep-csrf': 'bad' })).status, 403);
+    assert.equal((await post('/api/settings/model', { alias: 'unapproved-alias' })).status, 400);
+    const model = await (await fetch(origin + '/api/settings/model', { headers: { cookie } })).json();
+    assert.deepEqual(model, { defaultAlias: 'synthetic-api', aliases: [{ alias: 'synthetic-api', healthy: true }], credentialsConfigured: true });
     assert.equal(bootstrap.job.state, 'awaiting_review');
     const first = await (await post('/api/sessions', { agent: 'inspector' })).json();
     const second = await (await post('/api/sessions', { agent: 'workbook' })).json();
