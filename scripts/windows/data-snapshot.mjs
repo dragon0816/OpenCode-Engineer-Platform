@@ -21,9 +21,13 @@ async function credentials() {
     const names = new Set();
     for (const { id, definition } of db.prepare('SELECT id, definition FROM mcp_servers').iterate()) {
       if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid MCP identifier');
-      for (const { name, reference } of JSON.parse(definition).environment) {
-        if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) ||
-            reference !== 'OEP_MCP_' + id.toUpperCase() + '_' + name.toUpperCase()) {
+      const { transport, environment } = JSON.parse(definition);
+      const remote = transport === 'remote';
+      for (const { name, reference } of environment) {
+        const valid = remote ? /^[A-Za-z][A-Za-z0-9_-]{0,63}$/ : /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+        const suffix = remote ? name.toUpperCase().replaceAll('-', '_') : name.toUpperCase();
+        if (!valid.test(name) ||
+            reference !== 'OEP_MCP_' + id.toUpperCase() + '_' + suffix) {
           throw new Error('Invalid MCP credential reference');
         }
         names.add(reference);

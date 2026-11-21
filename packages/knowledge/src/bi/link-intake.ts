@@ -11,19 +11,31 @@ for (const [octets, bits] of [
   [[224, 0, 0, 0], 3],
 ] as const) blocked.addSubnet(octets.join('.'), bits);
 
+export async function pinIpv4(hostname: string, allowLocal: boolean, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const abort = Promise.withResolvers<never>();
+  const cancel = () => abort.reject(signal.reason);
+  signal.addEventListener('abort', cancel, { once: true });
+  const answers = await Promise.race([lookup(hostname, { family: 4, all: true }), abort.promise])
+    .finally(() => signal.removeEventListener('abort', cancel));
+  signal.throwIfAborted();
+  if (!answers.length || (!allowLocal && answers.some(({ address }) => blocked.check(address)))) {
+    throw new Error('來源位址受阻');
+  }
+  return answers[0].address;
+}
+
 export async function readApprovedLink(value: string, approved: ReadonlySet<string>, stop: AbortSignal) {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || url.port || isIP(url.hostname) ||
       !approved.has(url.origin)) throw new Error('來源未核准');
   const signal = AbortSignal.any([stop, AbortSignal.timeout(8000)]);
   // Pin the address used by TLS to the public IPv4 result we validated.
-  const answers = await lookup(url.hostname, { family: 4, all: true });
-  signal.throwIfAborted();
-  if (!answers.length || answers.some(({ address }) => blocked.check(address))) throw new Error('來源位址受阻');
+  const address = await pinIpv4(url.hostname, false, signal);
   return await new Promise<Buffer>((resolve, reject) => {
     const upstream = request(url, {
       signal, family: 4,
-      lookup: (_host, _options, callback) => callback(null, answers[0].address, 4),
+      lookup: (_host, _options, callback) => callback(null, address, 4),
       headers: { Accept: 'text/plain, text/markdown', 'Accept-Encoding': 'identity' },
     }, (response) => {
       const type = response.headers['content-type']?.split(';')[0];

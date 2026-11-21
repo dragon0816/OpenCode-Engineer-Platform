@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { pinCustomRemoteMcp, validateCustomRemoteMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 
 test('validates and persists local MCP definitions with credential names only', { skip: process.platform !== 'win32' }, () => {
@@ -45,3 +46,25 @@ test('validates and persists local MCP definitions with credential names only', 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('remote MCP accepts HTTPS and secret references and requires confirmation for private addresses', async () => {
+  const id = 'b'.repeat(32);
+  const definition = { name: '合成遠端 MCP', transport: 'remote', enabled: true, url: 'https://127.0.0.1:8443/mcp',
+    localService: false, headers: ['X-Synthetic-Token'], timeouts: { startup: 1000, catalog: 1000, execution: 1000 },
+    appliesToProjects: ['default'], dataScope: '合成資料' };
+  const validate = (input: Record<string, unknown>) => validateCustomRemoteMcp(id, input, ['default']);
+  const withCredentials = new URL(definition.url);
+  withCredentials.username = 'synthetic';
+  withCredentials.password = 'fixture';
+  for (const url of ['http://127.0.0.1', withCredentials.href, 'https://127.0.0.1/?token=value']) {
+    assert.throws(() => validate({ ...definition, url }));
+  }
+  for (const headers of [['Host'], ['Invalid: Name'], ['X-Synthetic-Token', 'x_synthetic_token'], [{ name: 'Authorization', value: 'synthetic' }]]) {
+    assert.throws(() => validate({ ...definition, headers }));
+  }
+  const server = validate(definition);
+  assert.deepEqual(server.environment, [{ name: 'X-Synthetic-Token', reference: `OEP_MCP_${id.toUpperCase()}_X_SYNTHETIC_TOKEN` }]);
+  await assert.rejects(pinCustomRemoteMcp(server, AbortSignal.timeout(1000)), /未確認/);
+  assert.equal(await pinCustomRemoteMcp({ ...server, localService: true }, AbortSignal.timeout(1000)), '127.0.0.1');
+});
+

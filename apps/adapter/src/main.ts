@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -26,6 +27,8 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
+import { pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
@@ -245,6 +248,56 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }
       send(response, 200, [{ id: knowledgeMcpName, managed: true, status, enabled,
         tools: runtime.knowledge ? [knowledgeToolName] : [] }]);
+      return;
+    }
+    if (path === '/api/settings/mcp/custom') {
+      if (method === 'POST') {
+        const input = await body(request);
+        const existing = store.customMcpServers().find(({ id }) => id === input.id);
+        if (input.action !== 'create' && !existing) throw new HttpError(404, '找不到伺服器。');
+        if (input.action === 'remove' && existing) {
+          store.removeCustomMcp(existing.id);
+        } else if (input.action === 'credential' && existing) {
+          const entry = existing.environment.find(({ name }) => name === input.name);
+          if (!entry) throw new HttpError(404, '找不到憑證欄位。');
+          try { saveCustomMcpCredential(entry.reference, input.value); }
+          catch (error) { throw new HttpError(400, (error as Error).message); }
+          send(response, 200, { configured: true });
+          return;
+        } else if (input.action === 'enable' && existing) {
+          if (typeof input.enabled !== 'boolean') throw new HttpError(400, '請選擇啟用或停用。');
+          if (input.enabled && existing.transport === 'remote') {
+            try { await pinCustomRemoteMcp(existing, AbortSignal.timeout(5000)); }
+            catch (error) { throw new HttpError(400, (error as Error).message); }
+          }
+          if (!store.customMcpServers().some(({ id, updatedAt }) => id === existing.id && updatedAt === existing.updatedAt)) {
+            throw new HttpError(409, '設定已變更，請重新載入。');
+          }
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          store.saveCustomMcp({ ...definition, enabled: input.enabled });
+        } else if (input.action === 'create' || input.action === 'update') {
+          const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
+          try {
+            const projectIDs = projects.map((project) => project.id);
+            const definition = input.transport === 'remote'
+              ? validateCustomRemoteMcp(id, input, projectIDs)
+              : validateCustomStdioMcp(id, input, projectIDs);
+            if (definition.transport === 'remote') await pinCustomRemoteMcp(definition, AbortSignal.timeout(5000));
+            if (existing && !store.customMcpServers().some((server) => server.id === existing.id && server.updatedAt === existing.updatedAt)) {
+              throw new Error('設定已變更，請重新載入。');
+            }
+            store.saveCustomMcp(definition);
+          } catch (error) {
+            const message = (error as Error).message;
+            throw new HttpError(400, /^[\u3400-\u9fff]/.test(message) ? message : '無法儲存伺服器設定。');
+          }
+        } else throw new HttpError(400, '請選擇伺服器操作。');
+      }
+      const servers = store.customMcpServers();
+      const configured = configuredCustomMcpCredentials(servers.flatMap(({ environment }) => environment.map(({ reference }) => reference)));
+      send(response, 200, servers.map((server) => ({
+        ...server, environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
+      })));
       return;
     }
     if (path === '/api/settings/knowledge') {
