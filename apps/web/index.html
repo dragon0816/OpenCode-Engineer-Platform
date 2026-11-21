@@ -14,6 +14,10 @@
   </header>
   <main>
     <aside class="sidebar">
+      <nav class="views" aria-label="工作台">
+        <button id="open-chat" type="button" aria-current="page">對話</button>
+        <button id="open-knowledge" type="button" disabled>知識庫</button>
+      </nav>
       <label for="agent">新會話的助理</label>
       <select id="agent" disabled>
         <option value="inspector">資料分析</option>
@@ -25,7 +29,7 @@
       <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
     </aside>
-    <section class="conversation" aria-label="對話">
+    <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
         <h1 id="session-title">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
@@ -43,7 +47,24 @@
         </div>
       </form>
     </section>
-    <aside class="sidebar files">
+    <section class="conversation knowledge" aria-labelledby="knowledge-title" id="knowledge-view" hidden>
+      <header class="conversation-header">
+        <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
+      </header>
+      <div class="knowledge-body">
+        <label for="vault">已發布的知識庫</label>
+        <select id="vault" disabled><option value="">載入中</option></select>
+        <dl id="vault-details"></dl>
+        <p id="knowledge-status" role="status"></p>
+        <form id="knowledge-form">
+          <label for="knowledge-question">問題</label>
+          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
+          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
+        </form>
+        <div id="knowledge-answer" aria-live="polite"></div>
+      </div>
+    </section>
+    <aside class="sidebar files" id="chat-files">
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
         <div id="drop">
