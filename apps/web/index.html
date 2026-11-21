@@ -218,26 +218,9 @@
             <label><input type="checkbox" id="enable-microphone"> 啟用麥克風語音輸入</label>
             <p id="microphone-settings-status" role="status"></p>
           </section>
-          <section id="settings-runtime" aria-labelledby="settings-runtime-title" hidden>
-            <h2 id="settings-runtime-title">執行環境</h2>
-            <p class="settings-help">查看本機服務使用的版本及啟動檢查結果。</p>
-            <p id="runtime-status" role="status">正在載入執行環境…</p>
-            <dl id="runtime-details"></dl>
-            <p id="runtime-agent"></p>
-            <details class="settings-advanced">
-              <summary>進階</summary>
-              <dl id="runtime-fingerprints"></dl>
-            </details>
-          </section>
-          <section id="settings-mcp" hidden>
-            <h2>MCP</h2>
-            <h3>內建知識庫 <span class="runtime-badge">由 OEP 管理</span></h3>
-            <p id="mcp-knowledge-status" role="status"></p>
-            <p id="mcp-knowledge-tools" hidden>內建工具：BI 查詢</p>
-            <p>BI 開關適用於新會話。</p>
-            <div class="settings-actions">
-              <button id="mcp-open-knowledge-settings" type="button">管理 BI 查詢工具</button>
-            </div>
+          <section id="settings-mcp" aria-labelledby="settings-mcp-title" hidden>
+            <h2 id="settings-mcp-title">MCP</h2>
+            <p class="settings-help">加入外部工具，並選擇哪些專案可以使用它們。</p>
             <div class="mcp-toolbar">
               <h3>自訂伺服器</h3>
               <button type="button" id="mcp-add">新增伺服器</button>
@@ -248,12 +231,21 @@
             </div>
             <p id="mcp-status" role="status"></p>
             <div id="mcp-servers"></div>
+            <div class="settings-group">
+              <h3>內建知識庫 <span class="runtime-badge">由 OEP 管理</span></h3>
+              <p id="mcp-knowledge-status" role="status"></p>
+              <p id="mcp-knowledge-tools" hidden>內建工具：BI 查詢</p>
+              <p>BI 開關適用於新會話。</p>
+              <div class="settings-actions">
+                <button id="mcp-open-knowledge-settings" type="button">管理 BI 查詢工具</button>
+              </div>
+            </div>
             <dialog id="mcp-editor" aria-labelledby="mcp-editor-title">
               <form id="mcp-form">
                 <h3 id="mcp-editor-title"></h3>
                 <label>名稱 <input name="name" required maxlength="80" autofocus></label>
                 <label>連線方式
-                  <select name="transport"><option value="stdio">本機程式（stdio）</option><option value="remote">遠端 HTTPS</option></select>
+                  <select name="transport"><option value="stdio">本機程式</option><option value="remote">遠端服務</option></select>
                 </label>
                 <div id="mcp-stdio-fields">
                   <label>執行檔 <input name="executable" maxlength="2048"></label>
@@ -261,11 +253,11 @@
                   <label>工作資料夾 <input name="cwd" maxlength="2048"></label>
                 </div>
                 <div id="mcp-remote-fields" hidden>
-                  <label>HTTPS 網址 <input name="url" type="url" maxlength="2048"></label>
+                  <label>安全連線網址 <input name="url" type="url" maxlength="2048"></label>
                   <label><input name="localService" type="checkbox"> 我確認允許連線至本機或私人網路服務</label>
                 </div>
                 <fieldset>
-                  <legend id="mcp-credential-title">環境變數</legend>
+                  <legend id="mcp-credential-title">程式的憑證欄位</legend>
                   <p>值存入 Windows 使用者憑證。已設定的值會保持隱藏。</p>
                   <div id="mcp-credential-rows"></div>
                   <button type="button" id="mcp-add-credential">新增憑證欄位</button>
@@ -275,12 +267,14 @@
                   <div id="mcp-projects"></div>
                 </fieldset>
                 <label>資料範圍說明 <textarea name="dataScope" rows="2" maxlength="2000"></textarea></label>
-                <details class="mcp-timeout-details">
-                  <summary>逾時（毫秒）</summary>
+                <details class="settings-advanced mcp-timeout-details">
+                  <summary>進階</summary>
+                  <p>本機程式透過 stdio 連線，憑證以環境變數傳入。遠端服務使用 HTTPS 與 HTTP 標頭。</p>
+                  <p>等待時間上限（毫秒）</p>
                   <div class="mcp-timeouts">
-                  <label>啟動 <input name="startup" type="number" min="100" max="120000" required></label>
-                  <label>工具清單 <input name="catalog" type="number" min="100" max="120000" required></label>
-                  <label>執行 <input name="execution" type="number" min="100" max="120000" required></label>
+                    <label>啟動 <input name="startup" type="number" min="100" max="120000" required></label>
+                    <label>工具清單 <input name="catalog" type="number" min="100" max="120000" required></label>
+                    <label>執行 <input name="execution" type="number" min="100" max="120000" required></label>
                   </div>
                 </details>
                 <label><input name="enabled" type="checkbox"> 啟用伺服器</label>
@@ -291,6 +285,17 @@
                 </div>
               </form>
             </dialog>
+          </section>
+          <section id="settings-runtime" aria-labelledby="settings-runtime-title" hidden>
+            <h2 id="settings-runtime-title">執行環境</h2>
+            <p class="settings-help">查看本機服務使用的版本及啟動檢查結果。</p>
+            <p id="runtime-status" role="status">正在載入執行環境…</p>
+            <dl id="runtime-details"></dl>
+            <p id="runtime-agent"></p>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <dl id="runtime-fingerprints"></dl>
+            </details>
           </section>
           <section id="settings-about" aria-labelledby="settings-about-title" hidden>
             <h2 id="settings-about-title">關於</h2>

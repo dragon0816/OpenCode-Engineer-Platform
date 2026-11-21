@@ -380,6 +380,8 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .settings-advanced { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .settings-advanced summary { color: var(--link); }
 .settings-advanced p { margin-block: 6px; }
+.settings-group { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.settings-group h3 { margin: 0 0 6px; font-size: 1rem; }
 #assistant-settings, #appearance-settings { display: grid; gap: 7px; }
 #assistant-settings input { width: 100%; }
 #model-settings { margin-top: 12px; }
@@ -555,4 +557,3 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 }
 .mcp-secret { flex-basis: 100%; }
 .mcp-timeout-details { margin-block: 10px; }
-.mcp-timeout-details summary { cursor: pointer; }

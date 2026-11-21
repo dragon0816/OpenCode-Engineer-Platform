@@ -74,7 +74,7 @@ export function bindMcpSettings(projects) {
     field('url').required = remote;
     field('executable').required = !remote;
     field('cwd').required = !remote;
-    find('mcp-credential-title').textContent = remote ? 'HTTP 標頭' : '環境變數';
+    find('mcp-credential-title').textContent = remote ? '服務的憑證欄位' : '程式的憑證欄位';
   }
 
   function open(server) {
@@ -177,7 +177,7 @@ export function bindMcpSettings(projects) {
         control('移除', (event) => {
           if (window.confirm('要移除此伺服器設定嗎？')) void apply({ action: 'remove' }, event.currentTarget);
         }));
-      card.append(heading, badges, element('p', (server.transport === 'stdio' ? '本機程式' : '遠端 HTTPS') +
+      card.append(heading, badges, element('p', (server.transport === 'stdio' ? '本機程式' : '遠端服務') +
         ' · ' + (allowed.length ? allowed.join('、') : '尚未允許任何專案')));
       if (server.dataScope) card.append(element('p', server.dataScope));
       card.append(actions, panel);
