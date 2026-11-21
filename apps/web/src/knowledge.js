@@ -111,7 +111,7 @@ export function bindKnowledge() {
 
   function showKnowledge(show) {
     find('knowledge-view').hidden = !show;
-    find('chat-view').hidden = find('chat-files').hidden = show;
+    find('chat-view').hidden = show;
     if (show) {
       open.setAttribute('aria-current', 'page');
       chat.removeAttribute('aria-current');

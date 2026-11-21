@@ -61,7 +61,7 @@ find('clear-reply').addEventListener('click', () => {
 const renderNotes = bindNotes(find('notes-filter'), find('session-notes'), find('export-notes'), (id) => {
   const message = messages.querySelector('[data-id="' + CSS.escape(id) + '"]');
   if (!message) return;
-  if (panelNarrow.matches) setPanel(false);
+  if (panelNarrow.matches) closePanel(false);
   message.focus();
   message.scrollIntoView({ block: 'center' });
 });
@@ -280,7 +280,8 @@ function render(context) {
         renderReply();
         prompt.focus();
       }, showError, (text) => { find('command-toast').textContent = text; },
-      () => { if (current === context) renderNotes(context); }));
+      () => { if (current === context) renderNotes(context); },
+      () => openSection('notes', entry)));
       fragment.append(entry);
     }
     appendEvents(Infinity);
@@ -314,6 +315,16 @@ function renderPanel(context) {
   const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
   if (context.fileKey === fileKey) return;
   context.fileKey = fileKey;
+  const resources = find('chat-resources');
+  const previousButtons = new Map([...resources.children].map((button) => [button.dataset.file, button]));
+  const resourceButtons = [];
+  function addResource(file, url) {
+    const button = previousButtons.get(url)
+      ?? action(file.name, () => void openPreview(file, url, context, button));
+    button.dataset.file = url;
+    button.setAttribute('aria-label', `預覽 ${file.name}`);
+    resourceButtons.push(button);
+  }
   attachmentList.replaceChildren();
   for (const attachment of state.attachments) {
     const checkbox = node('input');
@@ -328,17 +339,25 @@ function renderPanel(context) {
     const entry = node('li');
     entry.append(label);
     if (attachment.converted) entry.append(node('small', '已轉成含工作表與列號的 CSV'));
-    addFileDetails(entry, attachment, `${path}/attachments/${attachment.id}`, context, true);
+    const url = `${path}/attachments/${attachment.id}`;
+    addFileDetails(entry, attachment, url, context, true);
+    addResource(attachment, url);
     attachmentList.append(entry);
   }
   artifactList.replaceChildren();
   for (const run of state.runs.filter((run) => run.artifact).reverse()) {
     const entry = node('li');
     const artifact = { ...run.artifact, createdAt: run.finishedAt ?? run.createdAt };
-    addFileDetails(entry, artifact, `${path}/artifacts/${run.id}`, context);
+    const url = `${path}/artifacts/${run.id}`;
+    addFileDetails(entry, artifact, url, context);
+    addResource(artifact, url);
     artifactList.append(entry);
   }
   if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
+  const focused = document.activeElement;
+  resources.replaceChildren(...resourceButtons);
+  resources.hidden = resourceButtons.length === 0;
+  if (resourceButtons.includes(focused)) focused.focus({ preventScroll: true });
   const ledger = find('panel-runs');
   ledger.replaceChildren(...state.runs.toReversed().map((run) =>
     node('li', `${formatDate(run.createdAt)} · ${statuses[run.state] ?? '狀態未知'}`)));
@@ -377,6 +396,7 @@ function addFileDetails(entry, file, url, context, attachment = false) {
   if (!attachment) entry.append(download);
   entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
   const open = action('預覽', () => void openPreview(file, url, context, open));
+  open.setAttribute('aria-label', `預覽 ${file.name}`);
   actions.append(hash, open);
   if (attachment) actions.append(download, action('移除', async () => {
     if (!confirm(`要移除「${file.name}」嗎？`)) return;
@@ -384,27 +404,13 @@ function addFileDetails(entry, file, url, context, attachment = false) {
       await request(url, { data: {}, signal: context.abort.signal });
       if (current !== context) return;
       context.selected.delete(file.id);
-      if (previewPath === url) closePreview();
+      if (panelTabs.has(url)) closeTab(url);
       refresh(context);
     } catch (error) {
       if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。'));
     }
   }));
   entry.append(actions);
-}
-
-const preview = find('file-preview');
-let previewURL;
-let previewPath;
-let previewRequest;
-
-function closePreview() {
-  previewRequest?.abort();
-  previewPath = undefined;
-  preview.replaceChildren();
-  find('file-list').hidden = false;
-  if (previewURL) URL.revokeObjectURL(previewURL);
-  previewURL = undefined;
 }
 
 async function previewResponse(url, signal) {
@@ -414,21 +420,35 @@ async function previewResponse(url, signal) {
 }
 
 async function openPreview(file, url, context, opener) {
-  closePreview();
-  previewPath = url;
+  if (panelTabs.has(url)) {
+    showTab(url, opener);
+    return;
+  }
   const abort = new AbortController();
-  previewRequest = abort;
+  let objectURL;
+  const panel = node('div');
+  find('file-preview').append(panel);
   const body = node('div', undefined, 'preview-body');
   const title = node('h2', file.name);
-  title.tabIndex = -1;
-  const close = action('關閉預覽', () => {
-    closePreview();
-    (opener.isConnected ? opener : find('panel-files')).focus();
+  const actions = node('div', undefined, 'file-actions');
+  const download = node('a', '下載');
+  download.href = url;
+  download.download = file.name;
+  if (file.mime !== 'application/pdf') {
+    const browser = node('a', '在瀏覽器開啟');
+    browser.href = `${url}/preview`;
+    browser.target = '_blank';
+    browser.rel = 'noopener noreferrer';
+    actions.append(browser);
+  }
+  actions.append(download);
+  panel.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), actions, body);
+  addTab(url, file.name, panel, () => {
+    abort.abort();
+    if (objectURL) URL.revokeObjectURL(objectURL);
+    panel.remove();
   });
-  find('file-list').hidden = true;
-  preview.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), close, body);
-  title.focus({ preventScroll: true });
-  find('panel-files').scrollTop = 0;
+  showTab(url, opener);
   if (file.mime === 'application/pdf') {
     body.textContent = '目前無法預覽 PDF。請下載後開啟。';
     return;
@@ -444,8 +464,8 @@ async function openPreview(file, url, context, opener) {
       if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
       const image = node('img');
       image.alt = file.name;
-      previewURL = URL.createObjectURL(data);
-      image.src = previewURL;
+      objectURL = URL.createObjectURL(data);
+      image.src = objectURL;
       body.append(image);
     } else if (extension === 'html' || extension === 'htm') {
       const frame = node('iframe');
@@ -648,52 +668,117 @@ function refresh(context) {
 const rightPanel = find('chat-files');
 const panelToggle = find('toggle-files');
 const panelNarrow = matchMedia('(max-width: 900px)');
-const panelTabs = [...rightPanel.querySelectorAll('[role="tab"]')];
+const panelTabs = new Map();
+const panelSections = { files: '檔案與產物', work: '工作', diff: '差異', notes: '筆記' };
+const closeFiles = find('close-files');
+let activeTab;
+let panelOpener;
+let nextPreview = 0;
 
-function activatePanel(tab) {
-  for (const candidate of panelTabs) {
-    const active = tab === candidate;
-    candidate.setAttribute('aria-selected', String(active));
-    candidate.tabIndex = active ? 0 : -1;
-    find(candidate.getAttribute('aria-controls')).hidden = !active;
-  }
-  if (current) localStorage.setItem(`oep.panel.${current.path}`, tab.id);
-  if (tab.id === 'tab-work') void loadJobSummary();
-}
-
-function setPanel(open) {
-  rightPanel.classList.toggle('sheet-open', open);
-  panelToggle.setAttribute('aria-expanded', String(open));
-}
-
-panelToggle.addEventListener('click', () => {
-  const open = !rightPanel.classList.contains('sheet-open');
-  setPanel(open);
-  if (open) rightPanel.querySelector('[aria-selected="true"]').focus();
-});
-find('close-files').addEventListener('click', () => { setPanel(false); panelToggle.focus(); });
-panelNarrow.addEventListener('change', () => setPanel(false));
-rightPanel.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && panelNarrow.matches) {
-    event.preventDefault();
-    setPanel(false);
-    panelToggle.focus();
-  }
-});
-for (const [index, tab] of panelTabs.entries()) {
-  tab.addEventListener('click', () => activatePanel(tab));
-  tab.addEventListener('keydown', (event) => {
-    const target = {
-      ArrowRight: (index + 1) % panelTabs.length,
-      ArrowLeft: (index + panelTabs.length - 1) % panelTabs.length,
-      Home: 0, End: panelTabs.length - 1,
-    }[event.key];
-    if (target === undefined) return;
-    event.preventDefault();
-    activatePanel(panelTabs[target]);
-    panelTabs[target].focus();
+function addTab(key, title, panel, dispose) {
+  const item = node('div', undefined, 'panel-tab');
+  item.setAttribute('role', 'presentation');
+  const button = action(title, () => showTab(key));
+  const id = panel.id ? panel.id.slice('panel-'.length) : `preview-${++nextPreview}`;
+  button.id = `tab-${id}`;
+  panel.id ||= `panel-${id}`;
+  panel.tabIndex = 0;
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', button.id);
+  button.setAttribute('role', 'tab');
+  button.setAttribute('aria-controls', panel.id);
+  const close = action('×', () => closeTab(key));
+  close.className = 'close-tab';
+  close.setAttribute('aria-label', `關閉 ${title} 分頁`);
+  item.append(button, close);
+  find('panel-tabs').append(item);
+  panelTabs.set(key, { button, item, panel, dispose });
+  button.addEventListener('keydown', (event) => {
+    const keys = [...panelTabs.keys()];
+    const index = keys.indexOf(key);
+    const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: keys.length - 1 }[event.key];
+    if (event.key === 'Delete') {
+      event.preventDefault();
+      closeTab(key);
+    } else if (target !== undefined) {
+      event.preventDefault();
+      showTab(keys[(target + keys.length) % keys.length]);
+    }
   });
 }
+
+function updatePanelLayout() {
+  const overlay = !rightPanel.hidden && panelNarrow.matches;
+  document.querySelector('.navigation').inert = find('work-area').inert = overlay;
+  rightPanel.setAttribute('role', overlay ? 'dialog' : 'complementary');
+  if (overlay) rightPanel.setAttribute('aria-modal', 'true');
+  else rightPanel.removeAttribute('aria-modal');
+  closeFiles.textContent = panelNarrow.matches ? '返回對話' : '關閉附加資料';
+}
+
+function showTab(key, opener) {
+  if (opener && !rightPanel.contains(opener)) panelOpener = opener;
+  activeTab = key;
+  for (const [id, { button, panel }] of panelTabs) {
+    const active = id === key;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    panel.hidden = !active;
+  }
+  rightPanel.hidden = false;
+  panelToggle.setAttribute('aria-expanded', 'true');
+  updatePanelLayout();
+  panelTabs.get(key).button.focus({ preventScroll: true });
+  if (key === 'work') void loadJobSummary();
+}
+
+function openSection(key, opener) {
+  if (!panelTabs.has(key)) addTab(key, panelSections[key], find(`panel-${key}`));
+  showTab(key, opener);
+}
+
+function removeTab(key) {
+  const { item, panel, dispose } = panelTabs.get(key);
+  panel.hidden = true;
+  item.remove();
+  dispose?.();
+  panelTabs.delete(key);
+}
+
+function closeTab(key) {
+  const keys = [...panelTabs.keys()];
+  const index = keys.indexOf(key);
+  removeTab(key);
+  if (!panelTabs.size) closePanel();
+  else showTab(activeTab === key ? keys[index + 1] ?? keys[index - 1] : activeTab);
+}
+
+function closePanel(restoreFocus = true) {
+  for (const key of panelTabs.keys()) removeTab(key);
+  rightPanel.hidden = true;
+  panelToggle.setAttribute('aria-expanded', 'false');
+  updatePanelLayout();
+  if (restoreFocus) {
+    const opener = panelOpener?.isConnected ? panelOpener
+      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : panelToggle;
+    (opener ?? panelToggle).focus({ preventScroll: true });
+  }
+  panelOpener = undefined;
+  activeTab = undefined;
+}
+
+for (const [key, id] of [['files', 'toggle-files'], ['work', 'open-work'], ['diff', 'open-diff'], ['notes', 'open-notes']]) {
+  const opener = find(id);
+  opener.addEventListener('click', () => openSection(key, opener));
+}
+closeFiles.addEventListener('click', () => closePanel());
+find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
+panelNarrow.addEventListener('change', updatePanelLayout);
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
+  event.preventDefault();
+  closePanel();
+});
 
 function select(id) {
   voice.cancel();
@@ -706,7 +791,9 @@ function select(id) {
   renderNotes(null);
   renderReply();
   find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
-  closePreview();
+  closePanel(false);
+  find('chat-resources').replaceChildren();
+  find('chat-resources').hidden = true;
   find('panel-runs').replaceChildren();
   find('panel-diff').replaceChildren();
   jump.hidden = true;
@@ -745,7 +832,6 @@ function select(id) {
   renderReply();
   find('session-model-status').textContent = '';
   updateSessionAlias();
-  activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
@@ -1247,7 +1333,8 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 });
 
 function showSettings() {
-  for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  closePanel(false);
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
@@ -1272,7 +1359,7 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
     settingsView.hidden = true;
     settingsEntry.removeAttribute('aria-current');
     if (id === 'open-chat') {
-      find('chat-view').hidden = find('chat-files').hidden = false;
+      find('chat-view').hidden = false;
       find(id).setAttribute('aria-current', 'page');
     }
   }, { capture: true });
@@ -1317,6 +1404,7 @@ for (const section of document.querySelectorAll('.rail-section')) {
 find('assistant-count').textContent = agent.options.length;
 function syncNavigation() {
   const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
+  if (visible !== 'open-chat') closePanel(false);
   for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
     if (entry === visible) find(entry).setAttribute('aria-current', 'page');
     else find(entry).removeAttribute('aria-current');
@@ -1662,7 +1750,7 @@ try {
   }
   find('open-chat').addEventListener('click', () => {
     find('jobs-view').hidden = true;
-    find('chat-view').hidden = find('chat-files').hidden = false;
+    find('chat-view').hidden = false;
   });
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {

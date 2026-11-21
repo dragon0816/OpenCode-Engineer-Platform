@@ -248,7 +248,12 @@
     </section>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
-        <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>
+        <div class="panel-openers" aria-label="會話附加資料" role="group">
+          <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產物</button>
+          <button type="button" id="open-work" aria-controls="chat-files">工作</button>
+          <button type="button" id="open-diff" aria-controls="chat-files">差異</button>
+          <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
+        </div>
         <h1 id="session-title" tabindex="-1">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
         <label for="session-alias">會話模型</label>
@@ -260,6 +265,7 @@
         <p class="empty">上傳截圖、文件或工作簿，並輸入想要分析的問題。</p>
       </div>
       <button id="jump-latest" type="button" hidden>跳到最新訊息</button>
+      <section id="chat-resources" aria-label="會話檔案" hidden></section>
       <dialog id="remove-session-card" aria-labelledby="remove-session-question">
         <form method="dialog">
           <h2 id="remove-session-question"></h2>
@@ -427,17 +433,12 @@
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
     </main>
-    <aside class="sidebar files" id="chat-files" aria-label="會話面板">
+    <aside class="sidebar files" id="chat-files" aria-label="會話面板" hidden>
       <div class="panel-header">
-      <div role="tablist" aria-label="會話面板">
-        <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="true">檔案與產物</button>
-        <button type="button" role="tab" id="tab-work" aria-controls="panel-work" aria-selected="false" tabindex="-1">工作</button>
-        <button type="button" role="tab" id="tab-diff" aria-controls="panel-diff" aria-selected="false" tabindex="-1">差異</button>
-        <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false" tabindex="-1">筆記</button>
+        <button type="button" id="close-files">關閉附加資料</button>
+        <div id="panel-tabs" role="tablist" aria-label="會話附加資料"></div>
       </div>
-        <button type="button" id="close-files" aria-label="關閉會話面板">關閉</button>
-      </div>
-      <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0">
+      <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0" hidden>
         <div id="file-list">
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
@@ -455,8 +456,8 @@
         <ul id="artifacts"><li>尚無可下載的產物</li></ul>
       </section>
         </div>
-        <div id="file-preview"></div>
       </div>
+      <div id="file-preview"></div>
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
         <details id="panel-tools" hidden>
           <summary>會話工具</summary>

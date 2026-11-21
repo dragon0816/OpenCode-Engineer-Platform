@@ -164,7 +164,7 @@ function render(status) {
 open.addEventListener('click', () => {
   const show = view.hidden;
   find('knowledge-view').hidden = true;
-  find('chat-view').hidden = find('chat-files').hidden = show;
+  find('chat-view').hidden = show;
   view.hidden = !show;
   if (show) {
     find('jobs-title').focus();
