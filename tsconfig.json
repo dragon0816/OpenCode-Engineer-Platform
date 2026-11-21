@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "types": ["node"],
+    "rootDir": "scripts/phase0",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "noEmitOnError": true
+  },
+  "include": ["scripts/phase0/*.ts"]
+}

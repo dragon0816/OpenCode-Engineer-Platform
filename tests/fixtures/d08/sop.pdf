@@ -1,0 +1,32 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 490 180] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<<  /Length 549 >>
+stream
+BT /F1 10 Tf 14 TL 24 150 Td (D08 synthetic procedure XD-01 - minimal smoke) Tj T* (Create exactly two sheets in this order: Readings, Run. No formulas.) Tj T* (Readings A1:C1 \(text\): Sample | Voltage | Passed) Tj T* (Readings A2:C2: SYN-A \(text\) | 1.25 V \(decimal\) | TRUE \(boolean\)) Tj T* (Readings A3:C3: SYN-B \(text\) | 0.75 V \(decimal\) | FALSE \(boolean\)) Tj T* (Run A1:B1 \(text\): Run ID | Count) Tj T* (Run A2:B2: SYN-D08-01 \(text\) | 2 \(integer\)) Tj T* (Check exact cell values and types. Numeric absolute tolerance: 0.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000842 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+912
+%%EOF

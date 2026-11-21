@@ -48,7 +48,7 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 | S3　附件與 XLSX | `docs/validation/p0-s3-attachments.md` 記合成 PNG、PDF、兩個 sheet 的 XLSX、超限與不支援案例。以一次性 converter 驗證欄位、來源 locator 及 bounded parse。 | PNG、PDF 各讀出唯一內容，XLSX 的 Markdown/CSV 轉換逐格符合 fixture（兩 sheets 及列定位），原檔與轉換單獨有 hash。至少驗 `file:`、`data:`、超過 20 MiB、HTTP URI、掃描 PDF 回退及 Windows 路徑，所有結果符合預期。模型端媒體結果須與 S2 一致。 |
 | S4　SSE 重連 | `docs/validation/p0-s4-sse.md` 列 `/api/event` 事件、scope 和可對帳來源。 | 以兩個 session 故障注入至少 3 次斷線／overflow（含完成事件在斷線期間）。重連 5 秒內以狀態讀取收斂，跨 session 曝露與重複送件均為 0。瞬時事件可缺，記入證據。 |
 | S5　Server 安全 | `docs/validation/p0-s5-security.md` 以本機隔離的 upstream 和一次性 OEP proxy 探測 bind、密碼及 Origin 行為。 | `Get-NetTCPConnection` 顯示 listener 只在 loopback，受保護 API 無憑證回 401、正確憑證可用。測錯誤 Host、Origin、CSRF 與瀏覽器可見 upstream 密碼，全部拒絕或無外洩。對照 upstream 預設 CORS，確認 OEP 自行驗證。 |
-| S6　Windows lifecycle | `docs/validation/p0-s6-windows.md` 記 Windows／Node／binary 架構、Job Object、per-user、登入及路徑。 | Windows 11 x64 私有 VM，包含中文／空格路徑。啟動、port 衝突、單實例、正常停、launcher 強制停止、睡眠／喚醒、登出／再登入各一輪，兩種停法後 10 秒內受管 orphan 為 0。記錄各種恢復結果及 Node／Python worker 額外部署成本。 |
+| S6　Windows lifecycle | `docs/validation/p0-s6-windows.md` 記 Windows／Node／binary 架構、Job Object、per-user、登入及路徑。 | **原 v2 門檻，現以 [owner 修訂](#phase-0-owner-amendment) 為準。** 原要求 Windows 11 x64 私有 VM，包含中文／空格路徑，啟動、port 衝突、單實例、正常停、launcher 強制停止、睡眠／喚醒、登出／再登入各一輪，兩種停法後 10 秒內受管 orphan 為 0，記錄恢復結果與部署成本。睡眠及登出項已免測。 |
 | S7　授權盤點 | `docs/validation/p0-s7-licensing.md` 及 `docs/validation/p0-provenance.md` 盤點 AEP、OpenCode、依賴、fixture、自有素材與分發權。 | 100% 候選項有版本／來源／授權／處置，未授權可分發項為 0，secret scan 命中為 0。AEP 無通用 LICENSE，文件只引用公開路徑及設計概念。 |
 
 **提前建立知識 baseline**　`tests/fixtures/knowledge/gold.v1.json`（Phase 0 擬議資料檔）及 `docs/validation/p0-knowledge-baseline.md` 定義 48 題合成集與可重現的簡單文字匹配基線。最少 24 題有答案、20 題無證據、4 題矛盾或注入，涵蓋繁中、英文、混合文字、精確料號和短查詢。鎖 fixture hash、標註和評分方法，寫 Recall@5 與延遲。Phase 1 用 mock evidence set 補拒答／引用 baseline。只有 D01 核准、同一資料集及條件可比時才在私有環境另做 AEP 對照。
@@ -125,7 +125,7 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 | `packages/knowledge/src/jobs/{scheduler,reconcile}.ts`、`packages/knowledge/src/bi/link-intake.ts`、`packages/knowledge/migrations/004_schedule.sql` | 將立即、定時、Run Now 接入共用 ledger，記 UTC/IANA 時區、occurrence、missed/expired 與補跑。連結抓取限制核准目標、重新導向、流量與逾時，受阻時留待人工補件。 |
 | `apps/adapter/src/http/jobs.ts`、`apps/web/src/Jobs.tsx`、`tests/integration/{telegram-replay,schedules,source-fallback}.test.ts`、`tests/e2e/telegram-smoke.test.ts` | 使用者狀態、utc/時區、sleep/logout 恢復、真 bot smoke。 |
 
-**驗收與產物**　`npm run test:telegram` 模擬兩 bot 相同 update ID、未允許 sender、無法讀取連結、逾時、429、重送及 crash。至少 20 筆 durable 接單全部可對帳，重複 job、跨 bot/session、重複發布為 0。刻意在 persist 前、persist 後送新 offset 前、外部送出結果未知處終止，應重投或對帳並保留可見 indeterminate。三種觸發皆有測試，注入 clock jump、夏令時及睡眠後同 occurrence 的 Run Now／schedule 競態，最多一個 claim。兩個真 bot 各通過 smoke（Main 對話及 `/ask`、BI 連結與檔案→待審→通知）。受阻連結保留 URL、原因和補件，編造內容數為 0。`docs/validation/p4-telegram.md` 存去敏紀錄。
+**驗收與產物**　`npm run test:telegram` 模擬兩 bot 相同 update ID、未允許 sender、無法讀取連結、逾時、429、重送及 crash。至少 20 筆 durable 接單全部可對帳，重複 job、跨 bot/session、重複發布為 0。刻意在 persist 前、persist 後送新 offset 前、外部送出結果未知處終止，應重投或對帳並保留可見 indeterminate。三種觸發皆有測試。啟動／恢復對帳須以模擬 clock jump、夏令時、終止程序及重啟做單元和整合測試，包含同一 occurrence 的 Run Now／schedule 競態，最多一個 claim；這些案例沒有真實 OS 睡眠或登出證據。兩個真 bot 各通過 smoke（Main 對話及 `/ask`、BI 連結與檔案→待審→通知）。受阻連結保留 URL、原因和補件，編造內容數為 0。`docs/validation/p4-telegram.md` 存去敏紀錄。
 
 **遷移、回滾及風險**　啟用前備份 inbox/job/outbox/cursor 及 profile。回退先停 poller，保留尚未確認的 offset 和未定 intent，恢復後以 ledger 對帳再派送。停機超過 24 小時標示可能遺失尚未收到的 Telegram updates。R01、R07、R11。
 
@@ -140,6 +140,8 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 | `docs/OPERATIONS.md`、`docs/validation/p5-release.md` | 操作、排程、停機、未定結果、升級、回退、備份重綁。交付 SBOM、NOTICE、checksums、去敏結果。 |
 
 **驗收與產物**　`npm run test:release` 在乾淨 Windows VM 驗證 SOP→Excel、PNG/PDF 上傳、Telegram→BI→人工審核、Ask→可重現引用、schema 變更及備份→回復，6 類流程全數通過。使用兩套版本各演練一次升級及回退，把 OpenCode binary／profile 成套還原。備份前後比較 100% fixture counts、狀態、revision/hash、關係與引用。量測 RPO ≤24 小時、RTO ≤30 分鐘。發布候選含授權清單、SBOM、NOTICE、checksums，secret scan 無命中。
+
+**使用者文件已知限制**　Owner 於真實使用中驗證前，OEP 對跨真實 OS 睡眠或登出的排程正確性無保證。RPO／RTO 數值目前為未驗證目標。
 
 **遷移、回滾及風險**　升級前停止派送、做一致 DB/blob/profile 快照，啟用新程式後再次對帳。回退復原對應版本與資料，重新綁定 credentials，保持所有未定 intent 可追蹤。R01、R03、R05、R08、R10、R11、R12。
 
@@ -178,3 +180,34 @@ OEP 是單使用者、local-first 工程平台。OpenCode 管模型 turn、tool 
 3. 由 Claude Code 獨立 review diff 和驗收。Claude 不可用時，必須由獨立 Codex review delegate 讀 diff 並驗證，在報告記錄 reviewer 身分並明寫「reviewer 為獨立 Codex delegate，並非 Claude Code」。開發者自審不得代替。
 4. 開發者修正失敗項，再跑相關測試，原 reviewer 或同等獨立 reviewer 核對修正與重新驗證結果。
 5. phase gate 需全部必備門檻通過、阻擋問題結清、驗收文件齊備及 review 結論可追溯，才結束分支並開始下一 phase。仍需 owner 裁決的例外回到相應 ADR／決策。計畫未宣稱任一開發 phase 已開始或已通過。
+
+## 2026-11-21　Phase 0 實測修訂
+
+此節追加實測結果及執行解讀。Stage 4 已核准原 v2 與 D01–D09，Stage 5 的 Phase 0 有實作證據，gate 未通過。原驗收門檻續用。 [Decision 紀錄](DECISIONS.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+
+- S1、S4、S5、S6　Windows x64 ZIP／binary pin 為已驗靜態證據。臨時 Linux 容器取得同 tag 的 CLI／API、Automation、SSE 和 proxy 實測。Windows 原生執行仍須隔離 VM，原生 OpenCode listener、Job Object、睡眠／喚醒及登出／再登入須補證。S4 三次實際斷線已錄，另留 upstream overflow 待驗。Automation 繼續預設關閉。
+- S2　依 owner 此輪指定使用 `OEP_LITELLM_BASE_URL`／`OEP_LITELLM_API_KEY` 的程序或 User scope。實測 liveness 和有效憑證清單 200，無憑證清單 500、錯誤憑證 400。管理員須證實 key scope、認證語意、異常根因、retention／egress 及 fallback。禁止使用已知 master key，禁止探測管理端點。
+- S2、S3　候選 alias 上線前須以同一路徑做最小健康 probe，listing 無法確認可用性。選定 aliases 20 次串流工具／往返達標，PNG 和 PDF 各辨識通過。永久 forced `tool_choice` 有重複工具風險，規劃須在同一受控 turn 只限定首步，待另行驗證。401／403／429／5xx、timeout、長輸入和 fallback 的合成證據依 [S2](validation/p0-s2-gateway.md) 的範圍採用，真端行為仍待證。
+- Phase 0 probes 及合成 fixtures 納入版本控制，下載物、臨時 profile 與轉換輸出留於 `.phase0/` 或隔離容器的短暫檔案系統。D08 核定屬資料審核，Phase 1 才建 SOP→XLSX oracle 與 E2E。
+
+<a id="phase-1-egress-acceptance"></a>
+
+## 2026-11-21　Phase 1 模型出口設計與驗收補充
+
+Phase 0 測試容器的 `--network bridge` 限於一次性 Gateway probe。Phase 1 設計採 relay-only。OpenCode 與其子程序置於隔離的 Windows VM 網路。私有虛擬交換器只連 host relay，停用 NAT、IP forwarding 與對一般網路的預設路由。VM 網路政策只放行 loopback 及 relay 的固定 IP／port。Host relay 持有受限 key，透過獨立程序的預設拒絕 Windows 過濾規則，僅連設定核准的 Gateway 目的位址及 port。Relay 固定 API 路徑及模型 allowlist、拒絕 redirect，Gateway 位址或解析結果變更時須先更新核准規則。保留去敏的允許／拒絕證據。
+
+Phase 1 驗收須於目標 Windows 11 x64 VM 以合成資料測通 OpenCode→relay→核准 Gateway。由同一隔離環境中的 OpenCode 及測試子程序，分別嘗試直接連 Gateway、其他 LAN／公網目的地，及透過 relay 請求非核准路徑或 redirect。所有負例須在建立對外連線或轉送請求前拒絕，並用防火牆／relay 計數驗證沒有旁路或替代 provider。拒絕網路規則、移除 relay 或撤回 allowlist 後，工作須明確失敗。執行時不得以 Phase 0 bridge 取代這些限制。 [S5 測試出口邊界](validation/p0-s5-security.md)
+
+<a id="phase-0-owner-amendment"></a>
+
+## 2026-11-21　Owner 核准修訂 Phase 0 gate
+
+原 v2 gate 要求 O-1 至 O-4 全部結清。本修訂只取代該門檻，先前試驗紀錄與原驗收結果保留。三項條件齊備時，Phase 0 狀態才可標為 **conditionally passed**。 [核准紀錄](DECISIONS.md)
+
+1. R-1 至 R-9 與 4 項 Minor 已修正並具適用的負例證據。
+2. Claude 安排的獨立複核確認 Critical／Important 無未結項目。
+3. O-3a 通過本機 Windows 11 x64 原生基本測試。固定 v2.3.2 exe 在 Job Object 中，以獨立 profile/data 與帶密碼的 loopback 執行，完成 `/api/info`、mock relay session/prompt、SSE、雙地址族 listener 核對、正常停止與無殘留。
+
+O-1、O-2 由 Gateway 管理員繼續追蹤，狀態為 **TRACKED KNOWN RISKS**。Gateway 只用於合成 spike，憑證不進 repo、log 或 trace，保留去敏和 secret scan，非 2xx 回應一律視為失敗。O-4 已由 owner 核定為最小 D08 smoke oracle，PDF 一致性與雜湊測試是核定條件。此 oracle 僅供管線接線驗收。Phase 1 編碼以修訂後的 Phase 0 gate 為前置。 [D08 核定](validation/d08-oracle.md) · [驗收證據](reviews/PHASE0_GATE_REPORT.md)
+
+**O-3b – WAIVED by owner – not tested（2026-11-21）**。真實睡眠／喚醒及登出／再登入免測。此項無 GPT dots、VM 或 Hyper-V 工作。D06 的登入常駐、登出暫停、睡眠恢復時對帳、24 小時補跑、RPO ≤24 小時與 RTO ≤30 分鐘為 **UNVERIFIED** 設計假設。Phase 4 的啟動／恢復對帳實作保留，模擬 clock jump 與程序終止／重啟的結果僅適用於模擬條件。此免測決定不改上列三項 gate 條件。 [決策紀錄](DECISIONS.md)

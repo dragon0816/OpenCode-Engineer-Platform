@@ -1,0 +1,4 @@
+#!/bin/sh
+scanner="$(dirname "$0")/secret-scan.mjs"
+if [ ! -f "$scanner" ]; then scanner=scripts/phase0/secret-scan.mjs; fi
+exec node "$scanner" --staged
