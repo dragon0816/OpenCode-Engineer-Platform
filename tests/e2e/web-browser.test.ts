@@ -138,8 +138,9 @@ try {
           await page.ready(`!document.getElementById('${id}').open`);
         }
         await page.ready(sections.map((id) => `localStorage.getItem('oep.${id}.open') === 'false'`).join(' && '));
+        await page.evaluate('window.__beforeReload = true');
         await page.command('Page.reload');
-        await page.ready("document.querySelector('#connection').textContent === '已連線'");
+        await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
         assert.equal(await page.evaluate(collapsed), true);
         await tab();
         await page.ready("document.activeElement === document.querySelector('#rail-functions > summary')");
