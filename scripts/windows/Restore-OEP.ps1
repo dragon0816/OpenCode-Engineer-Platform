@@ -28,14 +28,7 @@ try {
     if (!$PSCmdlet.ShouldProcess($DataRoot, '回復 OEP 資料')) { return }
     $id = [guid]::NewGuid()
     $stage = "$DataRoot.oep-restore-staging-$id"
-    [void][IO.Directory]::CreateDirectory($stage)
-    foreach ($entry in $manifest.inventory) {
-        $path = Entry-OEP $stage $entry.path
-        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
-        [IO.File]::Copy((Entry-OEP $Backup $entry.path), $path)
-    }
-    Verify-OEP $stage $manifest.inventory 'backup.manifest.json'
-    Reconcile-Snapshot $stage $manifest
+    Copy-RestoreStage $Backup $manifest $stage
     if ($env:OEP_MAINTENANCE_TEST -eq '1' -and $env:OEP_TEST_INTERRUPT_RESTORE -eq '1') {
         [Environment]::Exit(87)
     }
@@ -44,16 +37,9 @@ try {
         Guard-OEP $safetyRoot
         [void](New-Backup $DataRoot $safetyRoot (Installed-Version $InstallRoot))
     }
-    if ([IO.Directory]::Exists($DataRoot)) {
-        $original = "$DataRoot.oep-restore-original-$id"
-        [IO.Directory]::Move($DataRoot, $original)
-        $old = $original
-    }
-    try { [IO.Directory]::Move($stage, $DataRoot) }
-    catch {
-        if ($old -and ![IO.Directory]::Exists($DataRoot)) { [IO.Directory]::Move($old, $DataRoot); $old = $null }
-        throw
-    }
+    $original = "$DataRoot.oep-restore-original-$id"
+    Move-RestoreStage $stage $DataRoot $original
+    if ([IO.Directory]::Exists($original)) { $old = $original }
     Reconcile-Snapshot $DataRoot $manifest
     Log-OEP $DataRoot 'RESTORE OK'
     if ($old -and !$nonempty) { [IO.Directory]::Delete($old) }

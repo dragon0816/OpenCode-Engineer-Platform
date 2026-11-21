@@ -35,7 +35,8 @@
     "build:release": "node scripts/release/build-release.mjs",
     "test:install": "node --test tests/e2e/install.test.ts",
     "test:backup": "node --disable-warning=ExperimentalWarning --test tests/e2e/backup-restore.test.ts",
-    "test:release:determinism": "node --test scripts/release/determinism.test.mjs"
+    "test:release:determinism": "node --test scripts/release/determinism.test.mjs",
+    "test:upgrade": "node --disable-warning=ExperimentalWarning --test tests/e2e/upgrade-rollback.test.ts"
   },
   "dependencies": {
     "@opencode/client": "2.3.2",

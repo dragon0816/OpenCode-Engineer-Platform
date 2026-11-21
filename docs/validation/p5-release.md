@@ -59,3 +59,20 @@ node --disable-warning=ExperimentalWarning --input-type=module -e "await import(
 - 本機回歸通過 lint、typecheck、單元及契約測試 54 項、秘密掃描 0 命中、ingest 16 項、knowledge 12 項、Telegram 5 項、Web、瀏覽器、合成 Excel、知識整合以及發行可重現建置。Recall@5 基線為 24/24。
 - 初次執行既有 Web、瀏覽器和 Excel 回歸時漏設資料根目錄覆寫，這些回歸在預設 OEP 資料目錄下建立了新的合成測試資料夾。之後在獨立暫存資料目錄重跑。
 - 一般使用者乾淨環境、開始功能表和排程操作 **UNVERIFIED**。 [乾淨 Windows 驗證](p5-clean-vm-runbook.md)
+
+## Phase 5C 開發機測試
+
+在 Windows x64 使用 Node.js 24、PowerShell 7 和包含 openpyxl／defusedxml 的 Python 3.12 環境。先執行 `npm run build:release`，再執行 `npm run test:upgrade`。測試預設使用 `dist/OEP-0.0.0-windows-x64.zip`。可設定 `OEP_TEST_RELEASE` 指向對應 ZIP。
+
+測試把該 ZIP 作為 v1。v2 是測試組在獨立暫存目錄產生的 patch 版本。測試只改寫發行檔內的 KnowledgeStore，使它為 `publications` 增加一個有預設值的欄位並把 `user_version` 從 1 改為 2，再重新計算清單與 ZIP 雜湊。兩版用相同的固定 OpenCode 執行檔，測試檢查回退後選用舊版的執行檔路徑及雜湊。合成資料含 300 張新增知識卡、發布修訂、引用、審核、通知 intent、BI 工作、Web 工作階段、執行紀錄、Telegram 收發匣及 OpenCode profile 樣本。
+
+測試中斷點在備份後、遷移與切換之間，以及回退移走原資料後。重新執行會回退並核對備份的逐檔 SHA-256。第一方 SQLite 版本防護逐庫驗證。安裝的舊版拒絕遷移後的知識庫。另以故意變更資料後回傳失敗的合成遷移驗證自動回退，並以同版套件驗證修復受損程式檔案。使用者環境的 RTO、RPO 和乾淨 VM 維持 **UNVERIFIED**。 [乾淨 Windows 驗證](p5-clean-vm-runbook.md)
+
+| 開發機演練 | 升級 | 回退 |
+|---|---:|---:|
+| 第一次 | 31.794 秒 | 3.098 秒 |
+| 第二次（重用已驗證的新版程式目錄） | 8.579 秒 | 3.186 秒 |
+
+時間包含 PowerShell 啟動、清單核對與資料比對。上述兩輪來自同一次合成測試。Recall@5 基線在本機重跑為 24/24。
+
+發行可重現性測試的兩份 ZIP 使用同一 SHA-256 `510e79a8f65ca34b9ce2626639603fe327e84c24ee16e869dd45e255af9e841f`，每個發行檔案通過清單核對。

@@ -110,3 +110,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 5B 交接
 
 phase-5/install-backup 加入使用者層級的安裝、解除安裝、SQLite 備份與回復。新測試使用暫存目錄和合成資料。開始功能表、排程與實際使用者的 RPO、RTO 仍待乾淨 Windows 環境驗證。Technical Lead 以 npm run merge-check 合併。 [驗收狀態](reviews/PHASE5_GATE_REPORT.md)
+
+## Phase 5C 交接
+
+分支 `phase-5/upgrade-rollback` 由 `09de884` 建立。使用合成資料與隔離的安裝路徑驗證 SQLite 前向遷移、升級及回退。使用者環境的 RPO、RTO、乾淨 VM 及實際捷徑與排程操作仍待驗證。Technical Lead 以 `npm run merge-check` 合併。 [本機驗證](validation/p5-release.md) · [驗收狀態](reviews/PHASE5_GATE_REPORT.md)

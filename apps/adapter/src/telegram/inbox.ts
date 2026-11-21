@@ -18,34 +18,51 @@ const laneOf = (bot: Bot, text: unknown): Lane => typeof text === 'string' &&
 export class TelegramInbox {
   readonly db: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, recoverSending = true) {
     this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS cursor(bot TEXT PRIMARY KEY, next INTEGER NOT NULL);
+    try {
+      this.migrate();
+      // A process can die after Telegram accepts a send and before SQLite records the reply.
+      if (recoverSending) this.db.exec("UPDATE outbox SET state='indeterminate' WHERE state='sending'");
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+
+  private migrate() {
+    const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
+    if (version > 1) throw new Error('Telegram 資料庫版本比程式新。請使用新版程式或先回退資料。');
+    if (version < 0) throw new Error('Telegram 資料庫版本無效。');
+    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
+    if (version === 1) return;
+    this.transaction(() => {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS cursor(bot TEXT PRIMARY KEY, next INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS inbox(bot TEXT, id INTEGER, topic INTEGER NOT NULL,
         payload TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(bot,id));
       CREATE TABLE IF NOT EXISTS outbox(bot TEXT, id TEXT, topic INTEGER NOT NULL, text TEXT NOT NULL,
         state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
         due INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(bot,id));`);
-    this.transaction(() => {
       const columns = this.db.prepare('PRAGMA table_info(inbox)').all();
-      if (columns.some((column) => column.name === 'firstSeen')) return;
-      this.db.exec(`ALTER TABLE inbox ADD COLUMN firstSeen INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE inbox ADD COLUMN started INTEGER;
-        ALTER TABLE inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE inbox ADD COLUMN due INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE inbox ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE inbox ADD COLUMN lane TEXT NOT NULL DEFAULT 'work';`);
-      const save = this.db.prepare('UPDATE inbox SET firstSeen=?,lane=? WHERE bot=? AND id=?');
-      const now = Date.now();
-      for (const row of this.db.prepare('SELECT bot,id,payload FROM inbox WHERE done=0').all()) {
-        const { text } = JSON.parse(String(row.payload));
-        save.run(now, laneOf(row.bot as Bot, text), row.bot, row.id);
-      }
+      if (!columns.some((column) => column.name === 'firstSeen')) this.addInboxColumns();
+      this.db.exec('CREATE INDEX IF NOT EXISTS inbox_open ON inbox(bot,lane,topic,id) WHERE done=0; PRAGMA user_version=1');
     });
-    this.db.exec('CREATE INDEX IF NOT EXISTS inbox_open ON inbox(bot,lane,topic,id) WHERE done=0');
-    // A process can die after Telegram accepts a send and before SQLite records the reply.
-    this.db.exec("UPDATE outbox SET state='indeterminate' WHERE state='sending'");
+  }
+
+  private addInboxColumns() {
+    this.db.exec(`ALTER TABLE inbox ADD COLUMN firstSeen INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE inbox ADD COLUMN started INTEGER;
+      ALTER TABLE inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE inbox ADD COLUMN due INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE inbox ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE inbox ADD COLUMN lane TEXT NOT NULL DEFAULT 'work';`);
+    const save = this.db.prepare('UPDATE inbox SET firstSeen=?,lane=? WHERE bot=? AND id=?');
+    const now = Date.now();
+    for (const row of this.db.prepare('SELECT bot,id,payload FROM inbox WHERE done=0').all()) {
+      const { text } = JSON.parse(String(row.payload));
+      save.run(now, laneOf(row.bot as Bot, text), row.bot, row.id);
+    }
+
   }
 
   transaction(work: () => void) {

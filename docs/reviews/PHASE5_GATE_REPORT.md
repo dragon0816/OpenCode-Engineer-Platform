@@ -1,6 +1,6 @@
 # Phase 5 驗收狀態
 
-整體驗收 **UNVERIFIED**。Phase 5B 已在開發機以隔離目錄驗證安裝、備份及回復。 [發行驗證](../validation/p5-release.md)
+整體驗收 **UNVERIFIED**。Phase 5B／5C 已在開發機以隔離目錄驗證 Windows 維護流程。 [發行驗證](../validation/p5-release.md)
 
 | 驗收項目 | 狀態與範圍 |
 |---|---|
@@ -9,7 +9,10 @@
 | 清單、授權、簽章 | ZIP 有 SHA256SUMS。CycloneDX SBOM、NOTICE、完整授權審查及可選的分離簽章欄位 **UNVERIFIED**。ZIP 未簽署。 |
 | 安裝與解除安裝 | **VERIFIED（本機隔離測試）**。ZIP 核對、清單、降版拒絕、重裝、預演、保留資料及刪除確認。**UNVERIFIED**。一般使用者的捷徑和登入排程實機操作。 |
 | 備份與回復 | **VERIFIED（本機合成測試）**。SQLite 寫入期間快照、檔案竄改與清單比對、強制回復安全備份、提交前中斷、保留份數、知識修訂與 Ask 引用。**UNVERIFIED**。每日排程實機操作和使用者憑證重綁。 |
-| 升級與回退 | **UNVERIFIED**。版本切換、資料遷移、待確認工作對帳、兩版本演練與中斷復原未完成。 |
+| 升級與回退 | **VERIFIED（本機合成測試）**。兩個發行版本、兩輪升級及回退、SQLite 前向遷移、既有列與修訂雜湊對帳、引用重現、OpenCode 版本路徑與 profile 成套還原。 |
+| 升級中斷、竄改及預演 | **VERIFIED（本機合成測試）**。備份後、遷移後及回退交換目錄中斷，重跑回退並核對備份檔案雜湊。ZIP 與備份清單竄改會被拒絕。驗證失敗遷移的自動回退與相同清單雜湊的同版本修復。 |
+| 待確認工作與版本防護 | **VERIFIED（本機合成測試）**。回退恢復備份的待處理工作，新增工作保留於原資料目錄並列入報告。較舊程式拒絕較新的 SQLite 版本。 |
+| 執行中升級與使用者整合 | **UNVERIFIED**。已安裝啟動器的正常停止、每使用者捷徑與排程切換仍待乾淨 Windows 環境驗證。 |
 | 六類安裝版流程 | **UNVERIFIED**。SOP→Excel、PNG/PDF 預覽、Telegram→BI→人工審核、Ask 引用、schema 發布與回退、備份回復均待從安裝版驗證。 |
 | RPO、RTO | **UNVERIFIED**。開發機合成資料的備份約 0.67 秒，回復約 0.74 秒。 |
 | Windows 11 x64 乾淨 VM | **UNVERIFIED**。本機無可用 VM 或 Windows Sandbox。 |

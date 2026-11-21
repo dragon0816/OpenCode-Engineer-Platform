@@ -55,4 +55,25 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 
 資料預設位於 %LOCALAPPDATA%\OEP，web 下包含知識庫、Web 設定、Telegram 資料庫及執行紀錄，web\profile 保存 OpenCode 設定與工作階段。SQLite 使用線上備份。知識資料庫內的 blob、審核來源與發布資料隨快照保存。備份略過執行暫存、SQLite 日誌檔、auth.json 和 maintenance.log。maintenance.log 只記操作種類、時間和成功狀態。
 
-維護指令需 PowerShell 7。原 Start-OEP.vbs 和 Start-OEP.ps1 支援 Windows PowerShell 5.1。使用 -WhatIf 預演。ZIP 預演檢查 ZIP 雜湊及項目路徑，正式安裝會核對所有檔案。用 -InstallRoot 和 -DataRoot 指定完整測試路徑，或用 OEP_DATA_DIR 指定資料目錄。當 OEP_MAINTENANCE_TEST 為 1，腳本會拒絕與預設安裝或資料目錄重疊的測試路徑，並略過真實捷徑及排程。
+維護指令需 PowerShell 7。原 Start-OEP.vbs 和 Start-OEP.ps1 支援 Windows PowerShell 5.1。使用 -WhatIf 預演。ZIP 預演和正式安裝都核對 ZIP 雜湊、項目路徑及發行清單。用 -InstallRoot 和 -DataRoot 指定完整測試路徑，或用 OEP_DATA_DIR 指定資料目錄。當 OEP_MAINTENANCE_TEST 為 1，腳本會拒絕與預設安裝或資料目錄重疊的測試路徑，並略過真實捷徑及排程。
+
+## 升級與回退
+
+使用一般使用者權限開啟 PowerShell 7。在新版發行資料夾執行下列命令。ZIP 旁須放同一批次的 `SHA256SUMS`。也可將 `-Source` 指向已解壓的完整發行資料夾。若安裝時指定過 `-InstallRoot` 或 `-DataRoot`，兩個命令都使用原來的完整路徑。
+
+```powershell
+pwsh -NoProfile -File .\scripts\windows\Upgrade-OEP.ps1 -Source .\OEP-1.2.0-windows-x64.zip -WhatIf
+pwsh -NoProfile -File .\scripts\windows\Upgrade-OEP.ps1 -Source .\OEP-1.2.0-windows-x64.zip
+pwsh -NoProfile -File .\scripts\windows\Rollback-OEP.ps1 -WhatIf
+pwsh -NoProfile -File .\scripts\windows\Rollback-OEP.ps1
+```
+
+請依實際版本調整 ZIP 檔名。預設需提供較新的版本。若需修復同一安裝版本，使用原版套件並加上 `-AllowSameVersion`。套件的發行清單雜湊必須和目前版本相同。預演驗證輸入及顯示操作目標。升級會檢查程式路徑，要求這一套的啟動器正常停止，並保留舊版資料夾。看見「偵測到其他 OpenCode。請先停止該服務。」時，請確認該服務可以停止，再從原本的介面停止。尚未支援升級停止要求的舊版，請先在網頁停止服務。
+
+安裝根目錄中的 `upgrade.journal.json` 記錄前後版本、資料根目錄、`upgrade-backups` 內的備份位置與清單 SHA-256，以及每個 SQLite 的前後 `user_version` 和筆數。成功訊息為「已升級至 <版本>。資料比對通過。」。維護日誌位於安裝根目錄的 `maintenance.log`。
+
+若操作中斷，使用原本的資料及安裝根路徑重跑同一升級命令，或執行回退。看到「OEP 升級或回退尚未完成。請先執行回退。」時，先完成回退。回退會驗證備份、回復資料及 profile、切回發行目錄及其 OpenCode，再顯示「已回退至 <版本>。資料比對通過。」。重複執行會顯示「已完成回退，無需再回退。」。若找不到升級紀錄，可指定 `-Backup <備份的完整路徑>`，其版本必須仍安裝在同一根目錄。
+
+回退會留下完整的 `oep-restore-original-*` 資料目錄。安裝根目錄內的 `rollback-*.json` 按資料庫及表格列出新增或變更的待處理工作列雜湊。雜湊可用報告中的欄位順序與保留資料對應。回退恢復備份當時的收件、寄件、通知及 BI 工作狀態，請先以保留的原資料核對已發送及待確認工作，再決定是否重做。
+
+新版可開啟並前向遷移舊資料。升級保留既有列、修訂雜湊與引用。內建歷史遷移可加入已知的空表或新增欄位，既有欄位內容必須相符。含版本防護的舊版開啟超出支援的資料庫版本時會顯示「資料庫版本比程式新。請使用新版程式或先回退資料。」。請使用回退命令成套回復程式及資料。發現「ZIP 的 SHA-256 與 SHA256SUMS 不符。」或「備份清單與升級紀錄不符。」時，請取得正確的發行檔案或原備份再重試。

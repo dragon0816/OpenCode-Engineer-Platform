@@ -19,13 +19,23 @@ export class Ledger {
 
   constructor(file: string, web = false) {
     this.db = new DatabaseSync(file);
+    try {
+      this.migrate(file, web);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+
+  private migrate(file: string, web: boolean) {
+    const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
+    if (version > (web ? 2 : 1)) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
+    if (version < 0) throw new Error('執行紀錄資料庫版本無效。');
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 4000;');
-    const version = this.db.prepare('PRAGMA user_version').get()?.user_version;
     if (version === 0) this.transaction(() => {
       this.db.exec(readFileSync(atRepo('apps/adapter/migrations/001_runs.sql'), 'utf8'));
       this.db.exec('PRAGMA user_version = 1');
     });
-    else if (version !== 1 && !(web && version === 2)) throw new Error('Unsupported run ledger version');
     if (web && version !== 2) {
       if (version === 1) this.db.prepare('VACUUM INTO ?').run(`${file}.before-v2-${Date.now()}`);
       this.transaction(() => {
