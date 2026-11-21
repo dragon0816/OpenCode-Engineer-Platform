@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
+import { testCustomMcp } from '../../launcher/src/custom-mcp-probe.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
@@ -118,6 +119,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   let auth: LocalAuth;
 
   let restarting = false;
+  let testingMcp = false;
   const changedCredentials = new Set<string>();
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
@@ -263,6 +265,20 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       restarting = true;
       response.once('finish', requestRestart);
       send(response, 202, { state: 'restarting' });
+      return;
+    }
+    if (path === '/api/settings/mcp/test' && method === 'POST') {
+      const { id } = await body(request);
+      const server = store.customMcpServers().find((entry) => entry.id === id);
+      if (!server) throw new HttpError(404, '找不到伺服器。');
+      if (testingMcp) throw new HttpError(409, '請等目前的連線測試完成。');
+      testingMcp = true;
+      try {
+        const results = await testCustomMcp(server);
+        send(response, 200, results);
+      } catch {
+        throw new HttpError(503, '無法啟動連線測試。');
+      } finally { testingMcp = false; }
       return;
     }
     if (path === '/api/settings/mcp/custom') {

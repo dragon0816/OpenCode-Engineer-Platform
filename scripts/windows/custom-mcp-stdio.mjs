@@ -19,8 +19,10 @@ for (const { name, reference } of environment) {
 }
 const sensitive = values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]);
 async function write(line) {
-  if (sensitive.some((value) => line.includes(value))) return;
-  if (!process.stdout.write(line + '\n')) await new Promise((resolve) => process.stdout.once('drain', resolve));
+  let normalized;
+  try { normalized = JSON.stringify(JSON.parse(line)); } catch { return; }
+  if (sensitive.some((value) => normalized.includes(value))) return;
+  if (!process.stdout.write(normalized + '\n')) await new Promise((resolve) => process.stdout.once('drain', resolve));
 }
 
 if (server.transport === 'remote') {
