@@ -120,7 +120,7 @@ export async function listen(handler: (request: IncomingMessage, response: Serve
 
 class ProbeInputError extends Error {}
 
-export async function* sse(body: ReadableStream<Uint8Array>, close?: AbortSignal) {
+export async function* sse(body: ReadableStream<Uint8Array>, close?: AbortSignal, onEOF?: () => void) {
   const decoder = new TextDecoder();
   const reader = body.getReader();
   let pending = '';
@@ -137,7 +137,10 @@ export async function* sse(body: ReadableStream<Uint8Array>, close?: AbortSignal
     for (;;) {
       cancelOnExit = false;
       const { value, done } = await reader.read();
-      if (done) return;
+      if (done) {
+        if (!cancellation) onEOF?.();
+        return;
+      }
       cancelOnExit = true;
       pending += decoder.decode(value, { stream: true });
       for (let line = pending.indexOf('\n'); line !== -1; line = pending.indexOf('\n')) {
@@ -175,13 +178,15 @@ export function subscribeEventStream(connect: (signal: AbortSignal) => Promise<R
     const response = await connect(signal);
     if (!response.ok || !response.body) throw new ProbeTransportError('SSE response refused');
     reading = true;
-    for await (const data of sse(response.body, abort.signal)) {
+    const unexpectedEOF = () => {
+      throw new ProbeTransportError(connected ? 'SSE ended before reconciliation' : 'SSE ended before server.connected');
+    };
+    for await (const data of sse(response.body, abort.signal, unexpectedEOF)) {
       signal.throwIfAborted();
       const event = JSON.parse(data) as { type: string; data?: { sessionID?: string } };
       if (event.type === 'server.connected') { connected = true; ready.resolve(); continue; }
       receive(event);
     }
-    if (!abort.signal.aborted) throw new ProbeTransportError(connected ? 'SSE ended before reconciliation' : 'SSE ended before server.connected');
     if (!connected) ready.reject(closedByProbe);
   })();
   const completed = Promise.race([work, ended.promise]).catch((error: unknown) => {
@@ -193,8 +198,13 @@ export function subscribeEventStream(connect: (signal: AbortSignal) => Promise<R
   void completed.catch(() => undefined);
   const during = <T>(operation: Promise<T>) => Promise.race([operation, completed.then(() => { throw closedByProbe; })]);
   const close = () => {
-    abort.abort(closedByProbe);
-    if (!reading) handshake.abort(closedByProbe);
+    if (reading) {
+      // Let an already-settled read report wire EOF before requesting reader cancellation.
+      queueMicrotask(() => abort.abort(closedByProbe));
+    } else {
+      handshake.abort(closedByProbe);
+      abort.abort(closedByProbe);
+    }
   };
   return { ready: ready.promise, close, completed, during };
 }

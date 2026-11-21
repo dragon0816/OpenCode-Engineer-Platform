@@ -215,6 +215,15 @@ test('SSE rejects EOF or read errors after connected and only suppresses probe-i
   await stream.ready;
   stream.close();
   await assert.rejects(stream.completed, (error) => error === defect);
+
+  let upstream!: ReadableStreamDefaultController<Uint8Array>;
+  const ending = new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; upstream.enqueue(hello); } });
+  const race = subscribeEventStream(async () => new Response(ending), AbortSignal.timeout(500), () => undefined);
+  await race.ready;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  upstream.close();
+  race.close();
+  await assert.rejects(race.completed, /before reconciliation/);
 });
 
 test('secret scan detects private IPv4 with or without a scheme or port using no runtime values', async () => {
