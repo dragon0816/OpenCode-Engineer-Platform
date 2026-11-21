@@ -25,13 +25,15 @@ function Guard-OEP($Path) {
 }
 function Tree-OEP($Root) {
     foreach ($item in Get-ChildItem -LiteralPath $Root -Force) {
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail-OEP '發現檔案或目錄連結。' }
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType -eq 'HardLink') {
+            Fail-OEP '發現檔案或目錄連結。'
+        }
         if ($item.PSIsContainer) { Tree-OEP $item.FullName } else { $item }
     }
 }
 function Entry-OEP($Root, [string]$Relative) {
     foreach ($part in $Relative.Split('/')) {
-        if ($part -notmatch '^[^\\/:*?"<>|\x00-\x1f]+$' -or $part -match '[ .]$|^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\.|$)') {
+        if ($part -notmatch '^[^\\/:*?"<>|\x00-\x1f]+$' -or $part -match '[ .]$|^(CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\.|$)') {
             Fail-OEP '清單或壓縮檔含有不安全的路徑。'
         }
     }

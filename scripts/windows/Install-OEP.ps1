@@ -107,7 +107,6 @@ try {
         installedAt = [DateTime]::UtcNow.ToString('o')
         manifestSha256 = $manifestHash
     }
-    Log-OEP $DataRoot 'INSTALL OK'
     Write-Output 'OEP 安裝完成。請從開始功能表開啟 OEP。'
 } catch {
     [Console]::Error.WriteLine($script:failure)
