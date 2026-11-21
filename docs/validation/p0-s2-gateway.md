@@ -62,3 +62,9 @@ pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode gateway-capabilitie
 ```
 
 指令 exit 0。兩個 alias 的 `none`、`schema`、`tool-failure`、`image`、`pdf` 共 10 項也通過，均為 HTTP 200、`succeeded`。診斷重現 `liveness:200, modelsValid:200, modelsNone:500, modelsWrong:400`。Key scope 與 500／400 根因仍未驗證，S2 gate 仍未通過。
+
+## 第 2 輪　限 HTTPS 與可失敗斷言
+
+依獨立審查，前文 20 回合的 PASS 降為 **UNVERIFIED**。舊程式在 alias 缺測、重試缺失或末則回答不符時不能完整阻擋驗收。原紀錄保留供追溯。新 runner 以預期 alias 各 10 回合、工具名及最後回答斷言。`contract-relay` 在 `--network none` 的 OpenCode 測得 20 連續通過、20 個分段案例、10 個並行案例，兩個 forced turn 均完成且各只呼叫一次工具，持久化 transcript 的合成 marker 已去敏。此合成證據不涵蓋真 Gateway 相容性、schema 或媒體。
+
+本輪實際執行 `gateway`、`gateway-capabilities`，兩者在 setup 均 exit 1 並回 `gateway requires HTTPS`。未送請求或憑證。每個非 2xx 仍判失敗，O-1／O-2 由 Gateway 管理員追蹤為 known risks。需可驗 TLS 的 HTTPS 設定才重測真端。 [本輪紀錄](../reviews/PHASE0_GATE_REPORT.md)

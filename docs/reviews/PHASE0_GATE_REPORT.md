@@ -100,3 +100,49 @@ Claude Code 首輪限定範圍審查已記錄於 `11a18ee`。審查重跑 lint�
 | `npm run scan`（清除 Gateway 程序環境值） | `mode:tree, files:56, hits:0`，exit 0 |
 
 **Gate 仍未通過，Phase 1 未開始。** O-1 受限 key scope、egress／retention，O-2 認證回應 500／400 的根因，O-3 隔離 Windows 11 x64 VM 的原生 OpenCode、睡眠與登出，O-4 D08 合成 SOP/PDF 與 cell oracle 核定均待 owner／基礎設施。此次診斷再次量到 `liveness:200, modelsValid:200, modelsNone:500, modelsWrong:400`，其餘首輪未完成的驗收仍列於上文。
+
+## 2026-11-21　修正第 2 輪（fix round 2）
+
+從獨立審查提交 `bc61330` 起算。原 v2 要求 O-1 至 O-4 全部結清，原版 gate 從未通過。Owner 核准的新門檻要求 R-1 至 R-9 及四項 Minor 修正與適用負例、獨立複核無未結 Critical／Important，以及 O-3a 本機基本測試通過。開發者修正與 O-3a 已驗，**仍待獨立複核，尚未達 conditionally passed**。Phase 1 未開始，未合併、push 或開 PR。 [獨立審查](PHASE0_INDEPENDENT_REVIEW.md) · [Owner 核准修訂](../IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
+
+### 歷史驗收狀態更正
+
+| 舊證據 | 修正狀態 | 本輪證據 |
+|---|---|---|
+| S2 真 Gateway 20 回合 PASS | **UNVERIFIED**。先前 probe 的 alias 缺測與末則回答斷言不足。 | 合成 OpenCode `contract-relay` 在新斷言 20/20，真 Gateway 未取得本輪可重測的 HTTPS 入口。 |
+| S4 隔離、重複送件 PASS | 舊證據 **UNVERIFIED**。過濾後的舊計數無法測到外洩，舊計數也未觀察實際送件。 | 新 `contract` 記錄接收端可見事件、送件端依 operation ID 計數和同一個 5 秒期限。 |
+| S5 Host、Origin、CSRF PASS；S1 部分印表驗收 | 舊證據 **UNVERIFIED**。錯誤觀察值未必導致非零退出。 | 新 `contract` 將 S1 與 S5 條件納入退出門檻，負例可觸發失敗。 |
+
+### 審查修正
+
+| 項目 | 修正及本機證據 |
+|---|---|
+| R-1 | 真憑證限 HTTPS。解析後依欄位重組、限制 upstream 大小並遮蔽 JSON／URL 編碼、分段值與不帶 port 的 hostname。合成 transcript、tool trace 及錯誤回應測試通過。 |
+| R-2 | relay 驗證每次啟動的 caller token 與限時 turn nonce、預期 alias、`tool_choice` 與 forced 兩步的結果 ID。負例拒絕無授權、錯 alias、非允許文字 choice、錯結果 ID、額外及遲到步驟。 |
+| R-3 | S1／S5、能力與 fault probe 改為非零退出條件；S2 必須兩 alias 各 10 次成功，核對工具名及最後文字。負例涵蓋不健康 alias、缺次數、錯工具、錯答案、認證與 proxy 觀察值。 |
+| R-4 | 預先分配六個 operation IDs，送件端計數、接收端驗 payload，重連及查詢共用一個 5 秒期限。外來事件、重複發送及超時反例均會失敗。 |
+| R-5 | Linux 以子程序 socket inodes 核對 TCP IPv4／IPv6，Windows native 依 Job child PID 核對。送認證前驗 listener 所有權，本機拒絕 redirect。額外 IPv6、錯埠、錯 owner、redirect 負例通過。 |
+| R-6 | `STARTUPINFOEX`／Job list 在建立時即入 Job。原生 Windows 合成 worker 尚未 resume 即中止，證實 readiness 無、listener 0、殘留 0。 |
+| R-7 | `pypdf 6.21.4` 對應上游修補版本，四個 wheels 有 SHA-256。PDF worker 套 256 MiB、2 秒 CPU、5 秒外層 timeout，正常及超頁負例已重測。 [上游公告](https://github.com/advisories/GHSA-cggf-277g-3q54) |
+| R-8 | OOXML 依 relationships 驗可達部件，禁 DTD/entity、外部 relationship 並預查座標；從同一已驗原生 handle 讀取。負例涵蓋非標準副檔名的 DTD、外部目標、過寬列、hardlink 及逸出。 |
+| R-9 | 增加 URL、JSON、Base64、字串相接、IPv6 ULA、裸內部 hostname 偵測及反例。`core.hooksPath=.githooks` 已在此 worktree 安裝。真 staged canary 回 `hits:1`、commit exit 1、HEAD 不變；已移除 stage 和檔案。合併前掃描來源、目標及工作樹。 |
+| Minor 1 | 開啟實際 XLSX 驗 `量測`、`Notes`，15 格，額外空白 sheet 負例失敗。 |
+| Minor 2 | 不同工作目錄共用 SID mutex，同 SID 第二 instance exit 23；驗 Job 核心成員、listener 和退出碼。 |
+| Minor 3 | 非串流 HTTP 200 無效 JSON 轉 relay 502，上游／relay 狀態分列，錯誤不回傳合成敏感標記。 |
+| Minor 4 | `effect` 修正為 `@opencode/protocol`、`@opencode/schema` 的直接依賴，以 repository lockfile 核對。 [清冊](../validation/p0-provenance.md) |
+
+### 重跑輸出與 owner 狀態
+
+| 命令或案例 | 結果 |
+|---|---|
+| `npm run lint`、`npm run typecheck` | 38 檔，兩項 exit 0 |
+| `npm test`、`npm run build`、`npm run scan` | 15 pass／0 fail／0 skip，編譯 11 個 JS，78 檔掃描 0 命中，均 exit 0 |
+| `python scripts/phase0/attachment_probe_test.py -v`、`python scripts/phase0/attachment_probe.py` | 5 個測試通過；兩張實際工作表共 15 格，文字 PDF／OCR fallback 通過，CSV SHA-256 `26364dac52fafe7eb797453c92354b66bff6fbbb695667fffc4c9bdbc412a971` |
+| `python scripts/phase0/d08_oracle_test.py -v` | 2 個測試通過。實際 PDF 抽取與 Markdown、JSON、XLSX 一致；一字節雜湊漂移、PDF 單值偏離、SOP 工作表名偏離均被拒。 [D08 核定及 SHA-256](../validation/d08-oracle.md) |
+| `run-container.ps1 -Mode contract` | exit 0；S1 client／Automation 斷言通過，S4 三次收斂 30／26／27 ms，外洩 0、重複 0、追蹤 operations 6。S5 IPv4 1／IPv6 0，401／200、Host／Origin／CSRF 403，密碼未外洩。 |
+| `run-container.ps1 -Mode contract-relay` | exit 0，`--network none`。兩合成 alias 各 10 次，分段 20、並行 10，兩 forced turn 完成，OpenCode transcript 有去敏。 |
+| `run-container.ps1 -Mode gateway`、`-Mode gateway-capabilities` | 均 exit 1，`gateway requires HTTPS`，setup 擋下，未送出請求或憑證。真 Gateway 重測 **UNVERIFIED**。 |
+| `pwsh -NoProfile -File scripts/phase0/windows-job.ps1` | exit 0，正常／強制／readiness 前中止 137／71／70 ms，所有殘留均 0。 |
+| `node scripts/phase0/windows-native-probe.ts` | exit 0，Windows 11 Pro x64 build 26200。固定 exe、認證 `/api/info` 回 2.3.2、無認證 401、mock prompt 和開始／完成 SSE 成功、IPv4 loopback 1、IPv6 0、Job 4 成員、child/supervisor exit 0、殘留 0。 **O-3a PASS**。 |
+
+O-1／O-2 仍為 Gateway 管理員的 **TRACKED KNOWN RISKS**。O-3b 為 **WAIVED by owner – not tested**，無 GPT dots、VM 或 Hyper-V 工作；D06 的真實 OS 行為與 RPO/RTO 為 **UNVERIFIED**，Phase 4 保留啟動／恢復對帳與模擬測試。O-4 已核定為最小管線 smoke oracle，並通過一致性與雜湊條件。 [決策紀錄](../DECISIONS.md) · [handoff](../HANDOFF.md)

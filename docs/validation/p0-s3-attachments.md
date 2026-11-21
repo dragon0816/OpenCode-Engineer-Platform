@@ -21,3 +21,8 @@ npm test
 入口測試拒絕外部 `file:`、`data:`、HTTP/HTTPS URI、超過 20 MiB、非允許 MIME、Windows 絕對與 UNC、越根、保留名稱、ADS 和 junction。測試在 NTFS 中文／空格目錄實際建立一般檔與 junction。20 MiB 邊界可接受。經受控合成檔建立的 data URI 只用於 S2 OpenCode API probe。
 
 XLSX 先驗 ZIP entry 數、解壓上限、XML 宣告和外部連結／macro，再使用 openpyxl read-only iterator，驗 sheet、列、欄、cell 長度、型別、公式／錯誤值。此 probe 僅處理合成檔。正式不可信檔案處理仍需有界程序、原子開啟與 reparse 防護。PNG/PDF Gateway 實測跑的是固定版 Linux binary。 [S2 觀察](p0-s2-gateway.md)
+## 第 2 輪　安全解析及逐格負例
+
+使用 `python -m pip install --only-binary=:all: --require-hashes --target .phase0/python-round2 -r scripts/phase0/requirements.txt` 重建 wheel 依賴，將 `PYTHONPATH` 指向該目錄再跑 `python scripts/phase0/attachment_probe_test.py -v` 與 `python scripts/phase0/attachment_probe.py`。上游公告將 PDF 頁樹問題修補於 `pypdf 6.21.4`，依賴鎖到該版及 wheel hash。PDF 子程序在讀取前套用 256 MiB、2 秒 CPU，外層 timeout 5 秒。 [上游安全公告](https://github.com/advisories/GHSA-cggf-277g-3q54)
+
+OOXML 依 relationships 與 Content Types 驗證所有可達部件，禁止 DTD、entities、外部 relationship 與孤立 ZIP 部件，先驗列／欄座標再進 openpyxl。Windows 從受控 staging 用同一 native handle 驗 reparse、最終路徑、link count 及長度後讀取。5 個 Python 測試通過，涵蓋超頁、非標準副檔名內 DTD、外部 relationship、過寬列、額外空 sheet、hardlink 與路徑逸出。正例仍為 `量測`／`Notes` 兩張、15 格及相同 CSV hash。
