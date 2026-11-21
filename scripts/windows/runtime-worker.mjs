@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 const {
   OEP_JOB_EXE: executable, OEP_JOB_PORT: port, OEP_JOB_CONTROL: control,
-  OEP_JOB_NODE: _node, OEP_JOB_OWNER: _owner, ...env
+  OEP_JOB_NODE: _node, OEP_JOB_OWNER: _owner, OEP_JOB_TEST_SCOPE: _testScope, ...env
 } = process.env;
 const stop = join(control, 'stop');
 const child = spawn(executable, ['serve', '--stdio', '--hostname', '127.0.0.1', '--port', port], {

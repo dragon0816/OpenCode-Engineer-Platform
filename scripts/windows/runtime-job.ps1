@@ -4,7 +4,10 @@ $node = $env:OEP_JOB_NODE
 $owner = Get-Process -Id ([int]$env:OEP_JOB_OWNER)
 $null = $owner.Handle
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$mutex = [Threading.Mutex]::new($false, "Global\OEP.Runtime.$sid")
+$scope = $env:OEP_JOB_TEST_SCOPE
+if ($scope -and $scope -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid test job scope' }
+$mutexName = if ($scope) { "Global\OEP.Runtime.Test.$sid.$scope" } else { "Global\OEP.Runtime.$sid" }
+$mutex = [Threading.Mutex]::new($false, $mutexName)
 $job = $null
 $locked = $false
 $handles = @()
