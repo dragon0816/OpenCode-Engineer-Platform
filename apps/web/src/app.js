@@ -4,7 +4,7 @@ import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
-import { loadJobSummary } from './jobs.js';
+import { bindJobs, loadJobSummary } from './jobs.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -1511,7 +1511,7 @@ for (const section of document.querySelectorAll('.rail-section')) {
 find('assistant-count').textContent = agent.options.length;
 function syncNavigation() {
   const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
-  if (visible !== 'open-chat') closePanel(false);
+  if (visible !== 'open-chat' || panelTabs.get(activeTab)?.preview) closePanel(false);
   for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
     if (entry === visible) find(entry).setAttribute('aria-current', 'page');
     else find(entry).removeAttribute('aria-current');
@@ -1858,6 +1858,7 @@ try {
   renderSessions();
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
+  bindJobs(openFeaturePreview);
   if (bootstrap.knowledge) {
     knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false));
     find('open-review').hidden = false;

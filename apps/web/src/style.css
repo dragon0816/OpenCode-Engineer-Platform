@@ -123,6 +123,15 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visi
   border: 1px solid var(--line); border-radius: 12px; background: var(--drop); padding: 12px;
 }
 #knowledge-question { max-height: 30dvh; }
+.feature-list > li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+  padding-block: 10px; border-block-start: 1px solid var(--line);
+}
+.feature-list > li > small { flex: 1 1 12rem; }
+.feature-list details { margin: 0; }
+.feature-more[open] > button { display: block; margin-block: 4px; }
+.feature-preview input:not([type="checkbox"]), .feature-preview textarea { width: 100%; }
+.feature-preview p + p { margin-block-start: 6px; }
 .feature-more > summary { width: fit-content; cursor: pointer; }
 #knowledge-answer:empty { display: none; }
 .knowledge details { margin-top: 8px; overflow-wrap: anywhere; }
