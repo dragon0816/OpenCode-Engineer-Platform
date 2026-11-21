@@ -20,7 +20,7 @@
 
 ## BI SQLite 版型
 
-固定版的發布檔由指定 commit 重建。BI materializer 設定 `PRAGMA user_version=14`。下表列出與匯入直接相關的欄位，較早快照可缺少部分表或後加欄位。 [SQLite 建表](https://github.com/dragon0816/agentic-engineering-platform/blob/c9961b2d0d66eef3892375213ce305883ebde960/feature_plugins/bi_knowledge/python/aep_bi/cards/store.py#L86) · [BI Vault §9](https://github.com/dragon0816/agentic-engineering-platform/blob/c9961b2d0d66eef3892375213ce305883ebde960/docs/phases/BI_VAULT.md#9-agent-discovery-and-readers)
+固定版的發布檔由指定 commit 重建。固定版 BI materializer 設定 `PRAGMA user_version=14`。owner 的實際已發布快照見到 `user_version` 8 與 9（舊版 8 的 `evidence` 少 `assessment` 欄），讀取器不依賴特定版號，只記錄實際值。下表列出與匯入直接相關的欄位，較早快照可缺少部分表或後加欄位。 [SQLite 建表](https://github.com/dragon0816/agentic-engineering-platform/blob/c9961b2d0d66eef3892375213ce305883ebde960/feature_plugins/bi_knowledge/python/aep_bi/cards/store.py#L86) · [BI Vault §9](https://github.com/dragon0816/agentic-engineering-platform/blob/c9961b2d0d66eef3892375213ce305883ebde960/docs/phases/BI_VAULT.md#9-agent-discovery-and-readers)
 
 | 表 | 格式與 OEP 映射 |
 |---|---|
@@ -46,3 +46,12 @@ npm run knowledge:migrate -- --restore-repo repo-a tag-a@example-generation
 檢查只輸出頂層資料夾、遞迴副檔名計數、發布解析狀態、SQLite 檔案大小與編號、表／欄位名稱、列數及 SQLite 版本。它不輸出 SQL 資料列、內文、原始資料夾路徑、作者或實際 tag。選中的 SQLite 以編號連到遮蔽標籤 `resolved-tag`。`--show-names` 在本機加印原始 tag、SQLite 及錯誤的相對路徑。使用 `--silent` 可省略 npm 把命令列引數原樣印出的橫幅。檢查遇到錯誤仍輸出已知結構並以非零狀態結束。
 
 CLI 匯入預設保留在本機。Web 從左側知識庫展開「從儲存庫資料夾匯入」，輸入本機完整路徑後可檢查或匯入。只有明確勾選授權，或在 CLI 傳入 `--allow-model`，該版本的證據才可由 Ask 傳給模型。庫、內容、FTS5 及目前指標在 OEP SQLite 同一交易切換。舊世代保留，可用報告的 vault 與 revision 回復。讀取限額為 JSON 2 MiB、SQLite 128 MiB、BI 各表 10 萬列及檢查 5 萬筆檔案項目。
+
+## 2026-11-21　Owner 實際資料夾驗證（去敏摘要）
+
+Claude Code 在 owner 授權下，對 owner 本機的已發布資料夾做了結構檢查與一次影子匯入（寫入暫存資料目錄，未啟用模型使用，來源資料夾未改動）。實際資料與名稱不進 repo。
+
+- 格式判定為 `aep.knowledge.repo/v1`、類型 BI。最新發布紀錄解析出發布版本，檔案雜湊驗證通過。發布紀錄未記錄檔案大小，故 `sizeVerified=false`，不是損壞。
+- 3 個已發布 SQLite，版號 8 與 9。14 張表與欄位名稱皆在預期範圍，`field_states` 與 `relation_evidence` 為空表，這兩張表沒有真實資料可驗。
+- 匯入成功，匯入後 `integrity_check` 為 ok，卡片數與資料夾內卡片檔數一致。英文與中文詞（含繁體中文）的 FTS5 檢索皆有命中。
+- 仍為 **UNVERIFIED**：OneDrive 檔案隨選在原生環境的行為、真實資料的 Ask 品質、v8 快照的匯入（本次只匯入目前選用的版本）。
