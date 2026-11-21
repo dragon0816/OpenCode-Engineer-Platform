@@ -17,7 +17,7 @@ PowerShell 與小型 Win32 bridge 在 worker resume 前使用 `AssignProcessToJo
 
 原始測試中，睡眠／喚醒、登出／再登入、登入自啟、鎖屏常駐和恢復時序均為 **UNVERIFIED**。`powercfg /a` 只證實測試主機的電源能力。當時規劃私有 VM 補證，現依 owner 修訂免測 O-3b。 [Owner 修訂](../IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
 
-部署成本觀察。Node 實測 `node.exe` 約 91.4 MB，Job Object bridge 由現有 PowerShell `Add-Type` 編譯。S3 Python 另需 Python 3.12 執行環境及三個 wheels，實際展開依賴約 5.16 MB，另有 worker 執行、timeout 與錯誤傳遞成本。主體維持 TypeScript/Node.js。
+部署成本觀察。Node 實測 `node.exe` 約 91.4 MB，Job Object bridge 由現有 PowerShell `Add-Type` 編譯。S3 目前使用 Python 3.12 和四個固定 wheel。第 2 輪修正前的三個 wheel 展開約 5.16 MB，四個 wheel 的展開容量尚未重測。部署另需負擔 worker、逾時與錯誤傳遞成本。主體維持 TypeScript/Node.js。
 ## 第 2 輪　合成 Job 與 O-3a 原生基本驗收
 
 測試主機為 Windows 11 Pro build 26200，64 位元，Node 為 x64。`pwsh -NoProfile -File scripts/phase0/windows-job.ps1` 用 `STARTUPINFOEX` 的 Job list 將 worker 在建立時納入 Job。三案例均驗不同目錄的同 SID 啟動遭拒、核心回報的 Job membership、實際 listeners、退出碼與殘留。最終重測正常停止為 137 ms、強制停止 71 ms、readiness 前停止 70 ms，三者殘留均為 0。已就緒的兩案例各計 worker、grandchild 與兩個 console helper。Readiness 前案例刻意不 resume worker，當時 listener 為 0。

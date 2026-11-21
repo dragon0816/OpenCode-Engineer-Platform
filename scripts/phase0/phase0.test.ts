@@ -290,6 +290,9 @@ test('attachment documentation matches the wheel lock and the Windows quota sema
   const wheels = readFileSync('scripts/phase0/requirements.txt', 'utf8').split(/\r?\n/).filter((line) => line.includes('--hash=sha256:'));
   const licensing = readFileSync('docs/validation/p0-s7-licensing.md', 'utf8');
   assert.match(licensing, new RegExp(`${wheels.length} 個 Python wheels`));
+  const windows = readFileSync('docs/validation/p0-s6-windows.md', 'utf8');
+  assert.match(windows, /目前使用 Python 3\.12 和四個固定 wheel。第 2 輪修正前的三個 wheel 展開約 5\.16 MB/);
+  assert.equal(wheels.length, 4);
   const pdf = readFileSync('docs/validation/p0-s3-attachments.md', 'utf8');
   assert.match(pdf, /Windows PDF 子程序[^。]+2 秒週期檢查的 user-time 配額[^。]+5 秒 wall-clock timeout/);
 });
