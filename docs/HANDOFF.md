@@ -126,3 +126,7 @@ The Windows workflow is **UNVERIFIED** until GitHub runs it. Review the [license
 ## Slice 4B 交接
 
 自訂 stdio MCP 定義儲存及備份回復已通過測試。Web 啟動器目前使用單一 OpenCode 執行環境。接手時需驗證如何依專案與新會話配置工具，同時保留既有會話的工具。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)
+
+## Slice 4C 交接
+
+自訂 MCP 由設定頁儲存，按下重新啟動後由 Web 啟動器載入。同一個啟動器保留工作資料目錄及 OpenCode profile，重新啟動完成後開啟新的配對頁。Chromium 驗證使用合成執行環境。獨立測試透過 Windows 啟動器驗證重新啟動與重新開啟後的定義。同一測試的合成憑證由 Windows 使用者環境變數傳至子程序，完成後刪除。 [驗收紀錄](reviews/PHASE2B_SLICE4C_REPORT.md)
