@@ -63,7 +63,7 @@ function secureHeaders(response: ServerResponse) {
 
 export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void) {
   checkDirectory(root);
-  for (const name of ['sessions', 'artifacts']) {
+  for (const name of ['sessions', 'model-work', 'artifacts']) {
     const folder = join(root, name);
     mkdirSync(folder, { recursive: true });
     checkDirectory(folder);

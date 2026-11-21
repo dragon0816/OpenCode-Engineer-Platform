@@ -55,17 +55,21 @@ export class ChatService {
   }
 
   workspace(session: Pick<WebSession, 'id'>) { return scopedPath(join(this.root, 'sessions'), session.id); }
+  private modelWorkspace(session: Pick<WebSession, 'id'>) { return scopedPath(join(this.root, 'model-work'), session.id); }
 
   async create(agent: Agent) {
     const id = randomUUID();
     const createdAt = Date.now();
     const local = { id, agent, alias: this.runtime.alias, createdAt };
     const workspace = this.workspace(local);
+    const modelWorkspace = this.modelWorkspace(local);
     checkDirectory(join(this.root, 'sessions'));
+    checkDirectory(join(this.root, 'model-work'));
     mkdirSync(workspace);
     mkdirSync(join(workspace, 'attachments'));
-    mkdirSync(join(workspace, 'generated'));
-    const upstreamID = await createSession(this.runtime.client, workspace, agent, this.runtime.alias, true);
+    mkdirSync(modelWorkspace);
+    mkdirSync(join(modelWorkspace, 'generated'));
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, this.runtime.alias, true);
     const session = { ...local, upstreamID };
     this.store.createSession(session);
     return session;
@@ -126,7 +130,7 @@ export class ChatService {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'Attachment not found in this session');
     }
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
-      createdAt: Date.now(), workspace: this.workspace(session), alias: session.alias, sessionID: session.upstreamID,
+      createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
     this.store.saveTurn(session.id, run, hash);
     this.notify(session.id);
@@ -149,7 +153,7 @@ export class ChatService {
       this.stop.signal.throwIfAborted();
       checkDirectory(run.workspace);
       if (input.workbook) checkDirectory(join(run.workspace, 'generated'));
-      const parts = this.attachments.prompt(session.id, run.workspace, input.attachments);
+      const parts = this.attachments.prompt(session.id, this.workspace(session), input.attachments);
       if (session.agent === 'workbook') {
         await client.session.update({ sessionID, permissions: input.workbook ?
           [{ action: 'edit', resource: workbookInput(run.id), effect: 'allow' }] : [] }, call());
