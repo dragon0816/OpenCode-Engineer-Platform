@@ -1,11 +1,37 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, openSync, readSync, closeSync, lstatSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 
 const [mode, root, destination] = process.argv.slice(2);
 const header = Buffer.from('SQLite format 3\0');
 const quote = (name) => '"' + name.replaceAll('"', '""') + '"';
+
+async function credentials() {
+  const folder = join(root, 'web');
+  const path = join(folder, 'web.sqlite');
+  const directory = lstatSync(folder, { throwIfNoEntry: false });
+  if (!directory) return [];
+  if (!directory.isDirectory()) throw new Error('Invalid web directory');
+  const file = lstatSync(path, { throwIfNoEntry: false });
+  if (!file) return [];
+  if (!file.isFile()) throw new Error('Invalid web database');
+  return useDatabase(path, (db) => {
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='mcp_servers'").get()) return [];
+    const names = new Set();
+    for (const { id, definition } of db.prepare('SELECT id, definition FROM mcp_servers').iterate()) {
+      if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid MCP identifier');
+      for (const { name, reference } of JSON.parse(definition).environment) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) ||
+            reference !== 'OEP_MCP_' + id.toUpperCase() + '_' + name.toUpperCase()) {
+          throw new Error('Invalid MCP credential reference');
+        }
+        names.add(reference);
+      }
+    }
+    return [...names].sort();
+  });
+}
 
 function* files(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -111,7 +137,7 @@ const webAdditions = new Set([
   'web_session_display', 'web_session_project', 'web_preferences', 'web_settings_audit',
   'web_turn_limits', 'web_model_settings', 'web_project_folders', 'web_action_decisions',
   'web_message_annotations', 'web_turn_replies', 'web_session_knowledge_disabled',
-  'web_knowledge_settings', 'web_appearance', 'web_sessions', 'attachments', 'web_turns',
+  'web_knowledge_settings', 'web_appearance', 'web_sessions', 'attachments', 'web_turns', 'mcp_servers',
 ]);
 const knowledgeAdditions = new Set([
   'benchmark_sets', 'inactive_vaults', 'review_uploads', 'review_schemas', 'review_schema_heads',
@@ -175,6 +201,7 @@ async function intentDiff(report) {
 try {
   if (mode === 'copy') await snapshot();
   else if (mode === 'describe') writeFileSync(destination, JSON.stringify(await describe()), { flag: 'wx' });
+  else if (mode === 'credentials') writeFileSync(destination, JSON.stringify(await credentials()), { flag: 'wx' });
   else if (mode === 'reconcile-upgrade') await reconcileUpgrade();
   else if (mode === 'intent-diff') await intentDiff(process.argv[5]);
   else throw new Error('Unknown mode');

@@ -1,9 +1,21 @@
-function CredentialNames-OEP {
+function CredentialNames-OEP($Path) {
     'OEP_LITELLM_BASE_URL'
     'OEP_LITELLM_API_KEY'
     'OEP_TELEGRAM_MAIN_BOT_TOKEN'
     'OEP_TELEGRAM_BI_BOT_TOKEN'
     'OEP_TELEGRAM_ALLOWED_USER_ID'
+    $report = Join-Path ([IO.Path]::GetTempPath()) ("OEP-credentials-" + [guid]::NewGuid() + '.json')
+    try {
+        Invoke-Snapshot 'credentials' $Path $report
+        Read-OEP $report
+    } finally { [IO.File]::Delete($report) }
+}
+function CredentialStatus-OEP($Names) {
+    foreach ($name in $Names) {
+        $configured = ![string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, 'User'))
+        $status = if ($configured) { '已設定' } else { '未設定' }
+        Write-Output "$name $status"
+    }
 }
 function Invoke-Snapshot($Mode, $Source, $Destination) {
     & (Maintenance-Node) --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" $Mode $Source $Destination 2>$null
@@ -20,11 +32,13 @@ function Read-Backup($Path) {
     [void]@(Tree-OEP $Path)
     $manifest = Read-OEP (Join-Path $Path 'backup.manifest.json')
     if ($manifest.format -ne 1 -or $manifest.tool -cne 'OEP.Backup' -or !$manifest.Contains('inventory') -or
-        !$manifest.Contains('databases') -or
-        (($manifest.credentials -join '|') -cne ((CredentialNames-OEP) -join '|'))) {
+        !$manifest.Contains('databases')) {
         Fail-OEP '備份清單格式錯誤。'
     }
     Verify-OEP $Path $manifest.inventory 'backup.manifest.json'
+    if (($manifest.credentials -join '|') -cne ((CredentialNames-OEP $Path) -join '|')) {
+        Fail-OEP '備份憑證名稱與資料庫不符。'
+    }
     $manifest
 }
 function Reconcile-Snapshot($Path, $Manifest) {
@@ -50,7 +64,7 @@ function New-Backup($Source, $Destination, $Version) {
         $manifest.backupId = $name
         $manifest.createdAt = [DateTime]::UtcNow.ToString('o')
         $manifest.oepVersion = $Version
-        $manifest.credentials = @(CredentialNames-OEP)
+        $manifest.credentials = @(CredentialNames-OEP $stage)
         $manifest.credentialNotice = '備份未讀取使用者環境變數的值。請重新設定下列名稱。'
         Write-OEP (Join-Path $stage 'backup.manifest.json') $manifest
         [IO.Directory]::Move($stage, $target)
