@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OEP 工程工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><strong>OEP</strong> <span>工程工作台</span></div>
+    <div class="top-actions"><span id="connection" role="status">正在連線</span><button id="stop" type="button" disabled>停止服務</button></div>
+  </header>
+  <main>
+    <aside class="sidebar">
+      <label for="agent">新會話的助理</label>
+      <select id="agent" disabled>
+        <option value="inspector">資料分析</option>
+        <option value="workbook">Excel 工作表</option>
+      </select>
+      <button id="new-session" type="button" disabled>新增會話</button>
+      <label for="sessions">會話</label>
+      <select id="sessions" disabled><option value="">尚無會話</option></select>
+      <small id="model"></small>
+      <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
+    </aside>
+    <section class="conversation" aria-label="對話">
+      <header class="conversation-header">
+        <h1 id="session-title">對話</h1>
+        <p id="progress" role="status">從左側新增會話後即可開始。</p>
+      </header>
+      <div id="error" role="alert" hidden></div>
+      <div id="messages" class="messages" aria-label="訊息">
+        <p class="empty">上傳截圖、文件或工作簿，並輸入想要分析的問題。</p>
+      </div>
+      <form id="composer">
+        <label for="prompt">訊息</label>
+        <textarea id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
+        <div class="compose-actions">
+          <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+          <button id="send" type="submit" disabled>送出</button>
+        </div>
+      </form>
+    </section>
+    <aside class="sidebar files">
+      <section aria-labelledby="attachments-title">
+        <h2 id="attachments-title">附件</h2>
+        <div id="drop">
+          <button id="pick" type="button" disabled>選擇檔案</button>
+          <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv" multiple hidden>
+          <span>也可拖曳到此處</span>
+        </div>
+        <small>PNG、JPG、PDF、XLSX、UTF-8 文字。單檔最多 20 MiB。</small>
+        <p id="upload-status" role="status"></p>
+        <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
+      </section>
+      <section aria-labelledby="artifacts-title">
+        <h2 id="artifacts-title">產物</h2>
+        <ul id="artifacts"><li>尚無可下載的產物</li></ul>
+      </section>
+      <section aria-labelledby="activity-title">
+        <h2 id="activity-title">即時進度</h2>
+        <ul id="activity" aria-live="polite"></ul>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
