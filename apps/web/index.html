@@ -52,6 +52,9 @@
           <button type="button" data-section="limits">回合限制</button>
           <button type="button" data-section="runtime">執行環境</button>
           <button type="button" data-section="integrations">整合說明</button>
+          <button type="button" data-section="input">輸入</button>
+          <button type="button" data-section="projects">專案與資料夾</button>
+          <button type="button" data-section="about">關於</button>
         </nav>
         <div class="settings-content">
           <section id="settings-assistant">
@@ -115,6 +118,29 @@
               <p id="limits-status" role="status"></p>
             </form>
           </section>
+          <section id="settings-input" hidden>
+            <h2>輸入</h2>
+            <label><input type="checkbox" id="enable-microphone"> 啟用麥克風語音輸入</label>
+            <p id="microphone-settings-status"></p>
+          </section>
+          <section id="settings-projects" hidden>
+            <h2>專案與資料夾</h2>
+            <label>專案 <select id="folder-project"></select></label>
+            <p id="project-working-root"></p>
+            <h3>唯讀資料夾</h3>
+            <ul id="project-folder-list"></ul>
+            <form id="project-folder-form">
+              <label for="project-folder">本機資料夾的絕對路徑</label>
+              <input id="project-folder" type="text" required>
+              <button type="submit">加入唯讀資料夾</button>
+            </form>
+            <p id="project-folder-status" role="status"></p>
+          </section>
+          <section id="settings-about" hidden>
+            <h2>關於</h2>
+            <dl id="about-details"></dl>
+            <p id="about-status" role="status"></p>
+          </section>
           <section id="settings-runtime" hidden>
             <h2>執行環境</h2>
             <p id="runtime-status" role="status">正在載入執行環境…</p>
@@ -147,15 +173,33 @@
         <p class="empty">上傳截圖、文件或工作簿，並輸入想要分析的問題。</p>
       </div>
       <button id="jump-latest" type="button" hidden>跳到最新訊息</button>
+      <dialog id="remove-session-card" aria-labelledby="remove-session-question">
+        <form method="dialog">
+          <h2 id="remove-session-question"></h2>
+          <p>刪除後，會話將從清單移除。</p>
+          <button value="reject" autofocus>取消</button>
+          <button value="accept">確認刪除</button>
+        </form>
+      </dialog>
       <form id="composer">
         <label for="prompt">訊息</label>
-        <textarea id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
+        <details id="project-read" hidden>
+          <summary>附加唯讀資料夾中的檔案</summary>
+          <label>資料夾 <select id="project-read-folder"></select></label>
+          <label>相對檔名 <input id="project-read-file" type="text"></label>
+          <button id="project-read-button" type="button">附加檔案副本</button>
+        </details>
+        <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply">移除引用</button></div>
+        <div id="command-toast" role="status"></div>
+        <ul id="slash-palette" role="listbox" aria-label="指令" hidden></ul>
+        <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
         <div class="compose-actions">
           <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
           <details id="shortcuts"><summary>快捷鍵</summary>
             <p>Enter 送出<br>Shift + Enter 換行<br>Esc 回到輸入框<br>Ctrl + Shift + S 停止處理</p>
           </details>
           <button id="send" type="submit" disabled>送出</button>
+          <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
           <button id="cancel-turn" type="button" hidden>停止處理</button>
         </div>
       </form>
@@ -200,6 +244,7 @@
         <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="true">檔案與產物</button>
         <button type="button" role="tab" id="tab-work" aria-controls="panel-work" aria-selected="false" tabindex="-1">工作</button>
         <button type="button" role="tab" id="tab-diff" aria-controls="panel-diff" aria-selected="false" tabindex="-1">差異</button>
+        <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false" tabindex="-1">筆記</button>
       </div>
         <button type="button" id="close-files" aria-label="關閉會話面板">關閉</button>
       </div>
@@ -233,6 +278,11 @@
       </details>
       </div>
       <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" tabindex="0" hidden></div>
+      <div role="tabpanel" id="panel-notes" aria-labelledby="tab-notes" tabindex="0" hidden>
+        <label>篩選 <select id="notes-filter"><option value="all">全部</option><option value="rated">有評價</option><option value="noted">有筆記</option></select></label>
+        <ul id="session-notes"></ul>
+        <button type="button" id="export-notes" disabled>匯出選取的筆記</button>
+      </div>
     </aside>
   </main>
 </body>

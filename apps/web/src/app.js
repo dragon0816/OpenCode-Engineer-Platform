@@ -1,4 +1,7 @@
 import { connect, request, RequestError } from './api.js';
+import { bindVoice } from './voice.js';
+import { bindNotes, messageActions } from './message-operations.js';
+import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { loadJobSummary } from './jobs.js';
 
@@ -42,11 +45,31 @@ const knownSessions = new Map();
 const selections = new Map();
 const submitted = new Map();
 const drafts = new Map();
+const replies = new Map();
+const replyChip = find('reply-chip');
+function renderReply() {
+  const reply = replies.get(current?.id);
+  replyChip.hidden = !reply;
+  find('reply-chip-text').textContent = reply ? '回覆 · ' + reply.text.slice(0, 120) : '';
+}
+find('clear-reply').addEventListener('click', () => {
+  replies.delete(current?.id);
+  renderReply();
+  prompt.focus();
+});
+const renderNotes = bindNotes(find('notes-filter'), find('session-notes'), find('export-notes'), (id) => {
+  const message = messages.querySelector('[data-id="' + CSS.escape(id) + '"]');
+  if (!message) return;
+  if (panelNarrow.matches) setPanel(false);
+  message.focus();
+  message.scrollIntoView({ block: 'center' });
+});
 let current;
 let uploadBusy = false;
 let sending = false;
 let stopped = false;
-let disableKnowledge;
+let knowledge;
+const voice = bindVoice(find('enable-microphone'), find('microphone'), find('microphone-settings-status'), prompt, () => current, showError);
 
 function showError(error) {
   notice.textContent = error ? error.message || String(error) : '';
@@ -65,6 +88,9 @@ function setControls() {
   cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
+  voice.update();
+  find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped;
+  find('project-read-button').disabled = uploadBusy;
   send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
@@ -237,13 +263,23 @@ function render(context) {
       appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
+      entry.tabIndex = -1;
       if (item.role === 'assistant') entry.append(avatar());
       const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
       if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
       entry.append(role);
-      if (item.role === 'assistant') appendMarkdown(entry, item.text);
-      else entry.append(node('p', item.text));
+      if (item.reply) entry.append(node('blockquote', item.reply.text, 'message-quote'));
+      const content = node('div');
+      if (item.role === 'assistant') appendMarkdown(content, item.text);
+      else content.append(node('p', item.text));
+      entry.append(content);
       for (const tool of item.tools ?? []) entry.append(toolCard(tool, previous.get(tool.id)));
+      entry.append(messageActions(context, item, content, (reference) => {
+        replies.set(id, reference);
+        renderReply();
+        prompt.focus();
+      }, showError, (text) => { find('command-toast').textContent = text; },
+      () => { if (current === context) renderNotes(context); }));
       fragment.append(entry);
     }
     appendEvents(Infinity);
@@ -267,6 +303,7 @@ function render(context) {
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
   renderPanel(context);
+  renderNotes(context);
   setControls();
 }
 
@@ -657,11 +694,15 @@ for (const [index, tab] of panelTabs.entries()) {
 }
 
 function select(id) {
+  voice.cancel();
+  find('project-read').open = false;
   if (current) drafts.set(current.id, { text: prompt.value, workbook: workbook.checked });
   current?.events.close();
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  renderNotes(null);
+  renderReply();
   find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
   closePreview();
   find('panel-runs').replaceChildren();
@@ -699,6 +740,7 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  renderReply();
   find('session-model-status').textContent = '';
   updateSessionAlias();
   activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
@@ -802,6 +844,7 @@ async function switchProject(id) {
   const entries = await request(`/api/projects/${id}/sessions`);
   select();
   project = id;
+  updateProjectRead();
   knownSessions.clear();
   localStorage.setItem('oep.activeProject', id);
   for (const entry of entries) addSession(entry);
@@ -836,6 +879,65 @@ async function upload(files) {
   uploadBusy = false;
   setControls();
 }
+
+let projectFolders = [];
+const folderForm = find('project-folder-form');
+const folderProject = find('folder-project');
+const folderStatus = find('project-folder-status');
+
+function updateProjectRead() {
+  const folders = projectFolders.find((entry) => entry.id === project)?.folders ?? [];
+  find('project-read-folder').replaceChildren(...folders.map((path) => new Option(path, path)));
+  setControls();
+}
+function displayProjectFolders() {
+  const active = projectFolders.find((entry) => entry.id === folderProject.value);
+  if (!active) return;
+  find('project-working-root').textContent = '工作根目錄 · ' + active.workingRoot;
+  find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
+    const row = node('li', folder);
+    row.append(' ', sessionButton('移除', () => void changeProjectFolder('remove', folder)));
+    return row;
+  }));
+}
+async function changeProjectFolder(action, folder) {
+  try {
+    projectFolders = await request('/api/settings/projects', { data: { action, folder, project: folderProject.value } });
+    folderStatus.textContent = action === 'add' ? '已加入唯讀資料夾。' : '已移除唯讀資料夾。';
+    if (action === 'add') folderForm.reset();
+    displayProjectFolders();
+    updateProjectRead();
+  } catch (error) { folderStatus.textContent = error.message; }
+}
+folderProject.addEventListener('change', displayProjectFolders);
+folderForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void changeProjectFolder('add', find('project-folder').value.trim());
+});
+find('project-read-button').addEventListener('click', async () => {
+  const context = current;
+  const field = find('project-read-file');
+  if (!context || !field.value.trim() || uploadBusy || stopped) return;
+  uploadBusy = true;
+  setControls();
+  try {
+    const attachment = await request(context.path + '/read-project-file', { data: {
+      folder: find('project-read-folder').value, file: field.value.trim(),
+    } });
+    context.selected.add(attachment.id);
+    if (current === context) {
+      field.value = '';
+      find('project-read').open = false;
+      uploadStatus.textContent = '已附加檔案副本。';
+      refresh(context);
+    }
+  } catch (error) {
+    if (current === context) showError(error);
+  } finally {
+    uploadBusy = false;
+    setControls();
+  }
+});
 
 const preferenceFields = ['name', 'introduction', 'instructions'];
 let savedAssistant;
@@ -1172,10 +1274,19 @@ async function renameSession(session) {
 }
 
 async function removeSession(session) {
-  if (!window.confirm(`確定刪除「${sessionLabel(session)}」？`)) return;
+  const card = find('remove-session-card');
+  const path = sessionPath(session.id);
+  find('remove-session-question').textContent = `確定刪除「${sessionLabel(session)}」？`;
+  card.returnValue = 'reject';
+  const decision = await new Promise((resolve) => {
+    card.addEventListener('close', () => resolve(card.returnValue), { once: true });
+    card.showModal();
+  });
   try {
-    await request(`${sessionPath(session.id)}/remove`, { data: {} });
+    await request(path + '/remove', { data: { decision } });
+    if (decision !== 'accept') return;
     drafts.delete(session.id);
+    replies.delete(session.id);
     selections.delete(session.id);
     submitted.delete(session.id);
     if (project !== session.project) return;
@@ -1183,6 +1294,7 @@ async function removeSession(session) {
     if (current?.id === session.id) select([...knownSessions.keys()].at(-1));
     renderSessions();
     (sessions.querySelector('[aria-current="true"]') ?? find('session-search')).focus();
+    find('command-toast').textContent = '已刪除會話。';
   } catch (error) { showError(error); }
 }
 
@@ -1215,6 +1327,7 @@ async function createSession(id) {
     renderSessions();
     if (current) prompt.focus();
   }
+  return current;
 }
 pick.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
@@ -1235,6 +1348,65 @@ drop.addEventListener('drop', (event) => {
   drop.classList.remove('dragging');
   void upload([...event.dataTransfer.files]);
 });
+const executeCommand = bindCommands(prompt, find('slash-palette'), find('command-toast'), {
+  async '/new'() {
+    const previous = current?.id;
+    const created = await createSession(project);
+    if (created && created.id !== previous) return { text: '已新增會話。' };
+  },
+  async '/stop'() {
+    await stopTurn();
+    return { text: '已送出停止要求。' };
+  },
+  async '/model'(alias) {
+    const context = current;
+    if (!modelSettings?.aliases.some((entry) => entry.alias === alias)) throw new Error('請輸入核准的模型名稱。');
+    const previous = knownSessions.get(context.id)?.alias;
+    async function change(value) {
+      const session = await request(context.path + '/model', { data: { alias: value } });
+      if (current === context) {
+        knownSessions.set(session.id, session);
+        updateSessionAlias();
+      }
+    }
+    await change(alias);
+    return {
+      text: '已切換模型。',
+      undo: previous && previous !== alias ? () => change(previous) : undefined,
+    };
+  },
+  async '/theme'(value) {
+    if (!['light', 'dark'].includes(value)) throw new Error('請輸入 light 或 dark。');
+    const previous = savedAppearance.theme;
+    async function change(next) {
+      applyAppearance(await request('/api/settings/appearance', { data: { theme: next, density: savedAppearance.density } }));
+      localStorage.removeItem('oep.theme');
+    }
+    await change(value);
+    return { text: '已切換主題。', undo: previous !== value ? () => change(previous) : undefined };
+  },
+  '/attach'() {
+    if (pick.disabled) throw new Error('目前無法選擇附件。');
+    pick.click();
+  },
+  async '/ask'(argument) {
+    const [, vault, question] = /^(\S+)\s+([\s\S]+)$/.exec(argument) ?? [];
+    if (!vault) throw new Error('請輸入知識庫識別碼和問題。');
+    if (!knowledge) throw new Error('知識庫目前未設定。');
+    await knowledge.ask(vault, question);
+  },
+  '/clear-search'() {
+    const search = find('session-search');
+    const previous = search.value;
+    find('clear-session-search').click();
+    prompt.focus();
+    return { text: '已清除會話搜尋。', undo: previous ? () => {
+      search.value = previous;
+      renderSessions();
+    } : undefined };
+  },
+}, showError);
+
 prompt.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
   event.preventDefault();
@@ -1248,9 +1420,11 @@ document.addEventListener('keydown', (event) => {
 });
 find('composer').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (prompt.value.startsWith('/')) { await executeCommand(); return; }
   if (send.disabled || !prompt.value.trim()) return;
   const context = current;
-  const data = { text: prompt.value, attachments: [...context.selected], workbook: workbook.checked };
+  const reference = replies.get(context.id);
+  const data = { text: prompt.value, attachments: [...context.selected], workbook: workbook.checked, replyTo: reference?.id };
   const previous = submitted.get(context.id);
   const signature = JSON.stringify(data);
   const id = previous?.signature === signature ? previous.id : crypto.randomUUID();
@@ -1262,6 +1436,8 @@ find('composer').addEventListener('submit', async (event) => {
   try {
     await request(`${context.path}/turns`, { data: { id, ...data } });
     submitted.delete(context.id);
+    if (replies.get(context.id) === reference) replies.delete(context.id);
+    if (current === context) renderReply();
     drafts.delete(context.id);
     if (!context.state?.runs.some((run) => run.id === id)) {
       context.pendingID = id;
@@ -1285,10 +1461,10 @@ find('composer').addEventListener('submit', async (event) => {
     refresh(context);
   }
 });
-cancelTurn.addEventListener('click', async () => {
+async function stopTurn() {
   const context = current;
   const id = runningID(context);
-  if (!id || context.cancelling) return;
+  if (!id || context.cancelling) throw new Error('目前沒有可停止的回合。');
   context.cancelling = true;
   setControls();
   try {
@@ -1298,14 +1474,13 @@ cancelTurn.addEventListener('click', async () => {
       render(context);
       prompt.focus();
     }
-  } catch (error) {
-    if (current === context) showError(error);
   } finally {
     context.cancelling = false;
     setControls();
     refresh(context);
   }
-});
+}
+cancelTurn.addEventListener('click', () => void stopTurn().catch(showError));
 document.addEventListener('keydown', (event) => {
   if (event.ctrlKey && event.shiftKey && event.code === 'KeyS' && !cancelTurn.hidden && !find('chat-view').hidden) {
     event.preventDefault();
@@ -1320,7 +1495,7 @@ stop.addEventListener('click', async () => {
     current?.events.close();
     current?.abort.abort();
     connection.textContent = '服務已停止';
-    disableKnowledge?.();
+    knowledge?.disable();
     agent.disabled = true;
     renderSessions();
     setControls();
@@ -1336,6 +1511,30 @@ try {
   model.textContent = `模型 ${bootstrap.alias}`;
   request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
   request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
+  request('/api/settings/projects').then((entries) => {
+    projectFolders = entries;
+    folderProject.replaceChildren(...entries.map(({ title, id }) => new Option(title, id)));
+    folderProject.value = project;
+    displayProjectFolders();
+    updateProjectRead();
+  }).catch(() => { folderStatus.textContent = '無法載入專案資料夾。'; });
+  request('/api/settings/about').then(({ version, license, pin, root }) => {
+    const details = find('about-details');
+    for (const [term, value] of [['OEP 版本', version], ['資料目錄', root], ['OpenCode 固定版本', pin], ['授權', license]]) {
+      details.append(node('dt', term), node('dd', value));
+    }
+    const repository = 'https://github.com/dragon0816/OpenCode-Engineer-Platform';
+    for (const [label, path] of [['使用說明', '/blob/main/README.md'], ['工作台文件', '/blob/main/docs/GUI_LAYOUT.md']]) {
+      const link = node('a', label);
+      link.href = repository + path;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      details.append(node('dt', label));
+      const description = node('dd');
+      description.append(link);
+      details.append(description);
+    }
+  }).catch(() => { find('about-status').textContent = '無法載入版本資訊。'; });
   request('/api/settings/runtime').then((runtime) => {
     const configured = (value) => value ? '已設定' : '未設定';
     find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
@@ -1369,7 +1568,7 @@ try {
   renderSessions();
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
-  if (bootstrap.knowledge) disableKnowledge = bindKnowledge();
+  if (bootstrap.knowledge) knowledge = bindKnowledge();
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

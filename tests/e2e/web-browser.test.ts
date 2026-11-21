@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -37,6 +37,7 @@ const sheets = [
   { name: 'Notes', rows: [['Code', 'Comment'], ['R1', '合成資料'], ['R2', 'a,b']] },
 ];
 let slowStarted = false;
+let syntheticReadOnlyFile: string | undefined;
 const pinged: string[] = [];
 const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
 const syntheticKey = randomUUID();
@@ -48,6 +49,20 @@ const synthetic: typeof fetch = async (_target, init) => {
     assert.equal(messages.length, 1);
     pinged.push(model);
     return Response.json({ choices: [{ message: { role: 'assistant', content: 'OEP-READY' }, finish_reason: 'stop' }] });
+  }
+  if (user.includes('SYNTHETIC_FOLDER_WRITE')) {
+    const path = syntheticReadOnlyFile;
+    assert.ok(path);
+    if (messages.at(-1)?.role !== 'tool') {
+      return completion(model, toolCall(0, 'call_folder_write', 'write', { path, content: 'SYNTHETIC_SHOULD_NOT_WRITE' }), 'tool_calls');
+    }
+    return completion(model, [{ role: 'assistant', content: '合成寫入檢查結束' }], 'stop');
+  }
+  if (user.includes('SYNTHETIC_REPLY_CONTEXT')) {
+    assert.match(user, /BEGIN QUOTED MESSAGE/);
+    assert.match(user, /合成量測摘要/);
+    assert.match(user, /END QUOTED MESSAGE/);
+    return completion(model, [{ role: 'assistant', content: '已核對合成引用' }], 'stop');
   }
   if (user.includes('SYNTHETIC_TOOL_LIMIT')) {
     assert.equal(model, gatewayAliases[1]);
@@ -241,10 +256,12 @@ try {
           document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.density === 'compact' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
         await page.evaluate(`
-          window.confirm = () => false;
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
+          document.querySelector('#remove-session-card [value=reject]').click();
         `);
         assert.equal(await page.evaluate("document.querySelector('[aria-current=true]')?.dataset.session"), selected);
+        await page.ready(`fetch('/api/sessions/' + ${JSON.stringify(selected)} + '/action-decisions')
+          .then(response => response.json()).then(rows => rows.some(row => row.decision === 'reject'))`);
         await page.evaluate("document.querySelector('#new-session-secondary').click()");
         await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session &&
           document.querySelector('[aria-current=true]').dataset.session !== ${JSON.stringify(selected)} &&
@@ -670,10 +687,220 @@ try {
         if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
         await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
         assert.equal(await page.evaluate("document.activeElement.id === 'toggle-files' && !document.querySelector('#chat-files').classList.contains('sheet-open')"), true);
+        await page.evaluate(`
+          const prompt = document.querySelector('#prompt');
+          prompt.focus();
+          prompt.value = '/';
+          prompt.dispatchEvent(new Event('input'));
+        `);
+        await page.ready("!document.querySelector('#slash-palette').hidden && document.querySelectorAll('#slash-palette [role=option]').length === 8");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 });
+        await page.ready("document.querySelector('#slash-palette [aria-selected=true]').textContent.includes('/help')");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await page.ready("document.querySelector('#command-toast').textContent.includes('/clear-search')");
+        await page.evaluate(`
+          document.querySelector('#prompt').value = '/unknown';
+          document.querySelector('#composer').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#error').textContent.includes('無法辨識')");
+        await page.evaluate(`
+          const menu = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions');
+          window.prompt = () => '合成筆記';
+          [...menu.querySelectorAll('button')].find(button => button.textContent === '新增或編輯筆記').click();
+          document.querySelector('#tab-notes').click();
+        `);
+        await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        await page.evaluate(`(() => {
+          window.prompt = () => '未選取的合成筆記';
+          [...document.querySelector('.message.user .message-actions').querySelectorAll('button')]
+            .find(button => button.textContent === '新增或編輯筆記').click();
+        })()`);
+        await page.ready("document.querySelectorAll('#session-notes input').length === 2");
+        await page.evaluate(`
+          [...document.querySelectorAll('#session-notes label')].find(label => label.textContent === '合成筆記').querySelector('input').click();
+          document.querySelector('#export-notes').click();
+          document.querySelector('#notes-filter').value = 'rated';
+          document.querySelector('#notes-filter').dispatchEvent(new Event('change'));
+        `);
+        assert.equal(await page.evaluate("document.querySelectorAll('#session-notes li:not(.empty)').length"), 0);
+        await until(async () => existsSync(join(downloads, 'notes.md')) || undefined, 8_000);
+        const exportedNotes = readFileSync(join(downloads, 'notes.md'), 'utf8');
+        assert.match(exportedNotes, /合成筆記/);
+        assert.doesNotMatch(exportedNotes, /未選取的合成筆記/);
+        await page.evaluate(`(() => {
+          const actions = [...[...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions').querySelectorAll('button')];
+          window.prompt = () => '合成原因';
+          actions.find(button => button.textContent === '讚').click();
+          Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+            writeText: async text => { window.syntheticClipboard = text; },
+          } });
+          actions.find(button => button.textContent === '複製文字').click();
+        })()`);
+        await page.ready("window.syntheticClipboard?.includes('合成量測摘要') && document.querySelector('#session-notes').textContent.includes('合成原因')");
+
+        await page.evaluate(`
+          var reference = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要'));
+          [...reference.querySelectorAll('.message-actions button')].find(button => button.textContent === '回覆這則訊息').click();
+          document.querySelector('#prompt').value = 'SYNTHETIC_REPLY_CONTEXT';
+          document.querySelector('#workbook').checked = false;
+          document.querySelector('#composer').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#messages').textContent.includes('已核對合成引用') && document.querySelector('.message-quote')?.textContent.includes('合成量測摘要')", 30_000);
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('.message-quote')?.textContent.includes('合成量測摘要') && document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        const folder = mkdtempSync(resolve('.phase0/synthetic-folder-'));
+        syntheticReadOnlyFile = join(folder, 'sample.txt');
+        writeFileSync(syntheticReadOnlyFile, 'SYNTHETIC_READ_ONLY');
+        const linked = join(mkdtempSync(resolve('.phase0/synthetic-folder-link-')), 'junction');
+        symlinkSync(folder, linked, process.platform === 'win32' ? 'junction' : 'dir');
+        const folderChecks = await page.evaluate<number[]>(`(async () => {
+          const csrf = (await fetch('/api/bootstrap').then(response => response.json())).csrf;
+          const post = (path, data) => fetch(path, { method: 'POST', headers: {
+            'X-OEP-CSRF': csrf, 'Content-Type': 'application/json',
+          }, body: JSON.stringify(data) }).then(response => response.status);
+          const settings = '/api/settings/projects';
+          const folder = ${JSON.stringify(folder)};
+          const results = [];
+          for (const candidate of ['relative', folder + '/missing', folder + '/sample.txt', ${JSON.stringify(linked)}, ${JSON.stringify('\\example.invalid\public')}, ${JSON.stringify(process.env.SystemRoot)}]) {
+            results.push(await post(settings, { project: 'default', action: 'add', folder: candidate }));
+          }
+          results.push(await post(settings, { project: 'default', action: 'add', folder }));
+          results.push(await post(settings, { project: 'secondary', action: 'add', folder }));
+          results.push(await post('/api/projects/default/sessions/' + ${JSON.stringify(selected)} + '/read-project-file', { folder, file: 'sample.txt' }));
+          results.push(await post('/api/projects/secondary/sessions/' + ${JSON.stringify(other)} + '/read-project-file', { folder, file: 'sample.txt' }));
+          return results;
+        })()`);
+        assert.deepEqual(folderChecks, [400, 400, 400, 400, 400, 400, 200, 409, 201, 404]);
+        await page.evaluate(`
+          document.querySelector('#prompt').value = 'SYNTHETIC_FOLDER_WRITE';
+          document.querySelector('#composer').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#messages').textContent.includes('SYNTHETIC_FOLDER_WRITE') && ['已完成','這次處理未完成'].includes(document.querySelector('#progress').textContent) && !document.querySelector('#send').disabled", 30_000);
+        assert.equal(readFileSync(join(folder, 'sample.txt'), 'utf8'), 'SYNTHETIC_READ_ONLY');
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('#project-read-folder option') && document.querySelector('.message-quote')");
+
+
+        await page.evaluate(`
+          document.querySelector('#open-settings').click();
+          document.querySelector('[data-section=input]').click();
+          document.querySelector('#enable-microphone').click();
+          document.querySelector('[data-section=about]').click();
+        `);
+        await page.ready("document.querySelector('#about-details').textContent.includes('MIT')");
+        await page.evaluate(`
+          document.querySelector('#close-settings').click();
+          window.SpeechRecognition = class {
+            start() {
+              queueMicrotask(() => {
+                if (window.syntheticSpeechError) this.onerror({ error: window.syntheticSpeechError });
+                else this.onresult({ resultIndex: 0, results: [[{ transcript: '合成語音' }]] });
+                this.onend();
+              });
+            }
+            abort() {}
+          };
+          document.querySelector('#microphone').click();
+        `);
+        await page.ready("document.querySelector('#prompt').value === '合成語音'");
+        for (const [error, label] of [['not-allowed', '權限已拒絕'], ['network', '轉錄失敗']]) {
+          await page.evaluate(`window.syntheticSpeechError = ${JSON.stringify(error)}; document.querySelector('#microphone').click()`);
+          await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(label)})`);
+        }
+        const annotationIsolation = await page.evaluate<number[]>(`(async () => {
+          const first = '/api/projects/default/sessions/' + ${JSON.stringify(selected)};
+          const second = '/api/projects/secondary/sessions/' + ${JSON.stringify(other)};
+          const state = await fetch(first + '/state').then(response => response.json());
+          const csrf = (await fetch('/api/bootstrap').then(response => response.json())).csrf;
+          const messageID = state.annotations.find(row => row.note === '合成筆記').messageID;
+          const post = (path, data) => fetch(path + '/annotation', { method: 'POST', headers: {
+            'X-OEP-CSRF': csrf, 'Content-Type': 'application/json',
+          }, body: JSON.stringify({ messageID, ...data }) });
+          const foreign = await post(second, { field: 'note', value: '合成跨專案' });
+          const edit = await post(first, { field: 'note', value: '合成修改' }).then(response => response.json());
+          const removed = await post(first, { field: 'rating', value: null }).then(response => response.json());
+          await post(first, { field: 'rating', value: 'up', reason: '合成原因' });
+          const deleted = await post(first, { field: 'note', value: null }).then(response => response.json());
+          await post(first, { field: 'note', value: '合成筆記' });
+          return [foreign.status, Number(edit.annotations.some(row => row.note === '合成修改')),
+            Number(removed.annotations.some(row => row.messageID === messageID && row.rating === null)),
+            Number(deleted.annotations.some(row => row.messageID === messageID && row.note === null))];
+        })()`);
+        assert.deepEqual(annotationIsolation, [404, 1, 1, 1]);
+        await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        if (process.env.OEP_CAPTURE_SLICE2D === '1') {
+          const shots = resolve('docs/validation/gui');
+          const shot = async (view: string, theme: string, layout: string) => {
+            const name = `slice2d-${view}-${theme}-${layout}`;
+            await capture(name);
+            writeFileSync(join(shots, name + '.png'), readFileSync(join(audit, name + '.png')));
+          };
+          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+            for (const theme of ['light', 'dark']) {
+              await page.evaluate(`(() => {
+                document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+                document.querySelector('#error').hidden = true;
+                const prompt = document.querySelector('#prompt');
+                prompt.focus();
+                prompt.value = '/';
+                prompt.dispatchEvent(new Event('input'));
+                document.querySelector('#composer').scrollIntoView({ block: 'end' });
+              })()`);
+              await shot('slash', theme, layout);
+              await page.evaluate(`(() => {
+                const prompt = document.querySelector('#prompt');
+                prompt.value = '';
+                prompt.dispatchEvent(new Event('input'));
+                const menu = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions');
+                menu.open = true;
+                menu.querySelector('summary').focus();
+                menu.scrollIntoView({ block: 'center' });
+              })()`);
+              await shot('message-menu', theme, layout);
+              await page.evaluate(`(() => {
+                [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions').open = false;
+                document.querySelector('.message-quote').scrollIntoView({ block: 'center' });
+              })()`);
+              await shot('reply', theme, layout);
+              await page.evaluate(`
+                if (matchMedia('(max-width: 900px)').matches) document.querySelector('#toggle-files').click();
+                document.querySelector('#tab-notes').click();
+              `);
+              await shot('notes', theme, layout);
+              await page.evaluate(`
+                if (document.querySelector('#chat-files').classList.contains('sheet-open')) document.querySelector('#close-files').click();
+                if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click();
+                document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
+              `);
+              await shot('action', theme, layout);
+              await page.evaluate(`
+                document.querySelector('#remove-session-card [value=reject]').click();
+                document.querySelector('#open-settings').click();
+                document.querySelector('#project-working-root').textContent = '工作根目錄 · C:/OEP/合成工作區';
+                var folderRow = document.querySelector('#project-folder-list li');
+                if (folderRow?.firstChild) folderRow.firstChild.textContent = 'C:/OEP/合成唯讀資料';
+                var aboutPath = document.querySelector('#about-details dd:nth-of-type(2)');
+                if (aboutPath) aboutPath.textContent = 'C:/OEP/合成資料';
+              `);
+              for (const section of ['input', 'projects', 'about']) {
+                await page.evaluate(`
+                  document.querySelector('[data-section=${section}]').click();
+                  document.querySelector('[data-section=${section}]').focus();
+                  window.scrollTo(0, 0);
+                `);
+                assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+                await shot(section, theme, layout);
+              }
+              await page.evaluate("document.querySelector('#close-settings').click()");
+            }
+          }
+          await page.command('Emulation.clearDeviceMetricsOverride');
+        }
         await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
-          window.confirm = () => true;
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
+          document.querySelector('#remove-session-card [value=accept]').click();
         `);
         await page.ready(`!Array.from(document.querySelectorAll('#sessions [data-session]'))
           .some((option) => option.dataset.session === ${JSON.stringify(selected)})`);
@@ -681,6 +908,48 @@ try {
           .then((response) => response.status)`), 404);
         assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), cases.length - 1);
         assert.equal(await page.evaluate("fetch('/api/projects/secondary/sessions').then(r => r.json()).then(rows => rows.length)"), 1);
+        const decisions = new DatabaseSync(join(root, 'web.sqlite'), { readOnly: true });
+        try {
+          const rows = decisions.prepare('SELECT decision FROM web_action_decisions WHERE session_id = ? ORDER BY id').all(selected);
+          assert.equal(rows[0]?.decision, 'reject');
+          assert.equal(rows.at(-1)?.decision, 'accept');
+        } finally { decisions.close(); }
+        async function slash(command: string) {
+          await page.evaluate(`
+            document.querySelector('#prompt').value = ${JSON.stringify(command)};
+            document.querySelector('#composer').requestSubmit();
+          `);
+        }
+        await slash('/new');
+        await page.ready("document.querySelector('#command-toast').textContent.includes('已新增會話')");
+        await page.evaluate(`
+          document.querySelector('#file-input').click = () => { window.syntheticPicker = true; };
+        `);
+        await slash('/attach');
+        await page.ready('window.syntheticPicker === true');
+        await slash('/theme light');
+        await page.ready("document.documentElement.dataset.theme === 'light'");
+        await page.evaluate("document.querySelector('#command-toast button')?.click()");
+        await page.ready("document.querySelector('#command-toast').textContent.includes('已復原')");
+        await slash('/model ' + gatewayAliases[1]);
+        await page.ready(`document.querySelector('#command-toast').textContent.includes('已切換模型') && document.querySelector('#model').textContent.includes(${JSON.stringify(gatewayAliases[1])})`);
+        await page.evaluate(`
+          document.querySelector('#session-search').value = '合成搜尋';
+          document.querySelector('#session-search').dispatchEvent(new Event('input'));
+        `);
+        await slash('/clear-search');
+        await page.ready("document.querySelector('#session-search').value === ''");
+        await page.evaluate("document.querySelector('#command-toast button')?.click()");
+        await page.ready("document.querySelector('#session-search').value === '合成搜尋'");
+        slowStarted = false;
+        await page.evaluate(`
+          document.querySelector('#prompt').value = 'SYNTHETIC_SLOW_TURN';
+          document.querySelector('#composer').requestSubmit();
+        `);
+        await until(async () => slowStarted || undefined, 8_000);
+        await slash('/stop');
+        await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
+
       }
       await page.evaluate("document.querySelector('#stop').click()");
       await page.ready("document.querySelector('#connection').textContent === '服務已停止'");

@@ -94,3 +94,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 2b Slice 2C
 
 本機分支 `phase-2b/settings` 包含由側欄或 Ctrl+, 開啟的設定頁。助理、外觀、模型、回合限制、執行環境與整合說明的驗收、截圖及未完成項目見 [Slice 2C 驗收報告](reviews/PHASE2B_SLICE2C_REPORT.md)。合併由 Technical Lead 使用 `npm run merge-check`。
+
+## Phase 2b Slice 2D
+
+對話指令、引用、評價及筆記、會話刪除卡和輸入、專案、關於設定的實作與驗證狀態見 [Slice 2D 驗收](reviews/PHASE2B_SLICE2D_REPORT.md)。Telegram 語音、通用工具直接瀏覽唯讀來源及其他開放矩陣項目在報告列出。

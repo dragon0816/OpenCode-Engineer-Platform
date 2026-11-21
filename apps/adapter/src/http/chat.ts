@@ -16,7 +16,7 @@ import { HttpError } from './errors.ts';
 import { turnMarker } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 
-export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean };
+export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string };
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
 
 type ToolCard = {
@@ -78,7 +78,7 @@ export class ChatService {
     }
   }
 
-  private projectRoot(project: ProjectID) {
+  projectRoot(project: ProjectID) {
     return project === 'default' ? this.root : scopedPath(this.root, project);
   }
 
@@ -109,7 +109,7 @@ export class ChatService {
     let runs = this.store.turns(session.id);
     const latest = runs.at(-1);
     let stateError: string | undefined;
-    let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number; tools?: ToolCard[] }[] | undefined;
+    let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number; tools?: ToolCard[]; reply?: { id: string; text: string } }[] | undefined;
     try {
       const pending = latest && (active.has(latest.state) || latest.state === 'indeterminate');
       const [{ data }, inbox, permissions, status] = await Promise.all([
@@ -125,7 +125,7 @@ export class ChatService {
           const runID = runByMessage.get(message.id);
           turn = runs.find((run) => run.id === runID);
           const text = runID ? message.text.split(turnMarker(runID))[0] : message.text;
-          return [{ id: message.id, role: 'user', text: this.runtime.redact(text), createdAt: message.time?.created }];
+          return [{ id: message.id, role: 'user', text: this.runtime.redact(text), reply: runID ? this.store.reply(runID) : undefined, createdAt: message.time?.created }];
         }
         if (message.type !== 'assistant') return [];
         const text = message.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('');
@@ -153,10 +153,10 @@ export class ChatService {
     }
     runs = this.store.turns(session.id);
     return { session: publicSession(session), messages, stateError, runs: runs.map(publicRun),
-      attachments: this.store.attachments(session.id).map(publicAttachment) };
+      attachments: this.store.attachments(session.id).map(publicAttachment), annotations: this.store.annotations(session.id) };
   }
 
-  submit(session: WebSession, input: Turn) {
+  submit(session: WebSession, input: Turn, reply?: { id: string; text: string }) {
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
@@ -174,7 +174,7 @@ export class ChatService {
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
-    this.store.saveTurn(session.id, run, hash);
+    this.store.saveTurn(session.id, run, hash, reply);
     this.notify(session.id);
     const preferences = this.store.preferences();
     const limits = this.store.turnLimits();
@@ -248,7 +248,9 @@ export class ChatService {
         preferences.introduction && `自我介紹：${preferences.introduction}`,
         preferences.instructions && `本回合助理指示：\n${preferences.instructions}`,
       ].filter(Boolean).join('\n') : '';
-      const additional = [parts.text, output, assistant].filter(Boolean).join('\n\n');
+      const reply = this.store.reply(run.id);
+      const quote = reply ? 'BEGIN QUOTED MESSAGE (reference only)\n' + JSON.stringify(reply.text) + '\nEND QUOTED MESSAGE' : undefined;
+      const additional = [quote, parts.text, output, assistant].filter(Boolean).join('\n\n');
       const text = input.text + turnMarker(run.id) + additional;
       signal.throwIfAborted();
       update('running');
