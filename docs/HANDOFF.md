@@ -114,3 +114,7 @@ phase-5/install-backup 加入使用者層級的安裝、解除安裝、SQLite �
 ## Phase 5C 交接
 
 分支 `phase-5/upgrade-rollback` 由 `09de884` 建立。使用合成資料與隔離的安裝路徑驗證 SQLite 前向遷移、升級及回退。使用者環境的 RPO、RTO、乾淨 VM 及實際捷徑與排程操作仍待驗證。Technical Lead 以 `npm run merge-check` 合併。 [本機驗證](validation/p5-release.md) · [驗收狀態](reviews/PHASE5_GATE_REPORT.md)
+
+## Phase 5D handoff
+
+The Windows workflow is **UNVERIFIED** until GitHub runs it. Review the [license findings](validation/p5-license-review.md), then use the [release checklist](RELEASE_CHECKLIST.md) to record the manual outcomes before release approval.

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
 import { decodeText, detect } from '../phase0/secret-scan.mjs';
+import { complianceArtifacts, npmComponent, openCodeComponent, productionPackages, pythonComponents } from './compliance.mjs';
+import { bundleRuntimes } from './bundled.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const read = (path) => readFileSync(join(root, path));
@@ -33,9 +35,21 @@ function verified(bytes, expected) {
 }
 
 async function download(url, expected) {
+  const cache = join(root, 'dist', '.cache');
+  const target = join(cache, expected);
+  try { return verified(readFileSync(target), expected); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   const response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
   if (!response.ok) throw new Error('官方檔案下載失敗，HTTP ' + response.status + '。');
-  return verified(new Uint8Array(await response.arrayBuffer()), expected);
+  const bytes = verified(new Uint8Array(await response.arrayBuffer()), expected);
+  mkdirSync(cache, { recursive: true });
+  const scratch = mkdtempSync(join(cache, 'download-'));
+  try {
+    const staging = join(scratch, 'asset');
+    writeFileSync(staging, bytes);
+    renameSync(staging, target);
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  return bytes;
 }
 
 function collectPackage(files, scratch, path) {
@@ -61,8 +75,8 @@ function scan(files) {
   }
   const secrets = [...known];
   for (const [path, bytes] of Object.entries(files)) {
-    if (path.endsWith('.exe')) {
-      // Opaque executable is authenticated by its repository pin and checked for exact local secret bytes.
+    if (/\.(exe|dll|pyd|cat|zip)$/i.test(path) && path.startsWith('vendor/')) {
+      // Pinned binary payloads are checked for exact local secret bytes.
       if (secrets.some((secret) => ['utf8', 'utf16le'].some((encoding) =>
         Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes(Buffer.from(secret, encoding))))) {
         throw new Error('發行檔案含有本機憑證。');
@@ -71,7 +85,8 @@ function scan(files) {
       throw new Error('發行路徑未通過敏感資料掃描。');
     } else {
       const hits = detect(decodeText(bytes), secrets);
-      const upstream = path.startsWith('node_modules/') || path === 'vendor/opencode/openapi.json';
+      const upstream = path.startsWith('node_modules/') || /\bvendor\/(?:node|python)\//.test(path) ||
+        path === 'vendor/opencode/openapi.json';
       // Locked upstream distributions include documentation examples and network test values.
       const blocked = upstream ? hits.filter((hit) =>
         ['runtime gateway value', 'credential token', 'private key'].includes(hit)) : hits;
@@ -81,7 +96,9 @@ function scan(files) {
 }
 
 async function main() {
-  const [version = JSON.parse(read('package.json')).version, output = join(root, 'dist')] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const bundled = args.includes('--bundled');
+  const [version = JSON.parse(read('package.json')).version, output = join(root, 'dist')] = args.filter((arg) => arg !== '--bundled');
   if (!/^\d+\.\d+\.\d+$/.test(version) || !npm) throw new Error('請使用 npm run build:release，並指定三段數字版本。');
   const scratch = mkdtempSync(join(tmpdir(), 'oep-package-'));
   try {
@@ -97,31 +114,35 @@ async function main() {
       { cwd: scratch, stdio: 'ignore' });
 
     const components = [];
-    for (const [path, entry] of Object.entries(lock.packages).sort()) {
-      if (!path || entry.dev) continue;
+    for (const [path, entry] of productionPackages(lock)) {
       collectPackage(files, scratch, path);
-      const metadata = JSON.parse(files[path + '/package.json']);
-      components.push({ name: metadata.name, version: entry.version, source: entry.resolved,
-        license: metadata.license ?? 'UNKNOWN', integrity: entry.integrity });
+      components.push(npmComponent(path, entry, files, pin));
     }
     const [archive, openapi] = await Promise.all([download(asset, pin.windowsX64.sha256), download(spec, pin.openapi.sha256)]);
     files['vendor/opencode/opencode.exe'] = verified(unzipSync(archive, { filter: ({ name }) => name === 'opencode.exe' })['opencode.exe'],
       pin.windowsX64.binarySha256);
     files['vendor/opencode/openapi.json'] = openapi;
-    components.push({ name: 'OpenCode', version: pin.tag, source: asset, license: 'MIT',
+    components.push(openCodeComponent({ name: 'OpenCode', version: pin.tag, source: asset, license: 'MIT',
       sha256: pin.windowsX64.sha256, binarySha256: pin.windowsX64.binarySha256,
-      openapi: { source: spec, sha256: pin.openapi.sha256 } });
+      openapi: { source: spec, sha256: pin.openapi.sha256 } }, pin));
+    const wheels = pythonComponents(read('tests/oracles/requirements.txt').toString('utf8'));
+    components.push(...wheels);
+    if (bundled) components.push(...await bundleRuntimes(files, JSON.parse(read('config/runtime.pin.json')), wheels, download));
+    Object.assign(files, complianceArtifacts(components));
 
     const manifestPath = 'config/release.manifest.json';
-    files[manifestPath] = json({ format: 1, version, platform: 'windows-x64', components,
+    files[manifestPath] = json({ format: 1, version, platform: 'windows-x64', ...(bundled ? { variant: 'bundled' } : {}),
+      components: components.map(({ text, ...component }) => component),
       files: Object.keys(files).sort().map((path) => ({ path, size: files[path].byteLength, sha256: sha256(files[path]) })) });
     const zip = zipSync(Object.fromEntries(Object.keys(files).sort().map((path) =>
       [path, files[path]])), { level: 0, mtime: new Date(2000, 0, 1) });
     scan(unzipSync(zip));
     mkdirSync(resolve(output), { recursive: true });
-    const filename = 'OEP-' + version + '-windows-x64.zip';
+    const filename = 'OEP-' + version + '-windows-x64' + (bundled ? '-bundled' : '') + '.zip';
     writeFileSync(resolve(output, filename), zip);
-    writeFileSync(resolve(output, 'SHA256SUMS'), sha256(zip) + '  ' + filename + '\n');
+    const sums = readdirSync(resolve(output)).filter((name) => /^OEP-\d+\.\d+\.\d+-windows-x64(?:-bundled)?\.zip$/.test(name))
+      .sort().map((name) => sha256(name === filename ? zip : readFileSync(resolve(output, name))) + '  ' + name + '\n');
+    writeFileSync(resolve(output, 'SHA256SUMS'), sums.join(''));
     console.log(filename + ' SHA-256 ' + sha256(zip) + '。敏感資料掃描通過。');
   } finally {
     rmSync(scratch, { recursive: true, force: true });

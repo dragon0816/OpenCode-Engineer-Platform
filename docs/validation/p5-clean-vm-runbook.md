@@ -29,3 +29,7 @@ Get-Content -LiteralPath (Join-Path $program 'current.json')
 ```
 
 安裝應顯示「OEP 安裝完成。」。正式升級前以舊版建立合成資料，記錄已發布修訂及引用，再從網頁停止舊版。預演顯示操作，`current.json` 及資料維持原狀。正式升級顯示「已升級至 1.2.0。資料比對通過。」且 journal 為 `committed`。回退顯示「已回退至 1.1.0。資料比對通過。」、原資料保存位置與工作比對報告；`current.json` 為 1.1.0。再執行回退應顯示「已完成回退，無需再回退。」。記錄兩次演練的時間、備份清單雜湊、資料庫前後版本與筆數、修訂雜湊、引用、待處理工作報告及重開後的 OpenCode 與 profile。手動中斷須另用拋棄式複本驗證。乾淨 VM 的結果仍為 **UNVERIFIED**。
+
+## Bundled variant
+
+Start from the clean Windows x64 snapshot and install PowerShell 7 with `winget install --id Microsoft.PowerShell --exact`. Verify the bundled ZIP against SHA256SUMS. Extract the maintenance scripts from the same ZIP, install into the dedicated VM test profile, and verify that the Start menu shortcut opens OEP without system Node or Python on PATH. Run the synthetic SOP-to-Excel case and verify the workbook using the bundled Python. Repeat the upgrade and rollback with two bundled versions. Exercise per-user shortcut and scheduled-task creation and removal, back up the data, restore into an isolated root, and verify credential rebinding separately. Record elapsed restore time and backup age. This VM exercise remains **UNVERIFIED**.

@@ -123,13 +123,19 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $start = Join-Path $Target 'scripts/windows/Start-OEP.ps1'
     $arguments = "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File ""$start"" -DataRoot ""$DataRoot"""
+    $launcher = $pwsh
+    if ([IO.File]::Exists((Join-Path $Target 'vendor/node/node.exe'))) {
+        $launcher = Join-Path $env:SystemRoot 'System32/wscript.exe'
+        $start = Join-Path $Target 'scripts/windows/Start-Bundled-OEP.vbs'
+        $arguments = """$start"" ""$DataRoot"""
+    }
     $links = @(Links-OEP)
     $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $links) {
         $link = Root-OEP $link
         if ($link -eq $links[1] -and !$DesktopShortcut) { [IO.File]::Delete($link); continue }
         $shortcut = $shell.CreateShortcut($link)
-        $shortcut.TargetPath = $pwsh
+        $shortcut.TargetPath = $launcher
         $shortcut.Arguments = $arguments
         $shortcut.WorkingDirectory = $Target
         $shortcut.Save()
@@ -137,7 +143,7 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $name = "OEP-Logon-$sid"
     if ($AutoStart) {
-        $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arguments
+        $action = New-ScheduledTaskAction -Execute $launcher -Argument $arguments
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
         $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -147,16 +153,44 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
     }
 }
 
-function Check-Prerequisites {
+function Node-OEP($Root) {
+    if ($Root) {
+        $bundledNode = Join-Path $Root 'vendor/node/node.exe'
+        if ([IO.File]::Exists($bundledNode)) { return $bundledNode }
+    }
+    (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+}
+function Maintenance-Node {
+    $root = Split-Path (Split-Path $PSScriptRoot)
+    $node = Join-Path $root 'vendor/node/node.exe'
+    if ([IO.File]::Exists($node)) { return $node }
+    if ($InstallRoot) {
+        $pointer = Join-Path $InstallRoot 'current.json'
+        if ([IO.File]::Exists($pointer)) {
+            $current = Read-OEP $pointer
+            [void](Version-OEP $current.version)
+            return (Node-OEP (Join-Path $InstallRoot $current.version))
+        }
+    }
+    Node-OEP $null
+}
+function Check-Prerequisites($Release) {
     if (!$IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
         Fail-OEP '需要 Windows x64。'
     }
-    $node = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (!$node -or (& $node.Source -p "process.versions.node.split('.')[0]+'/'+process.arch" 2>$null) -ne '24/x64') {
+    $bundled = $Release.manifest.variant -ceq 'bundled'
+    $node = if ($bundled) { Entry-OEP $Release.root 'vendor/node/node.exe' } else { Node-OEP $null }
+    if (!$node -or ![IO.File]::Exists($node) -or (& $node -p "process.versions.node.split('.')[0]+'/'+process.arch" 2>$null) -ne '24/x64') {
+        if ($bundled) { Fail-OEP '發行套件內的 Node.js 執行環境無法使用。' }
         Fail-OEP '需要 Node.js 24 x64。下載 https://nodejs.org/dist/latest-v24.x/ 或執行 winget install --id OpenJS.NodeJS.LTS --exact，並確認版本為 24。'
     }
     $python = if ($env:OEP_PYTHON) { $env:OEP_PYTHON } else { 'python.exe' }
     $script:failure = '需要 Python 3.12 和 openpyxl、defusedxml。執行 winget install --id Python.Python.3.12 --exact，再依操作文件安裝套件。'
+    if ($bundled) {
+        $python = Entry-OEP $Release.root 'vendor/python/python.exe'
+        $script:failure = '發行套件內的 Python 執行環境無法使用。'
+        if (![IO.File]::Exists($python)) { Fail-OEP $script:failure }
+    }
     & $python -I -c 'import sys,openpyxl,defusedxml; sys.exit(sys.version_info[:2] != (3,12))' 2>$null
     if ($LASTEXITCODE) { Fail-OEP $script:failure }
     $script:failure = '作業失敗。請檢查權限、剩餘空間及使用中的檔案。'

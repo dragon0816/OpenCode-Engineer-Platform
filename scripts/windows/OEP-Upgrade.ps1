@@ -81,7 +81,7 @@ function Restore-Upgrade($InstallRoot, $DataRoot, $JournalPath, $Journal) {
         }
         Copy-RestoreStage $backup $manifest $stage
         if ([IO.Directory]::Exists($DataRoot)) {
-            & node.exe --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" intent-diff $DataRoot $backup $report 2>$null
+            & (Maintenance-Node) --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" intent-diff $DataRoot $backup $report 2>$null
             if ($LASTEXITCODE) {
                 Write-OEP $report @{ status = 'unavailable'; changes = @() }
                 Write-Warning '無法比對原資料中的待處理工作。完整原資料仍會保留，供後續檢查。'
@@ -108,7 +108,7 @@ function Stop-UpgradeLauncher($InstallRoot, $Pointer) {
     $launcher = Join-Path $target 'apps\launcher\src\web.ts'
     $worker = Join-Path $target 'scripts\windows\runtime-worker.mjs'
     $binary = Join-Path $target 'vendor\opencode\opencode.exe'
-    $nodeImage = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+    $nodeImage = Node-OEP $target
     $launchers = @()
     foreach ($process in Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'opencode.exe'") {
         $entry = $null

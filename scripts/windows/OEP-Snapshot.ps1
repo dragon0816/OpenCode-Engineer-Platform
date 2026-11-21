@@ -6,7 +6,7 @@ function CredentialNames-OEP {
     'OEP_TELEGRAM_ALLOWED_USER_ID'
 }
 function Invoke-Snapshot($Mode, $Source, $Destination) {
-    & node.exe --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" $Mode $Source $Destination 2>$null
+    & (Maintenance-Node) --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" $Mode $Source $Destination 2>$null
     if ($LASTEXITCODE) { Fail-OEP 'SQLite 快照或資料比對失敗。' }
 }
 function Describe-Snapshot($Path) {

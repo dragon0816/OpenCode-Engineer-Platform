@@ -34,7 +34,6 @@ try {
         }
         return
     }
-    Check-Prerequisites
     if (![IO.Directory]::Exists($DataRoot)) { Fail-OEP '找不到 OEP 資料目錄。' }
     $sourcePath = Root-OEP $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Source)
     Separate-OEP $sourcePath $InstallRoot
@@ -44,6 +43,7 @@ try {
     }
     $scratch = Join-Path ([IO.Path]::GetTempPath()) ('OEP-release-' + [guid]::NewGuid())
     $release = Read-ReleaseOEP $sourcePath $scratch
+    Check-Prerequisites $release
     $currentPath = Root-OEP (Join-Path $InstallRoot 'current.json')
     if (![IO.File]::Exists($currentPath)) { Fail-OEP '找不到已安裝的 OEP 版本。' }
     $current = Read-OEP $currentPath
@@ -82,14 +82,14 @@ try {
     $previousRepo = $env:OEP_REPO_ROOT
     try {
         $env:OEP_REPO_ROOT = $target
-        $result = & node.exe --disable-warning=ExperimentalWarning (Entry-OEP $target $migration) $DataRoot 2>$null
+        $result = & (Node-OEP $target) --disable-warning=ExperimentalWarning (Entry-OEP $target $migration) $DataRoot 2>$null
         if ($LASTEXITCODE) { Fail-OEP '新版資料庫遷移失敗。' }
     } finally { $env:OEP_REPO_ROOT = $previousRepo }
     $journal.migration = $result | ConvertFrom-Json -AsHashtable
     Write-OEP $journalPath $journal
     Interrupt-Upgrade 'migration'
     [void](Read-RollbackBackup $journal)
-    & node.exe --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" reconcile-upgrade $DataRoot $backup 2>$null
+    & (Node-OEP $target) --disable-warning=ExperimentalWarning "$PSScriptRoot/data-snapshot.mjs" reconcile-upgrade $DataRoot $backup 2>$null
     if ($LASTEXITCODE) { Fail-OEP '升級比對失敗。資料筆數、工作狀態或發布修訂內容有差異。' }
     Select-OEPVersion $InstallRoot $DataRoot $journal.next
     Log-OEP $InstallRoot 'UPGRADE OK'

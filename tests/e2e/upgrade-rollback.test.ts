@@ -155,9 +155,9 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     }
 
     function interrupt(script: string, point: string, args: string[]) {
-      const result = spawnSync('pwsh.exe', ['-NoProfile', '-File', 'scripts/windows/' + script + '.ps1',
+      const result = spawnSync(fixture.powershell, ['-NoProfile', '-File', 'scripts/windows/' + script + '.ps1',
         '-InstallRoot', fixture.install, '-DataRoot', fixture.data, ...args],
-      { encoding: 'utf8', timeout: 120_000, env: { ...process.env, OEP_MAINTENANCE_TEST: '1', OEP_TEST_INTERRUPT_UPGRADE: point } });
+      { encoding: 'utf8', timeout: 120_000, env: { ...fixture.env, OEP_TEST_INTERRUPT_UPGRADE: point } });
       assert.ifError(result.error);
       assert.equal(result.status, 88, result.stderr);
     }

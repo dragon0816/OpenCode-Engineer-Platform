@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { unzipSync, zipSync } from 'fflate';
 import { maintenanceFixture } from './maintenance-fixture.ts';
@@ -8,9 +8,10 @@ import { maintenanceFixture } from './maintenance-fixture.ts';
 test('release installation and destructive-action guards', { skip: process.platform !== 'win32' }, () => {
   const fixture = maintenanceFixture();
   try {
-    const zip = readdirSync('dist').find((name) => /^OEP-.*-windows-x64\.zip$/.test(name));
-    assert.ok(zip, 'Run npm run build:release first');
-    const source = resolve('dist', zip);
+    const input = process.env.OEP_TEST_RELEASE ?? readdirSync('dist').find((name) => /^OEP-.*-windows-x64\.zip$/.test(name))?.replace(/^/, 'dist/');
+    assert.ok(input, 'Run npm run build:release first');
+    const source = resolve(input);
+    const zip = basename(source);
     const install = (...args: string[]) => fixture.run('Install-OEP', ['-Source', source, ...args]);
     const checksumFolder = join(fixture.root, 'checksum');
     mkdirSync(checksumFolder);

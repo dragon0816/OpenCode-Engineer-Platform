@@ -76,3 +76,15 @@ node --disable-warning=ExperimentalWarning --input-type=module -e "await import(
 時間包含 PowerShell 啟動、清單核對與資料比對。上述兩輪來自同一次合成測試。Recall@5 基線在本機重跑為 24/24。
 
 發行可重現性測試的兩份 ZIP 使用同一 SHA-256 `510e79a8f65ca34b9ce2626639603fe327e84c24ee16e869dd45e255af9e841f`，每個發行檔案通過清單核對。
+
+## Phase 5D evidence
+
+Build the standard ZIP with `npm run build:release` and the runtime-bundled ZIP with `npm run build:release -- --bundled`. Both ZIP hashes are recorded in `dist/SHA256SUMS` when built into the same directory. Run `npm run test:compliance` and `npm run test:release:determinism`. Repeat determinism with `OEP_TEST_BUNDLED=1` in the process environment to verify bundled runtime imports with a System32-only PATH. Point `OEP_TEST_RELEASE` at the bundled ZIP and set `OEP_TEST_BUNDLED=1` to exercise the bundled install and upgrade fixtures.
+
+Keep the release ZIP and checksum file fixed throughout an upgrade test. Run `npm run test:release:bundled` with the same bundled test environment to exercise the installed launcher and synthetic workbook campaign. The test uses a temporary installation and data root and intercepts the browser handoff.
+
+The hosted Windows runner may have Edge or Chrome at a standard installation path. CI tries the synthetic browser suite when it finds one, and the release checklist still requires the manual browser gate.
+
+PowerShell 5.1 compatibility is deferred. The maintenance core uses `ConvertFrom-Json -AsHashtable`, `$IsWindows`, `Path.IsPathFullyQualified`, `Path.TrimEndingDirectorySeparator` and the overwrite overload of `File.Move`. PowerShell 7 is still needed for the Job supervisor. The bundled shortcut uses Windows Script Host to call the bundled Node executable in a hidden window.
+
+Review the [license inventory](p5-license-review.md). The bundled Node distribution retains its aggregate LICENSE, including embedded dependency notices. The Python distribution retains LICENSE.txt. Owner review of their embedded terms is pending.

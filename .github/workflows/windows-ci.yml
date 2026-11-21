@@ -1,0 +1,76 @@
+name: Windows release verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24.14.1'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts
+      - run: python -m pip install --require-hashes -r tests/oracles/requirements.txt
+      - name: Verify source and build release
+        run: |
+          foreach ($gate in @('lint', 'typecheck', 'test', 'test:ingest', 'test:knowledge', 'test:telegram', 'test:compliance', 'test:release:determinism', 'scan', 'build:release')) {
+            $env:OEP_DATA_DIR = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ([guid]::NewGuid()))).FullName
+            npm run $gate
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Verify isolated installation and maintenance
+        run: |
+          foreach ($gate in @('test:install', 'test:backup', 'test:upgrade')) {
+            $env:OEP_DATA_DIR = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ([guid]::NewGuid()))).FullName
+            npm run $gate
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Extract scanned SBOM
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Get-Item dist/OEP-*-windows-x64.zip
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry('sbom.cdx.json'), (Join-Path $zip.DirectoryName 'sbom.cdx.json'))
+          } finally { $archive.Dispose() }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: oep-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/OEP-*-windows-x64.zip
+            dist/sbom.cdx.json
+            dist/SHA256SUMS
+      - name: Try Chromium with synthetic data
+        continue-on-error: true
+        run: |
+          $browser = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'),
+            (Join-Path $env:ProgramFiles 'Google/Chrome/Application/chrome.exe')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (!$browser) { Write-Output 'Chromium unavailable. Run the manual browser gate.'; exit 0 }
+          $env:OEP_TEST_BROWSER = $browser
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Get-Item dist/OEP-*-windows-x64.zip
+          $assets = New-Item -ItemType Directory -Force .phase0/assets/unpacked
+          $source = New-Item -ItemType Directory -Force .phase0/source
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry('vendor/opencode/opencode.exe'), (Join-Path $assets.FullName 'opencode.exe'))
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry('vendor/opencode/openapi.json'), (Join-Path $source.FullName 'openapi.json'))
+          } finally { $archive.Dispose() }
+          $env:OEP_DATA_DIR = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ([guid]::NewGuid()))).FullName
+          npm run test:e2e:browser

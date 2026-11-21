@@ -4,7 +4,7 @@
 
 ## 準備環境
 
-使用官方的 Windows x64 Node.js 24、Python 3.12 和 PowerShell 7。Node.js 和 PowerShell 7 可解壓官方 ZIP 到自己的目錄並加入使用者 PATH。Python 可選擇僅為目前使用者安裝。
+標準 ZIP 需要官方的 Windows x64 Node.js 24、Python 3.12 和 PowerShell 7。Node.js 和 PowerShell 7 可解壓官方 ZIP 到自己的目錄並加入使用者 PATH。Python 可選擇僅為目前使用者安裝。使用 bundled ZIP 時，只需另外安裝 PowerShell 7，並可略過下列 Python 套件安裝。
 
 在下載目錄執行下列命令。路徑含空格時請保留引號。
 
@@ -26,8 +26,8 @@ O-3b **WAIVED by owner – not tested**。在使用者於實際環境驗證前�
 
 ## 安裝與開啟
 
-1. 使用官方 Node.js 24 x64、Python 3.12 x64、PowerShell 7。Python 可執行 winget install --id Python.Python.3.12 --exact，PowerShell 可執行 winget install --id Microsoft.PowerShell --exact。新開 PowerShell 7 視窗以讀取 PATH 的更新。 [Node.js 24](https://nodejs.org/dist/latest-v24.x/) [Python 3.12](https://www.python.org/downloads/windows/) [PowerShell 7](https://github.com/PowerShell/PowerShell/releases)
-2. 核對 ZIP 的 SHA-256，將 ZIP 與 SHA256SUMS 放在同一資料夾。核對成功後，在檔案總管開啟 ZIP 的「內容」。若有「解除封鎖」選項，勾選並套用，再解壓一份以取得指令和 Python 套件清單。依前一節準備套件。如果使用虛擬環境，請將 OEP_PYTHON 存到 Windows 的使用者環境變數中，讓開始功能表也能找到同一個 Python。
+1. 安裝 PowerShell 7，可執行 winget install --id Microsoft.PowerShell --exact。標準 ZIP 另需官方 Node.js 24 x64 和 Python 3.12 x64。Python 可執行 winget install --id Python.Python.3.12 --exact。新開 PowerShell 7 視窗以讀取 PATH 的更新。 [Node.js 24](https://nodejs.org/dist/latest-v24.x/) [Python 3.12](https://www.python.org/downloads/windows/) [PowerShell 7](https://github.com/PowerShell/PowerShell/releases)
+2. 核對 ZIP 的 SHA-256，將 ZIP 與 SHA256SUMS 放在同一資料夾。核對成功後，在檔案總管開啟 ZIP 的「內容」。若有「解除封鎖」選項，勾選並套用，再解壓一份以取得指令。標準 ZIP 請依前一節準備 Python 套件。如果使用虛擬環境，請將 OEP_PYTHON 存到 Windows 的使用者環境變數中，讓開始功能表也能找到同一個 Python。
 3. 在解壓後的目錄執行以下命令。可加上 -DesktopShortcut 建立桌面捷徑，加上 -AutoStart 在登入時執行使用者排程。從開始功能表選擇 OEP。
 
 ~~~powershell
@@ -77,3 +77,10 @@ pwsh -NoProfile -File .\scripts\windows\Rollback-OEP.ps1
 回退會留下完整的 `oep-restore-original-*` 資料目錄。安裝根目錄內的 `rollback-*.json` 按資料庫及表格列出新增或變更的待處理工作列雜湊。雜湊可用報告中的欄位順序與保留資料對應。回退恢復備份當時的收件、寄件、通知及 BI 工作狀態，請先以保留的原資料核對已發送及待確認工作，再決定是否重做。
 
 新版可開啟並前向遷移舊資料。升級保留既有列、修訂雜湊與引用。內建歷史遷移可加入已知的空表或新增欄位，既有欄位內容必須相符。含版本防護的舊版開啟超出支援的資料庫版本時會顯示「資料庫版本比程式新。請使用新版程式或先回退資料。」。請使用回退命令成套回復程式及資料。發現「ZIP 的 SHA-256 與 SHA256SUMS 不符。」或「備份清單與升級紀錄不符。」時，請取得正確的發行檔案或原備份再重試。
+
+## Phase 5D Windows packages
+
+- Choose `OEP-<version>-windows-x64.zip` if Node.js 24 x64 and Python 3.12 with the hash-locked oracle requirements are installed.
+- Choose `OEP-<version>-windows-x64-bundled.zip` to use the Node.js and Python runtimes and Excel libraries inside the version directory. Both variants require PowerShell 7 for maintenance and the Windows Job supervisor. Install it with `winget install --id Microsoft.PowerShell --exact`.
+- Verify the ZIP with the accompanying `SHA256SUMS`. The root of each ZIP contains `sbom.cdx.json`, `THIRD_PARTY_LICENSES.md` and `NOTICE`. Their hashes are in `config/release.manifest.json`.
+- Windows CI runs synthetic unit, contract, ingestion, knowledge, Telegram, compliance, determinism and maintenance checks. The first GitHub run is **UNVERIFIED**. Run the Chromium suites manually on a Windows machine with Edge or Chrome. Real Gateway, real Telegram and clean-VM gates are manual.

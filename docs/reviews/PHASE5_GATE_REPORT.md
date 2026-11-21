@@ -4,9 +4,9 @@
 
 | 驗收項目 | 狀態與範圍 |
 |---|---|
-| 發行打包 | 建置 ZIP、列出檔案大小與 SHA-256，驗固定版 OpenCode ZIP、執行檔和 OpenAPI。Node.js 24、Python 3.12 和 PowerShell 7 為外部先決條件。 |
+| 發行打包 | **VERIFIED（本機）**。標準與 bundled ZIP 均可重現並列出檔案大小與 SHA-256，驗固定版 OpenCode ZIP、執行檔和 OpenAPI。Bundled ZIP 內附 Node.js 24 與 Python 3.12，兩種 ZIP 均需 PowerShell 7。 |
 | 發行掃描 | ZIP 解開後逐項檢查。第一方文字採專案規則，官方套件與規格採固定內容驗證及憑證規則，固定執行檔比對雜湊與本機憑證位元組。 |
-| 清單、授權、簽章 | ZIP 有 SHA256SUMS。CycloneDX SBOM、NOTICE、完整授權審查及可選的分離簽章欄位 **UNVERIFIED**。ZIP 未簽署。 |
+| 清單、授權、簽章 | **VERIFIED（本機）**。CycloneDX SBOM、NOTICE、授權全文與 SHA256SUMS 已產出，並通過合規測試。Owner 授權審查仍為 **UNVERIFIED**。ZIP 未簽署。 |
 | 安裝與解除安裝 | **VERIFIED（本機隔離測試）**。ZIP 核對、清單、降版拒絕、重裝、預演、保留資料及刪除確認。**UNVERIFIED**。一般使用者的捷徑和登入排程實機操作。 |
 | 備份與回復 | **VERIFIED（本機合成測試）**。SQLite 寫入期間快照、檔案竄改與清單比對、強制回復安全備份、提交前中斷、保留份數、知識修訂與 Ask 引用。**UNVERIFIED**。每日排程實機操作和使用者憑證重綁。 |
 | 升級與回退 | **VERIFIED（本機合成測試）**。兩個發行版本、兩輪升級及回退、SQLite 前向遷移、既有列與修訂雜湊對帳、引用重現、OpenCode 版本路徑與 profile 成套還原。 |
@@ -16,7 +16,7 @@
 | 六類安裝版流程 | **UNVERIFIED**。SOP→Excel、PNG/PDF 預覽、Telegram→BI→人工審核、Ask 引用、schema 發布與回退、備份回復均待從安裝版驗證。 |
 | RPO、RTO | **UNVERIFIED**。開發機合成資料的備份約 0.67 秒，回復約 0.74 秒。 |
 | Windows 11 x64 乾淨 VM | **UNVERIFIED**。本機無可用 VM 或 Windows Sandbox。 |
-| Windows CI 與獨立審查 | **UNVERIFIED**。Windows 發行 CI 待交付，Technical Lead 審查待進行。 |
+| Windows CI 與獨立審查 | **UNVERIFIED**。Windows 發行 CI 已通過 YAML 解析，待 GitHub 執行及 Technical Lead 審查。 |
 
 ## 沿用的限制
 
@@ -26,3 +26,14 @@
 - Phase 3b R6 的提案值與引文一致性仍待處理。
 - 真實睡眠／喚醒與登出／登入為 **O-3b – WAIVED by owner – not tested**。排程與復原行為只具合成條件下的既有證據。
 - 真實 BI bot 待設定 token 後補測。公開回歸使用合成資料。Gateway 的 LAN 明文 HTTP 仍是已知限制。
+
+## Phase 5D gates
+
+- Standard release compliance, manifest coverage, zero-hit zip scan and two-build determinism were verified locally. Owner review of OpenCode redistribution terms and AEP provenance remains open.
+- The bundled ZIP reproduced byte for byte across two local builds, passed the release scan, and imported the pinned Excel libraries with a System32-only PATH. The installer displayed the PowerShell 7 installation command when invoked under Windows PowerShell 5.1.
+- The bundled install and uninstall guards passed with a System32-only PATH. The installed runtimes verified five synthetic SOP-to-Excel workbooks, all 13 cells per workbook, and launched the web adapter through its browser handoff. The test intercepted that handoff to avoid opening a real browser profile.
+- The bundled maintenance suite passed two synthetic upgrade and rollback cycles, interrupted recovery, same-version repair, and future-schema refusal with a System32-only PATH.
+- The standard synthetic web, Chromium, Excel and knowledge suites passed. The knowledge baseline returned Recall@5 of 24/24.
+- The standard install, backup and restore, and upgrade and rollback suites passed locally. The upgrade rerun used a fixed ZIP and checksum file after an initial concurrent build replaced the test input.
+- The Windows CI definition parsed as YAML and was dry-read locally. The GitHub workflow itself remains **UNVERIFIED**. Chromium, real Gateway and real Telegram checks are manual.
+- Clean VM, per-user shortcuts and scheduled task, real credential rebinding, owner RPO/RTO and O-3b remain **UNVERIFIED**.
