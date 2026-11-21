@@ -1354,6 +1354,27 @@ atlasButton.addEventListener('click', () => {
 const settingsView = find('settings-view');
 const settingsEntry = find('open-settings');
 const settingsSections = [...find('settings-nav').querySelectorAll('button')];
+const settingsSectionPicker = find('settings-section');
+const settingsSectionKey = 'oep.settings.section';
+const savedSection = localStorage.getItem(settingsSectionKey);
+let activeSettingsSection = settingsSections.some((entry) => entry.dataset.section === savedSection) ? savedSection : 'assistant';
+settingsSectionPicker.replaceChildren(...settingsSections.map((entry) => new Option(entry.textContent, entry.dataset.section)));
+
+function renderSettingsSection() {
+  for (const [index, entry] of settingsSections.entries()) {
+    const active = entry.dataset.section === activeSettingsSection;
+    if (active) {
+      entry.setAttribute('aria-current', 'page');
+      settingsSectionPicker.options[index].setAttribute('aria-current', 'page');
+    } else {
+      entry.removeAttribute('aria-current');
+      settingsSectionPicker.options[index].removeAttribute('aria-current');
+    }
+    find(entry.getAttribute('aria-controls')).hidden = !active;
+  }
+  settingsSectionPicker.value = activeSettingsSection;
+}
+renderSettingsSection();
 
 const loadCustomMcp = bindMcpSettings(() => projects);
 
@@ -1372,9 +1393,23 @@ async function loadMcpSettings() {
   } catch { status.textContent = '無法讀取連線狀態。'; }
 }
 
+function loadActiveSettingsSection() {
+  if (activeSettingsSection === 'mcp') void loadMcpSettings();
+  if (activeSettingsSection === 'integrations') void loadTelegramStatus();
+}
+
+function switchSettingsSection(section) {
+  if (section === activeSettingsSection) return true;
+  if (!discardSettings()) return false;
+  activeSettingsSection = section;
+  localStorage.setItem(settingsSectionKey, section);
+  renderSettingsSection();
+  loadActiveSettingsSection();
+  return true;
+}
+
 find('mcp-open-knowledge-settings').addEventListener('click', () => {
-  settingsSections.find((section) => section.dataset.section === 'integrations').click();
-  if (!find('settings-integrations').hidden) find('knowledge-toolbox').focus();
+  if (switchSettingsSection('integrations')) find('knowledge-toolbox').focus();
 });
 
 function showSettings() {
@@ -1383,8 +1418,7 @@ function showSettings() {
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
-  if (!find('settings-integrations').hidden) void loadTelegramStatus();
-  if (!find('settings-mcp').hidden) void loadMcpSettings();
+  loadActiveSettingsSection();
   settingsEntry.setAttribute('aria-current', 'page');
   if (narrowNavigation.matches) setSidebar(false);
   find('settings-title').focus();
@@ -1411,17 +1445,11 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   }, { capture: true });
 }
 for (const button of settingsSections) {
-  button.addEventListener('click', () => {
-    if (button.hasAttribute('aria-current') || !discardSettings()) return;
-    for (const section of settingsSections) {
-      if (section === button) section.setAttribute('aria-current', 'page');
-      else section.removeAttribute('aria-current');
-      find(`settings-${section.dataset.section}`).hidden = section !== button;
-    }
-    if (button.dataset.section === 'mcp') void loadMcpSettings();
-    if (button.dataset.section === 'integrations') void loadTelegramStatus();
-  });
+  button.addEventListener('click', () => switchSettingsSection(button.dataset.section));
 }
+settingsSectionPicker.addEventListener('change', () => {
+  if (!switchSettingsSection(settingsSectionPicker.value)) settingsSectionPicker.value = activeSettingsSection;
+});
 document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.key !== ',') return;
   event.preventDefault();

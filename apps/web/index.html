@@ -74,17 +74,21 @@
         <button id="close-settings" type="button">返回對話</button>
       </header>
       <div class="settings-layout">
+        <label id="settings-picker">
+          設定分類
+          <select id="settings-section"></select>
+        </label>
         <nav id="settings-nav" aria-label="設定分類">
-          <button type="button" data-section="assistant" aria-current="page">助理</button>
-          <button type="button" data-section="appearance">外觀</button>
-          <button type="button" data-section="model">模型</button>
-          <button type="button" data-section="limits">回合限制</button>
-          <button type="button" data-section="projects">專案與資料夾</button>
-          <button type="button" data-section="integrations">整合</button>
-          <button type="button" data-section="input">輸入</button>
-          <button type="button" data-section="mcp">MCP</button>
-          <button type="button" data-section="runtime">執行環境</button>
-          <button type="button" data-section="about">關於</button>
+          <button type="button" data-section="assistant" aria-controls="settings-assistant" aria-current="page">助理</button>
+          <button type="button" data-section="appearance" aria-controls="settings-appearance">外觀</button>
+          <button type="button" data-section="model" aria-controls="settings-model">模型</button>
+          <button type="button" data-section="limits" aria-controls="settings-limits">回合限制</button>
+          <button type="button" data-section="projects" aria-controls="settings-projects">專案與資料夾</button>
+          <button type="button" data-section="integrations" aria-controls="settings-integrations">整合</button>
+          <button type="button" data-section="input" aria-controls="settings-input">輸入</button>
+          <button type="button" data-section="mcp" aria-controls="settings-mcp">MCP</button>
+          <button type="button" data-section="runtime" aria-controls="settings-runtime">執行環境</button>
+          <button type="button" data-section="about" aria-controls="settings-about">關於</button>
         </nav>
         <div class="settings-content">
           <section id="settings-assistant" aria-labelledby="settings-assistant-title">
