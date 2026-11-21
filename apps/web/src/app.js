@@ -50,6 +50,7 @@ function showError(error) {
 }
 
 function setControls() {
+  find('rename-session').disabled = find('remove-session').disabled = !current || stopped;
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
   send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
@@ -68,6 +69,7 @@ function emptyList(element, text) {
 }
 
 function sessionLabel(session) {
+  if (session.title) return session.title;
   const timestamp = new Intl.DateTimeFormat('zh-Hant', { dateStyle: 'short', timeStyle: 'short' }).format(session.createdAt);
   return `${labels[session.agent]} · ${timestamp}`;
 }
@@ -147,7 +149,21 @@ function select(id) {
   current?.events.close();
   current?.abort.abort();
   const session = knownSessions.get(id);
-  if (!session) return;
+  current = undefined;
+  if (!session) {
+    sessionTitle.textContent = '對話';
+    progress.textContent = '從左側新增會話後即可開始。';
+    messages.replaceChildren();
+    attachmentList.replaceChildren();
+    emptyList(artifactList, '尚無可下載的產物');
+    emptyList(activityList, '等待即時事件');
+    uploadStatus.textContent = '';
+    prompt.value = '';
+    showError();
+    setControls();
+    return;
+  }
+  localStorage.setItem('oep.activeSession', id);
   sessions.value = id;
   sessionTitle.textContent = sessionLabel(session);
   const draft = drafts.get(id);
@@ -190,10 +206,19 @@ function select(id) {
 
 function addSession(session) {
   knownSessions.set(session.id, session);
-  const option = node('option', sessionLabel(session));
-  option.value = session.id;
-  sessions.append(option);
-  sessions.disabled = false;
+}
+
+function renderSessions() {
+  const query = find('session-search').value.trim().toLocaleLowerCase();
+  sessions.replaceChildren(new Option(query ? '選擇搜尋結果' : '選擇會話', ''));
+  sessions.firstElementChild.disabled = true;
+  for (const session of knownSessions.values()) {
+    const label = sessionLabel(session);
+    if (label.toLocaleLowerCase().includes(query)) sessions.add(new Option(label, session.id));
+  }
+  sessions.disabled = sessions.length === 1;
+  sessions.value = current?.id ?? '';
+  if (sessions.selectedIndex < 0) sessions.selectedIndex = 0;
 }
 
 async function upload(files) {
@@ -224,14 +249,74 @@ async function upload(files) {
   setControls();
 }
 
+const preferenceFields = ['name', 'introduction', 'instructions'];
+function applyPreferences(preferences) {
+  for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
+}
+find('assistant-settings').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = find('save-assistant');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const data = Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
+    applyPreferences(await request('/api/settings', { data }));
+    find('settings-status').textContent = '已儲存';
+  } catch {
+    find('settings-status').textContent = '無法儲存助理設定，請再試一次。';
+  } finally { button.disabled = stopped; }
+});
+
+const theme = find('theme');
+const savedTheme = localStorage.getItem('oep.theme');
+if (['system', 'light', 'dark'].includes(savedTheme)) theme.value = savedTheme;
+function applyTheme() {
+  document.documentElement.dataset.theme = theme.value;
+  localStorage.setItem('oep.theme', theme.value);
+}
+theme.addEventListener('change', applyTheme);
+applyTheme();
+
+find('toggle-sidebar').addEventListener('click', () => {
+  const sidebar = find('session-sidebar');
+  sidebar.hidden = !sidebar.hidden;
+  find('toggle-sidebar').setAttribute('aria-expanded', String(!sidebar.hidden));
+});
+find('session-search').addEventListener('input', renderSessions);
+find('rename-session').addEventListener('click', async () => {
+  const context = current;
+  const title = window.prompt('請輸入會話名稱', sessionLabel(knownSessions.get(context.id)));
+  if (title === null) return;
+  try {
+    const renamed = await request(`/api/sessions/${context.id}/rename`, { data: { title } });
+    addSession(renamed);
+    renderSessions();
+    if (current === context) sessionTitle.textContent = sessionLabel(renamed);
+  } catch (error) { showError(error); }
+});
+find('remove-session').addEventListener('click', async () => {
+  const context = current;
+  if (!window.confirm(`確定刪除「${sessionLabel(knownSessions.get(context.id))}」？`)) return;
+  try {
+    await request(`/api/sessions/${context.id}/remove`, { data: {} });
+    knownSessions.delete(context.id);
+    if (current === context) select([...knownSessions.keys()].at(-1));
+    drafts.delete(context.id);
+    selections.delete(context.id);
+    submitted.delete(context.id);
+    renderSessions();
+    if (!current) create.focus();
+  } catch (error) { showError(error); }
+});
 sessions.addEventListener('change', () => select(sessions.value));
 create.addEventListener('click', async () => {
   create.disabled = true;
   showError();
   try {
     const session = await request('/api/sessions', { data: { agent: agent.value } });
-    if (knownSessions.size === 0) sessions.replaceChildren();
     addSession(session);
+    find("session-search").value = "";
+    renderSessions();
     select(session.id);
   } catch (error) { showError(error); }
   finally { create.disabled = stopped; }
@@ -311,10 +396,16 @@ try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
   model.textContent = `模型 ${bootstrap.alias}`;
+  find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
+  request('/api/settings').then((preferences) => {
+    applyPreferences(preferences);
+    find('save-assistant').disabled = stopped;
+  }).catch(() => { find('settings-status').textContent = '無法載入助理設定。'; });
   if (bootstrap.job.demo && bootstrap.job.state === 'awaiting_review') find('demo-job').hidden = false;
-  if (bootstrap.sessions.length) sessions.replaceChildren();
   for (const session of bootstrap.sessions) addSession(session);
-  if (bootstrap.sessions.length) select(bootstrap.sessions.at(-1).id);
+  const saved = localStorage.getItem('oep.activeSession');
+  renderSessions();
+  if (bootstrap.sessions.length) select(knownSessions.has(saved) ? saved : bootstrap.sessions.at(-1).id);
   agent.disabled = create.disabled = stop.disabled = false;
   if (bootstrap.knowledge) disableKnowledge = bindKnowledge();
 } catch (error) {

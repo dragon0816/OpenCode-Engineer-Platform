@@ -72,3 +72,8 @@ Local branch `phase-3b/usable-review` starts from `99e860b`. BI review now stage
 Local branch `phase-4/telegram-jobs` starts from `38520a3`. The Windows launcher wires private Telegram bots and BI scheduling into the **工作與排程** view. Synthetic validation covers shared BI claims, Telegram replays, Main topic isolation, verified Ask, outbox retry and simulated startup/resume. Real bots, real OS sleep and logout, full GUI parity, and Technical Lead review remain **UNVERIFIED**. The Technical Lead owns merge via `npm run merge-check`. [Operations](validation/p4-telegram.md) · [Gate report](reviews/PHASE4_GATE_REPORT.md)
 
 The Technical Lead follow-up adds a durable 120-second or 20-attempt processing budget, independent command handling, 25-second long polling, owner-configured target BI proposals, and confirmed manual resend of uncertain deliveries. The fake API and fake model exercise these paths. Source-byte retention and live Telegram smoke remain open. [Operations](validation/p4-telegram.md) · [Gate report](reviews/PHASE4_GATE_REPORT.md)
+
+
+## Phase 2b Slice 1
+
+工作台與設定已有部分實作，完整驗收仍開放。分支為 `phase-2b/workbench-shell`。 [驗收報告](reviews/PHASE2B_SLICE1_REPORT.md)

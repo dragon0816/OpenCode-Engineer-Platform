@@ -14,21 +14,66 @@
   </header>
   <main>
     <aside class="sidebar">
+      <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">會話導覽</button>
+      <div id="session-sidebar">
       <nav class="views" aria-label="工作台">
         <button id="open-chat" type="button" aria-current="page">對話</button>
         <button id="open-knowledge" type="button" disabled>知識庫</button>
         <button id="open-jobs" type="button">工作與排程</button>
       </nav>
+      <details id="settings">
+        <summary>設定</summary>
+        <label for="theme">外觀主題</label>
+        <select id="theme">
+          <option value="system">跟隨系統</option>
+          <option value="light">淺色</option>
+          <option value="dark">深色</option>
+        </select>
+        <form id="assistant-settings">
+          <h2>助理</h2>
+          <label for="assistant-name">助理名稱</label>
+          <input id="assistant-name" type="text" maxlength="80">
+          <label for="assistant-introduction">自我介紹</label>
+          <textarea id="assistant-introduction" maxlength="500"></textarea>
+          <label for="assistant-instructions">助理指示</label>
+          <textarea id="assistant-instructions" maxlength="4000"></textarea>
+          <p>儲存後，指示會用在接下來送出的回合。</p>
+          <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
+          <p id="settings-status" role="status"></p>
+        </form>
+        <label><input type="checkbox" disabled> 多助理委派</label>
+        <small>目前工作台尚未接入可受控的多助理委派。</small>
+        <details>
+          <summary>服務狀態</summary>
+          <p id="runtime-status"></p>
+        </details>
+        <details>
+          <summary>整合說明</summary>
+          <ul>
+            <li>公司登入、橋接與憑證信任需要 AEP 組織服務。</li>
+            <li>SSH 決策功能需要 AEP 專用服務。</li>
+            <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
+            <li>共享資料庫與資產庫訂閱需要公司服務及組織權限。</li>
+          </ul>
+        </details>
+      </details>
       <label for="agent">新會話的助理</label>
       <select id="agent" disabled>
         <option value="inspector">資料分析</option>
         <option value="workbook">Excel 工作表</option>
       </select>
       <button id="new-session" type="button" disabled>新增會話</button>
+      <label for="session-search">搜尋會話</label>
+      <input id="session-search" type="text" autocomplete="off">
       <label for="sessions">會話</label>
       <select id="sessions" disabled><option value="">尚無會話</option></select>
+      <div class="session-actions">
+        <button id="rename-session" type="button" disabled>重新命名</button>
+        <button id="remove-session" type="button" disabled>刪除</button>
+      </div>
       <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
+      </div>
     </aside>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
@@ -83,6 +128,8 @@
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
     <aside class="sidebar files" id="chat-files">
+      <details open>
+        <summary>檔案與產物</summary>
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
         <div id="drop">
@@ -98,10 +145,11 @@
         <h2 id="artifacts-title">產物</h2>
         <ul id="artifacts"><li>尚無可下載的產物</li></ul>
       </section>
-      <section aria-labelledby="activity-title">
-        <h2 id="activity-title">即時進度</h2>
+      </details>
+      <details open>
+        <summary id="activity-title">即時進度</summary>
         <ul id="activity" aria-live="polite"></ul>
-      </section>
+      </details>
     </aside>
   </main>
 </body>

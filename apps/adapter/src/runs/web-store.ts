@@ -2,11 +2,45 @@ import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src
 import type { Agent } from '../opencode/sessions.ts';
 import { Ledger } from './ledger.ts';
 
-export type WebSession = { id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number };
+export type WebSession = { id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
 
 export class WebStore extends Ledger {
-  constructor(file: string) { super(file, true); }
+  constructor(file: string) {
+    super(file, true);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS web_session_display (
+      id TEXT PRIMARY KEY REFERENCES web_sessions(id),
+      title TEXT,
+      removed INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_preferences (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      name TEXT NOT NULL,
+      introduction TEXT NOT NULL,
+      instructions TEXT NOT NULL
+    ) STRICT`);
+  }
+
+  preferences() {
+    return this.db.prepare('SELECT name, introduction, instructions FROM web_preferences WHERE id = 1')
+      .get() as { name: string; introduction: string; instructions: string } | undefined;
+  }
+
+  savePreferences(name: string, introduction: string, instructions: string) {
+    this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
+      .run(name, introduction, instructions);
+  }
+
+  renameSession(id: string, title: string) {
+    this.db.prepare(`INSERT INTO web_session_display (id, title) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET title = excluded.title`).run(id, title);
+  }
+
+  hideSession(id: string) {
+    this.db.prepare(`INSERT INTO web_session_display (id, removed) VALUES (?, 1)
+      ON CONFLICT(id) DO UPDATE SET removed = 1`).run(id);
+  }
 
   createSession(session: WebSession) {
     this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
@@ -14,7 +48,9 @@ export class WebStore extends Ledger {
   }
 
   sessions() {
-    return this.db.prepare('SELECT id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt FROM web_sessions ORDER BY created_at, id')
+    return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title
+      FROM web_sessions s LEFT JOIN web_session_display d ON d.id = s.id
+      WHERE COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
       .all() as WebSession[];
   }
 

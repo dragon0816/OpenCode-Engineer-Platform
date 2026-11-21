@@ -30,7 +30,7 @@
 | W Gateway Test、provider、alias、URL、模型清單／手填、context capacity | Adapt to OpenCode | 設定／模型，輸入框 | 2b | 切換核准模型並成功送合成 turn。拒絕未知 alias，錯誤僅報狀態。 |
 | W SecretRef／環境變數選擇 | Replace（使用 OEP 憑證繫結） | 設定／模型 | 2b | 顯示已設定狀態，HTML、API、log 都沒有值。 |
 | W 最近訊息、歷史 byte budget、工具次數、回合時限 | Adapt to OpenCode | 設定／回合限制 | 2b | 驗上下界，下一回合達界時呈現對應狀態。 |
-| W 已存會話選擇與刪除 | Keep | 左欄／會話管理 | 2b | 取消保留原會話，確認僅清除目標會話。 |
+| W 已存會話選擇與刪除 | Keep | 左欄／會話管理 | 2b | 取消保留原會話，確認僅清除目標會話。已驗證 Web 清單與存取範圍，保留稽核資料。 [Chromium 驗收](../tests/e2e/web-browser.test.ts) |
 | W 多 Agent 委派開關 | Adapt to OpenCode | 設定／助理 | 2b | 開啟時受限子代理可執行合成任務，關閉時無委派。 |
 | W、T Telegram 開關、token、sender／actor、查詢聯絡 bot 的人 | Adapt to OpenCode | 設定／兩個 bot | 4 | 開關、換值、發送者核對與拒收各測一次，憑證不回傳。 |
 | W Shared Platform portal／bridge URL、Personal Agent code、帳密登入、enroll、teams | Omit-with-reason（AEP 公司 Bridge 與組織帳號） | 設定／整合說明 | 2b | 頁面沒有公司登入、授權或登錄請求。 |

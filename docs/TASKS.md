@@ -113,3 +113,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 3b-R3　Traditional Chinese review forms and Chromium BI publish, cited Ask, and rollback.
 - [x] 3b-R4　Read-only Ask and MCP connection with a write-denial check.
 - [x] 3b-R5　Explicit model proposal, fabricated-quote rejection, and both approved aliases exercised with synthetic text. [Improvement report](reviews/PHASE3B_IMPROVEMENT_REPORT.md)
+
+
+## Phase 2b Slice 1
+
+- [ ] 完成工作台、日常設定、對話操作和專案隔離。部分實作與未驗項目見[驗收報告](reviews/PHASE2B_SLICE1_REPORT.md)。
