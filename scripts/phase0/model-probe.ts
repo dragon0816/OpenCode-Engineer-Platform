@@ -35,6 +35,14 @@ function isFixtureChoice(choice: unknown): boolean {
   return option?.type === forcedChoice.type && option.function?.name === forcedChoice.function.name;
 }
 
+function matchesToolResult(content: unknown, expected: string): boolean {
+  if (typeof content === 'string') return content === expected;
+  if (!Array.isArray(content) || content.length !== 1) return false;
+  const item = content[0];
+  return item !== null && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 2 &&
+    item.type === 'text' && item.text === expected;
+}
+
 function applyForcedStep(body: Request, trace: Trace, steps: ForcedSteps): boolean {
   if (body.model !== steps.model || !body.tools?.some((tool) => tool.function?.name === forcedChoice.function.name)) return false;
   if (!steps.first && trace.returned.length === 0) {
@@ -46,7 +54,7 @@ function applyForcedStep(body: Request, trace: Trace, steps: ForcedSteps): boole
   const results = body.messages?.filter((message) => message.role === 'tool');
   const expected = tokenFor.get('north')!;
   if (steps.followUp || !first?.done || first.calls.length !== 1 || !call?.id || call.name !== forcedChoice.function.name ||
-      results?.length !== 1 || results[0].tool_call_id !== call.id || !JSON.stringify(results[0].content)?.includes(expected)) return false;
+      results?.length !== 1 || results[0].tool_call_id !== call.id || !matchesToolResult(results[0].content, expected)) return false;
 
   // The isolated OpenCode model sets the choice on every request; release it only after the matching fixture result.
   body.tool_choice = trace.choice = 'none';

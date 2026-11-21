@@ -49,6 +49,14 @@ test('relay binds the caller and both forced requests to a live operation and to
     const mismatched = probe.openTurn(model, 'forced', 1000);
     assert.equal((await send({ nonce: mismatched.nonce })).status, 200);
     assert.equal((await send({ nonce: mismatched.nonce, result: { ...textResult, tool_call_id: 'other' } })).status, 409);
+    for (const content of ['prefix AMBER-812', { text: 'AMBER-812' }, [{ type: 'image', text: 'AMBER-812' }],
+      [{ type: 'text', text: 'AMBER-812', extra: true }], [{ type: 'text', text: 'AMBER-812' }, { type: 'text', text: 'extra' }]]) {
+      const wrong = probe.openTurn(model, 'forced', 1000);
+      try {
+        assert.equal((await send({ nonce: wrong.nonce })).status, 200);
+        assert.equal((await send({ nonce: wrong.nonce, result: { ...textResult, content } })).status, 409);
+      } finally { wrong.close(); }
+    }
   } finally { probe.close(); }
 });
 
