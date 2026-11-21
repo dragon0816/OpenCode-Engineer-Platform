@@ -31,11 +31,11 @@
 
 #### Phase 1 前置補強
 
-以下 Phase 0 證據為 **UNVERIFIED**。Phase 1 只在產品測試直接涵蓋時補證據，清單不另作 gate。
+以下 Phase 0 證據維持 **UNVERIFIED**。勾選只表示 Phase 1 的產品測試已涵蓋該情境。
 
 - [ ] S4　跨客戶端／路徑的重複送件計數。
-- [ ] S4　串流收到緩衝事件後切斷再重連。
-- [ ] S2　工具失敗回合的內容、call ID 與形狀。
+- [x] S4　已收到連線和開始事件後由客戶端切斷，再重連對帳。上游 overflow 仍待驗。
+- [x] S2　合成供應方核對工具成功／失敗回傳的內容、call ID 與形狀。真 Gateway 路徑仍待驗。
 - [ ] S4／S2　teardown 跳過清理、`SyntaxError` 轉 502 後 exit 0、遺失原始原因。
 - [ ] S6　Job supervisor 遇 worker `null` 退出碼的失敗處理。
 - [ ] Minor　Git 文件區分兩把設定鎖。
@@ -44,11 +44,14 @@
 
 #### Phase 1 實作及驗收
 
-- [ ] 管理監督程序、OpenCode client/session mapping 與權限。
-- [ ] 通過 Gateway 契約、兩 session 隔離與 evidence stub。
+- [x] 管理監督程序、OpenCode client/session mapping 與權限。原生 Windows 測試通過。
+- [x] 兩個並行 session 隔離、SSE 重連對帳、relay 合成錯誤契約及 evidence stub 通過。
+- [ ] 通過真 Gateway 的啟動健康檢查、工具／媒體與錯誤契約。兩個核准 alias 本輪皆未收到 HTTP 回應。
 - [ ] 在 Windows VM 驗證 OpenCode 及子程序只能透過受限 relay 連核准 Gateway，完成旁路負例。 [出口驗收](IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)
-- [ ] 完成 run/receipt/manifest，SOP→XLSX 連續 5/5，注入失敗的假成功為 0。
-- [ ] 提交 Phase 1 驗收和獨立 review。
+- [x] 完成 run／receipt／manifest。合成 SOP→XLSX 連續 5/5、13 格逐格相等，9 類故障注入假成功 0。
+- [ ] 真模型 SOP→XLSX 連續 5/5。啟動健康檢查受阻時，Excel 真回合數為 0。
+- [x] 提交 Phase 1 gate 報告及原始紀錄位置。 [Gate 報告](reviews/PHASE1_GATE_REPORT.md)
+- [ ] Claude Code 安排一次獨立複核，Phase 1 gate 仍未通過。
 
 ### Phase 2　Web、launcher 與附件
 

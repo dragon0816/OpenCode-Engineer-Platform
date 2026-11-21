@@ -95,3 +95,10 @@ Owner 已將 Phase 0 合併至本機 `main`（`1c45494`）並授權實作 Phase 
 三項 Minor 一併列為 **UNVERIFIED**：Git 設定文件未區分兩把鎖、`windows-job.cs` 未檢查 `CloseHandle` 回傳值、secret scan CLI 未給模式時靜默 exit 0。Phase 1 只在現有產品測試直接涵蓋時補證據，這份清單不阻擋開工或另開一輪舊 probe 複核。
 
 Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明文 HTTP，token 傳輸未加密，後續可請 Gateway 管理員提供 HTTPS。
+
+## 2026-11-21　Phase 1 PoC 的實作與驗收口徑
+
+- 啟動時一次選一個已核准 alias，預設 `gpt-5.4-mini`。以固定 OpenCode、同一 provider 與 relay 驗合成 nonce。任一請求非 2xx 或健康檢查逾時，該次驗收失敗。OEP 以 durable ID 對帳，不重送 prompt 或自動切換 alias。
+- 每次 Excel campaign 建獨立 OpenCode profile，且每次 run 新建 workspace 與 session。OpenCode 執行檔案工具，模型寫出 `program.js`。OEP 的 Node 工作程序提供固定 `writeWorkbook` 介面執行產物步驟，並以 SQLite 留存狀態、收據及 SHA-256。此工作程序只用於合成 PoC。
+- 直接使用 D08 核定資料、逐格 JSON 與 13 格精確相等規則。五回合交替餵 Markdown 與 PDF，驗證實際送件、工具寫檔及獨立 openpyxl 核對。合成供應方結果單獨保留。 [D08 核定](validation/d08-oracle.md)
+- 本輪採實體 Windows 11 x64 檢查 launcher、relay 與 agent 層的檔案權限。v2 的目標 VM、網路出口和防火牆旁路驗收維持 **UNVERIFIED**。 [驗收紀錄](reviews/PHASE1_GATE_REPORT.md)
