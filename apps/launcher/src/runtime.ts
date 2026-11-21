@@ -106,7 +106,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       nextCheck = 0;
     }
     return { ...initial, root, alias, aliases, aliasHealth: () => aliasHealth, checkAliases, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge,
-      gatewayCursor: relay.requestCursor, gatewaySince };
+      gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince };
   } catch (error) {
     try { await stop(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Health check and runtime cleanup failed'); }

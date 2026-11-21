@@ -1006,21 +1006,77 @@ sessionAlias.addEventListener('change', async () => {
 function modelDirty() {
   return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
 }
+const limitLabels = {
+  recentMessages: '最近訊息則數', historyBytes: '歷史位元組上限',
+  toolCalls: '工具呼叫次數上限', timeoutSeconds: '回合時限（秒）',
+};
+const limitsStatus = find('limits-status');
+const saveLimits = find('save-limits');
+let savedLimits;
+const limitInputs = new Map();
+function applyLimits({ values, fields }) {
+  savedLimits = values;
+  for (const [key, field] of Object.entries(fields)) {
+    if (!limitInputs.has(key)) {
+      const id = `limit-${key}`;
+      const label = node('label', limitLabels[key]);
+      label.htmlFor = id;
+      const input = node('input');
+      input.id = id;
+      input.type = 'number';
+      input.min = field.min;
+      input.max = field.max;
+      input.required = true;
+      const help = node('small', `範圍 ${field.min} 至 ${field.max}，預設 ${field.initial}。`);
+      help.id = `${id}-help`;
+      input.setAttribute('aria-describedby', help.id);
+      const row = node('div');
+      row.append(label, input, help);
+      find('limit-fields').append(row);
+      limitInputs.set(key, input);
+    }
+    limitInputs.get(key).value = values[key];
+  }
+  saveLimits.disabled = stopped;
+}
+function limitsDirty() {
+  return savedLimits && [...limitInputs].some(([key, input]) => input.valueAsNumber !== savedLimits[key]);
+}
+find('limits-settings').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (saveLimits.disabled) return;
+  saveLimits.disabled = true;
+  settingsSaving = true;
+  limitsStatus.textContent = '正在儲存…';
+  const data = Object.fromEntries([...limitInputs].map(([key, input]) => [key, input.valueAsNumber]));
+  for (const input of limitInputs.values()) input.disabled = true;
+  try {
+    applyLimits(await request('/api/settings/limits', { data }));
+    limitsStatus.textContent = '已儲存';
+  } catch {
+    limitsStatus.textContent = '無法儲存回合限制。請檢查數值範圍。';
+  } finally {
+    settingsSaving = false;
+    for (const input of limitInputs.values()) input.disabled = stopped;
+    saveLimits.disabled = stopped;
+  }
+});
 function assistantDirty() {
   return savedAssistant !== undefined && savedAssistant !== JSON.stringify(assistantValues());
 }
 function discardSettings() {
   if (settingsSaving) return false;
-  if (!assistantDirty() && !appearanceDirty() && !modelDirty()) return true;
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return true;
   if (!window.confirm('設定尚未儲存。要捨棄變更嗎？')) return false;
   if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
   if (appearanceDirty()) applyAppearance(savedAppearance);
   if (modelDirty()) applyModel(modelSettings);
-  find('settings-status').textContent = appearanceStatus.textContent = modelStatus.textContent = '';
+  if (limitsDirty()) for (const [key, input] of limitInputs) input.value = savedLimits[key];
+  find('settings-status').textContent = appearanceStatus.textContent = modelStatus.textContent = limitsStatus.textContent = '';
   return true;
 }
 window.addEventListener('beforeunload', (event) => {
-  if (!assistantDirty() && !appearanceDirty() && !modelDirty()) return;
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return;
   event.preventDefault();
   event.returnValue = true;
 });
@@ -1276,6 +1332,7 @@ try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
   model.textContent = `模型 ${bootstrap.alias}`;
+  request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
   request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
   find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
   request('/api/settings/appearance').then((appearance) => {

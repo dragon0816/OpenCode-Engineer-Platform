@@ -1,5 +1,7 @@
 import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src/run.ts';
 import type { Agent } from '../opencode/sessions.ts';
+import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
+import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Ledger } from './ledger.ts';
 
 export const projects = [
@@ -33,6 +35,10 @@ export class WebStore extends Ledger {
       id INTEGER PRIMARY KEY,
       section TEXT NOT NULL,
       changed_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_turn_limits (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      settings TEXT NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS web_model_settings (
       id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -79,6 +85,19 @@ export class WebStore extends Ledger {
           .run(image?.bytes ?? null, image?.mime ?? null);
       }
       this.auditSettings('appearance');
+    });
+  }
+
+  turnLimits() {
+    const row = this.db.prepare('SELECT settings FROM web_turn_limits WHERE id = 1').get();
+    return (row && parseTurnLimits(JSON.parse(String(row.settings)))) ?? turnLimitDefaults;
+  }
+
+  saveTurnLimits(limits: TurnLimits) {
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO web_turn_limits VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET settings = excluded.settings')
+        .run(JSON.stringify(limits));
+      this.auditSettings('turn-limits');
     });
   }
 

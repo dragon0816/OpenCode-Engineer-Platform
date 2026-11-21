@@ -49,6 +49,7 @@
           <button type="button" data-section="assistant" aria-current="page">助理</button>
           <button type="button" data-section="appearance">外觀</button>
           <button type="button" data-section="model">模型</button>
+          <button type="button" data-section="limits">回合限制</button>
           <button type="button" data-section="runtime">執行環境</button>
           <button type="button" data-section="integrations">整合說明</button>
         </nav>
@@ -103,6 +104,15 @@
                 <button id="recheck-model" type="button" disabled>立即重新檢查</button>
               </div>
               <p id="model-settings-status" role="status"></p>
+            </form>
+          </section>
+          <section id="settings-limits" hidden>
+            <h2>回合限制</h2>
+            <p>超出歷史上限時會省略較舊的完整對話回合。新訊息及當回合工具結果仍會納入。</p>
+            <form id="limits-settings">
+              <div id="limit-fields"></div>
+              <button id="save-limits" type="submit" disabled>儲存回合限制</button>
+              <p id="limits-status" role="status"></p>
             </form>
           </section>
           <section id="settings-runtime" hidden>

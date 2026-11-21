@@ -16,6 +16,7 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     aliases: ['synthetic-api'],
     aliasHealth: () => [{ alias: 'synthetic-api', healthy: true }],
     checkAliases: async () => true,
+    setTurnBoundary: () => undefined,
     redact: (value: string) => value.replaceAll(secret, '[redacted]'),
     endpoint: { hidden: secret, request: async () => new Response(null, { status: 503 }) },
     client: {

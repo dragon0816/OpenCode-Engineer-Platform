@@ -7,6 +7,8 @@ import type { ModelCall } from '../../../../packages/contracts/src/run.ts';
 import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
 import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson } from '../../../../scripts/phase0/probe-redaction.ts';
 
+import { countModelTools, limitHistory } from './turn-limits.ts';
+import type { TurnBoundary } from './turn-limits.ts';
 
 export const providerID = 'oep-relay';
 export const gatewayAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'] as const;
@@ -28,7 +30,7 @@ export function gatewaySettings() {
   return { url, key };
 }
 
-type RequestBody = { model?: string; stream?: boolean; messages?: unknown[] };
+type RequestBody = { model?: string; stream?: boolean; messages?: Parameters<typeof limitHistory>[0] };
 
 function observeCompletion(frames: unknown[]) {
   type Payload = { content?: unknown; tool_calls?: unknown[] };
@@ -85,6 +87,7 @@ export async function startGateway(options: {
       return Boolean(value?.choices?.length && observeCompletion([value]).output === 'text');
     } catch { return false; }
   }
+  let turn: TurnBoundary | undefined;
   let requests = 0;
   const outages = new Set<AbortController>();
   const server = createServer(async (request, response) => {
@@ -107,7 +110,12 @@ export async function startGateway(options: {
         try { body = await jsonInput<RequestBody>(request, options.web ? 64 * 1024 * 1024 : undefined); }
         catch { status = 400; }
         if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
-          const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(35_000)]);
+          const boundary = turn;
+          const filtered = boundary && limitHistory(body.messages, boundary.marker, boundary.limits);
+          const policy = filtered ? boundary : undefined;
+          const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(35_000), ...(policy ? [policy.signal] : [])]);
+          signal.throwIfAborted();
+          if (filtered) body.messages = filtered;
           const upstream = await (options.fetch ?? fetch)(target, {
             method: 'POST', redirect: 'manual', signal,
             headers: { 'content-type': 'application/json', authorization: `Bearer ${options.key}` },
@@ -119,6 +127,8 @@ export async function startGateway(options: {
             await upstream.body?.cancel().catch(() => undefined);
           } else if (body.stream) {
             const frames = await bufferedCompletion(upstream, redact);
+            policy?.addTools(countModelTools(frames));
+            signal.throwIfAborted();
             completion = observeCompletion(frames);
             status = 200;
             response.writeHead(status, { 'content-type': 'text/event-stream' });
@@ -127,6 +137,8 @@ export async function startGateway(options: {
           } else {
             const value = upstreamJson(await boundedUpstreamText(upstream)) as { choices?: unknown[]; error?: unknown } | null;
             if (!Array.isArray(value?.choices) || !value.choices.length || value.error) throw new Error('Invalid completion');
+            policy?.addTools(countModelTools([value]));
+            signal.throwIfAborted();
             completion = observeCompletion([value]);
             status = 200;
             send(response, status, redactJson(value, redact));
@@ -152,6 +164,7 @@ export async function startGateway(options: {
   return {
     baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, key, redact, ping,
     requestCursor: () => requests,
+    setTurnBoundary: (value?: TurnBoundary) => { turn = value; },
     close: () => new Promise<void>((resolve, reject) => {
       for (const request of outages) request.abort();
       server.close((error) => error ? reject(error) : resolve());

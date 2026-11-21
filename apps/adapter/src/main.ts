@@ -10,6 +10,7 @@ import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
 import { call } from './opencode/client.ts';
+import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { providerID } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
@@ -179,6 +180,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         }
       }
       send(response, 200, { defaultAlias: defaultAlias(), aliases: runtime.aliasHealth(), credentialsConfigured: true });
+      return;
+    }
+    if (path === '/api/settings/limits') {
+      if (method === 'POST') {
+        const limits = parseTurnLimits(await body(request));
+        if (!limits) throw new HttpError(400, '請輸入範圍內的整數。');
+        store.saveTurnLimits(limits);
+      }
+      send(response, 200, { values: store.turnLimits(), fields: turnLimitFields });
       return;
     }
     if (path === '/api/jobs') {
