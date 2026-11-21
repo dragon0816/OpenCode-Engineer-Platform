@@ -33,6 +33,8 @@
     "test:ingest": "node --disable-warning=ExperimentalWarning --test tests/integration/ingest-publish.test.ts",
     "test:telegram": "node --disable-warning=ExperimentalWarning --test tests/integration/telegram.test.ts",
     "build:release": "node scripts/release/build-release.mjs",
+    "test:install": "node --test tests/e2e/install.test.ts",
+    "test:backup": "node --disable-warning=ExperimentalWarning --test tests/e2e/backup-restore.test.ts",
     "test:release:determinism": "node --test scripts/release/determinism.test.mjs"
   },
   "dependencies": {
