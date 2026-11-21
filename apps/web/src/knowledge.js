@@ -79,8 +79,9 @@ export function bindKnowledge(openPreview, closePreviews) {
       const { vault: id } = await request('/api/knowledge/demo', { data: { load, allowModel: find('demo-model-consent').checked } });
       await refreshVaults(load ? id : vault.value);
       feedback.textContent = load ? '已載入範例知識庫。' : '已移除範例知識庫。';
-    } catch (error) { feedback.textContent = error.message; }
-    finally { demoLoad.disabled = demoRemove.disabled = false; }
+    } catch (error) {
+      feedback.textContent = error.message.replaceAll('示範庫', '範例知識庫').replaceAll('示範資料', '範例資料');
+    } finally { demoLoad.disabled = demoRemove.disabled = false; }
   }
   demoLoad.addEventListener('click', () => void demo(true));
   demoRemove.addEventListener('click', () => void demo(false));
@@ -192,11 +193,13 @@ export function bindKnowledge(openPreview, closePreviews) {
       if (write) {
         const report = await request('/api/knowledge/import', { data: { folder: path, allowModel: consent.checked } });
         repositoryStatus.textContent = [
-          `發布標籤 ${report.tag} · 版本 ${report.revision}`,
-          report.active ? (report.state === 'existing' ? '已匯入，索引可用。' : '匯入完成，索引已就緒。') :
+          `發布標籤 ${report.tag}`,
+          report.active ? (report.state === 'existing' ? '這個版本已匯入，可搜尋。' : '匯入完成，可搜尋。') :
             '已保留此版本，目前仍使用較新的發布紀錄。',
           `${report.cards} 張卡片、${report.sources} 個來源、${report.passages} 段證據、${report.relationships} 條關係`,
         ].join('\n');
+        diagnostics.hidden = false;
+        diagnostics.querySelector('p').textContent = `發布版本 ${report.revision}`;
         if (!find('knowledge-view').hidden) await refreshVaults(report.vault);
       } else {
         const { publication, repository, errors } = await request('/api/knowledge/inspect', { data: { folder: path } });

@@ -34,16 +34,20 @@ function showComparison(parent, { previous, candidate }) {
     const oldValues = old ? { '標題': old.title, '類型': old.type, '識別鍵': old.key, '版本': old.version, ...old.fields } : {};
     const newValues = next ? { '標題': next.title, '類型': next.type, '識別鍵': next.key, '版本': next.version, ...next.fields } : {};
     const changes = element('ul');
+    const technical = element('ul');
     const display = (value) => typeof value === 'string' ? value : value === undefined ? '（無）' : JSON.stringify(value);
     for (const field of new Set([...Object.keys(oldValues), ...Object.keys(newValues)])) {
       if (JSON.stringify(oldValues[field]) === JSON.stringify(newValues[field])) continue;
-      changes.append(element('li', field + ' · ' + display(oldValues[field]) + ' → ' + display(newValues[field])));
+      const list = ['類型', '識別鍵', '版本'].includes(field) ? technical : changes;
+      list.append(element('li', field + ' · ' + display(oldValues[field]) + ' → ' + display(newValues[field])));
       counts.fields++;
     }
-    if (!changes.childElementCount) continue;
+    if (!changes.childElementCount && !technical.childElementCount) continue;
     const state = !old ? 'added' : !next ? 'removed' : 'changed';
     counts[state]++;
-    parent.append(element('h4', { added: '新增', removed: '移除', changed: '變更' }[state] + ' · ' + (next ?? old).title), changes);
+    parent.append(element('h4', { added: '新增', removed: '移除', changed: '變更' }[state] + ' · ' + (next ?? old).title));
+    if (changes.childElementCount) parent.append(changes);
+    if (technical.childElementCount) advanced(parent).append(technical);
   }
   parent.prepend(element('p', '新增 ' + counts.added + ' · 變更 ' + counts.changed + ' · 移除 ' + counts.removed + ' · 欄位 ' + counts.fields));
   const evidence = element('div');
@@ -52,8 +56,8 @@ function showComparison(parent, { previous, candidate }) {
   const sources = new Map(candidate.sources.map((item) => [item.id, item.ref]));
   for (const item of candidate.passages) {
     if (JSON.stringify(item) === JSON.stringify(oldPassages.get(item.id))) continue;
-    evidence.append(element('p', [sources.get(item.sourceId), item.locator].filter(Boolean).join(' · ')),
-      element('blockquote', item.text));
+    evidence.append(element('p', sources.get(item.sourceId)), element('blockquote', item.text));
+    if (item.locator) advanced(evidence).append(element('p', item.locator));
   }
   parent.append(evidence);
 }
@@ -262,14 +266,15 @@ export function bindReview(anchor, onPublish, openPreview) {
       pending.replaceChildren();
       history.replaceChildren();
       for (const row of reviews) {
-        const { vault: draftVault } = JSON.parse(row.draft);
-        if (draftVault.kind !== kind) continue;
+        const draft = JSON.parse(row.draft);
+        if (draft.vault.kind !== kind) continue;
         reviewRows.set(row.id, row);
         const item = element('li');
-        const name = draftVault.title || row.vault;
+        const name = draft.vault.title || row.vault;
         const entry = button(item, name, () => openReview(row.id, entry, name), queueStatus);
         entry.dataset.featureFocus = 'review-' + row.id;
-        item.append(element('small', displayedState(row)));
+        const subject = (draft.cards ?? draft.addCards)?.[0]?.title || draft.updateCards?.[0]?.title || draft.sources?.[0]?.ref;
+        item.append(element('small', [displayedState(row), subject].filter(Boolean).join(' · ')));
         (row.status === 'pending' || row.status === 'approved' && !row.publication ? pending : history).append(item);
       }
       if (!pending.childElementCount) pending.append(element('li', '目前沒有待處理的草稿。'));
@@ -319,10 +324,11 @@ export function bindReview(anchor, onPublish, openPreview) {
       if (fields) fields.value = base.schema.document.fields.join(', ');
       status.textContent = '已載入知識庫。';
     });
-    const showSource = button(panel, '查看來源文字', () => {
-      const { body } = openPreview(`build-source-${kind}`, '來源文字', showSource);
+    function showSourcePreview(opener) {
+      const { body } = openPreview(`build-source-${kind}`, '來源文字', opener);
       if (!body.contains(sourceContent)) body.append(sourceContent);
-    });
+    }
+    const showSource = button(panel, '查看來源文字', () => showSourcePreview(showSource));
     showSource.hidden = true;
     const loadSource = button(panel, '載入來源至草稿', async () => {
       const file = source.files[0];
@@ -332,7 +338,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       sourceRef = file?.name ?? 'pasted.md';
       if (!sourceText.value.trim()) throw new Error('請選擇檔案或貼上來源文字。');
       showSource.hidden = false;
-      if (loadSource.getClientRects().length) showSource.click();
+      if (loadSource.getClientRects().length) showSourcePreview(loadSource);
     });
     button(panel, '送交審核', async () => {
       if (!base || baseVaultId !== vault.value) throw new Error('請先載入知識庫，或到進階建立草稿範本。');

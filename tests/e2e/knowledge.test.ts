@@ -162,6 +162,31 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const clickLabel = (scope: string, label: string) => browser.evaluate(
         `[...document.querySelector(${JSON.stringify(scope)}).querySelectorAll('button, summary')]
           .find(element => element.textContent.trim() === ${JSON.stringify(label)}).click()`);
+      const captureGallery = async (screens: [string, () => Promise<unknown>][]) => {
+        try {
+          for (const theme of ['light', 'dark']) {
+            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
+              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+              await ready(`innerWidth === ${width}`);
+              await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'`);
+              for (const [name, show] of screens) {
+                if (await browser.evaluate<boolean>(panelIsOpen)) await closePreview();
+                await show();
+                await browser.evaluate(`new Promise(resolve => requestAnimationFrame(() => {
+                  window.scrollTo(0, 0);
+                  document.querySelector('#chat-files').scrollTop = 0;
+                  requestAnimationFrame(() => resolve(true));
+                }))`);
+                const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+                writeFileSync(join('docs', 'validation', 'gui', `${name}-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));
+              }
+            }
+          }
+        } finally {
+          await browser.command('Emulation.clearDeviceMetricsOverride');
+          await browser.evaluate('delete document.documentElement.dataset.theme');
+        }
+      };
       try {
         await browser.command('Page.navigate', { url: web.pairURL() });
         await ready("!document.querySelector('#open-knowledge')?.disabled");
@@ -286,26 +311,15 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await clickLabel(preview, '開啟卡片');
         await ready(`document.querySelector('${previewBody} blockquote')?.textContent.includes('±0.8 dB')`);
         if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
-          for (const theme of ['light', 'dark']) {
-            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
-              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
-              await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'`);
-              for (const screen of ['drawer', 'overview', 'ask', 'quality', 'build']) {
-                await browser.evaluate(`{
-                  document.querySelector('#close-files').click();
-                  document.querySelector('#knowledge-tab-${screen === 'drawer' ? 'overview' : screen}').click();
-                  document.querySelector('#knowledge-folder').value = 'C:/OEP/合成儲存庫';
-                  document.querySelector('#knowledge-title').scrollIntoView({ block: 'start' });
-                  window.scrollTo(0, 0);
-                  if ('${screen}' === 'drawer') document.querySelector('#knowledge-cards tbody button').click();
-                }`);
-                if (screen === 'drawer') await ready(`document.querySelector('${previewBody} h3')`);
-                const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
-                writeFileSync(join('docs', 'validation', 'gui', `slice3a-${screen}-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));
-              }
-            }
-          }
-          await browser.command('Emulation.clearDeviceMetricsOverride');
+          await captureGallery(['overview', 'ask', 'quality', 'build', 'drawer'].map((screen) =>
+            ['slice3a-' + screen, async () => {
+              await browser.evaluate(`{
+                document.querySelector('#knowledge-tab-${screen === 'drawer' ? 'overview' : screen}').click();
+                document.querySelector('#knowledge-folder').value = 'C:/OEP/合成儲存庫';
+                if ('${screen}' === 'drawer') document.querySelector('#knowledge-cards tbody button').click();
+              }`);
+              if (screen === 'drawer') await ready(`document.querySelector('${previewBody} h3')`);
+            }]));
         }
         await browser.evaluate("document.querySelector('#close-files').click(); document.querySelector('#knowledge-tab-ask').click()");
         await browser.evaluate(`{
@@ -565,6 +579,32 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await ready("document.querySelector('#review-import-jobs').textContent.includes('已送審')");
         await labels('#review-import-jobs', ['立即執行']);
         await featureText('#review-view');
+
+        if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
+          const showJobs = async () => {
+            await browser.evaluate("if (document.querySelector('#jobs-view').hidden) document.querySelector('#open-jobs').click()");
+            await ready("!document.querySelector('#jobs-view').hidden && document.querySelector('#jobs-content').textContent.includes('下次執行 ')");
+          };
+          const showReview = async () => {
+            await browser.evaluate("if (document.querySelector('#review-view').hidden) document.querySelector('#open-review').click()");
+            await ready("!document.querySelector('#review-view').hidden && document.querySelector('#review-bi-pending button')");
+          };
+          await captureGallery([
+            ['jobs-list', showJobs],
+            ['jobs-details', async () => {
+              await showJobs();
+              await clickLabel('#jobs-content', 'schedule-paused');
+              await clickLabel(preview, '執行紀錄');
+              await ready(`document.querySelector('${previewBody}')?.textContent.includes('schedule-paused')`);
+            }],
+            ['review-list', showReview],
+            ['review-item', async () => {
+              await showReview();
+              await browser.evaluate("document.querySelector('#review-bi-pending button').click()");
+              await ready(`document.querySelector('${previewBody} blockquote')`);
+            }],
+          ]);
+        }
 
         const large = largeKnowledgeFixture();
         runtime.knowledge!.reviewStore.import(large, Buffer.from(canonical(large)));
