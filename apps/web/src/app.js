@@ -785,6 +785,7 @@ function sessionButton(label, action) {
 
 let collapsedProject;
 function renderSessions() {
+  find('session-count').textContent = knownSessions.size;
   const query = find('session-search').value.trim().toLocaleLowerCase();
   find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
@@ -951,6 +952,9 @@ function applyPreferences(preferences) {
   for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
   savedAssistant = JSON.stringify(assistantValues());
   find('sidebar-assistant-name').textContent = preferences.name || '助理';
+  const introduction = find('sidebar-assistant-intro');
+  introduction.textContent = preferences.introduction || '本機工程工作助理';
+  introduction.title = introduction.textContent;
 }
 find('assistant-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1244,7 +1248,7 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 
 function showSettings() {
   for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
-  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
   if (!find('settings-mcp').hidden) void loadMcpSettings();
@@ -1300,9 +1304,37 @@ setSidebar(!narrowNavigation.matches);
 narrowNavigation.addEventListener('change', () => setSidebar(!narrowNavigation.matches));
 sidebarToggle.addEventListener('click', () => setSidebar(find('session-sidebar').hidden));
 find('session-sidebar').addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches) return;
+  event.preventDefault();
   setSidebar(false);
   sidebarToggle.focus();
+});
+for (const section of document.querySelectorAll('.rail-section')) {
+  const key = `oep.${section.id}.open`;
+  section.open = localStorage.getItem(key) !== 'false';
+  section.addEventListener('toggle', () => localStorage.setItem(key, String(section.open)));
+}
+find('assistant-count').textContent = agent.options.length;
+function syncNavigation() {
+  const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
+  for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
+    if (entry === visible) find(entry).setAttribute('aria-current', 'page');
+    else find(entry).removeAttribute('aria-current');
+  }
+  if (narrowNavigation.matches) {
+    setSidebar(false);
+    if (visible === 'open-chat') sessionTitle.focus();
+  }
+}
+find('open-review').addEventListener('click', () => {
+  find('open-knowledge').click();
+  if (find('knowledge-view').hidden) return;
+  find('knowledge-tab-build').click();
+  const review = find('ingest-review');
+  review.open = true;
+  review.querySelector('summary').focus();
+  find('open-knowledge').removeAttribute('aria-current');
+  find('open-review').setAttribute('aria-current', 'page');
 });
 find('session-search').addEventListener('input', renderSessions);
 find('clear-session-search').addEventListener('click', () => {
@@ -1624,7 +1656,15 @@ try {
   renderSessions();
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
-  if (bootstrap.knowledge) knowledge = bindKnowledge();
+  if (bootstrap.knowledge) {
+    knowledge = bindKnowledge();
+    find('open-review').hidden = false;
+  }
+  find('open-chat').addEventListener('click', () => {
+    find('jobs-view').hidden = true;
+    find('chat-view').hidden = find('chat-files').hidden = false;
+  });
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

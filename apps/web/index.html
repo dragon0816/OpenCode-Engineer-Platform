@@ -8,37 +8,49 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="top">
-    <div class="brand"><strong>OEP</strong> <span>工程工作台</span></div>
-    <div class="top-actions"><span id="connection" role="status">正在連線</span><button id="stop" type="button" disabled>停止服務</button></div>
-  </header>
-  <main>
-    <aside class="sidebar navigation">
-      <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">會話導覽</button>
+  <div class="shell">
+    <aside class="sidebar navigation" aria-label="功能欄">
+      <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">功能導覽</button>
       <div id="session-sidebar">
+      <div class="sidebar-assistant">
+        <span class="assistant-avatar" aria-hidden="true">O</span>
+        <div><strong id="sidebar-assistant-name">助理</strong><small id="sidebar-assistant-intro">本機工程工作助理</small></div>
+      </div>
+      <details class="rail-section" id="rail-functions" open>
+      <summary>主功能</summary>
       <nav class="views" aria-label="工作台">
         <button id="open-chat" type="button" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg>對話</button>
         <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg>知識庫</button>
-        <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>工作與排程</button>
+        <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>排程與工作</button>
+        <button id="open-review" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16H6zm3 8 2 2 4-4"/></svg>審核</button>
+        <button id="open-settings" type="button" aria-keyshortcuts="Control+,"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/></svg>設定</button>
       </nav>
-      <div class="sidebar-assistant"><span class="assistant-avatar" aria-hidden="true">O</span><span id="sidebar-assistant-name">助理</span></div>
-      <label for="agent">新會話的助理</label>
-      <select id="agent" disabled>
-        <option value="inspector">資料分析</option>
-        <option value="workbook">Excel 工作表</option>
-      </select>
-      <label for="session-search">搜尋會話</label>
+      </details>
+      <details class="rail-section" id="rail-sessions" open>
+      <summary>會話 <span class="rail-count" id="session-count" title="目前專案的會話數">0</span></summary>
       <div class="session-search">
         <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
-        <input id="session-search" type="search" autocomplete="off" placeholder="搜尋會話">
+        <input id="session-search" type="search" autocomplete="off" placeholder="搜尋會話" aria-label="搜尋會話">
         <button id="clear-session-search" type="button" aria-label="清除搜尋" hidden>×</button>
       </div>
       <nav id="sessions" aria-label="專案與會話"></nav>
-      <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
-      <button id="open-settings" type="button" aria-keyshortcuts="Control+,">設定</button>
+      </details>
+      <details class="rail-section" id="rail-assistants" open>
+        <summary>助理 <span class="rail-count" id="assistant-count"></span></summary>
+        <label for="agent">新會話的助理</label>
+        <select id="agent" disabled>
+          <option value="inspector">資料分析</option>
+          <option value="workbook">Excel 工作表</option>
+        </select>
+      </details>
       </div>
     </aside>
+    <main id="work-area">
+    <header class="top">
+      <div class="brand"><strong>OEP</strong> <span>工程工作台</span><small id="model"></small></div>
+      <div class="top-actions"><span id="connection" role="status">正在連線</span><button id="stop" type="button" disabled>停止服務</button></div>
+    </header>
     <section class="conversation knowledge" id="settings-view" aria-labelledby="settings-title" hidden>
       <header class="settings-heading">
         <h1 id="settings-title" tabindex="-1">設定</h1>
@@ -237,7 +249,7 @@
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
         <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>
-        <h1 id="session-title">對話</h1>
+        <h1 id="session-title" tabindex="-1">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
         <label for="session-alias">會話模型</label>
         <select id="session-alias" disabled></select>
@@ -414,7 +426,8 @@
       <header><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
-    <aside class="sidebar files" id="chat-files">
+    </main>
+    <aside class="sidebar files" id="chat-files" aria-label="會話面板">
       <div class="panel-header">
       <div role="tablist" aria-label="會話面板">
         <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="true">檔案與產物</button>
@@ -464,6 +477,6 @@
         <button type="button" id="export-notes" disabled>匯出選取的筆記</button>
       </div>
     </aside>
-  </main>
+  </div>
 </body>
 </html>
