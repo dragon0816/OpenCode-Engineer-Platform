@@ -46,7 +46,7 @@ try {
     Write-Output '回復比對通過。資料筆數、SQLite 版本與發布修訂雜湊相符。'
     if ($nonempty) { Write-Output '原有資料已保留在旁邊的 oep-restore-original 目錄，另有 oep-safety-backups 備份。' }
     Write-Output '請依需要重新設定下列使用者環境變數，再執行 Check-OEP-Credentials.ps1。'
-    CredentialNames-OEP
+    CredentialStatus-OEP $manifest.credentials
 } catch {
     [Console]::Error.WriteLine($script:failure)
     exit 1

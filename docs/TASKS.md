@@ -172,3 +172,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 設定頁列出內建知識 MCP，連至現有 BI 查詢開關。
 - [ ] 完成通用 MCP、專案授權、資料範圍、憑證與備份驗收。
 - [ ] 完成能力清單、技能安裝與新會話有效工具驗收。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)
+
+## Phase 2b Slice 4B
+
+- [x] 自訂 stdio MCP 定義驗證、儲存與備份回復。
+- [ ] 新會話工具隔離、憑證綁定、設定頁、連線測試、遠端連線與 Chromium 驗收。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)

@@ -240,3 +240,7 @@ Generate CycloneDX, third-party license text and NOTICE from the pinned producti
 ## Phase 2b Slice 4A
 
 內建知識 MCP 由啟動器管理，設定頁沿用既有 BI 查詢開關。OEP 僅公開固定工具名稱與 OpenCode 的狀態代碼，連線錯誤原文留在執行環境。通用 MCP 的憑證與專案隔離設計待實作。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)
+
+## Phase 2b Slice 4B
+
+自訂 stdio 定義儲存於 Web SQLite。憑證參照採用 `OEP_MCP_<ID>_<NAME>`，後續值儲存沿用 Windows User-scope 環境變數。回復時以備份資料庫核對清單中的參照名稱。專案允許清單與資料範圍說明作為 Email 舊設定的替代，維持由 MCP 管理。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)

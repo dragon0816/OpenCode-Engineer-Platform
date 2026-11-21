@@ -122,3 +122,7 @@ The Windows workflow is **UNVERIFIED** until GitHub runs it. Review the [license
 ## Phase 2b Slice 4A
 
 本機分支 `phase-2b/mcp-capabilities` 由 `86538c1` 建立。設定新增內建知識 MCP 狀態。通用 MCP 管理與能力管理仍開放。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)
+
+## Slice 4B 交接
+
+自訂 stdio MCP 定義儲存及備份回復已通過測試。Web 啟動器目前使用單一 OpenCode 執行環境。接手時需驗證如何依專案與新會話配置工具，同時保留既有會話的工具。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)
