@@ -17,7 +17,10 @@ export function knowledgeModel(relay: { baseURL: string; key: string }, alias: s
         ] }),
       });
       if (!response.ok) {
-        await response.body?.cancel();
+        await response.body?.cancel().catch(() => undefined);
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return { failure: 'gateway-rejected', retryable: false };
+        }
         return { failure: 'unavailable', retryable: response.status === 429 || response.status >= 500 };
       }
       const reply = await response.json() as { choices?: { message?: { content?: unknown } }[] };
