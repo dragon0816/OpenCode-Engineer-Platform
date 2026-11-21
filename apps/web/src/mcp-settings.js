@@ -109,15 +109,22 @@ export function bindMcpSettings(projects) {
     editor.showModal();
   }
 
-  function renderResult(panel, result) {
+  function renderResult(panel, result, server, apply) {
     panel.replaceChildren();
     if (!result) return;
-    panel.append(element('p', result.ok ? '連線測試成功。工具清單僅供查看。' : result.reason));
+    panel.append(element('p', result.ok ? '連線測試成功。工具設定會在重新啟動後套用至新會話。' : result.reason));
     if (!result.ok || !result.tools.length) return;
     const tools = element('ul');
     for (const { name, description } of result.tools) {
       const item = element('li');
       item.append(element('strong', name), ...(description ? [element('p', description)] : []));
+      if (/^[a-z0-9_]{1,120}$/.test(name)) {
+        const enabled = !server.deniedTools.includes(name);
+        const toggle = control(enabled ? '停用工具' : '啟用工具', (event) =>
+          apply({ action: 'tool', tool: name, enabled: !enabled }, event.currentTarget));
+        toggle.setAttribute('aria-label', toggle.textContent + ' ' + name);
+        item.append(toggle);
+      } else item.append(element('p', '此工具名稱僅供查看。'));
       tools.append(item);
     }
     panel.append(tools);
@@ -140,7 +147,7 @@ export function bindMcpSettings(projects) {
       const allowed = projects().filter(({ id }) => server.appliesToProjects.includes(id)).map(({ title }) => title);
       const panel = element('div', '', 'mcp-result');
       panel.setAttribute('role', 'status');
-      renderResult(panel, results.get(server.id));
+
       const actions = element('div', '', 'settings-actions');
       const apply = async (data, button) => {
         button.disabled = true;
@@ -153,6 +160,7 @@ export function bindMcpSettings(projects) {
         } catch (error) { status.textContent = error.message; }
         finally { button.disabled = false; }
       };
+      renderResult(panel, results.get(server.id), server, apply);
       actions.append(control('編輯', () => open(server)),
         control(server.enabled ? '停用' : '啟用', (event) => apply({ action: 'enable', enabled: !server.enabled }, event.currentTarget)),
         control('測試連線', async (event) => {
@@ -162,7 +170,7 @@ export function bindMcpSettings(projects) {
           try {
             const result = await request(endpoint + '/test', { data: { id: server.id } });
             results.set(server.id, result);
-            renderResult(panel, result);
+            renderResult(panel, result, server, apply);
           } catch (error) { panel.textContent = error.message; }
           finally { button.disabled = false; button.focus({ preventScroll: true }); panel.scrollIntoView({ block: 'nearest' }); }
         }),

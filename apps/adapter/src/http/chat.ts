@@ -103,9 +103,14 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const permissions = (this.runtime.customMcp ?? []).filter((server) => server.enabled)
-      .map((server) => ({ action: `${customMcpName(server.id)}_*`, resource: '*',
-        effect: server.appliesToProjects.includes(project) ? 'allow' as const : 'deny' as const }));
+    const permissions = (this.runtime.customMcp ?? []).filter((server) => server.enabled).flatMap((server) => {
+      const name = customMcpName(server.id);
+      const allowed = server.appliesToProjects.includes(project);
+      return [
+        { action: `${name}_*`, resource: '*', effect: allowed ? 'allow' as const : 'deny' as const },
+        ...server.deniedTools.map((tool) => ({ action: `${name}_${tool}`, resource: '*', effect: 'deny' as const })),
+      ];
+    });
     const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled, permissions);
     const session = { ...local, upstreamID };
     this.store.createSession(session);

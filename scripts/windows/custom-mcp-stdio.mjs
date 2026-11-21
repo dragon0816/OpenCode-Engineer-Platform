@@ -21,7 +21,9 @@ const sensitive = values.flatMap((value) => [value, JSON.stringify(value).slice(
 async function write(line) {
   let normalized;
   try { normalized = JSON.stringify(JSON.parse(line)); } catch { return; }
+  for (const value of sensitive) normalized = normalized.replaceAll(value, '[已隱藏]');
   if (sensitive.some((value) => normalized.includes(value))) return;
+  try { JSON.parse(normalized); } catch { return; }
   if (!process.stdout.write(normalized + '\n')) await new Promise((resolve) => process.stdout.once('drain', resolve));
 }
 

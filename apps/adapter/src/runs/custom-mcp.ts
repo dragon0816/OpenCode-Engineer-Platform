@@ -8,6 +8,7 @@ const unsafePath = /[\u0000-\u001f<>"|?*&^%!]/;
 const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const blockedEnvironment = /^(?:PATH|PATHEXT|COMSPEC|SYSTEMROOT|SYSTEMDRIVE|WINDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|TEMP|TMP|PSMODULEPATH|PYTHON.*|NODE_.*|BUN_.*|DENO_.*|LD_.*|DYLD_.*|OPENCODE_.*|OEP_.*)$/i;
 
+export const customMcpTool = /^[a-z0-9_]{1,120}$/;
 export const customMcpName = (id: string) => `oep_custom_${id}`;
 
 export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp>;
@@ -16,7 +17,7 @@ export type CustomMcp = CustomStdioMcp | CustomRemoteMcp;
 
 function validateCommon(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('伺服器識別碼無效。');
-  const { name, enabled, timeouts, dataScope, appliesToProjects } = input;
+  const { name, enabled, timeouts, dataScope, appliesToProjects, deniedTools = [] } = input;
   if (typeof name !== 'string' || !name.trim() || name.length > 80 || /[\u0000-\u001f]/.test(name)) {
     throw new Error('請輸入 1 到 80 字的名稱。');
   }
@@ -34,10 +35,15 @@ function validateCommon(id: string, input: Record<string, unknown>, projects: re
     projects.includes(project)) || new Set(appliesToProjects).size !== appliesToProjects.length) {
     throw new Error('請選擇有效的專案。');
   }
+  if (!Array.isArray(deniedTools) || deniedTools.length > 50 ||
+      !deniedTools.every((tool): tool is string => typeof tool === 'string' && customMcpTool.test(tool)) ||
+      new Set(deniedTools).size !== deniedTools.length) {
+    throw new Error('請檢查工具設定。');
+  }
   return { id, name: name.trim(), enabled, timeouts: {
     startup: milliseconds(timing.startup), catalog: milliseconds(timing.catalog),
     execution: milliseconds(timing.execution),
-  }, dataScope, appliesToProjects };
+  }, dataScope, appliesToProjects, deniedTools };
 }
 
 export function validateCustomStdioMcp(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {

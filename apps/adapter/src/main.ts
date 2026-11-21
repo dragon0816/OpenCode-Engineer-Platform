@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, validateHeaderValue } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { basename, join } from 'node:path';
@@ -28,7 +28,7 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { customMcpName, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { customMcpName, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
@@ -260,11 +260,17 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const input = await body(request);
       if (Object.keys(input).length) throw new HttpError(400, '重新啟動不需要輸入內容。');
       if (!requestRestart) throw new HttpError(503, '目前無法從設定重新啟動執行環境。');
-      if (restarting || active.size > 1 || chat.busy() || telegram.busy()) {
+      if (restarting || active.size > 1 || chat.busy() || !telegram.pauseForRestart()) {
         throw new HttpError(409, '請等目前的操作及對話完成，再重新啟動。');
       }
       restarting = true;
-      response.once('finish', requestRestart);
+      const restart = () => {
+        response.off('finish', restart);
+        response.off('close', restart);
+        requestRestart();
+      };
+      response.once('finish', restart);
+      response.once('close', restart);
       send(response, 202, { state: 'restarting' });
       return;
     }
@@ -293,11 +299,27 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         } else if (input.action === 'credential' && existing) {
           const entry = existing.environment.find(({ name }) => name === input.name);
           if (!entry) throw new HttpError(404, '找不到憑證欄位。');
+          if (existing.transport === 'remote') {
+            if (typeof input.value !== 'string') throw new HttpError(400, '請輸入有效的 HTTP 標頭憑證。');
+            try { validateHeaderValue(entry.name, input.value); }
+            catch { throw new HttpError(400, '請輸入有效的 HTTP 標頭憑證。'); }
+          }
           try { saveCustomMcpCredential(entry.reference, input.value); }
           catch (error) { throw new HttpError(400, (error as Error).message); }
           changedCredentials.add(existing.id);
           send(response, 200, { configured: true });
           return;
+        } else if (input.action === 'tool' && existing) {
+          const { tool, enabled } = input;
+          if (typeof tool !== 'string' || !customMcpTool.test(tool) || typeof enabled !== 'boolean') {
+            throw new HttpError(400, '請選擇有效的工具設定。');
+          }
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          const denied = new Set(existing.deniedTools);
+          if (enabled) denied.delete(tool);
+          else denied.add(tool);
+          if (denied.size > 50) throw new HttpError(400, '每台伺服器最多可停用 50 個工具。');
+          store.saveCustomMcp({ ...definition, deniedTools: [...denied] });
         } else if (input.action === 'enable' && existing) {
           if (typeof input.enabled !== 'boolean') throw new HttpError(400, '請選擇啟用或停用。');
           if (input.enabled && existing.transport === 'remote') {
@@ -312,10 +334,11 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         } else if (input.action === 'create' || input.action === 'update') {
           const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
           try {
+            const definitionInput = { ...input, deniedTools: input.action === 'update' ? existing?.deniedTools : [] };
             const projectIDs = projects.map((project) => project.id);
             const definition = input.transport === 'remote'
-              ? validateCustomRemoteMcp(id, input, projectIDs)
-              : validateCustomStdioMcp(id, input, projectIDs);
+              ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
+              : validateCustomStdioMcp(id, definitionInput, projectIDs);
             if (definition.transport === 'remote') await pinCustomRemoteMcp(definition, AbortSignal.timeout(5000));
             if (existing && !store.customMcpServers().some((server) => server.id === existing.id && server.updatedAt === existing.updatedAt)) {
               throw new Error('設定已變更，請重新載入。');

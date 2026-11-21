@@ -96,8 +96,11 @@ export class WebStore extends Ledger {
 
   customMcpServers() {
     return this.db.prepare('SELECT definition, created_at, updated_at FROM mcp_servers ORDER BY created_at, id').all()
-      .map((row) => ({ ...JSON.parse(String(row.definition)) as CustomMcp,
-        createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) }));
+      .map((row) => {
+        const definition = JSON.parse(String(row.definition)) as CustomMcp;
+        return { ...definition, deniedTools: definition.deniedTools ?? [],
+          createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
+      });
   }
 
   saveCustomStdioMcp(id: string, input: Record<string, unknown>) {

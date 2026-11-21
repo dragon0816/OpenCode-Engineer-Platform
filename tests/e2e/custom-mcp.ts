@@ -16,9 +16,9 @@ mkdirSync(audit);
 mkdirSync(profile);
 const definitions = [true, false].map((enabled, index) => validateCustomStdioMcp(String(index).repeat(32), {
   name: 'Synthetic catalog', transport: 'stdio', enabled,
-  command: [process.execPath, resolve('tests/fixtures/mcp/stdio.mjs')], cwd: root,
+  command: [process.execPath, resolve('tests/fixtures/mcp/stdio.mjs'), '--extra-tool'], cwd: root,
   environment: [], timeouts: { startup: 5000, catalog: 5000, execution: 5000 },
-  dataScope: 'Synthetic', appliesToProjects: ['default'],
+  dataScope: 'Synthetic', deniedTools: ['synthetic_restricted'], appliesToProjects: ['default'],
 }, ['default', 'secondary']));
 const requests: { text: string; tools: string[] }[] = [];
 const runtime = await startRuntime(audit, {
@@ -60,6 +60,7 @@ try {
       console.log(JSON.stringify({ project, tools: names }));
       assert.equal(names.some((name) => name.includes(definitions[0].id)), project === 'default');
       assert.equal(names.some((name) => name.includes(definitions[1].id)), false);
+      assert.equal(names.some((name) => name.endsWith('_synthetic_restricted')), false);
     }
   } finally { await adapter.close(); }
 } finally {
