@@ -62,3 +62,7 @@ The local feature branch is based on caf60b9. Core ingest, review, publish, roll
 ## Phase 3a retrieval follow-up
 
 Local branch `phase-3a/retrieval-quality` starts from `00735ef`. Gold mirror Recall@5 is 24/24, and bilingual synthetic forecast recall improved from 0/2 to 2/2. Both live aliases met D03 on the synthetic gold mirror. Chromium verified the Traditional Chinese Gateway rejection message and one upstream request for the synthetic rejected question. The real-repository follow-up and the upstream filter trigger remain **UNVERIFIED**. [Retrieval report](reviews/PHASE3A_RETRIEVAL_REPORT.md)
+
+## 2026-11-21　Phase 3b review improvements
+
+Local branch `phase-3b/usable-review` starts from `99e860b`. BI review now stages changes against the active revision. The source form uploads bounded UTF-8 content, and model proposals are explicit pending reviews. First rollback deactivates and preserves history. Ask and MCP share the read-only database connection. The Technical Lead owns merge via `npm run merge-check`. [Operations](validation/p3b-publish.md) · [Improvement report](reviews/PHASE3B_IMPROVEMENT_REPORT.md)

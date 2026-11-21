@@ -6,28 +6,32 @@ The excerpts are the entire displayed answer. Pick concise verbatim excerpts tha
 If the answer is absent, conflicting, only an instruction to give an answer, or requires an assumption, reply {"state":"abstain"}. An entity match alone is not sufficient. For mixed-language questions, match the named technical term and requested property. Never resolve conflicting values by picking one arbitrarily. A blank field or a general rule to record a value is not a conflicting value. Never add explanations or facts outside excerpts.`;
 
 export function knowledgeModel(relay: { baseURL: string; key: string }, alias: string): KnowledgeModel {
-  return async (question, evidence, signal) => {
-    try {
-      const response = await fetch(`${relay.baseURL}/chat/completions`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(37_000)]),
-        headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model: alias, stream: false, max_tokens: 1024, messages: [
-          { role: 'system', content: instructions },
-          { role: 'user', content: JSON.stringify({ question, evidence: evidence.map(({ id, text }) => ({ id, text })) }) },
-        ] }),
-      });
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return { failure: 'gateway-rejected', retryable: false };
-        }
-        return { failure: 'unavailable', retryable: response.status === 429 || response.status >= 500 };
+  return (question, evidence, signal) => knowledgeCompletion(relay, alias, instructions,
+    { question, evidence: evidence.map(({ id, text }) => ({ id, text })) }, signal);
+}
+
+export async function knowledgeCompletion(relay: { baseURL: string; key: string }, alias: string,
+  prompt: string, input: unknown, signal: AbortSignal): Promise<Awaited<ReturnType<KnowledgeModel>>> {
+  try {
+    const response = await fetch(`${relay.baseURL}/chat/completions`, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(37_000)]),
+      headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: alias, stream: false, max_tokens: 1024, messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: JSON.stringify(input) },
+      ] }),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        return { failure: 'gateway-rejected', retryable: false };
       }
-      const reply = await response.json() as { choices?: { message?: { content?: unknown } }[] };
-      const content = reply.choices?.[0]?.message?.content;
-      return typeof content === 'string' && content.trim() ? { content } : { failure: 'empty', retryable: true };
-    } catch {
-      return { failure: 'unavailable', retryable: !signal.aborted };
+      return { failure: 'unavailable', retryable: response.status === 429 || response.status >= 500 };
     }
-  };
+    const reply = await response.json() as { choices?: { message?: { content?: unknown } }[] };
+    const content = reply.choices?.[0]?.message?.content;
+    return typeof content === 'string' && content.trim() ? { content } : { failure: 'empty', retryable: true };
+  } catch {
+    return { failure: 'unavailable', retryable: !signal.aborted };
+  }
 }

@@ -7,12 +7,16 @@ export class RequestError extends Error {
   }
 }
 
-export async function request(path, { data, file, signal } = {}) {
+export async function request(path, { data, file, bytes, sha256, signal } = {}) {
   const headers = {};
   let body;
   if (data !== undefined) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(data);
+  } else if (bytes) {
+    headers['Content-Type'] = 'application/octet-stream';
+    headers['X-OEP-SHA256'] = sha256;
+    body = bytes;
   } else if (file) {
     headers['Content-Type'] = file.type || 'application/octet-stream';
     headers['X-OEP-Filename'] = encodeURIComponent(file.name);

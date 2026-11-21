@@ -101,3 +101,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] Windows VM 安裝、全程 E2E、升級、rollback 與備份恢復。
 - [ ] SBOM、NOTICE、checksums、secret scan 和操作文件，含真實 OS 睡眠／登出的排程已知限制。 [文件計畫](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
 - [ ] 提交 Phase 5 驗收和獨立 review。
+
+### Phase 3b review follow-up
+
+- [x] 3b-R1　Incremental BI changes, bounded uploads, legacy API, and crash/replay/concurrency coverage.
+- [x] 3b-R2　First-publication deactivation, retained history, reactivation, and rollback crash recovery.
+- [x] 3b-R3　Traditional Chinese review forms and Chromium BI publish, cited Ask, and rollback.
+- [x] 3b-R4　Read-only Ask and MCP connection with a write-denial check.
+- [x] 3b-R5　Explicit model proposal, fabricated-quote rejection, and both approved aliases exercised with synthetic text. [Improvement report](reviews/PHASE3B_IMPROVEMENT_REPORT.md)

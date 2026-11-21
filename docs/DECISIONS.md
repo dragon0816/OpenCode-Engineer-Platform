@@ -158,3 +158,9 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - D03 補充。FTS5 匹配結果按 NFC 與空白正規化後的文字合併，保留每筆段落識別碼、卡片、來源與位置。每組以最佳 FTS5 匹配選出代表，再按詞法訊號排序。Ask 對代表段落的原文、來源、位置及雜湊執行既有引用驗證。多來源關聯留在檢索結果內，共用引用契約維持原樣。
 - 每次 Ask 最多提供 5 段、合計 20,000 UTF-8 bytes 的段落正文。這是以 byte 為基礎的 tokenizer 的保守正文 token 上限，問題、JSON 包裝及固定指令另計。既有 SQLite 發布世代可直接查詢。
 - Relay 將不可重試的 4xx 交給 Ask 作為 `gateway-rejected`，一次結束並以固定繁中文案呈現。429 與 5xx 維持原重試策略。 [驗證](reviews/PHASE3A_RETRIEVAL_REPORT.md)
+
+## 2026-11-21　Phase 3b review improvements
+
+- BI changes use an explicit parent and content-addressed source uploads. The existing candidate API remains available. Human review and the same atomic publication and intent transaction apply to both paths.
+- First-publication rollback records deactivation and retains the vault and history. Reactivation is an explicit review action. Ask and MCP use a SQLite read-only connection.
+- Owner decision for 3b-R5. Model proposal is available by default to anyone who can see the BI vault. Permission is handled externally. Proposal requires an explicit action, deterministically validates every quoted excerpt, and creates only a pending review. The UI and operations guide state that source text leaves the machine through the LAN HTTP Gateway. Ask retains its existing publication-level model permission.

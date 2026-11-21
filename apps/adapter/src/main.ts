@@ -12,7 +12,7 @@ import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowle
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
-import { reviewAction } from './http/review.ts';
+import { proposeReview, reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError } from './http/errors.ts';
 import { WebEvents } from './http/events.ts';
 import { download, upload } from './http/files.ts';
@@ -106,13 +106,24 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
       return;
     }
+    if (runtime.knowledge && path === '/api/knowledge/review-sources' && method === 'POST') {
+      send(response, 200, await uploadReviewSource(runtime.knowledge.reviewStore, request));
+      return;
+    }
     if (runtime.knowledge && path === '/api/knowledge/reviews') {
       const reviewStore = runtime.knowledge.reviewStore;
       if (method === 'GET') {
         send(response, 200, { reviews: reviewStore.reviews(), ...reviewStore.reconciliation() });
       } else {
         const input = await body(request);
-        try { send(response, 200, reviewAction(reviewStore, input)); }
+        try {
+          if (input.action === 'propose') {
+            const client = new AbortController();
+            response.once('close', () => client.abort());
+            const result = await proposeReview(reviewStore, input, runtime.knowledge.propose, client.signal);
+            if (!response.destroyed) send(response, 200, result);
+          } else send(response, 200, reviewAction(reviewStore, input));
+        }
         catch { throw new HttpError(422, '審核操作失敗。請重新整理並檢查版本、證據與審核狀態。'); }
       }
       return;
