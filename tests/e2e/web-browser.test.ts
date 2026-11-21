@@ -355,6 +355,24 @@ try {
         await page.ready("document.activeElement.id === 'tab-work' && document.querySelector('#panel-runs').textContent.includes('已完成')");
         await page.command('Page.reload');
         await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
+        await page.evaluate(`(() => {
+          const fetchAPI = window.fetch;
+          window.fetch = (path, options) => {
+            if (path !== '/api/jobs') return fetchAPI(path, options);
+            window.fetch = fetchAPI;
+            return Promise.resolve(Response.json({
+              jobs: [{ completed: 1, review_status: 'pending' }, { completed: 0, expires: Date.now() + 10000 }],
+              schedules: [{ state: 'paused' }],
+            }));
+          };
+          document.querySelector('#tab-work').click();
+        })()`);
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('待審核 1 筆、執行中 1 筆。排程：已暫停 1 筆')");
+        await page.evaluate("document.querySelector('#panel-jobs-link').click()");
+        await page.ready("!document.querySelector('#jobs-view').hidden && document.activeElement.id === 'jobs-title'");
+        await page.evaluate("document.querySelector('#open-jobs').click()");
+
         await page.evaluate("document.querySelector('#toggle-files').click()");
         await page.evaluate("document.querySelector('#tab-files').click()");
         await page.evaluate("window.addEventListener('message', event => { if (event.data === 'oep-preview-script') window.previewScript = true; })");
