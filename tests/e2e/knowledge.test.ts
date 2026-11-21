@@ -16,6 +16,7 @@ import { largeKnowledgeFixture } from '../fixtures/knowledge/large.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
 import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
+import { assertNoForbiddenShellText } from './forbidden-shell-text.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
@@ -130,6 +131,14 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
         assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), true);
         await ready("document.querySelector('#knowledge-status').textContent.includes('沒有已發布')");
+        await assertNoForbiddenShellText(browser);
+        await browser.evaluate("document.querySelector('#open-review').focus()");
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await ready(`document.querySelector('#open-review').getAttribute('aria-current') === 'page' &&
+          document.querySelector('#ingest-review').open && document.activeElement === document.querySelector('#ingest-review > summary')`);
+        await assertNoForbiddenShellText(browser);
+        await browser.evaluate("document.querySelector('#ingest-review').open = false; document.querySelector('#knowledge-tab-overview').click()");
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-ask').disabled"), true);
         context.diagnostic('Knowledge page displayed the empty published store');
         await browser.evaluate("document.querySelector('#open-chat').click()");

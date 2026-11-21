@@ -105,11 +105,54 @@ try {
   try {
     const page = await chromium(join(root, 'chromium'));
     try {
+      async function key(key: string, code: string, windowsVirtualKeyCode: number) {
+        const text = key === 'Enter' ? '\r' : undefined;
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode, text });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode });
+      }
+      const tab = () => key('Tab', 'Tab', 9);
+      const enter = () => key('Enter', 'Enter', 13);
+      const escape = () => key('Escape', 'Escape', 27);
+      const openPanel = (id: string) => page.evaluate(`(() => {
+        const menu = document.querySelector('#top-menu');
+        if (!menu.open) document.querySelector('#top-menu-trigger').click();
+        document.querySelector(${JSON.stringify('#' + id)}).click();
+      })()`);
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
       assert.equal(await page.evaluate("document.cookie.includes('oep_session')"), false);
       await page.ready("document.querySelector('#connection').textContent === '已連線'");
       await assertNoForbiddenShellText(page);
+      if (!real) {
+        const sections = ['rail-functions', 'rail-sessions', 'rail-assistants'];
+        const collapsed = `[${sections.map((id) => JSON.stringify(id)).join(',')}].every(id => !document.getElementById(id).open)`;
+        for (const id of sections) {
+          await tab();
+          await page.ready(`document.activeElement === document.querySelector('#${id} > summary')`);
+          await enter();
+          await page.ready(`!document.getElementById('${id}').open`);
+        }
+        await page.ready(sections.map((id) => `localStorage.getItem('oep.${id}.open') === 'false'`).join(' && '));
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('#connection').textContent === '已連線'");
+        assert.equal(await page.evaluate(collapsed), true);
+        await tab();
+        await page.ready("document.activeElement === document.querySelector('#rail-functions > summary')");
+        await enter();
+        await tab();
+        await page.ready("document.activeElement.id === 'open-chat'");
+        const reached = new Set<string>();
+        for (let index = 0; index < 20 && !reached.has('agent'); index++) {
+          await tab();
+          const focus = await page.evaluate<string>("document.activeElement.id || document.activeElement.parentElement.id");
+          reached.add(focus);
+          if (focus === 'rail-sessions' || focus === 'rail-assistants') await enter();
+        }
+        for (const id of ['open-jobs', 'open-settings', 'session-search', 'new-session', 'agent']) assert.ok(reached.has(id), id);
+        if (await page.evaluate("!document.querySelector('#open-review').hidden")) {
+          assert.ok(reached.has('open-knowledge') && reached.has('open-review'));
+        }
+      }
       await page.command('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
       let passed = 0;
       for (const item of cases) {
@@ -181,6 +224,43 @@ try {
       }
       if (!real) {
         await page.ready("document.querySelector('.tool-card[data-status=done]')");
+        const artifactButton = "#chat-resources button[data-file*='/artifacts/']";
+        const artifactTab = "#panel-tabs [role=tab][aria-selected=true]";
+        const visiblePreview = "#file-preview [role=tabpanel]:not([hidden])";
+        const clickArtifact = () => page.evaluate(`document.querySelector(${JSON.stringify(artifactButton)}).click()`);
+        assert.equal(await page.evaluate("document.querySelector('#chat-files').hidden && getComputedStyle(document.querySelector('#chat-files')).display === 'none'"), true);
+        const wideContent = await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width");
+        await clickArtifact();
+        await page.ready(`document.activeElement.matches('${artifactTab}') && document.querySelector('#file-preview table')`);
+        assert.ok(await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width") < wideContent);
+        assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('${visiblePreview} .file-actions a')].map(link => [link.textContent, link.target, Boolean(link.download)])`),
+          [['在瀏覽器開啟', '_blank', false], ['下載', '', true]]);
+        await tab();
+        await page.ready("document.activeElement.matches('.close-tab')");
+        await enter();
+        await page.ready(`document.querySelector('#chat-files').hidden && document.activeElement.matches(${JSON.stringify(artifactButton)})`);
+        await enter();
+        await page.ready("!document.querySelector('#chat-files').hidden");
+        await escape();
+        assert.equal(await page.evaluate(`document.querySelector('#chat-files').hidden && document.activeElement.matches(${JSON.stringify(artifactButton)})`), true);
+        assert.equal(await page.evaluate("document.querySelector('#work-area').getBoundingClientRect().width"), wideContent);
+
+        await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 840, deviceScaleFactor: 1, mobile: false });
+        await page.ready('innerWidth === 390');
+        await clickArtifact();
+        await page.ready(`(() => {
+          const panel = document.querySelector('#chat-files');
+          const bounds = panel.getBoundingClientRect();
+          return panel.getAttribute('aria-modal') === 'true' && bounds.left === 0 && bounds.top === 0 &&
+            bounds.width === innerWidth && bounds.height === innerHeight &&
+            document.querySelector('#work-area').inert && document.querySelector('.navigation').inert;
+        })()`);
+        assert.equal(await page.evaluate("document.querySelector('#close-files').textContent"), '返回對話');
+        await escape();
+        assert.equal(await page.evaluate(`document.activeElement.matches(${JSON.stringify(artifactButton)}) && !document.querySelector('#work-area').inert`), true);
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await page.ready("!matchMedia('(max-width: 540px)').matches");
+        await assertNoForbiddenShellText(page);
         assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
         await page.evaluate("document.querySelector('.tool-card summary').click()");
         assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), true);
@@ -337,6 +417,7 @@ try {
         await page.ready("document.querySelector('#appearance-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
         await page.evaluate("document.querySelector('#recheck-model').click()");
         await page.ready("document.querySelector('#model-settings-status').textContent === '已重新檢查'");
+        await assertNoForbiddenShellText(page);
         assert.deepEqual(pinged.slice(2).sort(), [...aliases].sort());
         const traces = ['health.jsonl', 'gateway.jsonl', 'web-turns.jsonl'].map((name) =>
           readFileSync(join(audit, name), 'utf8')).join(' ');
@@ -506,17 +587,26 @@ try {
         })()`);
         await page.ready("document.querySelector('#attachments').textContent.includes('sample.html')");
         const previewAttachment = async (name: string) => {
-          await page.evaluate(`[...document.querySelectorAll('#attachments li')].find(row => row.querySelector('label')?.textContent === ${JSON.stringify(name)})
-            .querySelectorAll('button')[1].click()`);
+          await page.evaluate(`(() => {
+            document.querySelector('#panel-tabs [id^="tab-preview-"][aria-selected=true]')?.parentElement.querySelector('.close-tab').click();
+            const row = [...document.querySelectorAll('#attachments li')].find(row => row.querySelector('label')?.textContent === ${JSON.stringify(name)});
+            row.querySelector('button[aria-label^="預覽"]').click();
+          })()`);
         };
-        await page.evaluate("document.querySelector('#toggle-files').click()");
+        await openPanel('toggle-files');
+        await openPanel('open-work');
+        await page.evaluate("document.querySelector('#tab-files').click()");
         await page.ready("document.querySelector('#toggle-files').getAttribute('aria-expanded') === 'true'");
+        await assertNoForbiddenShellText(page);
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.ready("document.activeElement.id === 'tab-work' && document.querySelector('#panel-runs').textContent.includes('已完成')");
         await page.command('Page.reload');
+        await page.ready("document.querySelector('#connection').textContent === '已連線' && document.querySelector('#chat-files').hidden && !document.querySelector('#panel-tabs').children.length");
+        await openPanel('open-work');
         await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
         await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
+        await assertNoForbiddenShellText(page);
         await page.evaluate(`(() => {
           const fetchAPI = window.fetch;
           window.fetch = (path, options) => {
@@ -534,8 +624,7 @@ try {
         await page.ready("!document.querySelector('#jobs-view').hidden && document.activeElement.id === 'jobs-title'");
         await page.evaluate("document.querySelector('#open-jobs').click()");
 
-        await page.evaluate("document.querySelector('#toggle-files').click()");
-        await page.evaluate("document.querySelector('#tab-files').click()");
+        await openPanel('toggle-files');
         await page.evaluate("window.addEventListener('message', event => { if (event.data === 'oep-preview-script') window.previewScript = true; })");
         await page.ready("document.querySelector('#attachments').textContent.includes('sample.html')");
         await previewAttachment('sample.html');
@@ -601,23 +690,17 @@ try {
                 theme.value = ${JSON.stringify(theme)};
                 theme.dispatchEvent(new Event('change'));
                 window.scrollTo(0, 0);
-                document.querySelectorAll('#chat-files [role=tabpanel]').forEach(panel => { panel.scrollTop = 0; });
+                document.querySelector('#chat-files').scrollTop = 0;
               })()`);
               if (layout === 'narrow') {
                 await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-                await page.ready("getComputedStyle(document.querySelector('#toggle-files')).display !== 'none'");
-                await page.evaluate("if (!document.querySelector('#chat-files').classList.contains('sheet-open')) document.querySelector('#toggle-files').click()");
-                await page.ready("document.querySelector('#chat-files').getBoundingClientRect().height > 0");
+                await page.ready("document.querySelector('#chat-files').getAttribute('aria-modal') === 'true'");
               }
               const screenshot = async (view: string) => {
                 if (layout === 'narrow') {
-                  await page.evaluate(`(() => {
-                    const panel = document.querySelector('#chat-files');
-                    if (!panel.classList.contains('sheet-open')) document.querySelector('#toggle-files').click();
-                  })()`);
                   await page.ready(`(() => {
                     const bounds = document.querySelector('#chat-files').getBoundingClientRect();
-                    return bounds.height > 0 && bounds.bottom <= innerHeight && bounds.top < innerHeight;
+                    return bounds.height === innerHeight && bounds.width === innerWidth && bounds.top === 0 && bounds.left === 0;
                   })()`);
                 }
                 await capture(`right-panel-${view}-${theme}-${layout}`);
@@ -626,9 +709,9 @@ try {
                 await screenshot('diff');
                 continue;
               }
-              await page.evaluate("document.querySelector('#tab-files').click(); document.querySelector('#file-preview button')?.click()");
+              await page.evaluate("document.querySelector('#panel-tabs [id^=tab-preview-]')?.parentElement.querySelector('.close-tab').click(); document.querySelector('#tab-files').click()");
               await screenshot('files');
-              await page.evaluate("document.querySelector('#tab-work').click()");
+              await openPanel('open-work');
               await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
               await screenshot('work');
               await page.evaluate("document.querySelector('#tab-files').click()");
@@ -684,11 +767,13 @@ try {
           document.querySelector('#composer').requestSubmit();
         })()`);
         await page.ready("document.querySelectorAll('#artifacts a').length === 2", 130_000);
-        await page.evaluate("document.querySelector('#tab-diff').click(); document.querySelector('#panel-diff button').click()");
+        await openPanel('open-diff');
+        await page.evaluate("document.querySelector('#panel-diff button').click()");
         await page.ready("document.querySelector('#panel-diff').textContent.includes('1 個儲存格') && document.querySelectorAll('.changed-cell').length === 1");
+        await assertNoForbiddenShellText(page);
         if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
         await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
-        assert.equal(await page.evaluate("document.activeElement.id === 'toggle-files' && !document.querySelector('#chat-files').classList.contains('sheet-open')"), true);
+        assert.equal(await page.evaluate("document.activeElement.id === 'top-menu-trigger' && document.querySelector('#chat-files').hidden"), true);
         await page.evaluate(`
           const prompt = document.querySelector('#prompt');
           prompt.focus();
@@ -709,8 +794,8 @@ try {
           const menu = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions');
           window.prompt = () => '合成筆記';
           [...menu.querySelectorAll('button')].find(button => button.textContent === '新增或編輯筆記').click();
-          document.querySelector('#tab-notes').click();
         `);
+        await openPanel('open-notes');
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
         await page.evaluate(`(() => {
           window.prompt = () => '未選取的合成筆記';
@@ -865,13 +950,10 @@ try {
                 document.querySelector('.message-quote').scrollIntoView({ block: 'center' });
               })()`);
               await shot('reply', theme, layout);
-              await page.evaluate(`
-                if (matchMedia('(max-width: 900px)').matches) document.querySelector('#toggle-files').click();
-                document.querySelector('#tab-notes').click();
-              `);
+              await openPanel('open-notes');
               await shot('notes', theme, layout);
               await page.evaluate(`
-                if (document.querySelector('#chat-files').classList.contains('sheet-open')) document.querySelector('#close-files').click();
+                if (!document.querySelector('#chat-files').hidden) document.querySelector('#close-files').click();
                 if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click();
                 document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
               `);
@@ -953,7 +1035,7 @@ try {
         await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
 
       }
-      await page.evaluate("document.querySelector('#stop').click()");
+      await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");
       await page.ready("document.querySelector('#connection').textContent === '服務已停止'");
       await stopping.promise;
       assert.equal(passed, cases.length);
