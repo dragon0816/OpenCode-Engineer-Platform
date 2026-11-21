@@ -577,3 +577,19 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .review-list h3 { font-size: .9rem; color: var(--muted); margin-block: 8px; }
 .review-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-block: 12px; }
 .review-actions label { flex-basis: 100%; }
+
+.shell:has(#knowledge-view:not([hidden]) #knowledge-ask-panel:not([hidden])) {
+  height: 100dvh; grid-template-rows: minmax(0, 1fr);
+}
+#work-area:has(#knowledge-view:not([hidden]) #knowledge-ask-panel:not([hidden])),
+#knowledge-view > .knowledge-body, #knowledge-ask-panel, .knowledge-answer-area { min-height: 0; }
+.knowledge-answer-area { overflow: auto; padding: 3px; }
+#knowledge-question { max-height: min(14dvh, 10rem); }
+.knowledge-selection select, .knowledge-body input, .knowledge-body textarea { max-width: 100%; }
+.knowledge-body, .feature-preview { overflow-wrap: anywhere; }
+.knowledge-body fieldset { min-width: 0; }
+#knowledge-repository-diagnostics p { white-space: pre-line; }
+@media (max-width: 540px) {
+  .knowledge-body, .knowledge-header { padding-inline: 14px; }
+  #knowledge-question { max-height: 12dvh; }
+}

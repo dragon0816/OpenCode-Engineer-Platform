@@ -3,6 +3,9 @@ import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
 
+const tabPreference = 'oep.knowledge.tab';
+const vaultPreference = 'oep.knowledge.vault';
+const vaultTitle = (item) => item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title;
 const find = (id) => document.getElementById(id);
 const label = (tag, value) => {
   const element = document.createElement(tag);
@@ -34,6 +37,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       item.tabIndex = selected ? 0 : -1;
       find(item.getAttribute('aria-controls')).hidden = !selected;
     }
+    localStorage.setItem(tabPreference, tab.id);
     if (focus) tab.focus();
   }
   tabs.forEach((tab, index) => {
@@ -45,6 +49,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       selectTab(tabs[(target + tabs.length) % tabs.length], true);
     });
   });
+  selectTab(tabs.find((tab) => tab.id === localStorage.getItem(tabPreference)) ?? tabs[0]);
   const open = find('open-knowledge');
   const chat = find('open-chat');
   const vault = find('vault');
@@ -94,6 +99,7 @@ export function bindKnowledge(openPreview, closePreviews) {
     technical.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);
     find('knowledge-rebuild').hidden = !selected;
+    if (selected) localStorage.setItem(vaultPreference, selected.id);
     browser.select(selected?.id);
     quality.select(selected);
     if (!selected) {
@@ -103,12 +109,11 @@ export function bindKnowledge(openPreview, closePreviews) {
     }
     for (const [term, value] of [
       ...(selected.tag ? [['發布標籤', selected.tag]] : []),
-      ['發布版本', selected.revision],
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
     for (const [term, value] of [
-      ['識別碼', selected.id], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ['識別碼', selected.id], ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
       ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
     ]) technical.append(label('dt', term), label('dd', value));
     vaultStatus.textContent = selected.ready ? '可搜尋' : '搜尋需要維護';
@@ -134,7 +139,7 @@ export function bindKnowledge(openPreview, closePreviews) {
     }
   }
 
-  async function refreshVaults(previous = vault.value) {
+  async function refreshVaults(previous = vault.value || localStorage.getItem(vaultPreference)) {
     loading?.abort();
     const active = loading = new AbortController();
     models.clear();
@@ -155,7 +160,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
       demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
-        new Option(`${item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
+        new Option([vaultTitle(item), item.tag, new Date(item.publishedAt).toLocaleString('zh-Hant')].filter(Boolean).join(' · '), item.id)));
       if (models.has(previous)) vault.value = previous;
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
@@ -173,9 +178,11 @@ export function bindKnowledge(openPreview, closePreviews) {
   });
   repositoryForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const diagnostics = find('knowledge-repository-diagnostics');
     const path = folder.value.trim();
     if (!path || importing) return;
     importing = true;
+    diagnostics.hidden = true;
     for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = true;
     const write = event.submitter === importFolder;
     repositoryStatus.textContent = write ? '正在驗證及匯入發布版本。' : '正在檢查資料夾。';
@@ -194,9 +201,11 @@ export function bindKnowledge(openPreview, closePreviews) {
         const states = { resolved: '已解析發布標籤與快照。', 'no published version': '找不到發布紀錄。',
           unresolved: '無法解析發布紀錄。', 'artifact unavailable': '已解析發布標籤，快照尚不可用。' };
         repositoryStatus.textContent = [states[publication.state],
-          repository.type === 'wiki' ? 'Wiki 資料夾目前僅支援檢查。' : '',
-          ...errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`),
+          repository.type === 'wiki' ? '文章資料夾目前僅支援檢查。' : '',
         ].filter(Boolean).join('\n');
+        diagnostics.hidden = !errors.length;
+        diagnostics.querySelector('p').textContent =
+          errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`).join('\n');
       }
     } catch (error) {
       repositoryStatus.textContent = error instanceof RequestError ? error.message : '無法處理此資料夾。';
@@ -227,7 +236,9 @@ export function bindKnowledge(openPreview, closePreviews) {
       box.className = 'message';
       box.append(label('h2', '答案'), label('p', result.answer));
       const selected = models.get(vault.value);
-      answer.append(box, label('small', [selected?.title, selected?.tag, `發布版本 ${result.revision}`].filter(Boolean).join(' · ')));
+      const release = label('details', '');
+      release.append(label('summary', '進階'), label('p', `發布版本 ${result.revision}`));
+      answer.append(box, label('small', [vaultTitle(selected), selected?.tag].filter(Boolean).join(' · ')));
       for (const citation of result.citations) {
         const trigger = label('button', `${citation.source} · ${citation.locator}`);
         trigger.type = 'button';
@@ -236,6 +247,7 @@ export function bindKnowledge(openPreview, closePreviews) {
           browser.openPassage({ ...citation, text: citation.context }, citation.quote, trigger));
         answer.append(trigger);
       }
+      answer.append(release);
     } catch {
       if (!active.signal.aborted) status.textContent = '本次詢問無法完成。';
     } finally {

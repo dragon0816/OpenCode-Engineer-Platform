@@ -728,7 +728,14 @@ function updatePanelLayout() {
 }
 
 function showTab(key, opener) {
-  if (opener && !rightPanel.contains(opener)) panelOpener = opener;
+  const target = panelTabs.get(key);
+  if (opener) {
+    target.opener = opener;
+    if (!rightPanel.contains(opener)) {
+      panelOpener = opener;
+      target.externalOpener = opener;
+    } else target.externalOpener = panelTabs.get(activeTab)?.externalOpener ?? panelOpener;
+  }
   activeTab = key;
   for (const [id, { button, panel }] of panelTabs) {
     const active = id === key;
@@ -785,23 +792,42 @@ function removeTab(key) {
   panelTabs.delete(key);
 }
 
+function visibleOpener(opener) {
+  if (opener?.isConnected && opener.getClientRects().length && !opener.closest('[inert]') &&
+      !opener.closest('details:not([open]) :not(summary, summary *)')) return opener;
+  if (opener?.dataset.featureFocus) {
+    const matches = document.querySelectorAll(`[data-feature-focus="${CSS.escape(opener.dataset.featureFocus)}"]`);
+    return [...matches].find((item) => item.getClientRects().length && !item.closest('[hidden], [inert]') &&
+      !item.closest('details:not([open]) :not(summary, summary *)'));
+  }
+}
+
 function closeTab(key) {
   const keys = [...panelTabs.keys()];
   const index = keys.indexOf(key);
+  if (keys.length === 1) {
+    closePanel();
+    return;
+  }
+  const { opener, preview } = panelTabs.get(key);
   removeTab(key);
-  if (!panelTabs.size) closePanel();
-  else showTab(activeTab === key ? keys[index + 1] ?? keys[index - 1] : activeTab);
+  const parent = opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
+  showTab(activeTab === key ? parent?.[0] ?? keys[index + 1] ?? keys[index - 1] : activeTab);
+  if (preview && parent?.[0] === activeTab) visibleOpener(opener)?.focus({ preventScroll: true });
 }
 
 function closePanel(restoreFocus = true) {
+  const tab = panelTabs.get(activeTab);
+  const opener = tab?.preview ? tab.externalOpener ?? panelOpener : panelOpener;
   for (const key of panelTabs.keys()) removeTab(key);
   rightPanel.hidden = true;
   panelToggle.setAttribute('aria-expanded', 'false');
   updatePanelLayout();
   if (restoreFocus) {
-    const opener = panelOpener?.isConnected ? panelOpener
-      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : menuTrigger;
-    (opener ?? menuTrigger).focus({ preventScroll: true });
+    const replacement = opener?.dataset.id && messages.querySelector(`[data-id="${CSS.escape(opener.dataset.id)}"]`);
+    const page = tab?.preview && find('work-area').querySelector('.knowledge:not([hidden]) h1');
+    const target = visibleOpener(opener) || replacement || page || menuTrigger;
+    target.focus({ preventScroll: true });
   }
   panelOpener = undefined;
   activeTab = undefined;
@@ -825,10 +851,15 @@ document.addEventListener('click', (event) => {
 });
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
-find('open-chat').addEventListener('click', () => {
-  if (panelTabs.get(activeTab)?.preview) closePanel(false);
-});
 panelNarrow.addEventListener('change', updatePanelLayout);
+document.addEventListener('keydown', (event) => {
+  const disclosure = event.target.closest?.('.feature-more[open]');
+  if (event.key === 'Escape' && !event.defaultPrevented && disclosure) {
+    event.preventDefault();
+    disclosure.open = false;
+    disclosure.querySelector('summary').focus();
+  }
+}, { capture: true });
 document.addEventListener('keydown', (event) => {
   if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
   event.preventDefault();
