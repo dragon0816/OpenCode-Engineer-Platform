@@ -443,6 +443,43 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           document.querySelector('#knowledge-rebuild').click();
         }`);
         await ready("document.querySelector('#knowledge-rebuild-status').textContent.includes('已重建')");
+        await browser.evaluate("document.querySelector('#knowledge-demo-load').click()");
+        await ready("document.querySelector('#vault').value === 'oep-synthetic-demo' && !document.querySelector('#knowledge-demo-remove').hidden");
+        await ready("document.querySelectorAll('#quality-questions li').length === 48");
+        assert.equal(await browser.evaluate("document.querySelector('#quality-editor').hidden"), true);
+        await browser.evaluate("document.querySelector('#knowledge-demo-remove').click()");
+        await ready("!document.querySelector('#vault option[value=oep-synthetic-demo]')");
+
+        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: 'http://atlas.example.invalid', toolbox: true })).status, 400);
+        await browser.evaluate(`{
+          document.querySelector('#open-settings').click();
+          document.querySelector('[data-section=integrations]').click();
+          window.atlasOpened = [];
+          window.open = (...args) => window.atlasOpened.push(args);
+        }`);
+        await ready("document.querySelector('#knowledge-toolbox').checked");
+        await browser.evaluate(`{
+          document.querySelector('#atlas-url').value = 'https://atlas.example.invalid/';
+          document.querySelector('#knowledge-toolbox').checked = false;
+          document.querySelector('#knowledge-settings').requestSubmit();
+        }`);
+        await ready("document.querySelector('#knowledge-settings-status').textContent === '已儲存。'");
+        assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
+        await browser.evaluate("window.confirm = () => false; document.querySelector('#open-atlas').click()");
+        assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
+        await browser.evaluate("window.confirm = () => true; document.querySelector('#open-atlas').click()");
+        assert.equal(await browser.evaluate("window.atlasOpened[0][0]"), 'https://atlas.example.invalid/');
+        const disabled = await (await api.post('/api/sessions', { agent: 'inspector' })).json();
+        assert.deepEqual(disabled.tools, []);
+        const accepted = await api.post(`/api/sessions/${disabled.id}/turns`, {
+          id: randomUUID(), text: 'Synthetic toolbox disabled probe', attachments: [], workbook: false,
+        });
+        assert.equal(accepted.status, 202);
+        await until(async () => {
+          const state = await (await api.get(`/api/sessions/${disabled.id}/state`)).json();
+          return state.messages.some((entry: { text: string }) => entry.text === 'Knowledge tool unavailable') || undefined;
+        }, 15_000);
+        assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: '', toolbox: true })).status, 200);
         await browser.evaluate("document.querySelector('#open-chat').click()");
         assert.equal(await browser.evaluate("document.querySelector('#chat-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'open-chat');

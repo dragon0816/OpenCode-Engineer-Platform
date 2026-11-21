@@ -63,6 +63,21 @@ export function bindKnowledge() {
   let loading;
   let pending;
   let importing;
+  const demoLoad = find('knowledge-demo-load');
+  const demoRemove = find('knowledge-demo-remove');
+  async function demo(load) {
+    demoLoad.disabled = demoRemove.disabled = true;
+    const feedback = find('knowledge-demo-status');
+    try {
+      const { vault: id } = await request('/api/knowledge/demo', { data: { load, allowModel: find('demo-model-consent').checked } });
+      await refreshVaults(load ? id : vault.value);
+      feedback.textContent = load ? '已載入合成示範庫。' : '已移除合成示範庫。';
+    } catch (error) { feedback.textContent = error.message; }
+    finally { demoLoad.disabled = demoRemove.disabled = false; }
+  }
+  demoLoad.addEventListener('click', () => void demo(true));
+  demoRemove.addEventListener('click', () => void demo(false));
+
   function controls() {
     const selected = models.get(vault.value);
     vault.disabled = Boolean(loading || pending) || !models.size;
@@ -126,6 +141,9 @@ export function bindKnowledge() {
       const { vaults } = await request('/api/knowledge/vaults', { signal: active.signal });
       if (active.signal.aborted) return;
       models = new Map(vaults.map((item) => [item.id, item]));
+      const hasDemo = models.has('oep-synthetic-demo');
+      demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
+      demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
         new Option(`${item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
       if (models.has(previous)) vault.value = previous;

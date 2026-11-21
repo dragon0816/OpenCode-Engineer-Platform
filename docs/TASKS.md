@@ -144,3 +144,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 ## Phase 2b Slice 2D
 
 - 對話操作與剩餘設定的實作、測試及開放項目見 [Slice 2D 驗收](reviews/PHASE2B_SLICE2D_REPORT.md)。
+
+## Phase 2b Slice 3A
+
+- 知識頁概覽、問答、品質、建置與整合設定的驗收及開放項目見 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md)。

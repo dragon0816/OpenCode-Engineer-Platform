@@ -8,6 +8,7 @@ import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
 import { benchmarkQuestions } from '../../../packages/knowledge/src/benchmark.ts';
+import { canonical, sha256 } from '../../../packages/knowledge/src/snapshot.ts';
 import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
@@ -229,6 +230,22 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { version, license, pin: tag, root });
       return;
     }
+    if (path === '/api/settings/knowledge') {
+      if (method === 'POST') {
+        const { atlasUrl, toolbox } = await body(request);
+        if (typeof atlasUrl !== 'string' || atlasUrl.length > 2048 || typeof toolbox !== 'boolean') {
+          throw new HttpError(400, '請檢查知識庫設定。');
+        }
+        const value = atlasUrl.trim();
+        const url = value ? URL.parse(value) : null;
+        if (value && (!url || !/^https:\/\//i.test(value) || url.username || url.password || /[\\\s]/.test(value))) {
+          throw new HttpError(400, '請輸入 HTTPS 網址。');
+        }
+        store.saveKnowledgeSettings(url?.href ?? '', toolbox);
+      }
+      send(response, 200, store.knowledgeSettings());
+      return;
+    }
     if (path === '/api/settings/runtime' && method === 'GET') {
       const pin = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
       send(response, 200, { pin: pin.tag, version: runtime.version, compatible: runtime.version === pin.tag.slice(1),
@@ -336,6 +353,18 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }).length : 0;
       const abstained = !answerable && result.state === 'abstain' && ['no-evidence', 'unsupported', 'invalid-citation'].includes(result.reason);
       send(response, 200, { result, usable, abstained, unsupported, reproducible, recall, citations: hits.length, elapsedMs: Math.round(performance.now() - start) });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/demo' && method === 'POST') {
+      const { load, allowModel } = await body(request);
+      if (typeof load !== 'boolean') throw new HttpError(400, '請選擇載入或移除示範資料。');
+      const { snapshot } = goldFixture();
+      snapshot.vault = { ...snapshot.vault, id: 'oep-synthetic-demo', title: '知識庫示範（合成資料）' };
+      snapshot.schema.document.synthetic = true;
+      snapshot.schema.sha256 = sha256(canonical(snapshot.schema.document));
+      try { runtime.knowledge.reviewStore.setDemo(snapshot, load, allowModel === true); }
+      catch { throw new HttpError(409, '示範庫與現有資料衝突，請檢查已發布的版本。'); }
+      send(response, 200, { loaded: load, vault: snapshot.vault.id });
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/browse' && method === 'POST') {

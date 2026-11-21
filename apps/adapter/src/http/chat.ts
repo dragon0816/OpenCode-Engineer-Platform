@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord, RunState } from '../../../../packages/contracts/src/run.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
+import { knowledgeMcpName, knowledgeToolName } from '../opencode/knowledge-mcp.ts';
 import { call } from '../opencode/client.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce } from '../opencode/sessions.ts';
@@ -46,7 +47,10 @@ export function publicRun(run: RunRecord) {
       ? { name: workbookName, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
 
-export function publicSession({ id, agent, alias, createdAt, title, project }: WebSession) { return { id, agent, alias, createdAt, project, ...(title ? { title } : {}) }; }
+export function publicSession({ id, agent, alias, createdAt, title, project, knowledgeDisabled }: WebSession) {
+  return { id, agent, alias, createdAt, project, tools: knowledgeDisabled ? [] : [`${knowledgeMcpName}_${knowledgeToolName}`],
+    ...(title ? { title } : {}) };
+}
 
 type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
 
@@ -88,7 +92,8 @@ export class ChatService {
   async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias) {
     const id = randomUUID();
     const createdAt = Date.now();
-    const local = { id, project, agent, alias, createdAt };
+    const knowledgeDisabled = !this.store.knowledgeSettings().toolbox;
+    const local = { id, project, agent, alias, createdAt, knowledgeDisabled: Number(knowledgeDisabled) };
     const workspace = this.workspace(local);
     const modelWorkspace = this.modelWorkspace(local);
     checkDirectory(join(this.projectRoot(project), 'sessions'));
@@ -97,7 +102,7 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true);
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled);
     const session = { ...local, upstreamID };
     this.store.createSession(session);
     return session;

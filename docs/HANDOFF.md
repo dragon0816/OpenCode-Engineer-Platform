@@ -98,3 +98,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 2b Slice 2D
 
 對話指令、引用、評價及筆記、會話刪除卡和輸入、專案、關於設定的實作與驗證狀態見 [Slice 2D 驗收](reviews/PHASE2B_SLICE2D_REPORT.md)。Telegram 語音、通用工具直接瀏覽唯讀來源及其他開放矩陣項目在報告列出。
+
+## Phase 2b Slice 3A
+
+從左側開啟知識庫並選擇已發布的版本。「概覽」提供固定預覽、篩選、全文搜尋與重建索引。「問答」的引用按鈕可開啟來源段落。「品質」在選中的知識庫保存題集。「建置」保留儲存庫匯入及 BI／Wiki 審核。「設定」的整合說明提供 Atlas 及新會話的 BI 查詢工具。 [驗收與未驗項目](reviews/PHASE2B_SLICE3A_REPORT.md)

@@ -469,3 +469,4 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #quality-questions { max-height: 330px; overflow: auto; }
 #quality-questions li { margin-block: 6px; }
 #quality-editor { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+#knowledge-demo-status { min-width: 0; }

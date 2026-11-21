@@ -529,6 +529,21 @@ const schema = this.reviewSchema(input.vault.id, base);
     });
   }
 
+  setDemo(snapshot: Snapshot, load: boolean, allowModel = false) {
+    return this.transaction(() => {
+      const vault = snapshot.vault.id;
+      const bytes = Buffer.from(canonical(snapshot));
+      const registered = this.db.prepare('SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication WHERE v.id=?')
+        .get(vault) as Publication | undefined;
+      if (registered && registered.manifest_hash !== sha256(bytes)) throw new Error('Demo vault collision');
+      if (load && registered) {
+        this.db.prepare('UPDATE publications SET allow_model=? WHERE id=?').run(Number(allowModel), registered.id);
+        this.activate(vault, registered.id);
+      } else if (load) this.writeSnapshot(snapshot, bytes, allowModel);
+      else if (registered) this.db.prepare('INSERT OR IGNORE INTO inactive_vaults VALUES (?)').run(vault);
+    });
+  }
+
   browse(vault: string, input: Record<string, unknown>) {
     const publication = this.publication(vault);
     if (!publication) return undefined;

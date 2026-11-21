@@ -1,3 +1,4 @@
+import { knowledgeMcpName, knowledgeToolName } from './knowledge-mcp.ts';
 import type { OpenCodeClient, SessionPromptInput } from '@opencode/client';
 import { randomBytes } from 'node:crypto';
 import { call } from './client.ts';
@@ -7,12 +8,13 @@ import { submissionCount } from './reconcile.ts';
 export type Agent = 'workbook' | 'inspector';
 export const promptID = () => `msg_${randomBytes(16).toString('hex')}`;
 
-export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, web = false) {
+export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, web = false, knowledgeDisabled = false) {
   const readable = (web ? [] : ['sop.md', 'marker.txt']).map((resource) => ({ action: 'read', resource, effect: 'allow' as const }));
   const writer = { action: 'edit', resource: 'program.js', effect: 'allow' as const };
   const session = await client.session.create({
     title: `OEP ${web ? 'Web' : 'synthetic'} ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
-    permissions: !web && agent === 'workbook' ? [...readable, writer] : readable,
+    permissions: knowledgeDisabled ? [{ action: `${knowledgeMcpName}_${knowledgeToolName}`, resource: '*', effect: 'deny' }] :
+      !web && agent === 'workbook' ? [...readable, writer] : readable,
   }, call());
   if (session.agent !== agent || session.location.directory !== directory ||
       session.model?.id !== alias || session.model.providerID !== providerID) {

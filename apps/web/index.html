@@ -148,6 +148,17 @@
             <p id="runtime-agent"></p>
           </section>
           <section id="settings-integrations" hidden>
+            <h2>知識庫整合</h2>
+            <form id="knowledge-settings">
+              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用 BI 查詢工具</label>
+              <label for="atlas-url">Atlas 網址（選填）</label>
+              <input id="atlas-url" type="url" maxlength="2048">
+              <div class="settings-actions">
+                <button type="submit">儲存知識庫設定</button>
+                <button id="open-atlas" type="button" disabled>開啟 Atlas</button>
+              </div>
+              <p id="knowledge-settings-status" role="status"></p>
+            </form>
             <h2>整合說明</h2>
             <ul>
               <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
@@ -219,6 +230,12 @@
         </div>
         <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
           <dl id="vault-details"></dl>
+          <div class="knowledge-pager">
+            <button id="knowledge-demo-load" type="button">載入合成示範庫</button>
+            <button id="knowledge-demo-remove" type="button" hidden>移除合成示範庫</button>
+            <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將合成證據送至模型</label>
+            <span id="knowledge-demo-status" role="status"></span>
+          </div>
           <p id="knowledge-overview-empty">請在「建置」匯入已發布的知識庫。</p>
           <div id="knowledge-browser" hidden>
             <h2>卡片預覽</h2>
@@ -364,6 +381,10 @@
         <div id="file-preview"></div>
       </div>
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
+        <details id="panel-tools" hidden>
+          <summary>會話工具</summary>
+          <ul><li>BI 知識庫查詢</li></ul>
+        </details>
         <ul id="panel-runs"></ul>
         <p id="panel-jobs"></p>
         <button id="panel-jobs-link" type="button">開啟工作與排程</button>
