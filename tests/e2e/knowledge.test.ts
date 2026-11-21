@@ -129,6 +129,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'knowledge-title');
         await browser.evaluate(`
+          document.querySelector('#knowledge-tab-build').click();
           document.querySelector('#knowledge-repository').open = true;
           document.querySelector('#knowledge-folder').value = ${JSON.stringify(repository)};
           document.querySelector('#knowledge-check-folder').click();
@@ -144,6 +145,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal((await (await api.get('/api/knowledge/vaults')).json()).vaults[0]?.id, vault);
         context.diagnostic('Chromium checked and imported the repository, and the authenticated API exposed its active generation');
         await browser.evaluate(`
+          document.querySelector('#knowledge-tab-ask').click();
           document.querySelector('#knowledge-question').value = ${JSON.stringify(question)};
           document.querySelector('#knowledge-ask').click();
         `);
@@ -166,6 +168,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await ready("document.querySelector('#knowledge-status').textContent.includes('引用已通過驗證')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
         await browser.evaluate(`
+          document.querySelector('#knowledge-tab-build').click();
           const reviewPanel = document.querySelector('#wiki-review');
           reviewPanel.open = true;
           const [reviewVault, reviewVersion] = reviewPanel.querySelectorAll('input');

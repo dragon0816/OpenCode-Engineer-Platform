@@ -209,6 +209,31 @@
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
       </header>
       <div class="knowledge-body">
+        <label for="vault">已發布的知識庫</label>
+        <select id="vault" disabled><option value="">載入中</option></select>
+        <div class="knowledge-tabs" role="tablist" aria-label="知識庫功能">
+          <button type="button" role="tab" id="knowledge-tab-overview" aria-controls="knowledge-overview" aria-selected="true">概覽</button>
+          <button type="button" role="tab" id="knowledge-tab-ask" aria-controls="knowledge-ask-panel" aria-selected="false" tabindex="-1">問答</button>
+          <button type="button" role="tab" id="knowledge-tab-quality" aria-controls="knowledge-quality" aria-selected="false" tabindex="-1">品質</button>
+          <button type="button" role="tab" id="knowledge-tab-build" aria-controls="knowledge-build" aria-selected="false" tabindex="-1">建置</button>
+        </div>
+        <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
+          <dl id="vault-details"></dl>
+          <p id="knowledge-overview-empty">請在「建置」匯入已發布的知識庫。</p>
+        </section>
+        <section id="knowledge-ask-panel" role="tabpanel" aria-labelledby="knowledge-tab-ask" hidden>
+        <p id="knowledge-status" role="status"></p>
+        <form id="knowledge-form">
+          <label for="knowledge-question">問題</label>
+          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
+          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
+        </form>
+        <div id="knowledge-answer" aria-live="polite"></div>
+        </section>
+        <section id="knowledge-quality" role="tabpanel" aria-labelledby="knowledge-tab-quality" tabindex="0" hidden>
+          <p>品質評估尚未開放。</p>
+        </section>
+        <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
         <details id="knowledge-repository">
           <summary>從儲存庫資料夾匯入</summary>
           <form id="knowledge-repository-form">
@@ -222,16 +247,7 @@
           </form>
           <p id="knowledge-repository-status" role="status"></p>
         </details>
-        <label for="vault">已發布的知識庫</label>
-        <select id="vault" disabled><option value="">載入中</option></select>
-        <dl id="vault-details"></dl>
-        <p id="knowledge-status" role="status"></p>
-        <form id="knowledge-form">
-          <label for="knowledge-question">問題</label>
-          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
-          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
-        </form>
-        <div id="knowledge-answer" aria-live="polite"></div>
+        </section>
       </div>
     </section>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
