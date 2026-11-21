@@ -2,28 +2,42 @@ import { appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { KnowledgeAsk } from '../../packages/knowledge/src/ask.ts';
 import type { Attempt } from '../../packages/knowledge/src/ask.ts';
+import { readRepository } from '../../packages/knowledge/src/repository.ts';
 import { canonical, sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { gatewayAliases, gatewaySettings, startGateway } from '../../apps/adapter/src/opencode/gateway.ts';
 import type { GatewayTrace } from '../../apps/adapter/src/opencode/gateway.ts';
 import { knowledgeModel } from '../../apps/adapter/src/opencode/knowledge-model.ts';
 import { goldFixture } from '../../tests/fixtures/knowledge/gold.ts';
+import { syntheticRepository } from '../../tests/fixtures/knowledge/repository.ts';
 import { evaluate } from '../phase0/knowledge-baseline.ts';
 
-const { snapshot, questions, baseline, extension, extendedBaseline } = goldFixture();
-const bytes = Buffer.from(canonical(snapshot));
+const { snapshot, questions: goldQuestions, baseline, extension, extendedBaseline } = goldFixture();
+const args = process.argv.slice(2);
+const repository = args.includes('--repository');
+const selected = args.filter((argument) => argument !== '--repository');
+if (selected.some((alias) => !gatewayAliases.some((approved) => approved === alias))) throw new Error('Invalid benchmark alias');
 mkdirSync('.phase0', { recursive: true });
 const audit = mkdtempSync(join('.phase0', 'knowledge-gold-'));
 const write = (file: string, value: object) => appendFileSync(join(audit, file), JSON.stringify(value) + '\n');
-const selected = process.argv.slice(2);
-if (selected.some((alias) => !gatewayAliases.some((approved) => approved === alias))) throw new Error('Invalid benchmark alias');
-console.log(JSON.stringify({ audit, aliases: selected.length ? selected : gatewayAliases, fixture: sha256(bytes),
+const mirror = join(audit, 'repository');
+const fixture = repository ? syntheticRepository(mirror, { snapshot }) : undefined;
+const input = fixture ? readRepository(mirror) : { snapshot, original: Buffer.from(canonical(snapshot)) };
+const questions = fixture ? goldQuestions.map((question) => ({ ...question,
+  evidence: question.evidence.map((id) => {
+    const mapped = fixture.evidenceIds.get(id);
+    if (!mapped) throw new Error('Missing benchmark evidence in synthetic repository');
+    return mapped;
+  }),
+})) : goldQuestions;
+console.log(JSON.stringify({ audit, aliases: selected.length ? selected : gatewayAliases, fixture: sha256(input.original),
+  ...(input.snapshot.repository && { tag: input.snapshot.repository.tag, revision: input.snapshot.publication.revision }),
   baseline: sha256(baseline), extension: sha256(extension) }));
 
 const store = new KnowledgeStore(':memory:');
 try {
-  const vault = snapshot.vault.id;
-  store.import(snapshot, bytes, true);
+  const vault = input.snapshot.vault.id;
+  store.import(input.snapshot, input.original, true);
   const retrievable = questions.filter((question) => question.class === 'answerable');
   const coverage = retrievable.map(({ id, query, evidence }) => {
     const hits = store.retrieve(vault, query)?.passages.map((passage) => passage.id) ?? [];

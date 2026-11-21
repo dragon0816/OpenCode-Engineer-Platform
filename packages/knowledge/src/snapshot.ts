@@ -6,8 +6,9 @@ export const digestPattern = /^[a-f0-9]{64}$/;
 export const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 
 export type Source = { id: string; ref: string; version: string; sha256?: string };
-export type Card = { id: string; type: string; key: string; title: string; version: string; fields: Record<string, unknown> };
-export type Relationship = { from: string; to: string; kind: string };
+export type Card = { id: string; type: string; key: string; title: string; version: string; fields: Record<string, unknown>;
+  fieldProvenance?: Record<string, unknown> };
+export type Relationship = { from: string; to: string; kind: string; provenance?: Record<string, unknown> };
 export type SnapshotPassage = { id: string; sourceId: string; cardId?: string; locator: string; text: string; sha256: string };
 export type Snapshot = {
   format: typeof snapshotFormat;
@@ -19,7 +20,17 @@ export type Snapshot = {
   cards: Card[];
   relationships: Relationship[];
   passages: SnapshotPassage[];
+  repository?: {
+    tag: string; commit: string; author: string; clock: number; seq: number;
+    history?: Record<string, unknown>[]; evidence?: Record<string, unknown>[]; relationEvidence?: Record<string, unknown>[];
+  };
 };
+
+type PublicationOrder = Pick<NonNullable<Snapshot['repository']>, 'clock' | 'author' | 'seq'>;
+
+export function compareRepositoryPublications(a: PublicationOrder, b: PublicationOrder) {
+  return a.clock - b.clock || (a.author < b.author ? -1 : a.author > b.author ? 1 : a.seq - b.seq);
+}
 
 export function invalid(location: string): never {
   throw new Error(`Invalid published snapshot at ${location}`);
@@ -75,8 +86,19 @@ export function validateSnapshot(value: unknown): Snapshot {
   if (publication.parent !== undefined && id(publication.parent, 'publication.parent') === revision) invalid('publication.parent');
   const schema = record(input.schema, 'schema');
   id(schema.id, 'schema.id');
-  id(schema.version, 'schema.version');
+  if (typeof schema.version !== 'string' || !/^[\p{L}\p{N}][\p{L}\p{N}._:@/+\-]{0,191}$/u.test(schema.version)) invalid('schema.version');
   if (sha256(canonical(record(schema.document, 'schema.document'))) !== schema.sha256) invalid('schema.sha256');
+  if (input.repository !== undefined) {
+    const repo = record(input.repository, 'repository');
+    id(repo.tag, 'repository.tag');
+    id(repo.author, 'repository.author');
+    if (typeof repo.commit !== 'string' || !digestPattern.test(repo.commit) ||
+        typeof repo.clock !== 'number' || !Number.isSafeInteger(repo.clock) || repo.clock < 0 ||
+        typeof repo.seq !== 'number' || !Number.isSafeInteger(repo.seq) || repo.seq < 1) invalid('repository order');
+    for (const key of ['history', 'evidence', 'relationEvidence']) {
+      if (repo[key] !== undefined) rows(repo[key], `repository.${key}`).forEach((row) => record(row, `repository.${key}`));
+    }
+  }
 
   const sourceIds = new Set<string>();
   const cardIds = new Set<string>();
@@ -103,12 +125,14 @@ export function validateSnapshot(value: unknown): Snapshot {
     string(card.title, at);
     string(card.version, at);
     record(card.fields, at);
+    if (card.fieldProvenance !== undefined) record(card.fieldProvenance, at);
   }
   for (const [index, value] of rows(input.relationships, 'relationships').entries()) {
     const at = `relationships[${index}]`;
     const edge = record(value, at);
     if (!cardIds.has(id(edge.from, at)) || !cardIds.has(id(edge.to, at))) invalid(at);
     unique(edges, JSON.stringify([edge.from, edge.to, string(edge.kind, at)]), at);
+    if (edge.provenance !== undefined) record(edge.provenance, at);
   }
   for (const [index, value] of rows(input.passages, 'passages').entries()) {
     const at = `passages[${index}]`;
