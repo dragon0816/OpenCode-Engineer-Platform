@@ -91,7 +91,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       const data = await setRequest({}, active.signal);
       if (active.signal.aborted) return;
       catalog = data.sets;
-      sets.replaceChildren(...catalog.map(({ name }) => new Option(name, name)));
+      sets.replaceChildren(...catalog.map(({ name, builtIn }) => new Option(builtIn ? '標準題集' : name, name)));
       if (catalog.some(({ name }) => name === preferred)) sets.value = preferred;
       aliases.replaceChildren(...data.aliases.map((alias) => new Option(modelLabel(alias), alias)));
       status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
@@ -177,7 +177,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
         row.append(button('選取證據', () => {
           if (!picked.includes(passage.id) && picked.length < 10) picked.push(passage.id);
           renderEvidence();
-        }), ' ', button(passage.source + ' · ' + passage.locator, () => openPassage(passage)), node('p', passage.text.slice(0, 200)));
+        }), ' ', button(passage.source + ' · ' + passage.locator, (event) => openPassage(passage, '', event.currentTarget)), node('p', passage.text.slice(0, 200)));
         matches.append(row);
       }
     } catch { status.textContent = '無法搜尋段落。'; }
@@ -212,6 +212,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
     find('quality-set-actions').inert = true;
     const title = node('p');
     const thresholds = node('details');
+    thresholds.hidden = true;
     const metrics = node('p');
     thresholds.append(node('summary', '進階評分'), metrics);
     const table = node('table');
@@ -254,7 +255,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
           if (question.answer) details.append(node('p', '預期：' + question.answer));
           if (result.answer) details.append(node('p', '實際：' + result.answer));
           for (const citation of result.citations ?? []) details.append(button(citation.source + ' · ' + citation.locator,
-            () => openPassage({ ...citation, text: citation.context }, citation.quote)));
+            (event) => openPassage({ ...citation, text: citation.context }, citation.quote, event.currentTarget)));
           row.cells[1].replaceChildren(details);
           row.insertCell().textContent = usable || abstained ? '是' : '否';
           row.insertCell().textContent = citations ? reproducible + '／' + citations : '—';

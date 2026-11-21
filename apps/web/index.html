@@ -57,7 +57,7 @@
         <details id="top-menu">
           <summary id="top-menu-trigger" aria-label="工作台選單">⋯</summary>
           <div class="top-menu-actions">
-            <div class="panel-openers" aria-label="會話附加資料" role="group">
+            <div class="panel-openers" aria-label="附加資料分頁" role="group">
               <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產出</button>
               <button type="button" id="open-work" aria-controls="chat-files">工作</button>
               <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
@@ -489,8 +489,9 @@
           </div>
         </section>
         <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
-        <details id="knowledge-repository">
-          <summary>從儲存庫資料夾匯入</summary>
+          <p class="page-help">匯入已發布的資料，或準備草稿送交審核。</p>
+          <details id="knowledge-repository">
+          <summary>從本機資料夾匯入</summary>
           <form id="knowledge-repository-form">
             <label for="knowledge-folder">本機資料夾完整路徑</label>
             <input type="text" id="knowledge-folder" maxlength="2048" autocomplete="off" spellcheck="false" required>
@@ -505,22 +506,15 @@
         </section>
       </div>
     </section>
-    <dialog id="knowledge-drawer" aria-labelledby="knowledge-drawer-title">
-      <header class="knowledge-drawer-header">
-        <h2 id="knowledge-drawer-title"></h2>
-        <form method="dialog"><button autofocus>關閉</button></form>
-      </header>
-      <div id="knowledge-drawer-body"></div>
-    </dialog>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
       <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
     </main>
-    <aside class="sidebar files" id="chat-files" aria-label="會話面板" hidden>
+    <aside class="sidebar files" id="chat-files" aria-label="附加資料" hidden>
       <div class="panel-header">
         <button type="button" id="close-files">關閉附加資料</button>
-        <div id="panel-tabs" role="tablist" aria-label="會話附加資料"></div>
+        <div id="panel-tabs" role="tablist" aria-label="附加資料分頁"></div>
       </div>
       <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0" hidden>
         <div id="file-list">

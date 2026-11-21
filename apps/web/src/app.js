@@ -724,7 +724,7 @@ function updatePanelLayout() {
   rightPanel.setAttribute('role', overlay ? 'dialog' : 'complementary');
   if (overlay) rightPanel.setAttribute('aria-modal', 'true');
   else rightPanel.removeAttribute('aria-modal');
-  closeFiles.textContent = panelNarrow.matches ? '返回對話' : '關閉附加資料';
+  closeFiles.textContent = !panelNarrow.matches ? '關閉附加資料' : find('chat-view').hidden ? '返回頁面' : '返回對話';
 }
 
 function showTab(key, opener) {
@@ -746,6 +746,35 @@ function showTab(key, opener) {
 function openSection(key, opener) {
   if (!panelTabs.has(key)) addTab(key, panelSections[key], find(`panel-${key}`));
   showTab(key, opener);
+}
+
+function openFeaturePreview(key, title, opener) {
+  if (panelTabs.has(key)) {
+    showTab(key, opener);
+    return panelTabs.get(key).preview;
+  }
+  const abort = new AbortController();
+  const panel = node('div', undefined, 'knowledge feature-preview');
+  const heading = node('h2', title);
+  const body = node('div', undefined, 'preview-body');
+  panel.append(heading, body);
+  find('file-preview').append(panel);
+  addTab(key, title, panel, () => {
+    abort.abort();
+    panel.remove();
+  });
+  const tab = panelTabs.get(key);
+  const preview = {
+    body,
+    signal: abort.signal,
+    setTitle(value) {
+      heading.textContent = tab.button.textContent = value;
+      tab.item.querySelector('.close-tab').setAttribute('aria-label', `關閉 ${value} 分頁`);
+    },
+  };
+  tab.preview = preview;
+  showTab(key, opener);
+  return preview;
 }
 
 function removeTab(key) {
@@ -796,6 +825,9 @@ document.addEventListener('click', (event) => {
 });
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
+find('open-chat').addEventListener('click', () => {
+  if (panelTabs.get(activeTab)?.preview) closePanel(false);
+});
 panelNarrow.addEventListener('change', updatePanelLayout);
 document.addEventListener('keydown', (event) => {
   if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
@@ -1827,7 +1859,7 @@ try {
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
   if (bootstrap.knowledge) {
-    knowledge = bindKnowledge();
+    knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false));
     find('open-review').hidden = false;
   }
   find('open-chat').addEventListener('click', () => {

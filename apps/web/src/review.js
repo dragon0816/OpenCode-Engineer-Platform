@@ -18,7 +18,7 @@ const statuses = { pending: '待審核', approved: '已核准', rejected: '已�
 
 function advanced(parent) {
   const fold = element('details');
-  fold.append(element('summary', '進階 · JSON'));
+  fold.append(element('summary', '進階'));
   parent.append(fold);
   return fold;
 }
@@ -57,25 +57,27 @@ function showComparison(parent, { previous, candidate }) {
   parent.append(evidence);
 }
 
-export function bindReview(anchor, onPublish) {
+export function bindReview(anchor, onPublish, openPreview) {
   const endpoint = '/api/knowledge/reviews';
   for (const kind of ['bi', 'wiki']) {
     const panel = element('details');
     panel.id = kind === 'bi' ? 'ingest-review' : 'wiki-review';
-    panel.append(element('summary', kind === 'bi' ? 'BI 匯入與審核' : 'Wiki 草稿與審核'));
+    panel.append(element('summary', kind === 'bi' ? '從來源建立卡片' : '從來源建立文章'));
     anchor.after(panel);
-    const vault = inputLabel(panel, '知識庫 ID');
+    const vault = inputLabel(panel, '知識庫代號');
     const vaultChoices = element('datalist');
     vaultChoices.id = panel.id + '-vaults';
     vault.setAttribute('list', vaultChoices.id);
     panel.append(vaultChoices);
-    const version = inputLabel(panel, 'Schema 版本');
-    const fields = kind === 'bi' ? inputLabel(panel, '必要欄位（逗號分隔）') : null;
-    const source = inputLabel(panel, '選擇 UTF-8 文字或 Markdown');
+    const schemaOptions = advanced(panel);
+    const version = inputLabel(schemaOptions, 'Schema 版本');
+    const fields = kind === 'bi' ? inputLabel(schemaOptions, '必要欄位（逗號分隔）') : null;
+    const source = inputLabel(panel, '選擇文字檔');
     source.type = 'file';
     source.accept = '.txt,.md,.markdown';
     const pasted = inputLabel(panel, '或貼上來源文字', 'textarea');
-    const sourceText = inputLabel(panel, '來源預覽（選取文字可作為引文）', 'textarea');
+    const sourceContent = element('div');
+    const sourceText = inputLabel(sourceContent, '來源預覽（選取文字可作為引文）', 'textarea');
     sourceText.readOnly = true;
     const cardList = element('div');
     panel.append(cardList);
@@ -221,16 +223,16 @@ export function bindReview(anchor, onPublish) {
       }
     }
 
-    button(panel, '安裝 Schema 並建立草稿範本', async () => {
+    button(schemaOptions, '安裝 Schema 並建立草稿範本', async () => {
       const names = fields ? fields.value.split(',').map((value) => value.trim()).filter(Boolean) : [];
       const schema = await submit({ action: 'schema', vault: vault.value, schema: 'local-' + kind, version: version.value, fields: names });
       setBase(await submit({ action: 'base', vault: vault.value }));
-      const text = 'Synthetic source';
+      const text = sourceOriginal ?? '';
       candidate.value = JSON.stringify({
         vault: { id: vault.value, title: vault.value, kind },
         schema: schema.sha256,
-        sources: [{ id: 'source', ref: 'source.md', original: text, markdown: text }],
-        cards: kind === 'bi' ? [{ id: 'card', type: 'record', key: 'card', title: 'Record', version: '1',
+        sources: [{ id: 'source', ref: sourceRef ?? '來源.txt', original: text, markdown: text }],
+        cards: kind === 'bi' ? [{ id: 'card', type: 'record', key: 'card', title: '', version: '1',
           fields: Object.fromEntries(names.map((name) => [name, text])) }] : [],
         relationships: [],
         evidence: kind === 'bi' ? names.map((field) => ({ sourceId: 'source', cardId: 'card', field, start: 0, end: text.length }))
@@ -243,27 +245,34 @@ export function bindReview(anchor, onPublish) {
       if (fields) fields.value = base.schema.document.fields.join(', ');
       status.textContent = '已載入知識庫。';
     });
-    button(panel, '載入來源至草稿', async () => {
+    const showSource = button(panel, '查看來源文字', () => {
+      const { body } = openPreview(`build-source-${kind}`, '來源文字', showSource);
+      if (!body.contains(sourceContent)) body.append(sourceContent);
+    });
+    showSource.hidden = true;
+    const loadSource = button(panel, '載入來源至草稿', async () => {
       const file = source.files[0];
-      if (file?.size > 1024 * 1024) throw new Error('請選擇 1 MiB 以內的 UTF-8 來源。');
+      if (file?.size > 1024 * 1024) throw new Error('請選擇不超過 1 MB 的文字檔。');
       sourceOriginal = file ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer()) : pasted.value;
       sourceText.value = sourceOriginal;
       sourceRef = file?.name ?? 'pasted.md';
       if (!sourceText.value.trim()) throw new Error('請選擇檔案或貼上來源文字。');
+      showSource.hidden = false;
+      if (loadSource.getClientRects().length) showSource.click();
     });
     button(panel, '送交審核', async () => {
-      if (!base || baseVaultId !== vault.value) throw new Error('請先載入知識庫或安裝 Schema。');
+      if (!base || baseVaultId !== vault.value) throw new Error('請先載入知識庫，或到進階建立草稿範本。');
       const metadata = base.vault ?? { id: vault.value, title: vault.value, kind };
       const id = crypto.randomUUID();
       if (kind === 'wiki') {
-        if (metadata.kind !== 'wiki') throw new Error('請選擇 Wiki 知識庫。');
+        if (metadata.kind !== 'wiki') throw new Error('請選擇文章知識庫。');
         const text = sourceOriginal ?? '';
-        if (!text.trim() || text.length > 4000) throw new Error('請載入 4,000 字元以內的 Wiki 草稿。');
+        if (!text.trim() || text.length > 4000) throw new Error('請載入 4,000 字元以內的文章草稿。');
         await submit({ action: 'stage', id, draft: { vault: metadata, schema: base.schema.sha256,
           sources: [{ id: 'source', ref: sourceRef, original: text, markdown: text }], cards: [], relationships: [],
           evidence: [{ sourceId: 'source', start: 0, end: text.length }] } });
       } else {
-        if (metadata.kind !== 'bi') throw new Error('請選擇 BI 知識庫。');
+        if (metadata.kind !== 'bi') throw new Error('請選擇卡片知識庫。');
         const draft = { vault: metadata, parent: base.parent, schema: base.schema.sha256, allowModel: base.allowModel,
           addCards: [], updateCards: [], removeCards: [], sources: [], evidence: [], relationships: [] };
         const sourceId = crypto.randomUUID();
@@ -311,11 +320,11 @@ export function bindReview(anchor, onPublish) {
       return sha256;
     }
     if (kind === 'bi') {
-      const note = element('p', '按下產生提案後，來源文字會透過區域網路的 HTTP Gateway 傳出本機。提案仍須人工核准。');
+      const note = element('p', '產生提案會將來源文字送到本機以外的模型服務。提案須由人工核准。');
       note.id = 'bi-proposal-note';
       panel.append(note);
       const control = button(panel, '產生模型提案', async () => {
-        if (!base?.vault || base.vault.id !== vault.value) throw new Error('請先載入已發布的 BI 知識庫。');
+        if (!base?.vault || base.vault.id !== vault.value) throw new Error('請先載入已發布的卡片知識庫。');
         if (!sourceText.value.trim() || new TextEncoder().encode(sourceOriginal).length > 24_000) {
           throw new Error('請載入 24,000 位元組以內的來源以產生提案。');
         }
@@ -324,6 +333,12 @@ export function bindReview(anchor, onPublish) {
         if (result.rejected) throw new Error('提案的引文無法核對。請檢查欄位 ' + result.rejected.join('、') + '。');
         status.textContent = '提案已送交人工審核。';
         await refresh();
+        if (control.getClientRects().length) {
+          const { body, signal } = openPreview('proposal-' + result.id, '模型提案', control);
+          body.textContent = '正在讀取提案…';
+          const comparison = await submit({ action: 'compare', id: result.id });
+          if (!signal.aborted) showComparison(body, comparison);
+        }
       });
       control.setAttribute('aria-describedby', note.id);
     }

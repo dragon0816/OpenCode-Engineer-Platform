@@ -22,10 +22,10 @@ const messages = {
   'evidence-changed-or-cancelled': '知識庫版本在查詢期間變更，或本次查詢已取消。',
 };
 
-export function bindKnowledge() {
-  const browser = bindKnowledgeBrowser(() => refreshVaults());
+export function bindKnowledge(openPreview, closePreviews) {
+  const browser = bindKnowledgeBrowser(() => refreshVaults(), openPreview);
   const quality = bindKnowledgeQuality(browser.openPassage, messages);
-  bindReview(find('knowledge-repository'), () => refreshVaults());
+  bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
     for (const item of tabs) {
@@ -205,7 +205,7 @@ export function bindKnowledge() {
       for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = false;
     }
   });
-  vault.addEventListener('change', describe);
+  vault.addEventListener('change', () => { closePreviews(); describe(); });
   find('knowledge-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (ask.disabled || !question.value.trim()) return;
@@ -229,15 +229,12 @@ export function bindKnowledge() {
       const selected = models.get(vault.value);
       answer.append(box, label('small', [selected?.title, selected?.tag, `發布版本 ${result.revision}`].filter(Boolean).join(' · ')));
       for (const citation of result.citations) {
-        const reference = label('details', '');
-        const trigger = label('summary', `${citation.source} · ${citation.locator}`);
-        trigger.setAttribute('aria-haspopup', 'dialog');
-        trigger.addEventListener('click', (event) => {
-          event.preventDefault();
-          browser.openPassage({ ...citation, text: citation.context }, citation.quote);
-        });
-        reference.append(trigger);
-        answer.append(reference);
+        const trigger = label('button', `${citation.source} · ${citation.locator}`);
+        trigger.type = 'button';
+        trigger.className = 'knowledge-reference';
+        trigger.addEventListener('click', () =>
+          browser.openPassage({ ...citation, text: citation.context }, citation.quote, trigger));
+        answer.append(trigger);
       }
     } catch {
       if (!active.signal.aborted) status.textContent = '本次詢問無法完成。';

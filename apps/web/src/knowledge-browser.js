@@ -51,20 +51,17 @@ function highlight(parent, content, query) {
   parent.append(snippet.slice(cursor), start + snippet.length < content.length ? '…' : '');
 }
 
-export function bindKnowledgeBrowser(refreshVaults) {
+export function bindKnowledgeBrowser(refreshVaults, openPreview) {
   const root = find('knowledge-browser');
   const form = find('knowledge-filters');
   const results = find('knowledge-cards');
   const search = find('knowledge-fts');
   const matches = find('knowledge-matches');
   const status = find('knowledge-browser-status');
-  const drawer = find('knowledge-drawer');
-  const drawerBody = find('knowledge-drawer-body');
   const rebuild = find('knowledge-rebuild');
   let active;
   let listing;
   let searching;
-  let drawing;
   let offset = 0;
   let sort = 'title';
   let descending = false;
@@ -72,36 +69,35 @@ export function bindKnowledgeBrowser(refreshVaults) {
   const columns = [['title', '卡片'], ['key', '識別鍵'], ['type', '類型'], ['category', '分類'], ['domain', '領域／資料夾'], ['version', '版本']];
   const browse = (data, signal) => request('/api/knowledge/browse', { data: { vault: active, ...data }, signal });
 
-  function showDrawer(title) {
-    find('knowledge-drawer-title').textContent = title;
-    drawerBody.replaceChildren();
-    if (!drawer.open) drawer.showModal();
-  }
-
-  function openPassage(passage, query = '') {
-    drawing?.abort();
-    showDrawer('來源段落');
-    const quote = node('blockquote');
-    quote.textContent = passage.text;
-    drawerBody.append(node('p', `${passage.source} · ${passage.locator}`), quote);
-    if (passage.sourceVersion) drawerBody.append(node('p', `來源版本 ${passage.sourceVersion}`));
+  function openPassage(passage, query = '', opener) {
+    const key = JSON.stringify(['passage', active, passage.sourceVersion, passage.id, passage.locator, query]);
+    const { body } = openPreview(key, '來源段落', opener);
+    const quote = node('blockquote', passage.text);
+    body.replaceChildren(node('p', `${passage.source} · ${passage.locator}`), quote);
+    if (passage.sourceVersion) {
+      const details = node('details');
+      details.append(node('summary', '進階'), node('p', `來源版本 ${passage.sourceVersion}`));
+      body.append(details);
+    }
     if (query) {
       const excerpt = node('p');
       highlight(excerpt, passage.text, query);
-      drawerBody.prepend(excerpt);
+      body.prepend(excerpt);
     }
-    if (passage.cardId) drawerBody.append(button('開啟卡片', () => void openCard(passage.cardId)));
+    if (passage.cardId) body.append(button('開啟卡片', (event) => void openCard(passage.cardId, event.currentTarget)));
   }
 
-  async function openCard(id) {
-    drawing?.abort();
-    const current = drawing = new AbortController();
-    showDrawer('讀取卡片中');
+  async function openCard(id, opener) {
+    const { body, signal, setTitle } = openPreview(JSON.stringify(['card', active, id]), opener.textContent, opener);
+    if (body.childElementCount) return;
+    body.append(node('p', '正在讀取卡片。'));
     try {
-      const { card, related, passages, history, evidence, revisions } = await browse({ card: id }, current.signal);
-      if (current.signal.aborted) return;
-      showDrawer(card.title);
-      drawerBody.append(node('p', `${card.type} · ${card.key} · 版本 ${card.version}`));
+      const { card, related, passages, history, evidence, revisions } = await browse({ card: id }, signal);
+      if (signal.aborted) return;
+      setTitle(card.title);
+      body.replaceChildren();
+      const details = node('details');
+      details.append(node('summary', '進階'), node('p', `${card.type} · ${card.key} · 版本 ${card.version}`));
       const fields = node('dl');
       for (const [key, value] of Object.entries(card.fields)) {
         const field = node('dd');
@@ -113,24 +109,25 @@ export function bindKnowledgeBrowser(refreshVaults) {
         field.append(provenance, state);
         fields.append(node('dt', key), field);
       }
-      drawerBody.append(node('h3', '欄位'), fields.childElementCount ? fields : node('p', '無資料'));
-      drawerBody.append(node('h3', '證據'));
-      if (!passages.length) drawerBody.append(node('p', '無資料'));
+      body.append(node('h3', '欄位'), fields.childElementCount ? fields : node('p', '無資料'));
+      body.append(node('h3', '證據'));
+      if (!passages.length) body.append(node('p', '無資料'));
       for (const passage of passages) {
         const record = evidence?.find((item) => item.passageIds.includes(passage.id));
-        drawerBody.append(node('p', [record?.field, passage.source, passage.locator].filter(Boolean).join(' · ')),
+        const reference = [record?.field, passage.source, passage.locator].filter(Boolean).join(' · ');
+        body.append(button(reference, (event) => openPassage(passage, '', event.currentTarget)),
           node('blockquote', passage.text));
       }
       for (const [direction, label] of [['from', '指向其他卡片'], ['to', '由其他卡片指向此卡片']]) {
-        drawerBody.append(node('h3', label));
+        body.append(node('h3', label));
         const links = related.filter((relation) => relation[direction] === id);
-        if (!links.length) drawerBody.append(node('p', '無資料'));
+        if (!links.length) body.append(node('p', '無資料'));
         const other = direction === 'from' ? 'to' : 'from';
         for (const relation of links) {
           const row = node('p');
-          row.append(button(relation[other + 'Title'] || relation[other], () => void openCard(relation[other])),
+          row.append(button(relation[other + 'Title'] || relation[other], (event) => void openCard(relation[other], event.currentTarget)),
             ' · ', relation.kind);
-          drawerBody.append(row);
+          body.append(row);
         }
       }
       const changes = node('details');
@@ -138,13 +135,12 @@ export function bindKnowledgeBrowser(refreshVaults) {
       const publications = node('details');
       publications.append(node('summary', '知識庫發布紀錄'));
       for (const revision of revisions) publications.append(node('p', revision.revision));
-      drawerBody.append(changes, publications);
+      details.append(changes, publications);
+      body.append(details);
     } catch {
-      if (!current.signal.aborted) showDrawer('無法讀取卡片');
+      if (!signal.aborted) body.textContent = '無法讀取卡片，請重新開啟。';
     }
   }
-
-  drawer.addEventListener('close', () => { if (!drawer.open) drawing?.abort(); });
 
   async function load(focus) {
     listing?.abort();
@@ -182,7 +178,7 @@ export function bindKnowledgeBrowser(refreshVaults) {
         const row = body.insertRow();
         for (const [column] of columns) {
           const cell = row.insertCell();
-          if (column === 'title') cell.append(button(card.title, () => void openCard(card.id)));
+          if (column === 'title') cell.append(button(card.title, (event) => void openCard(card.id, event.currentTarget)));
           else cell.textContent = card[column] || '無資料';
         }
       }
@@ -218,7 +214,7 @@ export function bindKnowledgeBrowser(refreshVaults) {
         const row = node('article');
         const snippet = node('p');
         highlight(snippet, passage.text, query);
-        row.append(button(`${passage.source} · ${passage.locator}`, () => openPassage(passage, query)), snippet);
+        row.append(button(`${passage.source} · ${passage.locator}`, (event) => openPassage(passage, query, event.currentTarget)), snippet);
         matches.append(row);
       }
     } catch {
@@ -250,7 +246,6 @@ export function bindKnowledgeBrowser(refreshVaults) {
       active = vault;
       listing?.abort();
       searching?.abort();
-      if (drawer.open) drawer.close();
       root.hidden = !vault;
       offset = 0;
       form.reset();
