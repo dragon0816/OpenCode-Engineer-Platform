@@ -1,0 +1,29 @@
+{
+  "update": "disable",
+  "share": "disabled",
+  "permissions": [{ "action": "*", "resource": "*", "effect": "deny" }],
+  "policies": [
+    { "action": "provider.use", "resource": "*", "effect": "deny" },
+    { "action": "provider.use", "resource": "oep-relay", "effect": "allow" }
+  ],
+  "agents": {
+    "workbook": {
+      "description": "Generate the synthetic workbook program",
+      "mode": "primary",
+      "system": "Work only on the synthetic workbook request in the current session."
+    },
+    "inspector": {
+      "description": "Read synthetic inputs without editing",
+      "mode": "primary",
+      "system": "Inspect synthetic inputs in the current session without editing files."
+    }
+  },
+  "providers": {
+    "oep-relay": {
+      "name": "OEP Relay",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "<loopback relay URL>", "apiKey": "<ephemeral relay credential>" },
+      "models": {}
+    }
+  }
+}
