@@ -8,6 +8,8 @@ const unsafePath = /[\u0000-\u001f<>"|?*&^%!]/;
 const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const blockedEnvironment = /^(?:PATH|PATHEXT|COMSPEC|SYSTEMROOT|SYSTEMDRIVE|WINDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|TEMP|TMP|PSMODULEPATH|PYTHON.*|NODE_.*|BUN_.*|DENO_.*|LD_.*|DYLD_.*|OPENCODE_.*|OEP_.*)$/i;
 
+export const customMcpName = (id: string) => `oep_custom_${id}`;
+
 export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp>;
 export type CustomRemoteMcp = ReturnType<typeof validateCustomRemoteMcp>;
 export type CustomMcp = CustomStdioMcp | CustomRemoteMcp;

@@ -1,14 +1,17 @@
 import { spawn } from 'node:child_process';
-import { existsSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readCustomMcpCredentials } from '../../apps/adapter/src/runs/custom-mcp-credentials.ts';
 
 const {
   OEP_JOB_EXE: executable, OEP_JOB_PORT: port, OEP_JOB_CONTROL: control,
   OEP_JOB_NODE: _node, OEP_JOB_OWNER: _owner, OEP_JOB_TEST_SCOPE: _testScope, ...env
 } = process.env;
 const stop = join(control, 'stop');
+const namesFile = join(control, 'mcp-credential-names.json');
+const names = existsSync(namesFile) ? JSON.parse(readFileSync(namesFile, 'utf8')) : [];
 const child = spawn(executable, ['serve', '--stdio', '--hostname', '127.0.0.1', '--port', port], {
-  env, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,
+  env: { ...env, ...readCustomMcpCredentials(names) }, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,
 });
 function record(name, value) {
   const path = join(control, name);

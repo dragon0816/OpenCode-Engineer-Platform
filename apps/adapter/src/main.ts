@@ -27,7 +27,7 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { customMcpName, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
@@ -87,7 +87,7 @@ function secureHeaders(response: ServerResponse) {
   ].join('; '));
 }
 
-export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false) {
+export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false, requestRestart?: () => void) {
   checkDirectory(root);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -117,10 +117,13 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   };
   let auth: LocalAuth;
 
+  let restarting = false;
+  const changedCredentials = new Set<string>();
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
     auth.check(request);
+    if (restarting) throw new HttpError(503, '執行環境正在重新啟動。');
     let path = request.url ?? '';
     if (!path.startsWith('/') || path.startsWith('//') || /[?#\\%]/.test(path)) throw new HttpError(400, 'Invalid request path');
     const method = request.method;
@@ -250,6 +253,18 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         tools: runtime.knowledge ? [knowledgeToolName] : [] }]);
       return;
     }
+    if (path === '/api/settings/mcp/restart' && method === 'POST') {
+      const input = await body(request);
+      if (Object.keys(input).length) throw new HttpError(400, '重新啟動不需要輸入內容。');
+      if (!requestRestart) throw new HttpError(503, '目前無法從設定重新啟動執行環境。');
+      if (restarting || active.size > 1 || chat.busy() || telegram.busy()) {
+        throw new HttpError(409, '請等目前的操作及對話完成，再重新啟動。');
+      }
+      restarting = true;
+      response.once('finish', requestRestart);
+      send(response, 202, { state: 'restarting' });
+      return;
+    }
     if (path === '/api/settings/mcp/custom') {
       if (method === 'POST') {
         const input = await body(request);
@@ -262,6 +277,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
           if (!entry) throw new HttpError(404, '找不到憑證欄位。');
           try { saveCustomMcpCredential(entry.reference, input.value); }
           catch (error) { throw new HttpError(400, (error as Error).message); }
+          changedCredentials.add(existing.id);
           send(response, 200, { configured: true });
           return;
         } else if (input.action === 'enable' && existing) {
@@ -295,9 +311,23 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }
       const servers = store.customMcpServers();
       const configured = configuredCustomMcpCredentials(servers.flatMap(({ environment }) => environment.map(({ reference }) => reference)));
-      send(response, 200, servers.map((server) => ({
-        ...server, environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
-      })));
+      const applied = runtime.customMcp ?? [];
+      const statuses = await runtime.client.mcp.list(undefined, call()).then(({ data }) => data, () => []);
+      const matches = (server: typeof servers[number]) => applied.some((entry) => {
+        const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;
+        return Object.entries(definition).every(([key, value]) =>
+          JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
+      });
+      send(response, 200, {
+        restartRequired: servers.some((server) => !matches(server)) ||
+          applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
+        servers: servers.map((server) => ({
+          ...server, restartRequired: !matches(server) || changedCredentials.has(server.id),
+          status: !server.enabled ? 'disabled' : server.environment.some(({ reference }) => !configured.has(reference))
+            ? 'needs_auth' : statuses.find(({ name }) => name === customMcpName(server.id))?.status.status ?? 'pending',
+          environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
+        })),
+      });
       return;
     }
     if (path === '/api/settings/knowledge') {

@@ -86,6 +86,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   timer.unref();
   tick();
   return {
+    busy: () => active.size > 0 || chat.busy(),
     configured: () => Boolean(mainApi || biApi),
     status() {
       return {

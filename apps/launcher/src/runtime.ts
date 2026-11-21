@@ -8,11 +8,13 @@ import { waitForOutcome } from '../../adapter/src/opencode/reconcile.ts';
 import { supervise } from './supervisor.ts';
 import { startKnowledgeRuntime } from './knowledge.ts';
 
+import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
+
 export type Runtime = Awaited<ReturnType<typeof startRuntime>>;
 
 type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web'> & { isolatedJob?: boolean };
 
-export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string) {
+export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string, customMcp: readonly CustomMcp[] = []) {
   const alias = synthetic?.alias ?? process.env.OEP_MODEL_ALIAS ?? gatewayAliases[0];
   if (!synthetic && !gatewayAliases.some((candidate) => candidate === alias)) throw new Error('Model alias is not approved');
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
@@ -36,7 +38,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   }
   try {
     if (profile) knowledge = await startKnowledgeRuntime(profile, root, settings);
-    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob);
+    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob, customMcp);
   } catch (error) {
     try { await closeRelays(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }
@@ -105,7 +107,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       await checkAliases();
       nextCheck = 0;
     }
-    return { ...initial, root, alias, aliases, aliasHealth: () => aliasHealth, checkAliases, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge,
+    return { ...initial, root, alias, aliases, aliasHealth: () => aliasHealth, checkAliases, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge, customMcp,
       gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince };
   } catch (error) {
     try { await stop(); }
