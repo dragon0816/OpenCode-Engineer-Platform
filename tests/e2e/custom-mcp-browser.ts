@@ -148,6 +148,15 @@ try {
   await page.ready("document.querySelector('#mcp-editor').open || window.mcpTestError");
   assert.equal(await evaluate('window.mcpTestError ?? null'), null);
   assert.equal(await evaluate('document.activeElement.name'), 'name');
+  assert.equal(await evaluate(`(() => {
+    const form = document.querySelector('#mcp-form');
+    const visible = selector => form.querySelector(selector)?.checkVisibility();
+    return ['[name=name]', '[name=transport]', '[name=executable]', '[name=args]', '[name=cwd]',
+      '#mcp-add-credential', '#mcp-projects [name=project][value=default]', '#mcp-projects [name=project][value=secondary]',
+      '[name=dataScope]', '[name=enabled]', '[type=submit]', '#mcp-cancel', 'details summary'].every(visible)
+      && ['startup', 'catalog', 'execution'].every(name => form.querySelector('details [name=' + name + '][type=number]'))
+      && Boolean(form.querySelector('#mcp-form-status[role=status]'));
+  })()`), true);
   await page.command('Input.insertText', { text: '合成工具目錄' });
   await press('Tab', 9);
   assert.equal(await evaluate('document.activeElement.name'), 'transport');
@@ -172,6 +181,12 @@ try {
   await page.command('Input.insertText', { text: '僅讀取合成測試資料。' });
   if (marker) {
     await click('#mcp-add-credential');
+    assert.equal(await evaluate(`(() => {
+      const row = document.querySelector('#mcp-credential-rows .mcp-credential');
+      return ['[data-mcp-name]', '[data-mcp-value][type=password]', '[type=checkbox]', 'button']
+        .every(selector => row.querySelector(selector)?.checkVisibility()) &&
+        row.querySelector('button').textContent === '移除此欄位';
+    })()`), true);
     await evaluate("document.querySelector('[data-mcp-name]').value = 'SYNTHETIC_MCP'; document.querySelector('[name=dataScope]').focus()");
   }
   await evaluate("window.syntheticExecutable = document.querySelector('[name=executable]').value; document.querySelector('[name=executable]').value = 'relative.exe'");
@@ -186,6 +201,9 @@ try {
   assert.equal(await evaluate('document.activeElement.type'), 'submit');
   await press(' ', 32);
   await page.ready("!document.querySelector('#mcp-editor').open && !document.querySelector('#mcp-restart-bar').hidden");
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('#mcp-servers .settings-actions button')].map(button => button.textContent)`),
+    ['編輯', '停用', '測試連線', '移除']);
+  assert.equal(await evaluate("document.querySelector('#settings-mcp #mcp-restart-bar #mcp-restart').checkVisibility()"), true);
   if (marker) {
     const id = await evaluate<string>("document.querySelector('#mcp-servers h4').id.replace('mcp-server-', '')");
     assert.match(id, /^[a-f0-9]{32}$/);
@@ -287,6 +305,9 @@ try {
         form.elements.transport.value = 'remote';
         form.elements.transport.dispatchEvent(new Event('change'));
         form.elements.url.value = 'http://127.0.0.1:${port}/mcp';`);
+      assert.equal(await evaluate(`document.querySelector('#mcp-remote-fields [name=url]').checkVisibility() &&
+        document.querySelector('#mcp-remote-fields [name=localService]').checkVisibility() &&
+        !document.querySelector('#mcp-stdio-fields [name=executable]').checkVisibility()`), true);
       await click('#mcp-form button[type=submit]');
       await page.ready("document.querySelector('#mcp-form-status').textContent.includes('HTTPS')");
       await evaluate(`document.querySelector('#mcp-form [name=url]').value = 'https://127.0.0.1:${port}/mcp'`);

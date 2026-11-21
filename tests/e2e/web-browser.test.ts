@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -41,6 +41,18 @@ let slowStarted = false;
 let syntheticReadOnlyFile: string | undefined;
 const pinged: string[] = [];
 const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
+const settingsPages = [
+  ['assistant', '助理', ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status', '#assistant-delegation']],
+  ['appearance', '外觀', ['#theme', '#density', '#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status']],
+  ['model', '模型', ['#default-alias', '#save-model', '#recheck-model', '#model-settings-status', '#model-credentials', '#model-health li']],
+  ['limits', '回合限制', ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status']],
+  ['projects', '專案與資料夾', ['#folder-project option', '#project-working-root', '#project-folder-list', '#project-folder', '#project-folder-form button[type=submit]', '#project-folder-status']],
+  ['integrations', '整合', ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status', '#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', '#telegram-configured', '.settings-advanced li']],
+  ['input', '輸入', ['#enable-microphone', '#microphone-settings-status']],
+  ['mcp', 'MCP', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#mcp-add', '#mcp-servers', '#mcp-restart-bar #mcp-restart', '#mcp-status']],
+  ['runtime', '執行環境', ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent', '#runtime-fingerprints dd:nth-of-type(4)']],
+  ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
+] as const;
 const syntheticKey = randomUUID();
 const syntheticURL = 'http://example.invalid/v1';
 const synthetic: typeof fetch = async (_target, init) => {
@@ -113,6 +125,35 @@ try {
       const tab = () => key('Tab', 'Tab', 9);
       const enter = () => key('Enter', 'Enter', 13);
       const escape = () => key('Escape', 'Escape', 27);
+      const reload = async () => {
+        await page.evaluate('window.__beforeReload = true');
+        await page.command('Page.reload');
+        await page.ready('window.__beforeReload !== true');
+      };
+      const click = async (selector: string) => {
+        const point = await page.evaluate<{ x: number; y: number }>(`(() => {
+          const element = document.querySelector(${JSON.stringify(selector)});
+          element.scrollIntoView({ block: 'nearest' });
+          const { left, top, width, height } = element.getBoundingClientRect();
+          return { x: left + width / 2, y: top + height / 2 };
+        })()`);
+        for (const type of ['mousePressed', 'mouseReleased']) {
+          await page.command('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
+        }
+      };
+      const selectSetting = (section: string) => page.evaluate(`(() => {
+        const picker = document.querySelector('#settings-section');
+        if (picker.checkVisibility()) {
+          picker.value = ${JSON.stringify(section)};
+          picker.dispatchEvent(new Event('change', { bubbles: true }));
+          picker.focus();
+        } else {
+          const button = document.querySelector('#settings-nav [data-section="${section}"]');
+          button.click();
+          button.focus();
+        }
+        window.scrollTo(0, 0);
+      })()`);
       const openPanel = (id: string) => page.evaluate(`(() => {
         const menu = document.querySelector('#top-menu');
         if (!menu.open) document.querySelector('#top-menu-trigger').click();
@@ -138,8 +179,7 @@ try {
           await page.ready(`!document.getElementById('${id}').open`);
         }
         await page.ready(sections.map((id) => `localStorage.getItem('oep.${id}.open') === 'false'`).join(' && '));
-        await page.evaluate('window.__beforeReload = true');
-        await page.command('Page.reload');
+        await reload();
         await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
         assert.equal(await page.evaluate(collapsed), true);
         await tab();
@@ -298,7 +338,7 @@ try {
           document.querySelector('.tool-card summary').click();
           document.documentElement.dataset.beforeToolReload = 'true';
         `);
-        await page.command('Page.reload');
+        await reload();
         await page.ready("!document.documentElement.dataset.beforeToolReload && document.querySelectorAll('.tool-card').length === 1");
         await page.command('Network.enable');
         const network = { latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
@@ -356,7 +396,7 @@ try {
         `);
         await page.ready("document.querySelector('#settings-status').textContent === '已儲存'");
         await page.evaluate("document.documentElement.dataset.beforeSettingsReload = 'true'");
-        await page.command('Page.reload');
+        await reload();
         await page.ready(`!document.documentElement.dataset.beforeSettingsReload &&
           document.querySelector('#assistant-name')?.value === '合成助理'`);
         assert.equal(await page.evaluate("document.querySelector('#assistant-introduction').value"), '測試簡介');
@@ -433,7 +473,7 @@ try {
         })()`);
         assert.deepEqual(apiChecks.statuses, [400, 400, 400, 400, 200, 400, 400, 400, 400]);
         for (const marker of [syntheticKey, syntheticURL, 'example.invalid']) assert.equal(apiChecks.visible.includes(marker), false);
-        await page.command('Page.reload');
+        await reload();
         await page.ready("document.querySelector('.sidebar-assistant img')?.naturalWidth > 0 && document.querySelector('#messages .assistant-avatar img')?.naturalWidth > 0");
         await page.evaluate("document.querySelector('#avatar-reset').click(); document.querySelector('#appearance-settings').requestSubmit()");
         await page.ready("document.querySelector('#appearance-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
@@ -459,7 +499,7 @@ try {
           document.querySelector('#limits-settings').requestSubmit();
         `);
         await page.ready("document.querySelector('#limits-status').textContent === '已儲存'");
-        await page.command('Page.reload');
+        await reload();
         await page.ready(`document.querySelector('#session-alias').value === ${JSON.stringify(gatewayAliases[1])} &&
           document.querySelector('#default-alias').value === ${JSON.stringify(gatewayAliases[1])} &&
           document.querySelector('#limit-toolCalls')?.value === '0' && document.querySelector('#limit-timeoutSeconds')?.value === '5'`);
@@ -492,6 +532,10 @@ try {
           document.querySelector('[data-section=appearance]').click();
         `);
         assert.equal(await page.evaluate("document.querySelector('#settings-appearance').hidden"), true);
+        await escape();
+        assert.equal(await page.evaluate(`!document.querySelector('#settings-view').hidden &&
+          !document.querySelector('#settings-assistant').hidden &&
+          document.querySelector('#assistant-name').value === '未儲存的名稱'`), true);
         await page.evaluate("window.confirm = () => true");
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
@@ -501,6 +545,84 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
         await page.ready("!document.querySelector('#settings-appearance').hidden");
         assert.equal(await page.evaluate("document.querySelector('#assistant-name').value"), '合成助理');
+
+        assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#settings-nav button')]
+          .map(button => [button.dataset.section, button.textContent])`), settingsPages.map(([section, title]) => [section, title]));
+        const expectSetting = async (section: string, title: string) => {
+          assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.settings-content > section:not([hidden])')]
+            .map(panel => [panel.id, panel.querySelector('h2').textContent])`), [[`settings-${section}`, title]]);
+          assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#settings-nav [aria-current="page"], #settings-section option[aria-current="page"]')]
+            .map(entry => entry.dataset.section ?? entry.value)`), [section, section]);
+        };
+        await assertNoForbiddenShellText(page, '#settings-view');
+        for (const [section, title, controls] of settingsPages) {
+          await click(`#settings-nav [data-section="${section}"]`);
+          await expectSetting(section, title);
+          if (section === 'integrations') {
+            await page.ready(`[...document.querySelectorAll('#telegram-main-status, #telegram-bi-status')]
+              .every(status => /^(已設定|未設定)$/.test(status.textContent))`);
+          }
+          if (section === 'mcp') await page.ready("document.querySelector('#mcp-servers').children.length > 0");
+          await assertNoForbiddenShellText(page, `#settings-${section}`);
+          for (const control of controls) {
+            assert.equal(await page.evaluate(`Boolean(document.querySelector(${JSON.stringify(`#settings-${section} ${control}`)}))`), true, control);
+          }
+        }
+        await page.evaluate("document.querySelector('#close-settings').focus()");
+        for (const [section, title] of settingsPages) {
+          await tab();
+          await page.ready(`document.activeElement.dataset.section === ${JSON.stringify(section)}`);
+          await enter();
+          await expectSetting(section, title);
+        }
+        assert.equal(await page.evaluate(`document.querySelector('.settings-heading').parentElement
+          === document.querySelector('#work-area > #settings-view') &&
+          document.querySelector('#chat-view').hidden && document.querySelector('#chat-files').hidden`), true);
+
+        const settingFolder = realpathSync(mkdtempSync(join(dataDirectory(), 'setting-folder-')));
+        await click('#settings-nav [data-section="projects"]');
+        await page.evaluate(`document.querySelector('#project-folder').value = ${JSON.stringify(settingFolder)}`);
+        await click('#project-folder-form button[type=submit]');
+        await page.ready("document.querySelector('#project-folder-status').textContent === '已加入唯讀資料夾。'");
+        await page.ready("document.querySelector('#project-folder-list li button')?.textContent === '移除'");
+        await reload();
+        await page.ready("document.querySelector('#connection').textContent === '已連線'");
+        await click('#open-settings');
+        await expectSetting('projects', '專案與資料夾');
+        await page.ready("document.querySelector('#project-folder-list li button')?.textContent === '移除'");
+        assert.equal(await page.evaluate(`document.querySelector('#project-read-folder option').value === ${JSON.stringify(settingFolder)}`), true);
+        await click('#project-folder-list li button');
+        await page.ready("document.querySelector('#project-folder-status').textContent === '已移除唯讀資料夾。'");
+        await page.ready("!document.querySelector('#project-read-folder option')");
+
+        await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 960, deviceScaleFactor: 1, mobile: false });
+        assert.deepEqual(await page.evaluate(`[...document.querySelector('#settings-section').options]
+          .map(option => [option.value, option.label])`), settingsPages.map(([section, title]) => [section, title]));
+        assert.equal(await page.evaluate(`document.querySelector('#settings-section').checkVisibility() &&
+          !document.querySelector('#settings-nav button').checkVisibility() &&
+          document.querySelector('#settings-section').value === 'projects'`), true);
+        await page.evaluate("document.querySelector('#close-settings').focus()");
+        await tab();
+        await page.ready("document.activeElement.id === 'settings-section'");
+        await key('ArrowDown', 'ArrowDown', 40);
+        await expectSetting('integrations', '整合');
+        await assertNoForbiddenShellText(page, '#settings-view');
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await click('#settings-nav [data-section="appearance"]');
+
+        const saveSettingsShots = process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
+        const settingsPaths = ['#project-working-root', '#about-details dd:nth-of-type(2)'];
+        const originalPaths = saveSettingsShots ? await page.evaluate<string[]>(`(() => {
+          const syntheticPaths = ['工作根目錄 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
+          return ${JSON.stringify(settingsPaths)}.map((selector, index) => {
+            const element = document.querySelector(selector);
+            const original = element.textContent;
+            element.textContent = syntheticPaths[index];
+            return original;
+          });
+        })()`) : [];
+        const capturedSections = saveSettingsShots ? settingsPages.map(([section]) => section)
+          : ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations'];
         for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
           await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
           for (const theme of ['light', 'dark']) {
@@ -510,18 +632,18 @@ try {
               document.querySelector('#appearance-settings').requestSubmit();
             `);
             await page.ready("document.querySelector('#appearance-status').textContent === '已儲存'");
-            for (const section of ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations']) {
-              await page.evaluate(`(() => {
-                const sectionButton = document.querySelector('[data-section="${section}"]');
-                sectionButton.click();
-                sectionButton.focus();
-                window.scrollTo(0, 0);
-              })()`);
+            for (const section of capturedSections) {
+              await selectSetting(section);
               assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
-              await capture(`settings-${section}-${theme}-${layout}`);
+              const name = `settings-${section}-${theme}-${layout}`;
+              await capture(name);
+              if (saveSettingsShots) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
             }
           }
         }
+        if (saveSettingsShots) await page.evaluate(`${JSON.stringify(settingsPaths)}.forEach((selector, index) => {
+          document.querySelector(selector).textContent = ${JSON.stringify(originalPaths)}[index];
+        })`);
         await page.evaluate("document.querySelector('#open-chat').click()");
         await page.command('Emulation.clearDeviceMetricsOverride');
         const captureLayouts = async (running: boolean) => {
@@ -623,7 +745,7 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.ready("document.activeElement.id === 'tab-work' && document.querySelector('#panel-runs').textContent.includes('已完成')");
-        await page.command('Page.reload');
+        await reload();
         await page.ready("document.querySelector('#connection').textContent === '已連線' && document.querySelector('#chat-files').hidden && !document.querySelector('#panel-tabs').children.length");
         await openPanel('open-work');
         await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
@@ -855,7 +977,7 @@ try {
           document.querySelector('#composer').requestSubmit();
         `);
         await page.ready("document.querySelector('#messages').textContent.includes('已核對合成引用') && document.querySelector('.message-quote')?.textContent.includes('合成量測摘要')", 30_000);
-        await page.command('Page.reload');
+        await reload();
         await page.ready("document.querySelector('.message-quote')?.textContent.includes('合成量測摘要') && document.querySelector('#session-notes').textContent.includes('合成筆記')");
         const folder = mkdtempSync(resolve('.phase0/synthetic-folder-'));
         syntheticReadOnlyFile = join(folder, 'sample.txt');
@@ -886,7 +1008,7 @@ try {
         `);
         await page.ready("document.querySelector('#messages').textContent.includes('SYNTHETIC_FOLDER_WRITE') && ['已完成','這次處理未完成'].includes(document.querySelector('#progress').textContent) && !document.querySelector('#send').disabled", 30_000);
         assert.equal(readFileSync(join(folder, 'sample.txt'), 'utf8'), 'SYNTHETIC_READ_ONLY');
-        await page.command('Page.reload');
+        await reload();
         await page.ready("document.querySelector('#project-read-folder option') && document.querySelector('.message-quote')");
 
 
@@ -990,11 +1112,7 @@ try {
                 if (aboutPath) aboutPath.textContent = 'C:/OEP/合成資料';
               `);
               for (const section of ['input', 'projects', 'about']) {
-                await page.evaluate(`
-                  document.querySelector('[data-section=${section}]').click();
-                  document.querySelector('[data-section=${section}]').focus();
-                  window.scrollTo(0, 0);
-                `);
+                await selectSetting(section);
                 assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
                 await shot(section, theme, layout);
               }
