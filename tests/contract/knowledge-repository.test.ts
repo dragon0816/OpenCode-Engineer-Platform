@@ -4,10 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { importKnowledgeRepository } from '../../apps/launcher/src/knowledge.ts';
+import { KnowledgeAsk } from '../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../packages/knowledge/src/repository.ts';
 import { sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
-import { sentinels, syntheticRepository } from '../fixtures/knowledge/repository.ts';
+import { goldFixture } from '../fixtures/knowledge/gold.ts';
+import { forecast, forecastQuestions, forecastRepository, sentinels, syntheticRepository } from '../fixtures/knowledge/repository.ts';
 
 function testFolder() {
   mkdirSync('.phase0', { recursive: true });
@@ -19,6 +21,64 @@ function fingerprints(root: string) {
     .map((entry) => ({ name: join(entry.parentPath, entry.name), hash: sha256(readFileSync(join(entry.parentPath, entry.name))) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
+
+test('retrieves a bilingual forecast from a noisy mirror and verifies the original citation', async () => {
+  const folder = testFolder();
+  const fixture = forecastRepository(folder);
+  const { snapshot, original } = readRepository(folder);
+  const vault = snapshot.vault.id;
+  const forecastId = fixture.evidenceIds.get('forecast');
+  const store = new KnowledgeStore(':memory:');
+  try {
+    store.import(snapshot, original, true);
+    let calls = 0;
+    const ask = new KnowledgeAsk(store, async (_question, evidence) => {
+      calls++;
+      assert.ok(evidence.length <= 5);
+      assert.equal(new Set(evidence.map((passage) => passage.text)).size, evidence.length);
+      const passage = evidence.find(({ id }) => id === forecastId);
+      assert.equal(passage?.text, forecast);
+      const duplicate = evidence.find(({ text }) => text.endsWith('is pending.'));
+      assert.ok(duplicate);
+      const copies = snapshot.passages.filter(({ text }) => text === duplicate.text);
+      assert.equal(copies.length, 12);
+      assert.deepEqual(duplicate.provenance.map(({ id, sourceId, cardId, locator, sha256 }) =>
+        ({ id, sourceId, cardId, locator, sha256 })), copies.map(({ id, sourceId, cardId, locator, sha256 }) =>
+        ({ id, sourceId, cardId, locator, sha256 })));
+      return { content: JSON.stringify({ state: 'answer', citations: [{ passageID: forecastId, quote: '2032 年 1.6T 燈具可達 480 台' }] }) };
+    });
+    for (const question of forecastQuestions) {
+      const result = await ask.ask({ vault, question }, new AbortController().signal);
+      assert.equal(result.state, 'verified');
+      assert.equal(result.answer, '2032 年 1.6T 燈具可達 480 台');
+      const [citation] = result.citations;
+      const stored = snapshot.passages.find(({ id }) => id === citation.passageID)!;
+      assert.equal(citation.sha256, sha256(stored.text));
+      assert.equal(citation.locator, stored.locator);
+      assert.equal(citation.sourceId, stored.sourceId);
+      assert.equal(citation.source, snapshot.sources.find(({ id }) => id === stored.sourceId)?.ref);
+    }
+    assert.equal((await ask.ask({ vault, question: 'What is the warranty for SYN-999?' },
+      new AbortController().signal)).reason, 'no-evidence');
+    assert.equal(calls, 2);
+  } finally { store.close(); }
+});
+
+test('preserves full Recall@5 on the published gold repository mirror', () => {
+  const folder = testFolder();
+  const { snapshot, questions } = goldFixture();
+  const fixture = syntheticRepository(folder, { snapshot });
+  const input = readRepository(folder);
+  const store = new KnowledgeStore(':memory:');
+  try {
+    store.import(input.snapshot, input.original, true);
+    for (const question of questions.filter(({ class: kind }) => kind === 'answerable')) {
+      const hits = store.retrieve(snapshot.vault.id, question.query)?.passages.map(({ id }) => id) ?? [];
+      assert.ok(hits.length <= 5);
+      for (const id of question.evidence) assert.ok(hits.includes(fixture.evidenceIds.get(id)!), question.id);
+    }
+  } finally { store.close(); }
+});
 
 test('repository publications use clock, author, then sequence along with the exact tag and commit', () => {
   const folder = testFolder();

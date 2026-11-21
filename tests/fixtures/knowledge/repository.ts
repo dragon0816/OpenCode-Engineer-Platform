@@ -123,3 +123,29 @@ export function syntheticRepository(root: string, options: { snapshot?: Snapshot
   if (options.republish !== false) publish('tag-a', 6, 3);
   return { repo, commits, json, publish, evidenceIds };
 }
+
+export const forecast = '年度展望顯示 2031 年共需 900 台，1.6T 燈具約 300 台，2032 年 1.6T 燈具可達 480 台。';
+export const forecastQuestions = [
+  '2032 年市場預估 1.6T 燈具的需求是多少？',
+  'What is the market estimate for 1.6T lamp demand in 2032?',
+];
+
+export function forecastRepository(root: string) {
+  const snapshot = smallSnapshot();
+  const add = (id: string, text: string) => {
+    const sourceId = 'source-' + id;
+    snapshot.cards.push({ id, type: 'kind-x', key: id, title: id, version: '1', fields: {} });
+    snapshot.sources.push({ id: sourceId, ref: id, version: '1' });
+    snapshot.passages.push({ id, sourceId, cardId: id, locator: '#L1', text, sha256: sha256(text) });
+  };
+  for (let index = 0; index < 24; index++) {
+    add('duplicate-' + index, index % 2
+      ? 'Market estimate for 1.6T lamp demand in 2032 is pending.'
+      : '2032 年市場預估 1.6T 燈具的需求尚待整理。');
+  }
+  for (let index = 0; index < 8; index++) {
+    add('metadata-' + index, 'name: 2032 市場預估 燈具需求 1.6T lamp demand ' + index);
+  }
+  add('forecast', forecast);
+  return syntheticRepository(root, { snapshot });
+}
