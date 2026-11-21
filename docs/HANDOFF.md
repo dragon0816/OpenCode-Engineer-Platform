@@ -48,3 +48,9 @@ Owner 確認已推送的 Phase 2 可做基本對話，從 `main` 的 `a6aa863` �
 合成 BI／Wiki、SQLite 備份回復、Chromium 與原生 MCP 均已驗。最終 48 題兩 alias 達 D03。第一輪 Haiku 的兩個無支持回答，以及後續封鎖與重測皆保留。整體 gate 為 **UNVERIFIED**，待 owner 提供權利核准的 AEP 快照本機路徑並在目標 VM 補測。真模型一般聊天是否自行選用工具仍待真實 smoke，明確 Ask 已跑真模型。 [Gate 報告](reviews/PHASE3A_GATE_REPORT.md)
 
 工作止於 3a。3b 的 ingest／review／publish 待後續授權與階段先決條件。2b 的通用 GUI 項目仍依矩陣排入後續階段。 [任務清單](TASKS.md)
+
+## 2026-11-21　Phase 3a 儲存庫資料夾交接
+
+從本機 `main` 的 `7e50d76` 建立 `phase-3a/repo-reader`。BI 資料夾可在 Web 知識頁檢查或匯入，也可用 `knowledge:inspect` 及 `knowledge:migrate -- --import-repo`。Web 及 CLI 的模型使用預設關閉。匯入隨交易切換發布指標，`--restore-repo` 可回復保留的世代。Wiki 已發布 manifest 沿用原有入口。 [格式與操作](validation/p3a-repo-reader.md)
+
+合成鏡像、Chromium、MCP 與兩個真 Gateway alias 達既有門檻。GPT 可答 23/24、Haiku 24/24，不可答皆拒答 24/24，公開引用皆可重現。Owner 的實際資料夾、原生 OneDrive 檔案隨選與目標 VM 仍為 **UNVERIFIED**。交接以 owner 本機去敏 inspect 為下一個驗證點。分支只留本機，工作止於 3a。 [本輪報告](reviews/PHASE3A_REPO_READER_REPORT.md)
