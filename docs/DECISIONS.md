@@ -108,3 +108,12 @@ Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明
 - 以各 alias 的啟動 nonce 為准入條件。若完整的 HTTP 200 回覆沒有可用內容，保留該次為失敗，啟動檢查最多以新 session 重試一次。一般驗收的空回覆若未產生程式，記為該回合失敗並重算連勝。每次送件仍使用各自 durable ID，不重送同一 ID。
 - 每個通過健康檢查的 alias 交替跑 D08 Markdown 與 PDF，最多九筆，達到實際連續五筆即停止。故障驗收先讓真模型寫程式並保留原檔與雜湊，再於各 run 的工作目錄注入故障。
 - 每次保留 relay 與上游 HTTP 狀態、可見輸出的類型、各請求延遲及 Gateway 有回傳的 token 用量。完整空回覆與未完成的串流有各自的紀錄。測試 Gateway 維持先前核准的 LAN 明文 HTTP，憑證在該段傳輸未加密。 [重測證據](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
+
+## 2026-11-21　Owner 啟動 Phase 2
+
+Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase-2/web-gui` 開始 Phase 2。普通真模型測試共 23 筆，19 筆通過，兩個 alias 各有同輪連續 5 筆通過。真故障注入的 7 個負例全數判失敗。Phase 2 依 v2 交付 Windows 單鍵啟動、同源 Web、附件、即時進度、產物下載及 BI 待審介面 stub，止於 Phase 2。 [Phase 1 驗收](reviews/PHASE1_GATE_REPORT.md) · [Phase 2 計畫](IMPLEMENTATION_PLAN_V2.md#phase-2同源-weblauncher-與附件)
+
+- 保留限制。AEP 唯讀，禁止推送、強制推送、重寫已發布歷史及直接提交至 `main`。只在目前 worktree 或 OEP 資料目錄操作檔案，禁止刪除或覆寫其外的檔案。禁止 Gateway 管理端點。已追蹤檔案只使用去敏設定，維持既有 hooks 與掃描，提交前跑 `npm run scan`。
+- 工作方式採最簡可行作法。取消例行加審、逐斷言 mutation、舊 Phase 0 probe 加固及小決策逐項請示。每個提交聚焦一件事。保留 lint、typecheck、test、build 的實際輸出及所有真模型嘗試，含失敗與重試。開發結束交由 Claude Code 做一次輕量複核。
+- Gateway 使用程序或 Windows User scope 的 `OEP_LITELLM_BASE_URL`、`OEP_LITELLM_API_KEY`，位址及 token 不寫入輸出、日誌或提交。延續核准的 LAN 明文 HTTP 與 `gpt-5.4-mini`、`claude-haiku-4-5-20251001`。沿用 relay 和有界的模型重試。UI 顯示去敏逾時、空回應及未確定的送件結果。
+- Web 採同源靜態 HTML、CSS 及原生瀏覽器 JavaScript，無前端建置依賴。附件透過單檔 HTTP 請求送入，UI 負責拖放及選檔。自動測試使用 HTTP 契約與可用的 Windows Chromium 瀏覽器。

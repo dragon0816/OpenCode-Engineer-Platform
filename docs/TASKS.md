@@ -53,9 +53,11 @@
 - [x] 真模型 SOP→XLSX 連續 5/5。GPT 補跑與 Haiku 各有同輪連續 5 筆。合計 23 筆普通跑次，19 筆成功全部各驗 13 格，4 筆逾時相關失敗均留存。 [真模型重測](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
 - [x] 真模式故障注入以 Haiku 完成，1 個控制組通過，7 個負例全部判失敗，假成功 0。 [故障證據](reviews/PHASE1_GATE_REPORT.md#真模式故障驗收--phase1-uw6xyz)
 - [x] 提交 Phase 1 gate 報告及原始紀錄位置。 [Gate 報告](reviews/PHASE1_GATE_REPORT.md)
-- [ ] Claude Code 安排一次獨立複核，Phase 1 gate 仍未通過。
+- [x] Owner 確認 Phase 1 已合併並推送（`e616e6a`），授權 Phase 2。原報告保留各驗收項的證據與限制。
 
 ### Phase 2　Web、launcher 與附件
+
+Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受阻即留下驗收報告並交接。 [決策紀錄](DECISIONS.md)
 
 - [ ] 單鍵 Windows 啟動與同源 Web chat、上傳和下載。
 - [ ] 驗證路徑邊界、隔離、Origin/CSRF、重連及程序樹清理。
