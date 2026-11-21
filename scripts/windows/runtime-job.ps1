@@ -36,7 +36,7 @@ try {
     if ($childId -notin $members -or $workerId -notin $members) { throw 'OpenCode Job membership failed.' }
     $handles = @($members | ForEach-Object { Get-Process -Id $_ })
     foreach ($member in $handles) { $null = $member.Handle }
-    Write-Record 'job' @{ pid=$childId; members=$members.Count }
+    Write-Record 'job' @{ pid=$childId; members=$members.Count; memberPIDs=$members }
     while (!$worker.WaitForExit(100)) {
         if ($owner.HasExited) { throw 'OEP launcher exited.' }
     }
