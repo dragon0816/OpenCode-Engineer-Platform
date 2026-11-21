@@ -184,3 +184,21 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 }
 #assistant-settings { display: grid; gap: 5px; margin-block: 10px; }
 #assistant-settings :is(input, textarea) { width: 100%; }
+#session-search { box-sizing: border-box; width: 100%; }
+.project { margin-block: 12px; }
+.project h2 { margin: 0 0 6px; font-size: 1rem; }
+.project h2 button { width: 100%; text-align: start; }
+.session-list { list-style: none; padding: 0; margin-block: 8px; }
+.session-list li { display: flex; align-items: flex-start; gap: 4px; margin-bottom: 4px; }
+.session-list li > button { flex: 1; min-width: 0; text-align: start; overflow-wrap: anywhere; }
+.session-list [aria-current="true"] { outline: 2px solid currentColor; outline-offset: -2px; font-weight: 700; }
+.session-list details { position: relative; }
+.session-list details button { display: block; width: 100%; white-space: nowrap; }
+.session-list summary { cursor: pointer; padding: 5px; }
+@media (max-width: 540px) {
+  .navigation #session-sidebar {
+    position: fixed; inset: 72px auto 12px 0; width: min(300px, 92vw); z-index: 5;
+    box-sizing: border-box; overflow: auto; padding: 16px; background: var(--surface);
+    box-shadow: 0 3px 18px #0005;
+  }
+}

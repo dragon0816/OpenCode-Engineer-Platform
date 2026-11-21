@@ -13,7 +13,7 @@
     <div class="top-actions"><span id="connection" role="status">正在連線</span><button id="stop" type="button" disabled>停止服務</button></div>
   </header>
   <main>
-    <aside class="sidebar">
+    <aside class="sidebar navigation">
       <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">會話導覽</button>
       <div id="session-sidebar">
       <nav class="views" aria-label="工作台">
@@ -62,15 +62,9 @@
         <option value="inspector">資料分析</option>
         <option value="workbook">Excel 工作表</option>
       </select>
-      <button id="new-session" type="button" disabled>新增會話</button>
       <label for="session-search">搜尋會話</label>
-      <input id="session-search" type="text" autocomplete="off">
-      <label for="sessions">會話</label>
-      <select id="sessions" disabled><option value="">尚無會話</option></select>
-      <div class="session-actions">
-        <button id="rename-session" type="button" disabled>重新命名</button>
-        <button id="remove-session" type="button" disabled>刪除</button>
-      </div>
+      <input id="session-search" type="search" autocomplete="off">
+      <nav id="sessions" aria-label="專案與會話"></nav>
       <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
       </div>

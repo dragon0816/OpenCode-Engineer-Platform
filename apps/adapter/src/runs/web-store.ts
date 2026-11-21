@@ -2,7 +2,13 @@ import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src
 import type { Agent } from '../opencode/sessions.ts';
 import { Ledger } from './ledger.ts';
 
-export type WebSession = { id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null };
+export const projects = [
+  { id: 'default', title: '主要工作區' },
+  { id: 'secondary', title: '獨立工作區' },
+] as const;
+export type ProjectID = typeof projects[number]['id'];
+
+export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
 
 export class WebStore extends Ledger {
@@ -12,6 +18,10 @@ export class WebStore extends Ledger {
       id TEXT PRIMARY KEY REFERENCES web_sessions(id),
       title TEXT,
       removed INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_session_project (
+      id TEXT PRIMARY KEY REFERENCES web_sessions(id),
+      project TEXT NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS web_preferences (
       id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -42,14 +52,19 @@ export class WebStore extends Ledger {
       ON CONFLICT(id) DO UPDATE SET removed = 1`).run(id);
   }
 
-  createSession(session: WebSession) {
-    this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
-      .run(session.id, session.upstreamID, session.agent, session.alias, session.createdAt);
+  createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>) {
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
+        .run(session.id, session.upstreamID, session.agent, session.alias, session.createdAt);
+      this.db.prepare('INSERT INTO web_session_project VALUES (?, ?)').run(session.id, session.project ?? 'default');
+    });
   }
 
   sessions() {
-    return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title
+    return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title,
+      COALESCE(p.project, 'default') AS project
       FROM web_sessions s LEFT JOIN web_session_display d ON d.id = s.id
+      LEFT JOIN web_session_project p ON p.id = s.id
       WHERE COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
       .all() as WebSession[];
   }

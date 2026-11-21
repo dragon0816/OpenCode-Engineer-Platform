@@ -9,7 +9,7 @@ import { createSession, promptID, submitOnce } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
-import type { WebSession, WebStore } from '../runs/web-store.ts';
+import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookInput, workbookLimit, workbookName } from '../runs/web-workbook.ts';
 import { HttpError } from './errors.ts';
 
@@ -23,7 +23,7 @@ export function publicRun(run: RunRecord) {
       ? { name: workbookName, bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
 
-export function publicSession({ id, agent, alias, createdAt, title }: WebSession) { return { id, agent, alias, createdAt, ...(title ? { title } : {}) }; }
+export function publicSession({ id, agent, alias, createdAt, title, project }: WebSession) { return { id, agent, alias, createdAt, project, ...(title ? { title } : {}) }; }
 
 type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
 
@@ -54,17 +54,21 @@ export class ChatService {
     }
   }
 
-  workspace(session: Pick<WebSession, 'id'>) { return scopedPath(join(this.root, 'sessions'), session.id); }
-  private modelWorkspace(session: Pick<WebSession, 'id'>) { return scopedPath(join(this.root, 'model-work'), session.id); }
+  private projectRoot(project: ProjectID) {
+    return project === 'default' ? this.root : scopedPath(this.root, project);
+  }
 
-  async create(agent: Agent) {
+  workspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'sessions'), session.id); }
+  private modelWorkspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'model-work'), session.id); }
+
+  async create(agent: Agent, project: ProjectID = 'default') {
     const id = randomUUID();
     const createdAt = Date.now();
-    const local = { id, agent, alias: this.runtime.alias, createdAt };
+    const local = { id, project, agent, alias: this.runtime.alias, createdAt };
     const workspace = this.workspace(local);
     const modelWorkspace = this.modelWorkspace(local);
-    checkDirectory(join(this.root, 'sessions'));
-    checkDirectory(join(this.root, 'model-work'));
+    checkDirectory(join(this.projectRoot(project), 'sessions'));
+    checkDirectory(join(this.projectRoot(project), 'model-work'));
     mkdirSync(workspace);
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
@@ -197,7 +201,7 @@ export class ChatService {
       } else {
         if (input.workbook) {
           update('background');
-          result = await publishWorkbook(join(this.root, 'artifacts'), run.workspace, run);
+          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run);
         }
         state = 'verified';
       }
@@ -233,7 +237,7 @@ export class ChatService {
     const run = this.store.turn(session.id, id)?.run;
     if (run?.state !== 'verified' || !run.artifact?.identity || run.receipt?.runID !== id) throw new HttpError(404, 'Verified artifact not found');
     try {
-      const directory = scopedPath(join(this.root, 'artifacts'), id);
+      const directory = scopedPath(join(this.projectRoot(session.project), 'artifacts'), id);
       const output = openWorkspaceFile(directory, workbookName, workbookLimit, run.artifact.identity);
       return { name: workbookName, data: output.data, sha256: output.identity.sha256 };
     } catch { throw new HttpError(409, 'Artifact is missing or has changed'); }
