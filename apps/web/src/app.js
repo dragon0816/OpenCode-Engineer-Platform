@@ -258,8 +258,11 @@ function render(context) {
   const phase = activeStates.has(latest?.state) ? 'running' : latest?.state === 'failed' ? 'failed' : '';
   context.phase = phase;
   if (row) row.dataset.phase = phase;
-  if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) context.pendingID = undefined;
-  progress.textContent = latest ? statuses[latest.state] : '等待訊息';
+  if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) {
+    context.pendingID = undefined;
+    context.pendingAt = undefined;
+  }
+  updateProgress();
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
   renderPanel(context);
@@ -569,6 +572,17 @@ function renderDiffChoices(context) {
   }
   target.append(choice, action('比較版本', () => void compare()), body);
 }
+
+function updateProgress() {
+  if (!current || stopped) return;
+  const latest = current.state?.runs.at(-1);
+  const startedAt = current.pendingAt ?? (activeStates.has(latest?.state) ? latest.createdAt : undefined);
+  const elapsed = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : undefined;
+  const label = current.pendingAt || latest?.state === 'running' ? '正在產生回覆' : statuses[latest?.state];
+  const text = elapsed === undefined ? (label ?? '等待訊息') : `${label}，已等候 ${elapsed} 秒`;
+  if (progress.textContent !== text) progress.textContent = text;
+}
+setInterval(updateProgress, 1000);
 
 function refresh(context) {
   if (context !== current || stopped) return;
@@ -977,12 +991,15 @@ find('composer').addEventListener('submit', async (event) => {
     await request(`${context.path}/turns`, { data: { id, ...data } });
     submitted.delete(context.id);
     drafts.delete(context.id);
-    if (!context.state?.runs.some((run) => run.id === id)) context.pendingID = id;
+    if (!context.state?.runs.some((run) => run.id === id)) {
+      context.pendingID = id;
+      context.pendingAt = Date.now();
+    }
     context.selected.clear();
     context.fileKey = undefined;
     if (current === context) {
       prompt.value = '';
-      progress.textContent = statuses.accepted;
+      updateProgress();
     }
   } catch (error) {
     if (error instanceof RequestError) submitted.delete(context.id);

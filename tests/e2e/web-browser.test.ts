@@ -312,6 +312,7 @@ try {
         })()`);
         await until(async () => slowStarted || undefined, 8_000);
         await page.ready("!document.querySelector('#cancel-turn').hidden && document.querySelector('#send').hidden");
+        await page.ready("/已等候 [1-9] 秒/.test(document.querySelector('#progress').textContent)");
         await captureLayouts(true);
         await page.evaluate("document.querySelector('#cancel-turn').click(); document.querySelector('#cancel-turn').click()");
         await page.ready("document.querySelector('#progress').textContent === '已停止這次處理' && !document.querySelector('#send').disabled");

@@ -86,3 +86,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 2b Slice 2A 交接
 
 本機分支 `phase-2b/conversation-area` 提供側欄、對話 Markdown、工具卡與取消回合。按「停止處理」可停止目前回合，頁首「停止服務」控制本機服務。合成 Excel 慢速模型案例驗證取消上游、台帳及產物下載。逐 token 串流與 SSE 遺漏事件補齊仍開放。 [驗收與截圖](reviews/PHASE2B_SLICE2A_REPORT.md)
+
+## Phase 2b Slice 2B
+
+分支 `phase-2b/right-panel` 從 `1782464` 開始。右側檔案、工作及差異分頁已整合既有會話與工作資料，附窄版及深淺色 Chromium 驗收。生成中會顯示等候秒數，Relay 保留完整欄位遮蔽。PDF 提供檔案資料及下載。合併由 Technical Lead 執行 `npm run merge-check`。 [驗收報告](reviews/PHASE2B_SLICE2B_REPORT.md)

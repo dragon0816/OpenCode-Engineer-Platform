@@ -335,3 +335,4 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 @media (min-width: 861px) and (max-width: 900px) {
   main { grid-template-columns: minmax(150px, 190px) minmax(280px, 1fr); }
 }
+.files :focus-visible, #toggle-files:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }

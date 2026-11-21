@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import { startGateway } from '../../apps/adapter/src/opencode/gateway.ts';
 import type { GatewayTrace } from '../../apps/adapter/src/opencode/gateway.ts';
+import { bufferedCompletion, redactFields } from '../../scripts/phase0/probe-redaction.ts';
 
 test('Relay restricts path, credential, model and redirects, and reports all upstream failures', async () => {
   const traces: GatewayTrace[] = [];
@@ -71,4 +72,19 @@ test('An empty upstream completion stays HTTP 200 and records usage without cont
     assert.equal(result.error, undefined);
     assert.deepEqual(result.tokens, { prompt: 30, completion: 7, total: 37 });
   } finally { await relay.close(); }
+});
+
+test('Buffered redaction protects raw and escaped markers at every SSE frame boundary', async () => {
+  const marker = randomBytes(10).toString('hex');
+  const redact = redactFields([marker]);
+  const escaped = Array.from(marker, (character) => '%25' + character.charCodeAt(0).toString(16)).join('');
+  for (const representation of [marker, escaped]) {
+    for (let split = 0; split <= representation.length; split++) {
+      const parts = ['合成 ' + representation.slice(0, split), representation.slice(split) + ' 文字'];
+      const frames = parts.map((content) => ({ choices: [{ index: 0, delta: { content } }] }));
+      const body = frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n';
+      const result = await bufferedCompletion(new Response(body), redact) as typeof frames;
+      assert.equal(result.map((frame) => frame.choices[0].delta.content).join(''), '[redacted]');
+    }
+  }
 });
