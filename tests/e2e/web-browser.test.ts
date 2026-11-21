@@ -170,9 +170,12 @@ try {
         assert.equal(await page.evaluate("/sample-hidden-value|Z:\\/synthetic/.test(document.querySelector('.tool-details').textContent)"), false);
         assert.equal(await page.evaluate("!!document.querySelector('#messages table') && !!document.querySelector('#messages pre code')"), true);
         assert.equal(await page.evaluate("!window.injected && !document.querySelector('#messages script, #messages img, #messages a[href^=javascript]')"), true);
-        await page.evaluate("document.querySelector('.tool-card summary').click()");
+        await page.evaluate(`
+          document.querySelector('.tool-card summary').click();
+          document.documentElement.dataset.beforeToolReload = 'true';
+        `);
         await page.command('Page.reload');
-        await page.ready("document.querySelectorAll('.tool-card').length === 1");
+        await page.ready("!document.documentElement.dataset.beforeToolReload && document.querySelectorAll('.tool-card').length === 1");
         await page.command('Network.enable');
         const network = { latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
         await page.command('Network.emulateNetworkConditions', { ...network, offline: true });
