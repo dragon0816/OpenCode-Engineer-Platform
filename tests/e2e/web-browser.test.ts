@@ -118,6 +118,11 @@ try {
         if (!menu.open) document.querySelector('#top-menu-trigger').click();
         document.querySelector(${JSON.stringify('#' + id)}).click();
       })()`);
+      const capture = async (name: string) => {
+        await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
+      };
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
       assert.equal(await page.evaluate("document.cookie.includes('oep_session')"), false);
@@ -258,6 +263,27 @@ try {
         assert.equal(await page.evaluate("document.querySelector('#close-files').textContent"), '返回對話');
         await escape();
         assert.equal(await page.evaluate(`document.activeElement.matches(${JSON.stringify(artifactButton)}) && !document.querySelector('#work-area').inert`), true);
+        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') {
+          const originalTheme = await page.evaluate<string>('document.documentElement.dataset.theme');
+          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+            await page.ready(`innerWidth === ${width}`);
+            for (const theme of ['light', 'dark']) {
+              await page.evaluate(`(() => {
+                document.documentElement.dataset.theme = '${theme}';
+                document.activeElement.blur();
+                const messages = document.querySelector('#messages');
+                messages.scrollTop = messages.scrollHeight;
+              })()`);
+              await capture(`conversation-${theme}-${layout}`);
+              await clickArtifact();
+              await page.ready(`document.querySelector('${visiblePreview} table')`);
+              await capture(`conversation-artifact-${theme}-${layout}`);
+              await escape();
+            }
+          }
+          await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(originalTheme)}`);
+        }
         await page.command('Emulation.clearDeviceMetricsOverride');
         await page.ready("!matchMedia('(max-width: 540px)').matches");
         await assertNoForbiddenShellText(page);
@@ -377,11 +403,6 @@ try {
         await page.evaluate(`document.querySelector('[data-session="' + ${JSON.stringify(selected)} + '"]').click()`);
         await page.ready("document.querySelector('#session-title').textContent === '合成會話'");
         await page.ready("document.querySelector('.tool-card')");
-        const capture = async (name: string) => {
-          await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-          writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
-        };
         await page.ready("!document.querySelector('#recheck-model').disabled && !document.querySelector('#save-limits').disabled");
         assert.deepEqual([...pinged].sort(), [...aliases].sort());
         await page.ready(`document.querySelector('#runtime-details').textContent.includes('v2.3.2') &&
@@ -532,7 +553,7 @@ try {
                   pane.scrollTop += card.getBoundingClientRect().top - pane.getBoundingClientRect().top - 110;
                   window.scrollTo(0, 0);
                 })()`);
-                await capture(`conversation-${theme}-${layout}`);
+                if (process.env.OEP_CAPTURE_RIGHT_PANEL !== '1') await capture(`conversation-${theme}-${layout}`);
                 await page.evaluate(`(() => {
                   const pane = document.querySelector('#messages');
                   const card = document.querySelector('.tool-card');
