@@ -1,5 +1,6 @@
 import { connect, request, RequestError } from './api.js';
 import { bindKnowledge } from './knowledge.js';
+import './jobs.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');

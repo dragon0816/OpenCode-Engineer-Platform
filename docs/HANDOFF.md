@@ -66,3 +66,7 @@ Local branch `phase-3a/retrieval-quality` starts from `00735ef`. Gold mirror Rec
 ## 2026-11-21　Phase 3b review improvements
 
 Local branch `phase-3b/usable-review` starts from `99e860b`. BI review now stages changes against the active revision. The source form uploads bounded UTF-8 content, and model proposals are explicit pending reviews. First rollback deactivates and preserves history. Ask and MCP share the read-only database connection. The Technical Lead owns merge via `npm run merge-check`. [Operations](validation/p3b-publish.md) · [Improvement report](reviews/PHASE3B_IMPROVEMENT_REPORT.md)
+
+## Phase 4 handoff
+
+Local branch `phase-4/telegram-jobs` starts from `38520a3`. The Windows launcher wires private Telegram bots and BI scheduling into the **工作與排程** view. Synthetic validation covers shared BI claims, Telegram replays, Main topic isolation, verified Ask, outbox retry and simulated startup/resume. Real bots, real OS sleep and logout, full GUI parity, and Technical Lead review remain **UNVERIFIED**. The Technical Lead owns merge via `npm run merge-check`. [Operations](validation/p4-telegram.md) · [Gate report](reviews/PHASE4_GATE_REPORT.md)

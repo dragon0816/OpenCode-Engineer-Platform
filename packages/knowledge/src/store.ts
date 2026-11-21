@@ -323,6 +323,24 @@ export class KnowledgeStore {
     if (lease) this.completeBi(id, lease);
   }
 
+  biCompleted(id: string) {
+    return this.db.prepare('SELECT completed FROM ingest_jobs WHERE id=?').get(key(id))?.completed === 1;
+  }
+
+  biStatus() {
+    return this.db.prepare(`SELECT j.id,j.expires,j.completed,r.status AS review_status
+      FROM ingest_jobs j LEFT JOIN ingest_effects e ON e.job=j.id
+      LEFT JOIN reviews r ON r.id=e.review ORDER BY j.id`).all();
+  }
+
+  reconcileBi() {
+    const due = this.db.prepare('SELECT id FROM ingest_jobs WHERE completed=0 AND expires<=? ORDER BY id').all(Date.now());
+    for (const row of due) {
+      try { this.runBi(String(row.id)); }
+      catch { /* Retain the job and lease for inspection and retry. */ }
+    }
+  }
+
   reviews() {
     return this.db.prepare(`SELECT r.id,r.vault,r.parent,r.edit,r.status,r.publication,r.draft,
       p.revision=r.publication AND i.vault IS NULL AS active,

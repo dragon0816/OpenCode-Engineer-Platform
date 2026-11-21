@@ -25,7 +25,7 @@ async function launch() {
     mkdirSync(profile, { recursive: true });
     checkDirectory(profile);
     runtime = await startRuntime(mkdtempSync(join(root, 'launch-')), undefined, profile);
-    adapter = await startAdapter(root, runtime, stop.resolve);
+    adapter = await startAdapter(root, runtime, stop.resolve, !process.env.NODE_TEST_CONTEXT);
     requestedReopen(root);
     await openBrowser(adapter.pairURL());
     const service = adapter;
