@@ -25,7 +25,7 @@ const messages = {
 export function bindKnowledge(openPreview, closePreviews) {
   const browser = bindKnowledgeBrowser(() => refreshVaults(), openPreview);
   const quality = bindKnowledgeQuality(browser.openPassage, messages);
-  bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
+  const refreshReviews = bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
     for (const item of tabs) {
@@ -244,6 +244,7 @@ export function bindKnowledge(openPreview, closePreviews) {
   });
   open.disabled = false;
   return {
+    refreshReviews,
     disable() {
       showKnowledge(false);
       open.disabled = true;

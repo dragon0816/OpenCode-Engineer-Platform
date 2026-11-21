@@ -1446,7 +1446,7 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 
 function showSettings() {
   closePanel(false);
-  for (const id of ['chat-view', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
@@ -1461,7 +1461,7 @@ find('close-settings').addEventListener('click', () => {
   find('open-chat').click();
   if (settingsView.hidden && narrowNavigation.matches) sidebarToggle.focus();
 });
-for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
   find(id).addEventListener('click', (event) => {
     if (settingsView.hidden) return;
     if (!discardSettings()) {
@@ -1510,7 +1510,8 @@ for (const section of document.querySelectorAll('.rail-section')) {
 }
 find('assistant-count').textContent = agent.options.length;
 function syncNavigation() {
-  const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
+  const view = ['chat', 'jobs', 'knowledge', 'review'].find((id) => !find(id + '-view').hidden);
+  const visible = 'open-' + view;
   if (visible !== 'open-chat' || panelTabs.get(activeTab)?.preview) closePanel(false);
   for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
     if (entry === visible) find(entry).setAttribute('aria-current', 'page');
@@ -1521,15 +1522,14 @@ function syncNavigation() {
     if (visible === 'open-chat') sessionTitle.focus();
   }
 }
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+  find(id).addEventListener('click', () => { find('review-view').hidden = true; });
+}
 find('open-review').addEventListener('click', () => {
-  find('open-knowledge').click();
-  if (find('knowledge-view').hidden) return;
-  find('knowledge-tab-build').click();
-  const review = find('ingest-review');
-  review.open = true;
-  review.querySelector('summary').focus();
-  find('open-knowledge').removeAttribute('aria-current');
-  find('open-review').setAttribute('aria-current', 'page');
+  for (const id of ['knowledge-view', 'jobs-view', 'chat-view']) find(id).hidden = true;
+  find('review-view').hidden = false;
+  find('review-title').focus();
+  void knowledge?.refreshReviews();
 });
 find('session-search').addEventListener('input', renderSessions);
 find('clear-session-search').addEventListener('click', () => {
@@ -1867,7 +1867,7 @@ try {
     find('jobs-view').hidden = true;
     find('chat-view').hidden = false;
   });
-  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).addEventListener('click', syncNavigation);
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

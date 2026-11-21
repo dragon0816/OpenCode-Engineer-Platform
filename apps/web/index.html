@@ -514,6 +514,32 @@
         <div id="jobs-content"></div>
       </div>
     </section>
+    <section class="conversation knowledge" id="review-view" aria-labelledby="review-title" hidden>
+      <header class="conversation-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
+      <div class="knowledge-body">
+        <p class="page-help">查看草稿的變更與來源。先核准內容，再發布到知識庫。</p>
+        <button id="review-refresh" type="button">重新整理清單</button>
+        <p id="review-status" role="status"></p>
+        <section class="review-list" aria-labelledby="review-pending-title">
+          <h2 id="review-pending-title">待處理</h2>
+          <h3>卡片</h3>
+          <ul id="review-bi-pending" class="feature-list"></ul>
+          <h3>文章</h3>
+          <ul id="review-wiki-pending" class="feature-list"></ul>
+        </section>
+        <details class="feature-more review-list">
+          <summary>審核紀錄</summary>
+          <h3>卡片</h3>
+          <ul id="review-bi-history" class="feature-list"></ul>
+          <h3>文章</h3>
+          <ul id="review-wiki-history" class="feature-list"></ul>
+        </details>
+        <details class="feature-more review-list" hidden>
+          <summary>匯入工作</summary>
+          <ul id="review-import-jobs"></ul>
+        </details>
+      </div>
+    </section>
     </main>
     <aside class="sidebar files" id="chat-files" aria-label="附加資料" hidden>
       <div class="panel-header">
