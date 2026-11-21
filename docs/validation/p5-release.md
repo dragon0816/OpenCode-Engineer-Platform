@@ -49,3 +49,13 @@ node --disable-warning=ExperimentalWarning --input-type=module -e "await import(
 ```
 
 3. 留存 Windows 版本與位元、一般使用者權限、Node 版本、ZIP SHA-256、上述兩行輸出和任何錯誤。安裝版六類流程、重新啟動後的資料比對與升級回退需有各自的證據。
+
+## Phase 5B 開發機測試
+
+- Phase 5B 的 OEP-0.0.0-windows-x64.zip 雜湊為 1a3f6f04a7375bec9c757e980253e838742ff743b7aa261f0d1abb9f26f00298。
+- 執行 npm run build:release 後，以 npm run test:install 驗 ZIP、檔案清單、竄改、額外路徑、路徑穿越、降版拒絕、重裝及解除安裝。
+- npm run test:backup 測試含約 1,000 張已發布知識卡、5,000 個段落、10,000 筆合成佐證資料和 2,000 個關係，另有審核、工作階段、BI 工作、收發匣及執行紀錄。使用實際知識庫和 Ask 引用驗證器比對發布內容。SQLite WAL 寫入程序持續執行時可取得線上快照。
+- 此份合成資料在開發機的一次測試耗時為備份 674 毫秒、回復 741 毫秒，包含 PowerShell 啟動與清單驗證。使用者環境的 RPO、RTO 為 **UNVERIFIED**。
+- 本機回歸通過 lint、typecheck、單元及契約測試 54 項、秘密掃描 0 命中、ingest 16 項、knowledge 12 項、Telegram 5 項、Web、瀏覽器、合成 Excel、知識整合以及發行可重現建置。Recall@5 基線為 24/24。
+- 初次執行既有 Web、瀏覽器和 Excel 回歸時漏設資料根目錄覆寫，這些回歸在預設 OEP 資料目錄下建立了新的合成測試資料夾。之後在獨立暫存資料目錄重跑。
+- 一般使用者乾淨環境、開始功能表和排程操作 **UNVERIFIED**。 [乾淨 Windows 驗證](p5-clean-vm-runbook.md)

@@ -224,3 +224,7 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 
 - ZIP 內附固定版 OpenCode 和鎖定的 Node 正式相依套件。Node.js 24、Python 3.12 和 PowerShell 7 由使用者準備。Excel oracle 的 Python 套件以鎖定雜湊安裝。
 - ZIP 未簽署。檔案清單逐項列 SHA-256 與大小，ZIP 的外部 SHA-256 同時涵蓋清單。 [發行驗證](validation/p5-release.md)
+
+## Phase 5B 維護與回復
+
+安裝使用每使用者版本目錄和 current.json。備份與回復須先關閉 OEP，以線上備份 API 擷取 SQLite，回復先在同層目錄驗證再重新命名。強制取代前保留原資料和額外安全備份。備份清單只列需要重綁的憑證名稱。D06 和 O-3b 驗證狀態延續既有決策。 [操作文件](OPERATIONS.md)

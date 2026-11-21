@@ -1,17 +1,17 @@
 # Phase 5 驗收狀態
 
-整體驗收 **UNVERIFIED**。本輪先交付發行建置。操作步驟和本機測試證據見發行驗證紀錄。 [發行驗證](../validation/p5-release.md)
+整體驗收 **UNVERIFIED**。Phase 5B 已在開發機以隔離目錄驗證安裝、備份及回復。 [發行驗證](../validation/p5-release.md)
 
 | 驗收項目 | 狀態與範圍 |
 |---|---|
 | 發行打包 | 建置 ZIP、列出檔案大小與 SHA-256，驗固定版 OpenCode ZIP、執行檔和 OpenAPI。Node.js 24、Python 3.12 和 PowerShell 7 為外部先決條件。 |
 | 發行掃描 | ZIP 解開後逐項檢查。第一方文字採專案規則，官方套件與規格採固定內容驗證及憑證規則，固定執行檔比對雜湊與本機憑證位元組。 |
 | 清單、授權、簽章 | ZIP 有 SHA256SUMS。CycloneDX SBOM、NOTICE、完整授權審查及可選的分離簽章欄位 **UNVERIFIED**。ZIP 未簽署。 |
-| 安裝與解除安裝 | **UNVERIFIED**。安裝紀錄、捷徑、登入自啟、降版保護及同一安裝範圍的程序停止尚未交付。 |
-| 備份與回復 | **UNVERIFIED**。一致性快照、憑證重綁、還原前保護與資料比對未完成。 |
+| 安裝與解除安裝 | **VERIFIED（本機隔離測試）**。ZIP 核對、清單、降版拒絕、重裝、預演、保留資料及刪除確認。**UNVERIFIED**。一般使用者的捷徑和登入排程實機操作。 |
+| 備份與回復 | **VERIFIED（本機合成測試）**。SQLite 寫入期間快照、檔案竄改與清單比對、強制回復安全備份、提交前中斷、保留份數、知識修訂與 Ask 引用。**UNVERIFIED**。每日排程實機操作和使用者憑證重綁。 |
 | 升級與回退 | **UNVERIFIED**。版本切換、資料遷移、待確認工作對帳、兩版本演練與中斷復原未完成。 |
 | 六類安裝版流程 | **UNVERIFIED**。SOP→Excel、PNG/PDF 預覽、Telegram→BI→人工審核、Ask 引用、schema 發布與回退、備份回復均待從安裝版驗證。 |
-| RPO、RTO | **UNVERIFIED**。尚無大型合成資料集的備份及回復時間。 |
+| RPO、RTO | **UNVERIFIED**。開發機合成資料的備份約 0.67 秒，回復約 0.74 秒。 |
 | Windows 11 x64 乾淨 VM | **UNVERIFIED**。本機無可用 VM 或 Windows Sandbox。 |
 | Windows CI 與獨立審查 | **UNVERIFIED**。Windows 發行 CI 待交付，Technical Lead 審查待進行。 |
 
