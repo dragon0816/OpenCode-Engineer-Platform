@@ -35,6 +35,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   let knowledgeCalls = 0;
   let rejectedCalls = 0;
   let toolResults = 0;
+  let benchmarkStarted = false;
   const synthetic: typeof fetch = async (_target, init) => {
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     if (!stream) {
@@ -44,6 +45,15 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.ok(passage);
         return Response.json({ choices: [{ message: { content: JSON.stringify({
           state: 'answer', citations: [{ passageID: passage.id, quote: '7.2 mm' }],
+        }) } }] });
+      }
+      if (user.question.startsWith('Benchmark')) {
+        if (user.question.includes('cancel')) {
+          benchmarkStarted = true;
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+        return Response.json({ choices: [{ message: { content: JSON.stringify({
+          state: 'answer', citations: [{ passageID: citationId, quote: '±0.8 dB' }],
         }) } }] });
       }
       assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), [citationId]);
@@ -211,6 +221,77 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#knowledge-status').textContent.includes('引用已通過驗證')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
+        await ready("document.querySelector('#vault').value === 'synthetic-bench' && !document.querySelector('#quality-actions').hidden && !document.querySelector('#vault').disabled");
+        await browser.evaluate(`{
+          document.querySelector('#knowledge-tab-quality').click();
+          const form = document.querySelector('#quality-add-set');
+          form.elements.name.value = '合成品質檢查';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-sets').value === '合成品質檢查'");
+        await browser.evaluate(`{
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration';
+          form.elements.answer.value = '±0.8 dB';
+          form.elements.passages.value = 'SYN-48B';
+          document.querySelector('#quality-find').click();
+        }`);
+        await ready("document.querySelector('#quality-matches button')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-matches button').click();
+          document.querySelector('#quality-editor').requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('Benchmark')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-question-list').open = true;
+          document.querySelector('#quality-questions button').click();
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration revised';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('revised')");
+        await browser.evaluate(`{
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'SYN-404 absent';
+          form.elements.kind.value = 'no-evidence';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelectorAll('#quality-questions li').length === 2");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('D03 通過')");
+        await browser.evaluate(`{
+          document.querySelector('#quality-export').click();
+          const json = document.querySelector('#quality-json');
+          const questions = JSON.parse(json.value);
+          questions[0].answer = '合成錯誤答案';
+          json.value = JSON.stringify(questions);
+          document.querySelector('#quality-import').click();
+        }`);
+        await until(async () => {
+          const data = await (await api.post('/api/knowledge/benchmarks', { vault })).json();
+          return data.sets.some((entry: { questions: { answer: string }[] }) =>
+            entry.questions.some(({ answer }) => answer === '合成錯誤答案')) || undefined;
+        }, 5000);
+        await ready("!document.querySelector('#quality-actions').hidden && !document.querySelector('#quality-actions').inert && !document.querySelector('#quality-run').disabled");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('D03 未通過')");
+        await browser.evaluate("document.querySelector('#quality-results details').open = true");
+        assert.match(await browser.evaluate<string>("document.querySelector('#quality-results details').textContent"), /答案或引用與預期不符/);
+        await browser.evaluate("document.querySelector('#quality-results details button').click()");
+        await ready("document.querySelector('#knowledge-drawer').open && document.querySelector('#knowledge-drawer-body blockquote')?.textContent.includes('±0.8 dB')");
+        await browser.evaluate("document.querySelector('#knowledge-drawer').close()");
+        await browser.evaluate(`{
+          document.querySelector('#quality-questions button').click();
+          const form = document.querySelector('#quality-editor');
+          form.elements.query.value = 'Benchmark SYN-48B calibration cancel';
+          form.requestSubmit();
+        }`);
+        await ready("document.querySelector('#quality-questions li')?.textContent.includes('cancel')");
+        await browser.evaluate("document.querySelector('#quality-run').click()");
+        await until(() => Promise.resolve(benchmarkStarted || undefined), 5000);
+        await browser.evaluate("document.querySelector('#quality-stop').click()");
+        await ready("document.querySelector('#quality-results').textContent.includes('已取消')");
+
         await browser.evaluate(`{
           document.querySelector('#knowledge-tab-build').click();
           const reviewPanel = document.querySelector('#wiki-review');

@@ -1,3 +1,4 @@
+import type { BenchmarkQuestion } from './benchmark.ts';
 import { browseSnapshot } from './browse.ts';
 import { randomUUID } from 'node:crypto';
 import { key, materialize, materializeChange, reviewSchema, sourceUploadLimit } from './ingest.ts';
@@ -8,6 +9,12 @@ import type { Passage } from '../../contracts/src/evidence.ts';
 import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './retrieval.ts';
 import { canonical, compareRepositoryPublications, digestPattern, string, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
+
+const benchmarksMigration = `
+  CREATE TABLE IF NOT EXISTS benchmark_sets (
+    vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
+  ) STRICT;
+`;
 
 const schema = `
   CREATE TABLE IF NOT EXISTS blobs (
@@ -69,7 +76,7 @@ export class KnowledgeStore {
         this.db.exec('PRAGMA journal_mode=WAL');
         this.transaction(() => this.db.exec(`${schema} PRAGMA user_version=1;`));
       } else if (version !== 1) throw new Error('Unsupported knowledge database schema');
-      if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration));
+      if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration + benchmarksMigration));
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
     } catch (error) {
@@ -505,6 +512,20 @@ const schema = this.reviewSchema(input.vault.id, base);
         relationships: snapshot.relationships.length, modelEnabled: Boolean(publication.allow_model),
         ...(snapshot.repository && { tag: snapshot.repository.tag }),
         ready: publication.index_hash === publication.manifest_hash };
+    });
+  }
+
+  benchmarkSets(vault: string) {
+    if (!this.publication(vault)) return;
+    return this.db.prepare('SELECT name, questions FROM benchmark_sets WHERE vault=? ORDER BY name').all(vault)
+      .map(({ name, questions }) => ({ name: String(name), questions: JSON.parse(String(questions)) as BenchmarkQuestion[], builtIn: false }));
+  }
+
+  saveBenchmark(vault: string, name: string, questions: BenchmarkQuestion[] | null) {
+    return this.transaction(() => {
+      if (!this.publication(vault)) throw new Error('Vault unavailable');
+      if (questions === null) this.db.prepare('DELETE FROM benchmark_sets WHERE vault=? AND name=?').run(vault, name);
+      else this.db.prepare('INSERT OR REPLACE INTO benchmark_sets VALUES (?, ?, ?)').run(vault, name, JSON.stringify(questions));
     });
   }
 

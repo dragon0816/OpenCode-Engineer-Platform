@@ -1,3 +1,4 @@
+import { bindKnowledgeQuality } from './knowledge-quality.js';
 import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
@@ -23,6 +24,7 @@ const messages = {
 
 export function bindKnowledge() {
   const browser = bindKnowledgeBrowser(() => refreshVaults());
+  const quality = bindKnowledgeQuality(browser.openPassage, messages);
   bindReview(find('knowledge-repository'), () => refreshVaults());
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
@@ -74,6 +76,7 @@ export function bindKnowledge() {
     details.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);
     browser.select(selected?.id);
+    quality.select(selected);
     if (!selected) {
       status.textContent = '目前沒有已發布的快照。';
       controls();
@@ -113,6 +116,7 @@ export function bindKnowledge() {
     const active = loading = new AbortController();
     models.clear();
     browser.select(undefined);
+    quality.select(undefined);
     vault.replaceChildren(new Option('載入中', ''));
     status.textContent = '正在讀取已發布版本。';
     details.replaceChildren();

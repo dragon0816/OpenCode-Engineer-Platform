@@ -259,7 +259,51 @@
         <div id="knowledge-answer" aria-live="polite"></div>
         </section>
         <section id="knowledge-quality" role="tabpanel" aria-labelledby="knowledge-tab-quality" tabindex="0" hidden>
-          <p>品質評估尚未開放。</p>
+          <p id="quality-status" role="status">請選擇知識庫。</p>
+          <div id="quality-actions" hidden>
+            <div class="knowledge-filters">
+              <label>題集 <select id="quality-sets"></select></label>
+              <label>核准模型 <select id="quality-aliases"></select></label>
+              <button type="button" id="quality-run" disabled>執行題集</button>
+              <button type="button" id="quality-stop" disabled>取消執行</button>
+            </div>
+            <p id="quality-builtin-note" hidden>這組 48 道標準題可在授權模型使用的合成示範庫執行。</p>
+            <div id="quality-set-actions">
+              <form id="quality-add-set">
+                <label>新題集名稱 <input name="name" type="text" maxlength="80" required></label>
+                <button type="submit">新增題集</button>
+              </form>
+              <button type="button" id="quality-remove-set">刪除題集</button>
+              <details>
+                <summary>進階匯入與匯出</summary>
+                <label>從檔案載入 JSON <input id="quality-json-file" type="file" accept=".json,application/json"></label>
+                <label>題集 JSON<textarea id="quality-json" rows="5"></textarea></label>
+                <button type="button" id="quality-import">匯入並取代題目</button>
+                <button type="button" id="quality-export">匯出題集</button>
+              </details>
+            </div>
+            <div id="quality-results" class="knowledge-results" aria-live="polite"></div>
+            <details id="quality-question-list">
+              <summary>題目</summary>
+              <ol id="quality-questions"></ol>
+            </details>
+            <form id="quality-editor" hidden>
+              <h2>編輯題目</h2>
+              <label>問題 <textarea name="query" rows="2" required maxlength="500"></textarea></label>
+              <label>預期答案 <textarea name="answer" rows="2" maxlength="2000"></textarea></label>
+              <label>類別 <select name="kind">
+                <option value="answerable">可回答</option><option value="no-evidence">缺乏證據</option>
+                <option value="conflict">證據衝突</option><option value="injection">含注入指令</option>
+              </select></label>
+              <h3>預期證據</h3>
+              <div id="quality-evidence"></div>
+              <label>搜尋證據 <input type="text" name="passages" maxlength="500"></label>
+              <button type="button" id="quality-find">搜尋段落</button>
+              <ul id="quality-matches"></ul>
+              <button type="submit">儲存題目</button>
+              <button type="button" id="quality-new-question">新增另一題</button>
+            </form>
+          </div>
         </section>
         <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
         <details id="knowledge-repository">

@@ -464,3 +464,8 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #knowledge-drawer dd { margin-inline-start: 12px; }
 #knowledge-drawer blockquote { white-space: pre-wrap; margin-inline: 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--line); }
 #knowledge-cards { max-height: 360px; }
+.knowledge-results { overflow: auto; margin-block: 10px; }
+.knowledge-results td, .knowledge-results th { text-align: start; padding: 6px; border-bottom: 1px solid var(--line); }
+#quality-questions { max-height: 330px; overflow: auto; }
+#quality-questions li { margin-block: 6px; }
+#quality-editor { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
