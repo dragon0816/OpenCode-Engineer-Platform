@@ -1,3 +1,4 @@
+import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
 
 const find = (id) => document.getElementById(id);
@@ -19,6 +20,7 @@ const messages = {
 };
 
 export function bindKnowledge() {
+  bindReview(document.getElementById('knowledge-answer'), () => refreshVaults());
   const open = find('open-knowledge');
   const chat = find('open-chat');
   const vault = find('vault');

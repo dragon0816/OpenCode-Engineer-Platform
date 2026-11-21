@@ -57,8 +57,7 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
   const databaseRoot = dirname(profile);
   const path = join(databaseRoot, knowledgeFile);
   verifyKnowledgePath(path);
-  new KnowledgeStore(path).close();
-  const store = new KnowledgeStore(path, true);
+  const store = new KnowledgeStore(path);
   let relay: Awaited<ReturnType<typeof startGateway>> | undefined;
   let mcp: Awaited<ReturnType<typeof startKnowledgeMcp>> | undefined;
   const close = async () => {
@@ -71,7 +70,7 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
       trace: (row) => appendFileSync(join(audit, 'knowledge-gateway.jsonl'), JSON.stringify(row) + '\n') });
     const ask = new KnowledgeAsk(store, knowledgeModel(relay, options.alias));
     mcp = await startKnowledgeMcp(ask);
-    return { ask, overview: () => store.overview(), inspectRepository,
+    return { ask, reviewStore: store, overview: () => store.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
       config: mcp.config, close };
   } catch (error) {
