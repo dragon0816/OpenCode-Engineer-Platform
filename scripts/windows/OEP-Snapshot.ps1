@@ -65,3 +65,24 @@ function Installed-Version($Root) {
     $package = Join-Path $PSScriptRoot '../../package.json'
     (Version-OEP (Read-OEP $package).version).ToString()
 }
+function Copy-RestoreStage($Backup, $Manifest, $Stage) {
+    [void][IO.Directory]::CreateDirectory($Stage)
+    foreach ($entry in $Manifest.inventory) {
+        $path = Entry-OEP $Stage $entry.path
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        [IO.File]::Copy((Entry-OEP $Backup $entry.path), $path)
+    }
+    Verify-OEP $Stage $Manifest.inventory 'backup.manifest.json'
+    Reconcile-Snapshot $Stage $Manifest
+}
+
+function Move-RestoreStage($Stage, $DataRoot, $Original) {
+    if ([IO.Directory]::Exists($DataRoot)) { [IO.Directory]::Move($DataRoot, $Original) }
+    try { [IO.Directory]::Move($Stage, $DataRoot) }
+    catch {
+        if ([IO.Directory]::Exists($Original) -and ![IO.Directory]::Exists($DataRoot)) {
+            [IO.Directory]::Move($Original, $DataRoot)
+        }
+        throw
+    }
+}
