@@ -8,6 +8,7 @@ import { AttachmentService, convertWorkbook } from '../../apps/adapter/src/runs/
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { publishWorkbook, workbookInput } from '../../apps/adapter/src/runs/web-workbook.ts';
 
 function directory() {
   mkdirSync('.phase0', { recursive: true });
@@ -127,4 +128,16 @@ test('forward migration preserves Phase 1 run records and saves a consistent rol
   const reverted = new Ledger(join(root, backup));
   try { assert.deepEqual(reverted.get(record.id), record); }
   finally { reverted.close(); }
+});
+
+test('invalid model workbook JSON produces no downloadable file', async () => {
+  const root = directory();
+  const data = join(root, 'generated');
+  const output = join(root, 'artifacts');
+  mkdirSync(data);
+  mkdirSync(output);
+  const run = { id: 'invalid', workspace: root, mode: 'synthetic', state: 'background' as const, createdAt: 1, retries: 0, errors: [] };
+  writeFileSync(scopedPath(root, workbookInput(run.id)), '[{"name":"Notes","rows":[["A"]}]');
+  await assert.rejects(publishWorkbook(output, root, run), /invalid workbook JSON/);
+  assert.deepEqual(readdirSync(output), []);
 });

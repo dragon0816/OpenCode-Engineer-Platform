@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord } from '../../../../packages/contracts/src/run.ts';
+import { HttpError } from '../http/errors.ts';
 import { convertWorkbook } from './attachments.ts';
 import { workbook } from './workbook.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
@@ -15,7 +16,10 @@ export async function publishWorkbook(root: string, workspace: string, run: RunR
   const source = workbookInput(run.id);
   const input = openWorkspaceFile(workspace, source, 64 * 1024);
   if (Number(BigInt(input.identity.created) / 1_000_000n) < run.createdAt) throw new Error('Workbook data is stale');
-  const bytes = workbook(JSON.parse(input.data.toString('utf8')));
+  let sheets: unknown;
+  try { sheets = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(input.data)); }
+  catch { throw new HttpError(422, 'The model wrote invalid workbook JSON. Try the workbook request again'); }
+  const bytes = workbook(sheets);
   await convertWorkbook(Buffer.from(bytes));
 
   checkDirectory(root);

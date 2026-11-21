@@ -156,7 +156,9 @@ export class ChatService {
       }
       const output = input.workbook ? [
         `Use the write tool once to create ${workbookInput(run.id)} relative to the session workspace.`,
-        'Write a strict JSON array of sheets, each with a name string and rows as arrays of strings, numbers, or booleans.',
+        'The file must contain strict JSON with no Markdown or commentary. Example of a complete file:',
+        '[{"name":"Example","rows":[["Label","Value"],["Sample",1]]}]',
+        'Replace the example with the requested sheets. Check that each row and each sheet’s rows array are closed before writing.',
         'Use up to four sheets, 20 rows per sheet and 12 columns per row. Then reply with a brief summary.',
       ].join(' ') : '';
       const additional = [parts.text, output].filter(Boolean).join('\n\n');
