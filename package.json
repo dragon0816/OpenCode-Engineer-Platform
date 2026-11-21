@@ -29,7 +29,8 @@
     "runtime": "node --disable-warning=ExperimentalWarning apps/launcher/src/main.ts",
     "build": "tsc --outDir .phase0/build",
     "scan": "node scripts/phase0/secret-scan.mjs --tree",
-    "merge-check": "node scripts/phase0/merge-check.mjs"
+    "merge-check": "node scripts/phase0/merge-check.mjs",
+    "test:ingest": "node --disable-warning=ExperimentalWarning --test tests/integration/ingest-publish.test.ts"
   },
   "dependencies": {
     "@opencode/client": "2.3.2",

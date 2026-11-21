@@ -145,3 +145,10 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - 先支援 BI 的已發布 SQLite。以發布紀錄順序解析標籤，僅驗選中標籤與其成品。發布紀錄無法判讀、最新 tag 缺件或成品不符時，保留目前的 OEP 世代。沒有發布紀錄時回報未發布。Wiki 資料夾提供結構檢查，既有 Wiki manifest 與合成快照匯入沿用原契約。
 - 在既有 OEP SQLite 以每筆發布事件建立不可變世代。原始 SQLite、卡片、欄位出處、關係、證據與 FTS5 同交易持久化，最後切換指標。發布排序以 clock 為準，可重發舊 tag。保留既有世代供明確回復，較舊輸入不取代目前的發布。證據出處以快照內資訊為準，原始文件的獨立核對與撤回紀錄重播留待實際版本確認。
 - Web 以現有同源配對及 CSRF 驗證接收本機完整路徑。結構檢查預設遮蔽 tag 及深層路徑，CLI `--show-names` 在本機解除名稱遮蔽。預設匯入只供本機持有，獲明確模型授權的世代才供 Ask 使用。 [格式與操作](validation/p3a-repo-reader.md)
+
+## 2026-11-21 Phase 3b implementation decisions
+
+- Store review schemas, original drafts, saved edits, job claims, effects and notification intents as additive SQLite tables. Commit the reviewed snapshot, blobs, FTS index, pointer, review receipt and outbox intent in one transaction.
+- Keep the Phase 3a snapshot and SQLite format readable. A vault with an installed review schema accepts new active publications through review. Existing published imports remain available for unmanaged vaults.
+- Use a distinct candidate ID as the job, review and notification deduplication key. Compare the saved edit number during review and the published predecessor during publish and rollback.
+- Normalize known AEP SQLite layouts 8, 9 and 14 in memory. Fail closed on unknown versions and use the OEP data directory for writes.

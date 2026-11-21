@@ -56,6 +56,7 @@ export function readBiSnapshot(db: DatabaseSync, file: string, identity: Identit
   }
 
   const userVersion = Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);
+  if (![8, 9, 14].includes(userVersion)) problem('Unsupported BI SQLite user_version.');
   const reference = read('meta', ['key', 'value']).find((row) => row.key === 'schema')?.value;
   if (reference !== undefined && typeof reference !== 'string') problem('Invalid BI schema reference.');
   const separator = typeof reference === 'string' ? reference.lastIndexOf('@') : -1;

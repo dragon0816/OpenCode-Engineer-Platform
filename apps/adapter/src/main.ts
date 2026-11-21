@@ -12,6 +12,7 @@ import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowle
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
+import { reviewAction } from './http/review.ts';
 import { HttpError } from './http/errors.ts';
 import { WebEvents } from './http/events.ts';
 import { download, upload } from './http/files.ts';
@@ -23,6 +24,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
+  ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
 ]);
@@ -102,6 +104,17 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
         sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/reviews') {
+      const reviewStore = runtime.knowledge.reviewStore;
+      if (method === 'GET') {
+        send(response, 200, { reviews: reviewStore.reviews(), ...reviewStore.reconciliation() });
+      } else {
+        const input = await body(request);
+        try { send(response, 200, reviewAction(reviewStore, input)); }
+        catch { throw new HttpError(422, '審核操作失敗。請重新整理並檢查版本、證據與審核狀態。'); }
+      }
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {

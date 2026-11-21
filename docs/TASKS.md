@@ -81,9 +81,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 ### Phase 3b　Ingest／review／publish
 
-- [ ] BI staging／schema/evidence、Wiki sandbox 與人工核准。
-- [ ] 永續 job/effect ledger、冪等發布、失敗恢復及 rollback。
-- [ ] 提交 Phase 3b 驗收和獨立 review。
+- [x] 合成 BI staging／schema/evidence、Wiki sandbox 與人工核准核心流程。
+- [x] 永續 job/effect ledger、冪等發布、失敗恢復及 rollback。
+- [ ] Phase 3b GUI parity 剩餘功能及 Technical Lead 獨立審查。 [Gate 報告](reviews/PHASE3B_GATE_REPORT.md)
 
 ### Phase 4　Telegram 和三種 BI 觸發
 

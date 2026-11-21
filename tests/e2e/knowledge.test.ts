@@ -71,6 +71,9 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       assert.equal((await fetch(api.origin + '/api/knowledge/import', {
         method: 'POST', headers: { origin: api.origin },
       })).status, 401);
+      const reviewsPath = '/api/knowledge/reviews';
+      assert.equal((await fetch(api.origin + reviewsPath)).status, 401);
+      assert.equal((await fetch(api.origin + reviewsPath, { method: 'POST', headers: { origin: api.origin } })).status, 401);
       assert.equal((await api.post('/api/knowledge/inspect', { folder: 'relative-path' })).status, 400);
       assert.equal((await api.post('/api/knowledge/import', { folder: root })).status, 422);
       const inspection = await api.post('/api/knowledge/inspect', { folder: repository });
@@ -117,6 +120,30 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         `);
         await browser.ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
+        await browser.evaluate(`
+          const reviewPanel = document.querySelector('#wiki-review');
+          reviewPanel.open = true;
+          const [reviewVault, reviewVersion] = reviewPanel.querySelectorAll('input');
+          reviewVault.value = 'synthetic-wiki';
+          reviewVersion.value = '1';
+          reviewPanel.querySelector('button').click();
+        `);
+        await browser.ready("document.querySelector('#wiki-review textarea').value.includes('synthetic-wiki')");
+        const clickReview = (label: string) => browser.evaluate(
+          `[...document.querySelectorAll('#wiki-review button')].find(element => element.textContent === ${JSON.stringify(label)}).click()`);
+        await clickReview('送交審核');
+        await browser.ready("document.querySelector('#wiki-review').textContent.includes('pending')");
+        const reviewList = await (await api.get(reviewsPath)).json();
+        const id = reviewList.reviews[0].id;
+        assert.equal((await api.post(reviewsPath, { action: 'publish', id })).status, 422);
+        await clickReview('核准');
+        await browser.ready("document.querySelector('#wiki-review').textContent.includes('approved')");
+        await clickReview('發布');
+        await browser.ready("document.querySelector('#wiki-review').textContent.includes('回復前一版本')");
+        assert.equal((await (await api.get(reviewsPath)).json()).intents.length, 1);
+        await clickReview('回復前一版本');
+        await until(async () => !(await (await api.get('/api/knowledge/vaults')).json()).vaults
+          .some(({ id }: { id: string }) => id === 'synthetic-wiki'), 5000);
         await browser.evaluate("document.querySelector('#open-chat').click()");
         assert.equal(await browser.evaluate("document.querySelector('#chat-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'open-chat');
