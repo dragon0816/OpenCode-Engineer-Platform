@@ -201,8 +201,6 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
   .top { padding-inline: 12px; gap: 8px; }
   .top-model span { display: block; margin: 0; }
 }
-#assistant-settings { display: grid; gap: 5px; margin-block: 10px; }
-#assistant-settings :is(input, textarea) { width: 100%; }
 #session-search { box-sizing: border-box; width: 100%; }
 .project { margin-block: 12px; }
 .project h2 { margin: 0 0 6px; font-size: 1rem; }
@@ -365,21 +363,32 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .files :focus-visible, #toggle-files:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
 
 
-.settings-layout { display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); gap: 18px; }
-#settings-nav { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; }
-#settings-nav button { width: 100%; text-align: left; }
+.settings-layout { display: grid; grid-template-columns: 155px minmax(0, 1fr); gap: clamp(20px, 4vw, 52px); }
+#settings-nav { display: grid; align-content: start; gap: 4px; }
+#settings-view #settings-nav button { text-align: start; border-color: transparent; }
 #settings-view [aria-current="page"], #open-settings[aria-current="page"] { border-color: var(--link); color: var(--link); }
 #settings-view :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
-.settings-content { min-width: 0; max-width: 650px; }
-.settings-content h2 { margin-top: 0; }
-.settings-content label { display: block; }
+.settings-content { min-width: 0; max-width: 650px; overflow-wrap: anywhere; }
+.settings-content h2 { font-size: 1.22rem; margin: 0 0 4px; }
+.settings-help { color: var(--muted); margin-bottom: 18px; }
+.settings-content label { display: block; font-weight: 600; }
+.settings-content textarea { display: block; width: 100%; resize: vertical; min-height: 4rem; }
+.settings-content dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; }
+.settings-content dt { color: var(--muted); }
+.settings-content dd { margin: 0; }
+.settings-advanced { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.settings-advanced summary { color: var(--link); }
+.settings-advanced p { margin-block: 6px; }
+#assistant-settings, #appearance-settings { display: grid; gap: 7px; }
+#assistant-settings input { width: 100%; }
+#model-settings { margin-top: 12px; }
+#limit-fields { display: grid; gap: 10px; }
 @media (max-width: 540px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
-  #settings-nav button { width: auto; }
+  #settings-nav { display: flex; flex-wrap: wrap; }
 }
 
 
-#appearance-settings { display: grid; gap: 8px; }
 #appearance-settings input { max-width: 100%; }
 .sidebar-assistant { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .assistant-avatar {
@@ -396,8 +405,11 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #limit-fields small { color: var(--muted); }
 #session-alias { max-width: 100%; }
 
-#settings-view { --settings-control-border: #667985; min-height: 440px; padding: 20px; }
-.settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+#settings-view { --settings-control-border: #667985; flex: 1; min-width: 0; padding: clamp(16px, 3vw, 36px); background: var(--surface); }
+.settings-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 22px; padding-bottom: 12px; border-bottom: 1px solid var(--line);
+}
 .settings-heading h1 { margin: 0; }
 :root[data-theme="dark"] #settings-view { --settings-control-border: #829eac; }
 @media (prefers-color-scheme: dark) {
@@ -408,7 +420,8 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 }
 #settings-view #settings-nav button[aria-current="page"] { border-color: var(--link); background: var(--selected); }
 #limit-fields input { background: var(--surface); color: inherit; }
-.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 8px; }
+.settings-actions [role="status"]:empty { display: none; }
 #default-alias { max-width: 100%; }
 #limit-fields input { width: min(100%, 12ch); font: inherit; }
 #settings-integrations li { margin-bottom: 8px; }

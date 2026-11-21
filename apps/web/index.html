@@ -68,7 +68,7 @@
         </details>
       </div>
     </header>
-    <section class="conversation knowledge" id="settings-view" aria-labelledby="settings-title" hidden>
+    <section id="settings-view" aria-labelledby="settings-title" hidden>
       <header class="settings-heading">
         <h1 id="settings-title" tabindex="-1">設定</h1>
         <button id="close-settings" type="button">返回對話</button>
@@ -87,24 +87,32 @@
           <button type="button" data-section="about">關於</button>
         </nav>
         <div class="settings-content">
-          <section id="settings-assistant">
+          <section id="settings-assistant" aria-labelledby="settings-assistant-title">
+            <h2 id="settings-assistant-title">助理</h2>
+            <p class="settings-help">設定助理的名稱、介紹和回覆方式。</p>
             <form id="assistant-settings">
-              <h2>助理</h2>
               <label for="assistant-name">助理名稱</label>
               <input id="assistant-name" type="text" maxlength="80">
               <label for="assistant-introduction">自我介紹</label>
               <textarea id="assistant-introduction" maxlength="500"></textarea>
               <label for="assistant-instructions">助理指示</label>
               <textarea id="assistant-instructions" maxlength="4000"></textarea>
-              <p>新會話會完整套用儲存的指示。先前會話的歷史可能仍包含舊指示。</p>
-              <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
-              <p id="settings-status" role="status"></p>
+              <small>新對話會完整套用儲存的指示，舊對話可能仍包含先前的指示。</small>
+              <div class="settings-actions">
+                <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
+                <p id="settings-status" role="status"></p>
+              </div>
             </form>
-            <label><input type="checkbox" disabled> 多助理委派</label>
-            <small>目前固定版本的 OEP 設定只允許主要助理執行，委派工具未獲授權。</small>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <p>助理指示儲存在 <code>soul.md</code>。</p>
+              <label><input id="assistant-delegation" type="checkbox" disabled> 多助理委派</label>
+              <small>目前只允許主要助理執行工作。</small>
+            </details>
           </section>
-          <section id="settings-appearance" hidden>
-            <h2>外觀</h2>
+          <section id="settings-appearance" aria-labelledby="settings-appearance-title" hidden>
+            <h2 id="settings-appearance-title">外觀</h2>
+            <p class="settings-help">調整主題、畫面間距和助理頭像。</p>
             <form id="appearance-settings">
               <label for="theme">外觀主題</label>
               <select id="theme">
@@ -120,13 +128,13 @@
               <div class="settings-actions">
                 <button id="avatar-reset" type="button">還原預設頭像</button>
                 <button id="save-appearance" type="submit" disabled>儲存外觀</button>
+                <p id="appearance-status" role="status"></p>
               </div>
-              <p id="appearance-status" role="status"></p>
             </form>
           </section>
-          <section id="settings-model" hidden>
-            <h2>模型</h2>
-            <p>模型閘道是外部服務，請由維運端管理。OEP 不提供閘道管理操作。</p>
+          <section id="settings-model" aria-labelledby="settings-model-title" hidden>
+            <h2 id="settings-model-title">模型</h2>
+            <p class="settings-help">選擇新對話使用的模型並查看連線狀態。</p>
             <p id="model-credentials"></p>
             <ul id="model-health"></ul>
             <form id="model-settings">
@@ -135,18 +143,28 @@
               <div class="settings-actions">
                 <button id="save-model" type="submit" disabled>儲存預設模型</button>
                 <button id="recheck-model" type="button" disabled>立即重新檢查</button>
+                <p id="model-settings-status" role="status"></p>
               </div>
-              <p id="model-settings-status" role="status"></p>
             </form>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <p>外部維運人員負責管理模型閘道及更新憑證。</p>
+            </details>
           </section>
-          <section id="settings-limits" hidden>
-            <h2>回合限制</h2>
-            <p>超出歷史上限時會省略較舊的完整對話回合。新訊息及當回合工具結果仍會納入。</p>
+          <section id="settings-limits" aria-labelledby="settings-limits-title" hidden>
+            <h2 id="settings-limits-title">回合限制</h2>
+            <p class="settings-help">設定每次回覆可參考多少舊訊息、使用工具的次數與處理時間。</p>
             <form id="limits-settings">
               <div id="limit-fields"></div>
-              <button id="save-limits" type="submit" disabled>儲存回合限制</button>
-              <p id="limits-status" role="status"></p>
+              <div class="settings-actions">
+                <button id="save-limits" type="submit" disabled>儲存回合限制</button>
+                <p id="limits-status" role="status"></p>
+              </div>
             </form>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <p>超出歷史上限時會省略較舊的完整對話回合，仍會納入新訊息與本次工具結果。</p>
+            </details>
           </section>
           <section id="settings-input" hidden>
             <h2>輸入</h2>
