@@ -35,44 +35,63 @@
       <nav id="sessions" aria-label="專案與會話"></nav>
       <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
-      <details id="settings">
-        <summary>設定</summary>
-        <label for="theme">外觀主題</label>
-        <select id="theme">
-          <option value="system">跟隨系統</option>
-          <option value="light">淺色</option>
-          <option value="dark">深色</option>
-        </select>
-        <form id="assistant-settings">
-          <h2>助理</h2>
-          <label for="assistant-name">助理名稱</label>
-          <input id="assistant-name" type="text" maxlength="80">
-          <label for="assistant-introduction">自我介紹</label>
-          <textarea id="assistant-introduction" maxlength="500"></textarea>
-          <label for="assistant-instructions">助理指示</label>
-          <textarea id="assistant-instructions" maxlength="4000"></textarea>
-          <p>儲存後，指示會用在接下來送出的回合。</p>
-          <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
-          <p id="settings-status" role="status"></p>
-        </form>
-        <label><input type="checkbox" disabled> 多助理委派</label>
-        <small>目前工作台尚未接入可受控的多助理委派。</small>
-        <details>
-          <summary>服務狀態</summary>
-          <p id="runtime-status"></p>
-        </details>
-        <details>
-          <summary>整合說明</summary>
+      <button id="open-settings" type="button" aria-keyshortcuts="Control+,">設定</button>
+      </div>
+    </aside>
+    <section class="conversation knowledge" id="settings-view" aria-labelledby="settings-title" hidden>
+      <header class="settings-heading">
+        <h1 id="settings-title" tabindex="-1">設定</h1>
+        <button id="close-settings" type="button">返回對話</button>
+      </header>
+      <div class="settings-layout">
+        <nav id="settings-nav" aria-label="設定分類">
+          <button type="button" data-section="assistant" aria-current="page">助理</button>
+          <button type="button" data-section="appearance">外觀</button>
+          <button type="button" data-section="runtime">執行環境</button>
+          <button type="button" data-section="integrations">整合說明</button>
+        </nav>
+        <div class="settings-content">
+          <section id="settings-assistant">
+            <form id="assistant-settings">
+              <h2>助理</h2>
+              <label for="assistant-name">助理名稱</label>
+              <input id="assistant-name" type="text" maxlength="80">
+              <label for="assistant-introduction">自我介紹</label>
+              <textarea id="assistant-introduction" maxlength="500"></textarea>
+              <label for="assistant-instructions">助理指示</label>
+              <textarea id="assistant-instructions" maxlength="4000"></textarea>
+              <p>儲存後，指示會用在接下來送出的回合。</p>
+              <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
+              <p id="settings-status" role="status"></p>
+            </form>
+            <label><input type="checkbox" disabled> 多助理委派</label>
+            <small>目前固定版本的 OEP 設定只允許主要助理執行，委派工具未獲授權。</small>
+          </section>
+          <section id="settings-appearance" hidden>
+            <h2>外觀</h2>
+              <label for="theme">外觀主題</label>
+              <select id="theme">
+                <option value="system">跟隨系統</option>
+                <option value="light">淺色</option>
+                <option value="dark">深色</option>
+              </select>
+          </section>
+          <section id="settings-runtime" hidden>
+            <h2>執行環境</h2>
+            <p id="runtime-status"></p>
+          </section>
+          <section id="settings-integrations" hidden>
+            <h2>整合說明</h2>
           <ul>
             <li>公司登入、橋接與憑證信任需要 AEP 組織服務。</li>
             <li>SSH 決策功能需要 AEP 專用服務。</li>
             <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
             <li>共享資料庫與資產庫訂閱需要公司服務及組織權限。</li>
           </ul>
-        </details>
-      </details>
+          </section>
+        </div>
       </div>
-    </aside>
+    </section>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
         <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>

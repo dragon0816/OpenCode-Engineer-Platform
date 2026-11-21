@@ -143,8 +143,6 @@ a { color: #07567d; }
 a { color: var(--link); }
 #toggle-sidebar, #session-search { width: 100%; margin-bottom: 10px; }
 .session-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-#settings { margin-bottom: 12px; }
-#settings label { display: block; }
 summary { cursor: pointer; }
 summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .files details + details { margin-top: 14px; }
@@ -210,7 +208,7 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
   --sidebar-meta: .75rem;
 }
 #session-sidebar:not([hidden]) { display: flex; flex-direction: column; min-height: 100%; }
-.navigation #settings { margin: auto 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.navigation #open-settings { position: sticky; bottom: 0; margin-top: auto; text-align: left; }
 #session-sidebar > label { color: var(--muted); font-size: var(--sidebar-meta); margin-block: 8px 4px; }
 .views button, .session-search { display: flex; align-items: center; gap: 8px; }
 .views button, .project-heading button, .session-list li > button {
@@ -336,3 +334,27 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
   main { grid-template-columns: minmax(150px, 190px) minmax(280px, 1fr); }
 }
 .files :focus-visible, #toggle-files:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+
+.settings-layout { display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); gap: 18px; }
+#settings-nav { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; }
+#settings-nav button { width: 100%; text-align: left; }
+#settings-view [aria-current="page"], #open-settings[aria-current="page"] { border-color: var(--link); color: var(--link); }
+#settings-view :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.settings-content { min-width: 0; max-width: 650px; }
+.settings-content h2 { margin-top: 0; }
+.settings-content label { display: block; }
+@media (max-width: 540px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  #settings-nav button { width: auto; }
+}
+
+
+#settings-view { min-height: 440px; align-self: start; padding: 20px; }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+.settings-heading h1 { margin: 0; }
+.settings-content form p[role="status"]:empty { display: none; }
+#settings-integrations li { margin-bottom: 8px; }
+@media (max-width: 540px) {
+  #settings-view { min-height: 0; padding: 14px; }
+}

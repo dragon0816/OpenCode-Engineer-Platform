@@ -860,6 +860,51 @@ function applyTheme() {
 theme.addEventListener('change', applyTheme);
 applyTheme();
 
+const settingsView = find('settings-view');
+const settingsEntry = find('open-settings');
+const settingsSections = [...find('settings-nav').querySelectorAll('button')];
+
+function showSettings() {
+  for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
+  settingsView.hidden = false;
+  settingsEntry.setAttribute('aria-current', 'page');
+  if (narrowNavigation.matches) setSidebar(false);
+  find('settings-title').focus();
+}
+
+settingsEntry.addEventListener('click', showSettings);
+find('close-settings').addEventListener('click', () => {
+  find('open-chat').click();
+  if (settingsView.hidden && narrowNavigation.matches) sidebarToggle.focus();
+});
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+  find(id).addEventListener('click', (event) => {
+    if (settingsView.hidden) return;
+    settingsView.hidden = true;
+    settingsEntry.removeAttribute('aria-current');
+    if (id === 'open-chat') {
+      find('chat-view').hidden = find('chat-files').hidden = false;
+      find(id).setAttribute('aria-current', 'page');
+    }
+  }, { capture: true });
+}
+for (const button of settingsSections) {
+  button.addEventListener('click', () => {
+    if (button.hasAttribute('aria-current')) return;
+    for (const section of settingsSections) {
+      if (section === button) section.setAttribute('aria-current', 'page');
+      else section.removeAttribute('aria-current');
+      find(`settings-${section.dataset.section}`).hidden = section !== button;
+    }
+  });
+}
+document.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey || event.altKey || event.shiftKey || event.key !== ',') return;
+  event.preventDefault();
+  showSettings();
+});
+
 const narrowNavigation = matchMedia('(max-width: 540px)');
 const sidebarToggle = find('toggle-sidebar');
 function setSidebar(open) {
