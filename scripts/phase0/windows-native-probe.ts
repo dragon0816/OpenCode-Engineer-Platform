@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { startModelProbe } from './model-probe.ts';
 import { check } from './probe-assertions.ts';
 import { pause, sse, until } from './probe-http.ts';
-import { ownerCheckedFetch } from './probe-listeners.ts';
+import { ownerCheckedFetch, ownsWindowsPeer } from './probe-listeners.ts';
 
 const providerID = 'phase-zero-native';
 const report = (evidence: object) => console.log(JSON.stringify({ test: 'O-3a-native', ...evidence }));
@@ -21,8 +21,7 @@ async function freeLoopbackPort() {
   return port;
 }
 
-function windowsListeners(netstat: string, pid: number) {
-  const rows = execFileSync(netstat, ['-ano'], { encoding: 'utf8', windowsHide: true, timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] });
+function windowsListeners(rows: string, pid: number) {
   return rows.split(/\r?\n/).map((row) => row.trim().split(/\s+/))
     .filter(([protocol, , , state, owner]) => protocol === 'TCP' && state === 'LISTENING' && Number(owner) === pid)
     .map(([, local]) => local);
@@ -80,12 +79,13 @@ async function main() {
     });
     check('native membership', { child: Number.isSafeInteger(job.pid) && job.pid > 0, members: job.members >= 2 });
     stage = 'authenticated-readiness';
-    const listeners = () => windowsListeners(netstat, job.pid);
+    const tcpTable = () => execFileSync(netstat, ['-ano'], { encoding: 'utf8', windowsHide: true, timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const listeners = () => windowsListeners(tcpTable(), job.pid);
     const ownership = () => {
       const opened = listeners();
       return opened.length === 1 && opened[0] === `127.0.0.1:${port}`;
     };
-    const guarded = ownerCheckedFetch(url, ownership);
+    const guarded = ownerCheckedFetch(url, ownership, (peer) => supervisor.exitCode === null && ownsWindowsPeer(tcpTable(), job.pid, peer));
     const client = OpenCode.make({ baseUrl: url, fetch: guarded, headers: { authorization: auth } });
     const version = await until(async () => {
       if (supervisor.exitCode !== null) throw new Error('Supervisor stopped during readiness');

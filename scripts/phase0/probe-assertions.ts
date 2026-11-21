@@ -35,17 +35,21 @@ export function reconnectionAudit(owner: string) {
   const sends = new Map<string, number>();
   return {
     receive(serialized: string) { visible.push((JSON.parse(serialized) as { sessionID: string }).sessionID); },
-    async send<T>(id: string, transport: () => Promise<T>) {
-      sends.set(id, (sends.get(id) ?? 0) + 1);
-      return transport();
+    observePrompt(request: Request, body: Buffer) {
+      const match = /^\/api\/session\/([^/]+)\/prompt$/.exec(new URL(request.url).pathname);
+      if (request.method !== 'POST' || !match) return;
+      const payload = JSON.parse(body.toString('utf8')) as { id?: unknown };
+      if (typeof payload.id !== 'string' || !payload.id) throw new Error('S4 prompt omitted its operation ID');
+      const key = `${decodeURIComponent(match[1])}/${payload.id}`;
+      sends.set(key, (sends.get(key) ?? 0) + 1);
     },
     get captured() { return visible.filter((session) => session === owner).length; },
-    verify(operations: string[], elapsed: number[]) {
+    verify(operations: { sessionID: string; id: string }[], elapsed: number[]) {
       const foreignExposed = visible.filter((session) => session !== owner).length;
       const duplicateSubmissions = [...sends.values()].reduce((total, count) => total + count - 1, 0);
       check('S4', {
         receiver: foreignExposed === 0, sender: duplicateSubmissions === 0 &&
-          sends.size === operations.length && operations.every((id) => sends.get(id) === 1),
+          sends.size === operations.length && operations.every(({ sessionID, id }) => sends.get(`${sessionID}/${id}`) === 1),
         reconnectDeadline: elapsed.length === 3 && elapsed.every((ms) => ms >= 0 && ms <= 5000),
       });
       return { foreignExposed, duplicateSubmissions, trackedOperations: sends.size };

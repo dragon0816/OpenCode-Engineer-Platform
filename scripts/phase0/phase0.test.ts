@@ -6,10 +6,10 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { inspectStagedFile, maxUploadBytes, uploadPolicy } from './attachment-probe.ts';
 import { evaluate, fixture } from './knowledge-baseline.ts';
-import { listen, send, sse } from './probe-http.ts';
+import { listen, ProbeDeadlineError, ProbeTransportError, send, sse, subscribeEventStream, turnFailure, until } from './probe-http.ts';
 import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
 import type { Trace } from './model-probe.ts';
-import { onlyExpectedListener, ownerCheckedFetch, parseListeners } from './probe-listeners.ts';
+import { onlyExpectedListener, ownerCheckedFetch, ownsWindowsPeer, parseListeners } from './probe-listeners.ts';
 
 test('socket ownership counts all child listeners and excludes unrelated socket inodes', () => {
   const row = (host: string, inode: number) => `0: ${host}:1234 00000000:0000 0A 0:0 0:0 0 1000 0 ${inode}`;
@@ -25,16 +25,44 @@ test('socket ownership counts all child listeners and excludes unrelated socket 
 test('guarded client sends no credentials without ownership and follows no redirects', async () => {
   let calls = 0;
   let followed = 0;
+  let acceptedPort: number | undefined;
+  let checkedPort: number | undefined;
   const other = await listen(async (_, reply) => { followed++; send(reply, 200); });
-  const first = await listen(async (_, reply) => { calls++; reply.writeHead(302, { location: other.url }).end(); });
+  const first = await listen(async (request, reply) => { calls++; acceptedPort = request.socket.remotePort; reply.writeHead(302, { location: other.url }).end(); });
   try {
     const headers = { authorization: 'Basic synthetic-fixture' };
-    await assert.rejects(ownerCheckedFetch(first.url, () => false)(first.url, { headers }), /ownership/);
+    await assert.rejects(ownerCheckedFetch(first.url, () => false, () => true)(first.url, { headers }), /listener ownership/);
     assert.equal(calls, 0);
-    await assert.rejects(ownerCheckedFetch(first.url, () => true)(first.url, { headers, redirect: 'follow' }));
+    await assert.rejects(ownerCheckedFetch(first.url, () => true, () => false)(first.url, { headers }), /peer ownership/);
+    assert.equal(calls, 0);
+    await assert.rejects(ownerCheckedFetch(first.url, () => true, (peer) => {
+      checkedPort = peer.clientPort;
+      return true;
+    })(first.url, { headers, redirect: 'follow' }), /redirect refused/);
     assert.equal(calls, 1);
+    assert.equal(acceptedPort, checkedPort);
     assert.equal(followed, 0);
   } finally { first.close(); other.close(); }
+});
+
+test('Windows peer attribution requires established reversed tuple and the expected child PID', () => {
+  const tuple = { serverPort: 10101, clientPort: 20202 };
+  const line = (local: number, remote: number, state: string, owner: number) => ` TCP 127.0.0.1:${local} 127.0.0.1:${remote} ${state} ${owner}`;
+  const correct = line(tuple.serverPort, tuple.clientPort, 'ESTABLISHED', 42);
+  assert.equal(ownsWindowsPeer(correct, 42, tuple), true);
+  assert.equal(ownsWindowsPeer(correct, 43, tuple), false);
+  assert.equal(ownsWindowsPeer(line(tuple.clientPort, tuple.serverPort, 'ESTABLISHED', 42), 42, tuple), false);
+  assert.equal(ownsWindowsPeer(line(tuple.serverPort, tuple.clientPort, 'LISTENING', 42), 42, tuple), false);
+});
+
+test('a real deadline is distinct from transport failure and an unrelated TypeError escapes the turn', async () => {
+  await assert.rejects(until(async () => undefined, 5), (error) => turnFailure(error) === 'deadline');
+  const wrapped = (cause: Error) => Object.assign(new Error('wrapper', { cause }), { name: 'ClientError', reason: 'Transport' });
+  assert.equal(turnFailure(wrapped(new ProbeDeadlineError())), 'deadline');
+  assert.equal(turnFailure(wrapped(new ProbeTransportError())), 'transport-error');
+  const bug = new TypeError('unrelated synthetic program failure');
+  assert.throws(() => turnFailure(bug), (error) => error === bug);
+  assert.throws(() => turnFailure(wrapped(bug)), (error) => error === bug);
 });
 
 test('probe assertions reject incomplete contracts, unhealthy aliases and incorrect tool answers', () => {
@@ -66,14 +94,42 @@ test('every security observable can fail the S5 probe', () => {
 
 test('the receiver detects foreign delivery and the sender detects duplicate submissions under a shared deadline', async () => {
   const audit = reconnectionAudit('a');
-  await audit.send('operation', async () => {});
-  audit.receive('{"sessionID":"a"}');
-  assert.doesNotThrow(() => audit.verify(['operation'], [3, 5, 8]));
-  assert.throws(() => audit.verify(['operation'], [3, 5, 5001]), /reconnectDeadline/);
-  await audit.send('operation', async () => {});
-  assert.throws(() => audit.verify(['operation'], [3, 5, 8]), /sender/);
-  audit.receive('{"sessionID":"b"}');
-  assert.throws(() => audit.verify(['operation'], [3, 5, 8]), /receiver/);
+  const operations = [{ sessionID: 'a', id: 'one' }, { sessionID: 'b', id: 'two' }];
+  let dispatched = 0;
+  const receiver = await listen(async (_, reply) => { dispatched++; send(reply, 200, {}); });
+  try {
+    const transport = ownerCheckedFetch(receiver.url, () => true, () => true, audit.observePrompt);
+    const submit = async ({ sessionID, id }: typeof operations[number]) => {
+      const response = await transport(`${receiver.url}/api/session/${sessionID}/prompt`, { method: 'POST', body: JSON.stringify({ id }) });
+      assert.equal(response.status, 200);
+      await response.json();
+    };
+    await submit(operations[0]);
+    await submit(operations[1]);
+    assert.equal(dispatched, 2);
+    audit.receive('{"sessionID":"a"}');
+    assert.doesNotThrow(() => audit.verify(operations, [3, 5, 8]));
+    assert.throws(() => audit.verify(operations, [3, 5, 5001]), /reconnectDeadline/);
+    const duplicateWithinOneSend = async () => { await submit(operations[1]); await submit(operations[1]); };
+    await duplicateWithinOneSend();
+    assert.equal(dispatched, 4);
+    assert.throws(() => audit.verify(operations, [3, 5, 8]), /sender/);
+    audit.receive('{"sessionID":"b"}');
+    assert.throws(() => audit.verify(operations, [3, 5, 8]), /receiver/);
+  } finally { receiver.close(); }
+});
+
+test('SSE EOF and abort before connected reject readiness and finish under the same deadline', { timeout: 1000 }, async () => {
+  const eof = subscribeEventStream(async () => new Response(''), new AbortController().signal, () => {});
+  await assert.rejects(eof.ready, /before server.connected/);
+  await assert.rejects(eof.completed, /before server.connected/);
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new ProbeDeadlineError()), 15);
+  try {
+    const stalled = subscribeEventStream(() => new Promise(() => {}), deadline.signal, () => {});
+    await assert.rejects(stalled.ready, ProbeDeadlineError);
+    await assert.rejects(stalled.completed, ProbeDeadlineError);
+  } finally { clearTimeout(timer); }
 });
 
 test('secret scan detects private IPv4 with or without a scheme or port using no runtime values', async () => {
@@ -143,6 +199,14 @@ test('knowledge fixture retains all four annotated classes and deterministic rec
   assert.deepEqual(result.misses, []);
   assert.equal(result.recallAt5, 1);
   assert.equal(result.latencyMs.samples, 96);
+});
+
+test('attachment documentation matches the wheel lock and the Windows quota semantics', () => {
+  const wheels = readFileSync('scripts/phase0/requirements.txt', 'utf8').split(/\r?\n/).filter((line) => line.includes('--hash=sha256:'));
+  const licensing = readFileSync('docs/validation/p0-s7-licensing.md', 'utf8');
+  assert.match(licensing, new RegExp(`${wheels.length} 個 Python wheels`));
+  const pdf = readFileSync('docs/validation/p0-s3-attachments.md', 'utf8');
+  assert.match(pdf, /Windows PDF 子程序[^。]+2 秒週期檢查的 user-time 配額[^。]+5 秒 wall-clock timeout/);
 });
 
 test('attachment ingress rejects client URIs, Windows path syntax and oversized inputs', () => {

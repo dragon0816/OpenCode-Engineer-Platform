@@ -10,9 +10,9 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { candidateAliases, fixtureGateway, forcedChoice, mockAliases, startModelProbe, syntheticMarker, tokenFor, workingAliases } from './model-probe.ts';
 import { redactFields } from './probe-redaction.ts';
-import { listen, pause, send, sse, until } from './probe-http.ts';
+import { listen, pause, send, subscribeEventStream, turnFailure, until } from './probe-http.ts';
 import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
-import { onlyExpectedListener, ownerCheckedFetch, processListeners } from './probe-listeners.ts';
+import { onlyExpectedListener, ownerCheckedFetch, ownsLinuxPeer, processListeners, type PeerTuple } from './probe-listeners.ts';
 
 const binary = '/work/.phase0/assets/linux/opencode';
 const providerID = 'oep-phase-zero';
@@ -82,8 +82,11 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
   };
   const listeners = () => child.pid && child.exitCode === null && child.signalCode === null ? processListeners(child.pid) : [];
   const ownsListener = () => onlyExpectedListener(listeners(), port);
-  const guardedFetch = ownerCheckedFetch(url, ownsListener);
-  const client = OpenCode.make({ baseUrl: url, headers: { authorization: auth }, fetch: guardedFetch });
+  const ownsPeer = (peer: PeerTuple) => !!child.pid && child.exitCode === null && child.signalCode === null && ownsLinuxPeer(child.pid, peer);
+  const guardedFetch = ownerCheckedFetch(url, ownsListener, ownsPeer);
+  const makeClient = (fetch = guardedFetch) => OpenCode.make({ baseUrl: url, headers: { authorization: auth }, fetch });
+  const client = makeClient();
+  const observeClient = (observe: (request: Request, body: Buffer) => void) => makeClient(ownerCheckedFetch(url, ownsListener, ownsPeer, observe));
   try {
     const version = await until(async () => {
       if (child.exitCode !== null) throw new Error('server exited');
@@ -94,7 +97,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
         return info.version;
       } catch { return undefined; }
     });
-    return { client, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
+    return { client, observeClient, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
   } catch (error) {
     await stop();
     throw error;
@@ -109,9 +112,9 @@ async function createSession(server: Server, model = 'probe-model', ask = false)
 }
 
 async function waitForTurn(client: Client, sessionID: string, timeout = 35_000) {
-  return until(async () => {
-    const session = await client.session.get({ sessionID }, callOptions());
-    return session.outcome && !(await client.session.active(callOptions()))[sessionID] ? session.outcome : undefined;
+  return until(async (signal) => {
+    const session = await client.session.get({ sessionID }, { signal });
+    return session.outcome && !(await client.session.active({ signal }))[sessionID] ? session.outcome : undefined;
   }, timeout);
 }
 
@@ -125,9 +128,9 @@ async function turn(server: Server, model: string, text: string, files?: Session
     const assistantText = messages.data.filter((message) => message.type === 'assistant').map((message) =>
       message.content.flatMap((part) => part.type === 'text' ? [part.text] : []));
     return { outcome, transcript: assistantText.flat().join('\n'), finalText: assistantText.at(-1)?.join('') ?? '' };
-  } catch {
+  } catch (error) {
     await client.session.interrupt({ sessionID }, callOptions()).catch(() => {});
-    return { outcome: 'deadline-or-error', transcript: '', finalText: '' };
+    return { outcome: turnFailure(error), transcript: '', finalText: '' };
   }
 }
 
@@ -185,36 +188,23 @@ async function reconnection(server: Server) {
   const b = await createSession(server, 'slow-model');
   const owned = new Set([a.id]);
   const audit = reconnectionAudit(a.id);
+  const promptClient = server.observeClient(audit.observePrompt);
   const operation = (sessionID: string, text: string) => ({ id: `msg_${randomBytes(12).toString('hex')}`, sessionID, text });
   const plan = Array.from({ length: 3 }, (_, index) => ({
     a: operation(a.id, `Synthetic A ${index + 1}`), b: operation(b.id, `Synthetic B ${index + 1}`),
   }));
-  const submit = (planned: ReturnType<typeof operation>) => audit.send(planned.id, () => client.session.prompt(planned, callOptions()));
+  const submit = (planned: ReturnType<typeof operation>) => promptClient.session.prompt(planned, callOptions());
   let foreignDropped = 0;
   const projected = new Set<string>();
   const seenReplies = new Set<string>();
-  const subscribe = (deadline = AbortSignal.timeout(5000)) => {
-    const abort = new AbortController();
-    const signal = AbortSignal.any([abort.signal, deadline]);
-    const connected = Promise.withResolvers<void>();
-    const completed = (async () => {
-      try {
-        const response = await server.fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal });
-        if (!response.ok || !response.body) throw new Error('SSE response');
-        for await (const data of sse(response.body)) {
-          const event = JSON.parse(data) as { type: string; data?: { sessionID?: string } };
-          if (event.type === 'server.connected') { connected.resolve(); continue; }
-          if (!['session.execution.started', 'session.execution.succeeded'].includes(event.type)) continue;
-          const owner = event.data?.sessionID;
-          if (!owner) continue;
-          if (!owned.has(owner)) { foreignDropped++; continue; }
-          audit.receive(JSON.stringify({ sessionID: owner }));
-        }
-      } catch { if (!abort.signal.aborted) throw new Error('event connection'); }
-    })();
-    void completed.catch(connected.reject);
-    return { ready: connected.promise, close: () => abort.abort(), completed };
-  };
+  const subscribe = (deadline = AbortSignal.timeout(5000)) => subscribeEventStream(
+    (signal) => server.fetch(`${server.url}/api/event`, { headers: { authorization: server.auth }, signal }), deadline, (event) => {
+      if (!['session.execution.started', 'session.execution.succeeded'].includes(event.type)) return;
+      const owner = event.data?.sessionID;
+      if (!owner) return;
+      if (!owned.has(owner)) { foreignDropped++; return; }
+      audit.receive(JSON.stringify({ sessionID: owner }));
+    });
 
   const elapsed: number[] = [];
   for (let cycle = 1; cycle <= 3; cycle++) {
@@ -254,7 +244,7 @@ async function reconnection(server: Server) {
       elapsed.push(Math.round(performance.now() - started));
     } finally { replay.close(); await replay.completed; }
   }
-  const observed = audit.verify(plan.flatMap((cycle) => [cycle.a.id, cycle.b.id]), elapsed);
+  const observed = audit.verify(plan.flatMap((cycle) => [cycle.a, cycle.b]), elapsed);
   check('S4', { filtered: foreignDropped >= 3, delivered: audit.captured >= 3, durable: projected.size === 3 });
   report('S4-disconnect', { elapsed, captured: audit.captured, foreignDropped, durableUniqueSubmissions: projected.size, ...observed });
 }
@@ -433,13 +423,13 @@ async function failures(server: Server, probe: Probe) {
     const status = Number(model.slice(-3));
     const retryable = status === 429 || status === 503;
     check('S2-injected-status', { statuses: statuses.length === 1 && statuses[0] === status, fallback: !fallback,
-      attempts: retryable ? traces.length >= 2 : traces.length === 1, outcome: outcome === (retryable ? 'deadline-or-error' : 'failed') });
+      attempts: retryable ? traces.length >= 2 : traces.length === 1, outcome: outcome === (retryable ? 'deadline' : 'failed') });
   }
   const from = probe.traces.length;
   const { outcome } = await turn(server, 'slow-model', 'Wait for the local synthetic delay.', undefined, 300);
   const requested = probe.traces.slice(from).some((trace) => trace.model === 'slow-model');
   report('S2-injected-deadline', { outcome, requested, deadlineMs: 300 });
-  check('S2-injected-deadline', { requested, outcome: outcome === 'deadline-or-error' });
+  check('S2-injected-deadline', { requested, outcome: outcome === 'deadline' });
 }
 
 async function main() {
