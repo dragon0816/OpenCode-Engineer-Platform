@@ -1,0 +1,117 @@
+{
+  "format": "aep-bi-dataset-snapshot/1",
+  "classification": "INTERNAL",
+  "dataset": "Synthetic BI Modules",
+  "schema": {
+    "ref": "fixture-schema@1.0.0",
+    "id": "fixture-schema",
+    "version": "1.0.0",
+    "source": "workspace",
+    "sha256": "e43afa6d1218baede7bc07bd557b655ef612a8c7aaf747be9bcadc2013aa5b39",
+    "document": {
+      "schema_id": "fixture-schema",
+      "version": "1.0.0",
+      "title": "Synthetic Modules",
+      "types": [
+        {
+          "name": "module",
+          "fields": [
+            {
+              "name": "limit",
+              "kind": "float"
+            },
+            {
+              "name": "probe",
+              "kind": "link",
+              "relation_type": "uses_probe"
+            }
+          ]
+        },
+        {
+          "name": "probe",
+          "fields": [
+            {
+              "name": "label",
+              "kind": "str"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "cards": [
+    {
+      "id": "module-9",
+      "entity_type": "module",
+      "canonical_key": "module-9",
+      "name": "Demo Module",
+      "version": 1,
+      "synthetic": true,
+      "created": "2026-02-13T01:00:00Z",
+      "updated": "2026-02-13T01:00:00Z",
+      "created_by_import": null,
+      "fields": {
+        "limit": {
+          "value": 1.25,
+          "kind": "source",
+          "ref": "Mock module sheet",
+          "by": "synthetic",
+          "at": "2026-02-13T01:00:00Z"
+        },
+        "probe": {
+          "value": "probe-4",
+          "kind": "source",
+          "ref": "Mock module sheet",
+          "by": "synthetic",
+          "at": "2026-02-13T01:00:00Z"
+        }
+      },
+      "history": []
+    },
+    {
+      "id": "probe-4",
+      "entity_type": "probe",
+      "canonical_key": "probe-4",
+      "name": "Demo Probe",
+      "version": 1,
+      "synthetic": true,
+      "created": "2026-02-13T01:00:00Z",
+      "updated": "2026-02-13T01:00:00Z",
+      "created_by_import": null,
+      "fields": {
+        "label": {
+          "value": "Nectar",
+          "kind": "source",
+          "ref": "Mock probe register",
+          "by": "synthetic",
+          "at": "2026-02-13T01:00:00Z"
+        }
+      },
+      "history": []
+    }
+  ],
+  "imports": [],
+  "meta": {
+    "source_last_updated": "2026-02-13T01:00:00Z",
+    "stats": {
+      "cards": 2,
+      "cards_by_type": {
+        "module": 1,
+        "probe": 1
+      },
+      "fields": 3,
+      "history": 0,
+      "imports": 0
+    }
+  },
+  "digest": "bf885bfaeff6356a0afcab3d5ad884c21f85d49438eb0dd61e93f1f5da700500",
+  "publication": {
+    "namespace": "synthetic",
+    "name": "fixtures",
+    "version": "1.0.0",
+    "base_version": null,
+    "published_by": "synthetic",
+    "published_at": "2026-02-13T02:00:00Z",
+    "note": "Independent fixture"
+  }
+}
