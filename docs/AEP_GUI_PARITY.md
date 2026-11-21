@@ -69,10 +69,12 @@
 | B、G 已發卡片概覽、類別／domain／sample 篩選、詳細資料及關係、全文查詢、重建索引 | Adapt to OpenCode | 知識／卡片、維護 CLI | 3a／2b | 3a 匯入後對帳 IDs、關係、版本、FTS 與恢復，2b 由頁面依條件瀏覽詳細卡片。 |
 | B、G 新增 BI 庫／領域、機密分類、來源選檔／轉檔／預覽／移除、Markdown 草稿修訂 | Keep | 知識／BI 建置 | 3b | 合成檔進 staging，版本保留且未核准前查無資料。 |
 | B、G schema 建議／助理／草稿／差異／升級、skill 新增／編輯／匯入／匯出，Profile 與資料處理程式 | Adapt to OpenCode | 知識／建置設定 | 3b | 更新合成 schema、規則與 profile，驗不符版本及未授權執行均拒。 |
+| B 資料集新增、從 JSON 安裝 schema、安裝範例 schema | Adapt to OpenCode | 知識／建置設定 | 3b | 載入合成 schema 後只能對應其版本開啟資料集，畸形 JSON 無法安裝。 |
 | B、G Ingest 批次／停止、欄位／關係預覽、逐一／批次定案及修正 | Adapt to OpenCode | 知識／審核 | 3b | 中斷批次後重啟，核准範圍及來源定位可對帳。 |
 | B、K、G Benchmark 題目增改、AI 草擬、執行、逐題結果 | Adapt to OpenCode | 知識／品質 | 3a／3b | 3a 固定 gold set 可重跑。3b 保存合成題目後測試，錯題可展開原引文。 |
-| B、G Dashboard 查閱與篩選、AI 編寫 SQL、預覽、增改排序／套用 | Adapt to OpenCode（D05 先做概覽，後續將分析限制於發布資料） | 知識／概覽 | 3a／2b | 3a 顯示正確版本、計數與狀態；後續合成分析可重排並拒絕寫入 SQL。 |
+| B、G Dashboard 查閱與篩選、AI 編寫 SQL、預覽、增改排序／套用 | Replace（D05 先做概覽，2b 提供已發布資料的固定唯讀查詢與排序；進階 SQL 作者功能依 D05 延後） | 知識／概覽 | 3a／2b | 3a 顯示正確版本、計數與狀態。2b 用固定查詢預覽合成資料、保存篩選與排序。 |
 | B、G 版本／分享 commit、push、tag、發布、加入／連線與衝突處理 | Replace（本機不可變快照匯入與 OEP 發布／回退；多人同步依 D05 延後） | 知識、維護 CLI | 3a／3b | 匯入兩版、回看各版證據。3b 必須經審核才能發佈，衝突保持原指標。 |
+| B Shared Platform 瀏覽／訂閱／同步資料集與組織可見性 | Omit-with-reason（依賴公司 Bridge 和組織權限，D04／D05） | 知識／整合說明 | 2b | 選擇本機已發布資料集時可讀同等摘要，過程沒有公司服務請求。 |
 | B、G 載入示範、Atlas 連結 | Adapt to OpenCode | 知識／概覽 | 2b | 可載入合成示範；Atlas 明確開啟後才離開本機頁。 |
 | I、B、G BI Telegram inbox　領域綁定、收件、筆數、篩選、挑選來源、錯誤與補件 | Adapt to OpenCode（D07 單 BI bot 分流） | 知識／收件、設定 | 4 | 訊息重投仍只見一次，受阻連結保留原因和人工補件入口。 |
 | K Wiki 新建／加入與切換／捨棄 sandbox、擁有範圍、來源及題目資料夾 | Adapt to OpenCode | 知識／Wiki 建置 | 3b | 切換兩個 sandbox，捨棄其中一個後已發布版本與另一組草稿可讀。 |
