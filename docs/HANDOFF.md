@@ -25,7 +25,7 @@
 1. Phase 0 五項證據降為 **UNVERIFIED**：S4 跨客戶端／路徑重複送件計數與緩衝事件後切斷的重連、S2 工具失敗回合的內容／call ID／形狀、S4／S2 teardown 的跳過清理／502 後 exit 0／遺失原始原因、S6 worker `null` 退出碼。三項 Minor 為兩把 Git 設定鎖的文件、`CloseHandle` 回傳值、無模式 scanner 靜默 exit 0。只在 Phase 1 產品測試直接涵蓋時補證據。 [前置清單](TASKS.md) · [豁免紀錄](DECISIONS.md)
 2. Phase 1 worktree 已安裝既有 hooks，每次提交前已執行 `npm run scan`。原生 Windows OpenCode、兩 session 隔離、合成 Markdown／PDF→XLSX 連續 5/5 與 9 類故障已驗。 [重現步驟](validation/p1-runtime.md)
 3. 真模型普通跑次共 23 筆，19 筆通過。保留 GPT 的 4 筆逾時相關失敗，兩個 alias 都有通過的 PDF 工具回合。Haiku 的真模式故障驗收共 8 筆，控制組通過、7 個負例全判失敗。原始資料路徑、完整雜湊和每次延遲／token 位置見報告。目標 VM 出口與完整真錯誤契約仍待驗。 [Gate 報告與原始紀錄](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
-4. Phase 2 依 v2 交付同源 Web、launcher、附件、事件與下載。以 Phase 2 gate 報告交接實測、所有真模型嘗試及仍待驗的項目，提供 Claude Code 一次輕量複核。 [決策紀錄](DECISIONS.md) · [任務清單](TASKS.md)
+4. Phase 2 在 `phase-2/web-gui` 完成同源 Web、launcher、附件、事件、下載與 BI 待審示範。操作入口是 `scripts/windows/Start-OEP.vbs`。真 Gateway 15 筆中 14 筆通過，最終 Chromium 重測 3/3。將差異與未驗項目交 Claude Code 一次輕量複核，Phase 2 gate 保留 **UNVERIFIED**。 [操作](validation/p2-windows-web.md) · [Gate 報告](reviews/PHASE2_GATE_REPORT.md)
 
 <a id="phase-0-owner-checklist"></a>
 

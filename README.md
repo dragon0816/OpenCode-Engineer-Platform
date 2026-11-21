@@ -2,6 +2,10 @@
 
 OEP is a new, local-first, single-user engineering agent platform built around OpenCode.
 
+## Windows 工作台
+
+在已準備的 Windows 11 x64 電腦上雙擊 `scripts/windows/Start-OEP.vbs`。OEP 會啟動固定版 OpenCode，並在預設瀏覽器打開工作台。初次安裝、附件格式與驗收命令見操作文件。 [Windows 工作台操作](docs/validation/p2-windows-web.md)
+
 ## Planning documents
 
 - [Implementation Plan](docs/IMPLEMENTATION_PLAN.md)

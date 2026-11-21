@@ -113,7 +113,15 @@ Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明
 
 Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase-2/web-gui` 開始 Phase 2。普通真模型測試共 23 筆，19 筆通過，兩個 alias 各有同輪連續 5 筆通過。真故障注入的 7 個負例全數判失敗。Phase 2 依 v2 交付 Windows 單鍵啟動、同源 Web、附件、即時進度、產物下載及 BI 待審介面 stub，止於 Phase 2。 [Phase 1 驗收](reviews/PHASE1_GATE_REPORT.md) · [Phase 2 計畫](IMPLEMENTATION_PLAN_V2.md#phase-2同源-weblauncher-與附件)
 
-- 保留限制。AEP 唯讀，禁止推送、強制推送、重寫已發布歷史及直接提交至 `main`。只在目前 worktree 或 OEP 資料目錄操作檔案，禁止刪除或覆寫其外的檔案。禁止 Gateway 管理端點。已追蹤檔案只使用去敏設定，維持既有 hooks 與掃描，提交前跑 `npm run scan`。
+- 保留限制。AEP 唯讀，禁止推送、強制推送、重寫已發布歷史及直接提交至 `main`。禁止刪除或覆寫目前 worktree 或 OEP 資料目錄以外的檔案。禁止 Gateway 管理端點。已追蹤檔案只使用去敏設定，維持既有 hooks 與掃描，提交前跑 `npm run scan`。
 - 工作方式採最簡可行作法。取消例行加審、逐斷言 mutation、舊 Phase 0 probe 加固及小決策逐項請示。每個提交聚焦一件事。保留 lint、typecheck、test、build 的實際輸出及所有真模型嘗試，含失敗與重試。開發結束交由 Claude Code 做一次輕量複核。
 - Gateway 使用程序或 Windows User scope 的 `OEP_LITELLM_BASE_URL`、`OEP_LITELLM_API_KEY`，位址及 token 不寫入輸出、日誌或提交。延續核准的 LAN 明文 HTTP 與 `gpt-5.4-mini`、`claude-haiku-4-5-20251001`。沿用 relay 和有界的模型重試。UI 顯示去敏逾時、空回應及未確定的送件結果。
 - Web 採同源靜態 HTML、CSS 及原生瀏覽器 JavaScript，無前端建置依賴。附件透過單檔 HTTP 請求送入，UI 負責拖放及選檔。自動測試使用 HTTP 契約與可用的 Windows Chromium 瀏覽器。
+
+## 2026-11-21　Phase 2 實作取捨
+
+- Windows 捷徑採 VBS 隱藏啟動 PowerShell。首次具備系統工具及核准 Gateway 設定後，由啟動器補齊 npm 依賴、Windows 固定版執行檔與 OpenAPI。啟動以本機版本、認證及 listener 驗證為準，Gateway 請求於使用者送出訊息時開始，服務逾時仍可打開對話與檔案清單。同帳號第二次啟動通知既有主程序重新開頁。
+- PNG、JPG、PDF 以伺服器從已核對的 bytes 自建媒體附件。UTF-8 文字與有工作表／列號的 CSV 投影作為模型文字輸入。存檔單檔 20 MiB，每個會話的上傳工作區 200 MiB，計入原檔及 CSV 投影。模型暫存使用專用工作目錄。每則訊息的原始媒體合計上限 40 MiB、文字合計上限 1 MiB。Gateway relay 保留有界請求體及逾時。PDF 交核准模型處理。
+- Web 運行中一次派送一個模型 turn，讓同機兩個以上的會話可保有獨立資料及台帳，並可精確關聯 Gateway 請求。OpenCode 內部重試保留由 relay 稽核。OEP 每個 ID 派送一次，後續依同一 ID 對帳。OEP 重啟後未驗證的工作顯示失敗或待核對。對話從 OpenCode 讀取，OEP 只保存自身會話映射、附件、run、收據及產物 manifest。
+- Web Excel 由助理將資料寫入僅當次 run 可寫的 JSON 檔。OEP 只解析資料並驗證 JSON 與工作簿，使用 Phase 1 現有工作簿編碼器建立固定值 XLSX。產物限制為 4 張、每張 20 列／12 欄。BI 待審列使用固定假資料。
+- Chromium 驗收採已安裝的 Edge／Chrome 與 Node 內建 WebSocket，無 Playwright 下載。Windows 腳本測試由 WSH 實際啟動，測試邊界攔截最後的 OS 瀏覽器交接，保護目前的使用者瀏覽器；另外以隔離 Chromium profile 驗 UI。

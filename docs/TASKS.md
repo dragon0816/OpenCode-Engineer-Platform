@@ -59,9 +59,11 @@
 
 Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受阻即留下驗收報告並交接。 [決策紀錄](DECISIONS.md)
 
-- [ ] 單鍵 Windows 啟動與同源 Web chat、上傳和下載。
-- [ ] 驗證路徑邊界、隔離、Origin/CSRF、重連及程序樹清理。
-- [ ] 提交 Phase 2 驗收和獨立 review。
+- [x] 交付單鍵 Windows 啟動、同源 Web chat、選檔與拖放、Excel 投影及驗證產物下載。
+- [x] 本機 Windows 驗收兩次啟動共用一個 supervisor、正常／強制停、三次 SSE 斷線、同源與檔案界線。WSH 測試於瀏覽器交接處使用測試接收器。
+- [x] 真 Gateway 共 15 筆，14 筆通過，完整保留 2 筆請求逾時重試及 1 筆模型 JSON 失敗。最終 GPT 的 Chromium 驗收 3/3 通過。
+- [x] 提交 Phase 2 操作及驗收文件。 [操作](validation/p2-windows-web.md) · [Gate 報告](reviews/PHASE2_GATE_REPORT.md)
+- [ ] 乾淨 Windows 11 x64 VM 與實際預設瀏覽器交接、Windows 檔案 symlink、其他未驗項目及 Claude Code 輕量複核。 [待辦](reviews/PHASE2_GATE_REPORT.md#偏差風險及-owner-待辦)
 
 ### Phase 3a　唯讀 BI/Wiki
 
