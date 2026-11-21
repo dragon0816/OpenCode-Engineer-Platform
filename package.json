@@ -4,15 +4,29 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": "24.x" },
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "lint": "node scripts/phase0/lint.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test scripts/phase0/*.test.ts",
+    "test": "node --test scripts/phase0/*.test.ts tests/contract/*.test.ts",
+    "test:contract": "node --test tests/contract/*.test.ts",
+    "test:contract:native": "node --disable-warning=ExperimentalWarning tests/e2e/native-contract.ts",
+    "test:e2e:excel": "node --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts",
+    "test:e2e:excel:faults": "node --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts --faults",
+    "test:e2e:excel:synthetic": "node --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts --synthetic",
+    "runtime": "node --disable-warning=ExperimentalWarning apps/launcher/src/main.ts",
     "build": "tsc --outDir .phase0/build",
     "scan": "node scripts/phase0/secret-scan.mjs --tree",
     "merge-check": "node scripts/phase0/merge-check.mjs"
   },
-  "dependencies": { "@opencode/client": "2.3.2" },
-  "devDependencies": { "@types/node": "24.12.4", "typescript": "6.0.3" }
+  "dependencies": {
+    "@opencode/client": "2.3.2",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "6.0.3"
+  }
 }

@@ -10,7 +10,7 @@
 | 2　交叉審查 | Codex 完整閱讀 Claude 的兩份報告並回查原始碼。Claude 因 token 限制只讀 Codex §A、§G、§H，§B–§F 未讀。 [Codex 交叉審查](reviews/CODEX_CROSS_REVIEW.md) · [Claude 有限交叉審查](reviews/CLAUDE_CROSS_REVIEW.md) |
 | 3　整合 | 完成 [審查對照](REVIEW_COMPARISON.md)、[ADR](ARCHITECTURE_DECISIONS.md)、[v2 計畫](IMPLEMENTATION_PLAN_V2.md)、[AEP 差距](AEP_FEATURE_GAP_ANALYSIS.md)、[任務](TASKS.md) 與 [決策紀錄](DECISIONS.md)。[v1](IMPLEMENTATION_PLAN.md) 保留作歷史。 |
 | 4　owner 核准 | **已核准**。2026-11-21 owner 回覆「接受所有建議預設並開工」，接受 v2 和 D01–D09。 [決策紀錄](DECISIONS.md) |
-| 5　開發 | `phase-0/spikes` 已完成第 4 輪 Phase 0 修正及本機驗證。O-3a 重測通過，gate 仍待最終獨立複核。複核通過後由 Claude Code 使用受檢入口合併。 |
+| 5　開發 | Owner 已合併 Phase 0 至本機 `main`（`1c45494`）並以豁免結案。原 v2 與修訂後 gate 均未通過。Phase 1 在 `phase-1/runtime-poc`。真 Gateway 恢復後，GPT 與 Haiku 各有一輪連續 5 筆通過 D08。VM 出口與完整真錯誤契約仍待驗。 [決策紀錄](DECISIONS.md) · [真模型重測](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測) |
 
 ## 來源與驗證狀態
 
@@ -22,14 +22,15 @@
 
 ## 接手操作
 
-1. 在 `phase-0/spikes` 用 `git diff 04da09a..HEAD` 取得第 4 輪修正，交由獨立 reviewer 複核 I-A 至 I-E 與兩項 Minor。 [第 3 輪獨立複核](reviews/PHASE0_INDEPENDENT_REREVIEW_R3.md) · [第 4 輪證據](reviews/PHASE0_GATE_REPORT.md#fix-round-4)
-2. 依修訂門檻核對修正及 O-3a。獨立複核無未結 Critical／Important 時才記錄 **conditionally passed**，並由 Claude Code 用受檢入口合併已複核的 SHA。入口先掃描並啟用目標 worktree hooks，再移動 ref。拋棄式 clone 已驗 Git 設定鎖、UTF-16 canary、一般合併及明確 fast-forward。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [合併程序](validation/p0-s7-licensing.md)
+1. Phase 0 五項證據降為 **UNVERIFIED**：S4 跨客戶端／路徑重複送件計數與緩衝事件後切斷的重連、S2 工具失敗回合的內容／call ID／形狀、S4／S2 teardown 的跳過清理／502 後 exit 0／遺失原始原因、S6 worker `null` 退出碼。三項 Minor 為兩把 Git 設定鎖的文件、`CloseHandle` 回傳值、無模式 scanner 靜默 exit 0。只在 Phase 1 產品測試直接涵蓋時補證據。 [前置清單](TASKS.md) · [豁免紀錄](DECISIONS.md)
+2. Phase 1 worktree 已安裝既有 hooks，每次提交前已執行 `npm run scan`。原生 Windows OpenCode、兩 session 隔離、合成 Markdown／PDF→XLSX 連續 5/5 與 9 類故障已驗。 [重現步驟](validation/p1-runtime.md)
+3. 真模型普通跑次共 23 筆，19 筆通過。保留 GPT 的 4 筆逾時相關失敗，兩個 alias 都有通過的 PDF 工具回合。Haiku 的真模式故障驗收共 8 筆，控制組通過、7 個負例全判失敗。原始資料路徑、完整雜湊和每次延遲／token 位置見報告。目標 VM 出口、獨立圖片附件與完整真錯誤契約仍待驗。Phase 2 尚未開始。 [Gate 報告與原始紀錄](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
 
 <a id="phase-0-owner-checklist"></a>
 
 ## Phase 0　責任人提交清單
 
-- [ ] **O-1，Gateway 管理員（TRACKED KNOWN RISK）**　私下提供短期、可撤銷、模型 allowlist 與限額的 scoped key 證據，說明核准 egress／retention，並提供可驗 TLS 的 HTTPS 測試入口。Gateway 僅用於合成 spike，repo 僅保留去敏摘要。
+- [ ] **O-1，Gateway 管理員（TRACKED KNOWN RISK）**　私下提供短期、可撤銷、模型 allowlist 與限額的 scoped key 證據，說明核准 egress／retention，後續提供 HTTPS 入口。Owner 已授權 Phase 1 合成資料實測，repo 僅保留去敏摘要。
 - [ ] **O-2，Gateway 管理員（TRACKED KNOWN RISK）**　說明無 key 得 500、錯 key 得 400 的原因、預期認證狀態及可公開的重測摘要。非 2xx 皆判失敗，憑證、私有主機名及原始請求留在授權渠道。
 - [x] **O-3a，本機原生基本驗收**　Windows 11 x64 的固定版 OpenCode、Job Object、mock relay、認證及 SSE 已驗。 [S6](validation/p0-s6-windows.md)
 - **O-3b，WAIVED by owner – not tested**　無 GPT dots、VM 或 Hyper-V 工作。Phase 4 保留啟動／恢復對帳及模擬時鐘跳躍、終止程序／重啟測試，涵蓋模擬條件。使用者文件須說明，owner 於實務驗證前，OEP 對跨真實 OS 睡眠／登出的排程正確性無保證。

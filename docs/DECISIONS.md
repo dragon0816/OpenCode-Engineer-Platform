@@ -79,3 +79,32 @@ Phase 0 修訂後的三項 gate 條件維持。R-1 至 R-9 與 4 項 Minor 修�
 Owner 明確回覆「O-4 OK」。核定 `Readings` 的 `A1:C3` 和 `Run` 的 `A1:B2`，共 13 格，精確相等，容差 0，僅用合成資料，禁止公式及額外工作表。Owner 核閱 Markdown SOP 與 oracle；核定以 PDF 抽取結果與兩者一致、逐格與核定雜湊測試通過為條件。O-4 不再開放。更改核定值或規則需事先取得新的 owner 核准。 [核定內容與 SHA-256](validation/d08-oracle.md)
 
 用途限最小管線接線 smoke。含計算的多步驟 oracle 是可另案選擇的 Phase 1 工作，本輪未建立。Phase 0 gate 仍待獨立複核。
+
+## 2026-11-21　Owner 豁免結案並啟動 Phase 1
+
+Owner 已將 Phase 0 合併至本機 `main`（`1c45494`）並授權實作 Phase 1。Phase 0 以 **owner waiver** 結案，原 v2 及修訂後的 gate 均未通過。O-1／O-2 繼續追蹤，O-3b 維持免測，O-4 維持核定的 13 格精確相等最小煙霧 oracle，D01–D09 繼續適用。
+
+下列五項 probe 證據降為 **UNVERIFIED**：
+
+- S4　跨其他客戶端／路徑的重複送件計數。
+- S4　已收到緩衝事件後串流切斷時的重連。
+- S2　工具執行失敗時的回合內容、call ID 與結果形狀。
+- S4／S2　probe teardown 錯誤處理。已知有跳過清理、`SyntaxError` 轉 502 後 exit 0、原始原因遺失的路徑。
+- S6　Windows Job supervisor 將 worker 的 `null` 退出碼當作 0。
+
+三項 Minor 一併列為 **UNVERIFIED**：Git 設定文件未區分兩把鎖、`windows-job.cs` 未檢查 `CloseHandle` 回傳值、secret scan CLI 未給模式時靜默 exit 0。Phase 1 只在現有產品測試直接涵蓋時補證據，這份清單不阻擋開工或另開一輪舊 probe 複核。
+
+Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明文 HTTP，token 傳輸未加密，後續可請 Gateway 管理員提供 HTTPS。
+
+## 2026-11-21　Phase 1 PoC 的實作與驗收口徑
+
+- 啟動時一次選一個已核准 alias，預設 `gpt-5.4-mini`。以固定 OpenCode、同一 provider 與 relay 驗合成 nonce。任一請求非 2xx 或健康檢查逾時，該次驗收失敗。OEP 以 durable ID 對帳，不重送 prompt 或自動切換 alias。
+- 每次 Excel campaign 建獨立 OpenCode profile，且每次 run 新建 workspace 與 session。OpenCode 執行檔案工具，模型寫出 `program.js`。OEP 的 Node 工作程序提供固定 `writeWorkbook` 介面執行產物步驟，並以 SQLite 留存狀態、收據及 SHA-256。此工作程序只用於合成 PoC。
+- 直接使用 D08 核定資料、逐格 JSON 與 13 格精確相等規則。五回合交替餵 Markdown 與 PDF，驗證實際送件、工具寫檔及獨立 openpyxl 核對。合成供應方結果單獨保留。 [D08 核定](validation/d08-oracle.md)
+- 本輪採實體 Windows 11 x64 檢查 launcher、relay 與 agent 層的檔案權限。v2 的目標 VM、網路出口和防火牆旁路驗收維持 **UNVERIFIED**。 [驗收紀錄](reviews/PHASE1_GATE_REPORT.md)
+
+## 2026-11-21　Gateway 恢復後的真模型重測
+
+- 以各 alias 的啟動 nonce 為准入條件。若完整的 HTTP 200 回覆沒有可用內容，保留該次為失敗，啟動檢查最多以新 session 重試一次。一般驗收的空回覆若未產生程式，記為該回合失敗並重算連勝。每次送件仍使用各自 durable ID，不重送同一 ID。
+- 每個通過健康檢查的 alias 交替跑 D08 Markdown 與 PDF，最多九筆，達到實際連續五筆即停止。故障驗收先讓真模型寫程式並保留原檔與雜湊，再於各 run 的工作目錄注入故障。
+- 每次保留 relay 與上游 HTTP 狀態、可見輸出的類型、各請求延遲及 Gateway 有回傳的 token 用量。完整空回覆與未完成的串流有各自的紀錄。測試 Gateway 維持先前核准的 LAN 明文 HTTP，憑證在該段傳輸未加密。 [重測證據](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)

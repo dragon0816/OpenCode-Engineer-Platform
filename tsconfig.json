@@ -3,12 +3,12 @@
     "target": "ES2024",
     "module": "NodeNext",
     "types": ["node"],
-    "rootDir": "scripts/phase0",
+    "rootDir": ".",
     "strict": true,
     "verbatimModuleSyntax": true,
     "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "noEmitOnError": true
   },
-  "include": ["scripts/phase0/*.ts"]
+  "include": ["scripts/phase0/*.ts", "apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
 }

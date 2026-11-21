@@ -1,6 +1,6 @@
 # OEP 階段與任務清單
 
-日期 2026-11-21（Asia/Taipei）。Phase 0 第 3 輪修正、負例與故障注入已交付。修訂後的 gate 待獨立複核，本機合併尚未執行。原 v2 的 O-1 至 O-4 全部結清門檻保留作歷史。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+日期 2026-11-21（Asia/Taipei）。Phase 0 已合併至本機 `main`（`1c45494`），由 owner 豁免結案，原 v2 與修訂後的 gate 均未通過。Owner 已授權 Phase 1。 [決策紀錄](DECISIONS.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
 
 ## Stage 1–4　審查與開工核准
 
@@ -25,16 +25,35 @@
 - [x] 修正第 1 輪　I-1 完整 forced turn、I-2 私網 IPv4 掃描、I-3 Phase 1 出口驗收補充。 [修正證據](reviews/PHASE0_GATE_REPORT.md)
 - [x] O-4　Owner 核定最小 D08 smoke oracle，PDF 對照與雜湊測試通過；核定範圍僅限管線接線。 [D08 核定](validation/d08-oracle.md)
 - [x] 第 4 輪　I-A 至 I-E 與兩項 Minor 已更新，O-3a 重測通過。 [實測與故障注入](reviews/PHASE0_GATE_REPORT.md#fix-round-4)
-- [ ] Gate　等 Claude Code 安排最終獨立複核。O-1／O-2 為 Gateway 管理員追蹤的 known risks，O-3b 已免測，O-4 已核定且測試通過。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
-- [ ] Claude Code 於複核通過後使用受檢合併入口，先掃來源、目標、工作樹與 index，並在移動目標 ref 前設定及核對 hooks 和 `merge.ff=false`。拋棄式 clone 已驗此程序。 [S7](validation/p0-s7-licensing.md)
+- [x] 結案　Owner 豁免 Phase 0 gate，已本機合併。O-1／O-2 繼續追蹤，O-3b 已免測，O-4 維持核定。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
 
 ### Phase 1　Runtime 與 SOP→XLSX
 
-- [ ] 管理監督程序、OpenCode client/session mapping 與權限。
-- [ ] 通過 Gateway 契約、兩 session 隔離與 evidence stub。
+#### Phase 1 前置補強
+
+以下 Phase 0 證據維持 **UNVERIFIED**。勾選只表示 Phase 1 的產品測試已涵蓋該情境。
+
+- [ ] S4　跨客戶端／路徑的重複送件計數。
+- [x] S4　已收到連線和開始事件後由客戶端切斷，再重連對帳。上游 overflow 仍待驗。
+- [x] S2　合成供應方核對工具成功／失敗回傳的內容、call ID 與形狀。真 Gateway 已驗成功寫檔與 PDF，完整錯誤契約仍待驗。
+- [ ] S4／S2　teardown 跳過清理、`SyntaxError` 轉 502 後 exit 0、遺失原始原因。
+- [ ] S6　Job supervisor 遇 worker `null` 退出碼的失敗處理。
+- [ ] Minor　Git 文件區分兩把設定鎖。
+- [ ] Minor　`windows-job.cs` 檢查 `CloseHandle` 回傳值。
+- [ ] Minor　secret scan CLI 無模式時靜默 exit 0。
+
+#### Phase 1 實作及驗收
+
+- [x] 管理監督程序、OpenCode client/session mapping 與權限。原生 Windows 測試通過。
+- [x] 兩個並行 session 隔離、SSE 重連對帳、relay 合成錯誤契約及 evidence stub 通過。
+- [x] 真 Gateway 的兩個核准 alias 均通過啟動健康檢查，實際完成 OpenCode 工具呼叫及 PDF→XLSX。
+- [ ] 真 Gateway 的獨立圖片附件與完整錯誤契約維持 **UNVERIFIED**。
 - [ ] 在 Windows VM 驗證 OpenCode 及子程序只能透過受限 relay 連核准 Gateway，完成旁路負例。 [出口驗收](IMPLEMENTATION_PLAN_V2.md#phase-1-egress-acceptance)
-- [ ] 完成 run/receipt/manifest，SOP→XLSX 連續 5/5，注入失敗的假成功為 0。
-- [ ] 提交 Phase 1 驗收和獨立 review。
+- [x] 完成 run／receipt／manifest。合成 SOP→XLSX 連續 5/5、13 格逐格相等，9 類故障注入假成功 0。
+- [x] 真模型 SOP→XLSX 連續 5/5。GPT 補跑與 Haiku 各有同輪連續 5 筆。合計 23 筆普通跑次，19 筆成功全部各驗 13 格，4 筆逾時相關失敗均留存。 [真模型重測](reviews/PHASE1_GATE_REPORT.md#gateway-恢復後的真模型重測)
+- [x] 真模式故障注入以 Haiku 完成，1 個控制組通過，7 個負例全部判失敗，假成功 0。 [故障證據](reviews/PHASE1_GATE_REPORT.md#真模式故障驗收--phase1-uw6xyz)
+- [x] 提交 Phase 1 gate 報告及原始紀錄位置。 [Gate 報告](reviews/PHASE1_GATE_REPORT.md)
+- [ ] Claude Code 安排一次獨立複核，Phase 1 gate 仍未通過。
 
 ### Phase 2　Web、launcher 與附件
 
