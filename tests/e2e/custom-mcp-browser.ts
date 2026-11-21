@@ -160,17 +160,31 @@ try {
   await page.command('Input.insertText', { text: args.join('\n') });
   await press('Tab', 9);
   await page.command('Input.insertText', { text: root });
-  await evaluate("document.querySelector('input[name=project][value=default]').checked = true");
-  await evaluate("document.querySelector('[name=dataScope]').value = '僅讀取合成測試資料。'");
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.id'), 'mcp-add-credential');
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.value'), 'default');
+  await press(' ', 32);
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.value'), 'secondary');
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.name'), 'dataScope');
+  await page.command('Input.insertText', { text: '僅讀取合成測試資料。' });
   if (marker) {
     await click('#mcp-add-credential');
-    await evaluate("document.querySelector('[data-mcp-name]').value = 'SYNTHETIC_MCP'");
+    await evaluate("document.querySelector('[data-mcp-name]').value = 'SYNTHETIC_MCP'; document.querySelector('[name=dataScope]').focus()");
   }
   await evaluate("window.syntheticExecutable = document.querySelector('[name=executable]').value; document.querySelector('[name=executable]').value = 'relative.exe'");
   await click('#mcp-form button[type=submit]');
   await page.ready("document.querySelector('#mcp-form-status').textContent.includes('完整路徑')");
   await evaluate("document.querySelector('[name=executable]').value = window.syntheticExecutable");
-  await click('#mcp-form button[type=submit]');
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.tagName'), 'SUMMARY');
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.name'), 'enabled');
+  await press('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.type'), 'submit');
+  await press(' ', 32);
   await page.ready("!document.querySelector('#mcp-editor').open && !document.querySelector('#mcp-restart-bar').hidden");
   if (marker) {
     const id = await evaluate<string>("document.querySelector('#mcp-servers h4').id.replace('mcp-server-', '')");
@@ -196,6 +210,10 @@ try {
   }
   await screenshots('result');
   if (marker) {
+    await click('.mcp-result button');
+    await page.ready("document.querySelector('.mcp-result button')?.textContent === '啟用工具'");
+    await click('.mcp-result button');
+    await page.ready("document.querySelector('.mcp-result button')?.textContent === '停用工具'");
     const statePath = await submit('Synthetic restart guard');
     await awaited(activeTurn.promise, 'Synthetic restart guard failed to start');
     try {

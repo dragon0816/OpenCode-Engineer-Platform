@@ -40,6 +40,11 @@ processes.execFile = ((...args: unknown[]) => {
   ];
   const url = options?.env?.OEP_BROWSER_URL;
   if (!url || !binary.toLowerCase().endsWith('\\powershell.exe')) return Reflect.apply(original, processes, args);
+  if (process.send) {
+    process.send(url);
+    callback();
+    return new ChildProcess();
+  }
   void capture(url).then(() => callback(), () => callback(new Error('Browser handoff failed')));
   return new ChildProcess();
 }) as typeof original;
