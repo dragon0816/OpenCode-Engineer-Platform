@@ -7,7 +7,7 @@ import { until, waitForExit } from '../../../scripts/phase0/probe-http.ts';
 export type JobStop = { supervisorExit: number | null; childExit: number | null; members: number; orphans: number | null };
 
 export function startJob(control: string, workspace: string, env: NodeJS.ProcessEnv) {
-  const powershell = join(process.env.ProgramFiles!, 'PowerShell', '7', 'pwsh.exe');
+  const powershell = process.env.OEP_PWSH || join(process.env.ProgramFiles!, 'PowerShell', '7', 'pwsh.exe');
   const processHandle = spawn(powershell, ['-NoProfile', '-NonInteractive', '-File', atRepo('scripts/windows/runtime-job.ps1')], {
     cwd: workspace, windowsHide: true, stdio: 'ignore',
     env: { ...env, OEP_JOB_NODE: process.execPath, OEP_JOB_CONTROL: control, OEP_JOB_OWNER: String(process.pid) },

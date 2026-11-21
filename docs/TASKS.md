@@ -102,6 +102,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 ### Phase 5　發行及回歸
 
+- [x] 建置可重現 Windows ZIP、逐檔雜湊清單及外部 ZIP checksum，在本機以解壓後的內容載入啟動器。 [發行驗證](validation/p5-release.md)
+- [ ] 交付安裝、解除安裝、備份、回復、升級與回退腳本及隔離的安裝版驗收。
 - [ ] Windows VM 安裝、全程 E2E、升級、rollback 與備份恢復。
 - [ ] SBOM、NOTICE、checksums、secret scan 和操作文件，含真實 OS 睡眠／登出的排程已知限制。 [文件計畫](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment)
 - [ ] 提交 Phase 5 驗收和獨立 review。

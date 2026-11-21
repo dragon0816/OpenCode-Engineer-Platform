@@ -219,3 +219,8 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - 概覽以已發布快照為資料來源。伺服器分頁每次最多 25 張卡片，搜尋沿用 SQLite FTS5，重建沿用原子交易。來源欄位、狀態或歷史缺資料時顯示「無資料」。
 - 問答保留個別發布版本的模型授權。品質題集儲存在 OEP 知識庫 SQLite，兩題並行上限由瀏覽器及伺服器共同執行。合成示範庫預設本機瀏覽，可明確授權使用模型。
 - 示範移除停用示範發布指標。Atlas 網址保存在本機設定，交由瀏覽器在確認後開啟。新會話在建立時記錄 BI 工具開關，已建立會話沿用自身設定。 [驗收](reviews/PHASE2B_SLICE3A_REPORT.md)
+
+## Phase 5 Windows 發行建置
+
+- ZIP 內附固定版 OpenCode 和鎖定的 Node 正式相依套件。Node.js 24、Python 3.12 和 PowerShell 7 由使用者準備。Excel oracle 的 Python 套件以鎖定雜湊安裝。
+- ZIP 未簽署。檔案清單逐項列 SHA-256 與大小，ZIP 的外部 SHA-256 同時涵蓋清單。 [發行驗證](validation/p5-release.md)
