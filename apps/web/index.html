@@ -57,7 +57,7 @@
         <details id="top-menu">
           <summary id="top-menu-trigger" aria-label="工作台選單">⋯</summary>
           <div class="top-menu-actions">
-            <div class="panel-openers" aria-label="會話附加資料" role="group">
+            <div class="panel-openers" aria-label="附加資料分頁" role="group">
               <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產出</button>
               <button type="button" id="open-work" aria-controls="chat-files">工作</button>
               <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
@@ -369,26 +369,39 @@
       </form>
     </section>
     <section class="conversation knowledge" aria-labelledby="knowledge-title" id="knowledge-view" hidden>
-      <header class="conversation-header">
+      <header class="conversation-header knowledge-header">
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
-      </header>
-      <div class="knowledge-body">
-        <label for="vault">已發布的知識庫</label>
-        <select id="vault" disabled><option value="">載入中</option></select>
+        <div class="knowledge-selection">
+          <label for="vault">已發布的知識庫</label>
+          <select id="vault" disabled><option value="">載入中</option></select>
+          <p id="vault-status" role="status"></p>
+        </div>
         <div class="knowledge-tabs" role="tablist" aria-label="知識庫功能">
           <button type="button" role="tab" id="knowledge-tab-overview" aria-controls="knowledge-overview" aria-selected="true">概覽</button>
           <button type="button" role="tab" id="knowledge-tab-ask" aria-controls="knowledge-ask-panel" aria-selected="false" tabindex="-1">問答</button>
           <button type="button" role="tab" id="knowledge-tab-quality" aria-controls="knowledge-quality" aria-selected="false" tabindex="-1">品質</button>
           <button type="button" role="tab" id="knowledge-tab-build" aria-controls="knowledge-build" aria-selected="false" tabindex="-1">建置</button>
         </div>
+      </header>
+      <div class="knowledge-body">
         <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
+          <p class="page-help">瀏覽已發布的卡片，或搜尋來源段落。</p>
           <dl id="vault-details"></dl>
-          <div class="knowledge-pager">
-            <button id="knowledge-demo-load" type="button">載入範例知識庫</button>
-            <button id="knowledge-demo-remove" type="button" hidden>移除範例知識庫</button>
-            <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將合成證據送至模型</label>
-            <span id="knowledge-demo-status" role="status"></span>
-          </div>
+          <details id="vault-advanced">
+            <summary>進階</summary>
+            <dl id="vault-technical"></dl>
+            <button type="button" id="knowledge-rebuild" hidden>重建索引</button>
+            <p id="knowledge-rebuild-status" role="status"></p>
+          </details>
+          <details class="feature-more">
+            <summary>更多</summary>
+            <div class="knowledge-pager">
+              <button id="knowledge-demo-load" type="button">載入範例知識庫</button>
+              <button id="knowledge-demo-remove" type="button" hidden>移除範例知識庫</button>
+              <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將範例內容交給模型回答</label>
+              <span id="knowledge-demo-status" role="status"></span>
+            </div>
+          </details>
           <p id="knowledge-overview-empty">請在「建置」匯入已發布的知識庫。</p>
           <div id="knowledge-browser" hidden>
             <h2>卡片預覽</h2>
@@ -412,33 +425,33 @@
               <button type="submit">搜尋段落</button>
             </form>
             <div id="knowledge-matches" aria-live="polite"></div>
-            <details>
-              <summary>索引維護</summary>
-              <button type="button" id="knowledge-rebuild">重建索引</button>
-              <p id="knowledge-rebuild-status" role="status"></p>
-            </details>
           </div>
         </section>
         <section id="knowledge-ask-panel" role="tabpanel" aria-labelledby="knowledge-tab-ask" hidden>
-        <p id="knowledge-status" role="status"></p>
-        <form id="knowledge-form">
-          <label for="knowledge-question">問題</label>
-          <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
-          <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
-        </form>
-        <div id="knowledge-answer" aria-live="polite"></div>
+          <div class="knowledge-answer-area">
+            <p class="page-help">使用目前選取的知識庫回答問題，並查看答案引用的段落。</p>
+            <p id="knowledge-status" role="status"></p>
+            <div id="knowledge-answer" aria-live="polite"></div>
+          </div>
+          <form id="knowledge-form">
+            <label for="knowledge-question">問題</label>
+            <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
+            <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
+          </form>
         </section>
         <section id="knowledge-quality" role="tabpanel" aria-labelledby="knowledge-tab-quality" tabindex="0" hidden>
+          <p class="page-help">用題集檢查回答和引用是否符合預期。</p>
           <p id="quality-status" role="status">請選擇知識庫。</p>
           <div id="quality-actions" hidden>
             <div class="knowledge-filters">
               <label>題集 <select id="quality-sets"></select></label>
-              <label>核准模型 <select id="quality-aliases"></select></label>
               <button type="button" id="quality-run" disabled>執行題集</button>
               <button type="button" id="quality-stop" disabled>取消執行</button>
             </div>
             <p id="quality-builtin-note" hidden>這組 48 道標準題可在允許模型使用的範例知識庫執行。</p>
-            <div id="quality-set-actions">
+            <details id="quality-set-actions">
+              <summary>進階</summary>
+              <label>核准模型 <select id="quality-aliases"></select></label>
               <form id="quality-add-set">
                 <label>新題集名稱 <input name="name" type="text" maxlength="80" required></label>
                 <button type="submit">新增題集</button>
@@ -451,7 +464,7 @@
                 <button type="button" id="quality-import">匯入並取代題目</button>
                 <button type="button" id="quality-export">匯出題集</button>
               </details>
-            </div>
+            </details>
             <div id="quality-results" class="knowledge-results" aria-live="polite"></div>
             <details id="quality-question-list">
               <summary>題目</summary>
@@ -476,8 +489,9 @@
           </div>
         </section>
         <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
-        <details id="knowledge-repository">
-          <summary>從儲存庫資料夾匯入</summary>
+          <p class="page-help">匯入已發布的資料，或準備草稿送交審核。</p>
+          <details id="knowledge-repository">
+          <summary>從本機資料夾匯入</summary>
           <form id="knowledge-repository-form">
             <label for="knowledge-folder">本機資料夾完整路徑</label>
             <input type="text" id="knowledge-folder" maxlength="2048" autocomplete="off" spellcheck="false" required>
@@ -488,26 +502,53 @@
             </div>
           </form>
           <p id="knowledge-repository-status" role="status"></p>
+          <details id="knowledge-repository-diagnostics" hidden>
+            <summary>進階</summary>
+            <p></p>
+          </details>
         </details>
         </section>
       </div>
     </section>
-    <dialog id="knowledge-drawer" aria-labelledby="knowledge-drawer-title">
-      <header class="knowledge-drawer-header">
-        <h2 id="knowledge-drawer-title"></h2>
-        <form method="dialog"><button autofocus>關閉</button></form>
-      </header>
-      <div id="knowledge-drawer-body"></div>
-    </dialog>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
-      <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
-      <div class="knowledge-body" id="jobs-content"></div>
+      <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
+      <div class="knowledge-body">
+        <p class="page-help">查看下次執行、已送出的工作與通知。</p>
+        <p id="jobs-status" role="status"></p>
+        <div id="jobs-content"></div>
+      </div>
+    </section>
+    <section class="conversation knowledge" id="review-view" aria-labelledby="review-title" hidden>
+      <header class="conversation-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
+      <div class="knowledge-body">
+        <p class="page-help">查看草稿的變更與來源。先核准內容，再發布到知識庫。</p>
+        <button id="review-refresh" type="button">重新整理清單</button>
+        <p id="review-status" role="status"></p>
+        <section class="review-list" aria-labelledby="review-pending-title">
+          <h2 id="review-pending-title">待處理</h2>
+          <h3>卡片</h3>
+          <ul id="review-bi-pending" class="feature-list"></ul>
+          <h3>文章</h3>
+          <ul id="review-wiki-pending" class="feature-list"></ul>
+        </section>
+        <details class="feature-more review-list">
+          <summary>審核紀錄</summary>
+          <h3>卡片</h3>
+          <ul id="review-bi-history" class="feature-list"></ul>
+          <h3>文章</h3>
+          <ul id="review-wiki-history" class="feature-list"></ul>
+        </details>
+        <details class="feature-more review-list" hidden>
+          <summary>匯入工作</summary>
+          <ul id="review-import-jobs"></ul>
+        </details>
+      </div>
     </section>
     </main>
-    <aside class="sidebar files" id="chat-files" aria-label="會話面板" hidden>
+    <aside class="sidebar files" id="chat-files" aria-label="附加資料" hidden>
       <div class="panel-header">
         <button type="button" id="close-files">關閉附加資料</button>
-        <div id="panel-tabs" role="tablist" aria-label="會話附加資料"></div>
+        <div id="panel-tabs" role="tablist" aria-label="附加資料分頁"></div>
       </div>
       <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0" hidden>
         <div id="file-list">

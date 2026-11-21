@@ -91,7 +91,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       const data = await setRequest({}, active.signal);
       if (active.signal.aborted) return;
       catalog = data.sets;
-      sets.replaceChildren(...catalog.map(({ name }) => new Option(name, name)));
+      sets.replaceChildren(...catalog.map(({ name, builtIn }) => new Option(builtIn ? '標準題集' : name, name)));
       if (catalog.some(({ name }) => name === preferred)) sets.value = preferred;
       aliases.replaceChildren(...data.aliases.map((alias) => new Option(modelLabel(alias), alias)));
       status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
@@ -177,7 +177,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
         row.append(button('選取證據', () => {
           if (!picked.includes(passage.id) && picked.length < 10) picked.push(passage.id);
           renderEvidence();
-        }), ' ', button(passage.source + ' · ' + passage.locator, () => openPassage(passage)), node('p', passage.text.slice(0, 200)));
+        }), ' ', button(passage.source + ' · ' + passage.locator, (event) => openPassage(passage, '', event.currentTarget)), node('p', passage.text.slice(0, 200)));
         matches.append(row);
       }
     } catch { status.textContent = '無法搜尋段落。'; }
@@ -211,11 +211,15 @@ export function bindKnowledgeQuality(openPassage, messages) {
     editor.inert = rows.inert = true;
     find('quality-set-actions').inert = true;
     const title = node('p');
+    const thresholds = node('details');
+    thresholds.hidden = true;
+    const metrics = node('p');
+    thresholds.append(node('summary', '進階評分'), metrics);
     const table = node('table');
     const header = table.createTHead().insertRow();
     for (const text of ['題目', '狀態', '可用', '引用重現', '耗時']) header.append(node('th', text));
     const body = table.createTBody();
-    results.replaceChildren(title, table);
+    results.replaceChildren(title, table, thresholds);
     const pending = questions.map((question) => ({ question, row: body.insertRow() }));
     for (const { question, row } of pending) {
       row.insertCell().textContent = question.query;
@@ -251,7 +255,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
           if (question.answer) details.append(node('p', '預期：' + question.answer));
           if (result.answer) details.append(node('p', '實際：' + result.answer));
           for (const citation of result.citations ?? []) details.append(button(citation.source + ' · ' + citation.locator,
-            () => openPassage({ ...citation, text: citation.context }, citation.quote)));
+            (event) => openPassage({ ...citation, text: citation.context }, citation.quote, event.currentTarget)));
           row.cells[1].replaceChildren(details);
           row.insertCell().textContent = usable || abstained ? '是' : '否';
           row.insertCell().textContent = citations ? reproducible + '／' + citations : '—';
@@ -270,7 +274,9 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const meets = answerable > 0 && unanswerable > 0 && totals.citations > 0 && totals.usable / answerable >= 0.9 &&
       totals.refused / unanswerable >= 0.95 && totals.recall / answerable >= recallTarget && totals.citations === totals.reproduced && totals.unsupported === 0 && totals.errors === 0;
     title.textContent = active.signal.aborted ? `已取消 · 完成 ${totals.done}／${questions.length}` :
-      `D03 ${meets ? '通過' : '未通過'} · 前五段證據召回率 ${answerable ? (100 * totals.recall / answerable).toFixed(0) + '%' : '—'}（≥${recallTarget * 100}%） · 可答可用 ${totals.usable}／${answerable}（≥90%） · 不可答拒答 ${totals.refused}／${unanswerable}（≥95%） · 引用重現 ${totals.reproduced}／${totals.citations}（100%） · 關鍵無證據答案 ${totals.unsupported}（0）`;
+      meets ? '題集檢查通過。' : '題集檢查未通過。';
+    thresholds.hidden = active.signal.aborted;
+    metrics.textContent = `D03 ${meets ? '通過' : '未通過'} · 前五段證據召回率 ${answerable ? (100 * totals.recall / answerable).toFixed(0) + '%' : '—'}（≥${recallTarget * 100}%） · 可答可用 ${totals.usable}／${answerable}（≥90%） · 不可答拒答 ${totals.refused}／${unanswerable}（≥95%） · 引用重現 ${totals.reproduced}／${totals.citations}（100%） · 關鍵無證據答案 ${totals.unsupported}（0）`;
     if (active.signal.aborted) {
       for (const { row } of pending) if (row.cells[1].textContent === '執行中' || row.cells[1].textContent === '待執行') row.cells[1].textContent = '已取消';
     }

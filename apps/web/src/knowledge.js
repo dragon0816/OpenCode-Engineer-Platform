@@ -3,6 +3,9 @@ import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { RequestError, request } from './api.js';
 
+const tabPreference = 'oep.knowledge.tab';
+const vaultPreference = 'oep.knowledge.vault';
+const vaultTitle = (item) => item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title;
 const find = (id) => document.getElementById(id);
 const label = (tag, value) => {
   const element = document.createElement(tag);
@@ -22,10 +25,10 @@ const messages = {
   'evidence-changed-or-cancelled': '知識庫版本在查詢期間變更，或本次查詢已取消。',
 };
 
-export function bindKnowledge() {
-  const browser = bindKnowledgeBrowser(() => refreshVaults());
+export function bindKnowledge(openPreview, closePreviews) {
+  const browser = bindKnowledgeBrowser(() => refreshVaults(), openPreview);
   const quality = bindKnowledgeQuality(browser.openPassage, messages);
-  bindReview(find('knowledge-repository'), () => refreshVaults());
+  const refreshReviews = bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
     for (const item of tabs) {
@@ -34,6 +37,7 @@ export function bindKnowledge() {
       item.tabIndex = selected ? 0 : -1;
       find(item.getAttribute('aria-controls')).hidden = !selected;
     }
+    localStorage.setItem(tabPreference, tab.id);
     if (focus) tab.focus();
   }
   tabs.forEach((tab, index) => {
@@ -45,12 +49,15 @@ export function bindKnowledge() {
       selectTab(tabs[(target + tabs.length) % tabs.length], true);
     });
   });
+  selectTab(tabs.find((tab) => tab.id === localStorage.getItem(tabPreference)) ?? tabs[0]);
   const open = find('open-knowledge');
   const chat = find('open-chat');
   const vault = find('vault');
   const question = find('knowledge-question');
   const ask = find('knowledge-ask');
   const details = find('vault-details');
+  const technical = find('vault-technical');
+  const vaultStatus = find('vault-status');
   const status = find('knowledge-status');
   const answer = find('knowledge-answer');
   const repositoryStatus = find('knowledge-repository-status');
@@ -72,8 +79,9 @@ export function bindKnowledge() {
       const { vault: id } = await request('/api/knowledge/demo', { data: { load, allowModel: find('demo-model-consent').checked } });
       await refreshVaults(load ? id : vault.value);
       feedback.textContent = load ? '已載入範例知識庫。' : '已移除範例知識庫。';
-    } catch (error) { feedback.textContent = error.message; }
-    finally { demoLoad.disabled = demoRemove.disabled = false; }
+    } catch (error) {
+      feedback.textContent = error.message.replaceAll('示範庫', '範例知識庫').replaceAll('示範資料', '範例資料');
+    } finally { demoLoad.disabled = demoRemove.disabled = false; }
   }
   demoLoad.addEventListener('click', () => void demo(true));
   demoRemove.addEventListener('click', () => void demo(false));
@@ -89,22 +97,28 @@ export function bindKnowledge() {
     answer.replaceChildren();
     const selected = models.get(vault.value);
     details.replaceChildren();
+    technical.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);
+    find('knowledge-rebuild').hidden = !selected;
+    if (selected) localStorage.setItem(vaultPreference, selected.id);
     browser.select(selected?.id);
     quality.select(selected);
     if (!selected) {
-      status.textContent = '目前沒有已發布的快照。';
+      status.textContent = vaultStatus.textContent = '目前沒有已發布的知識庫。';
       controls();
       return;
     }
     for (const [term, value] of [
-      ['識別碼', selected.id], ...(selected.tag ? [['發布標籤', selected.tag]] : []),
-      ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ...(selected.tag ? [['發布標籤', selected.tag]] : []),
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
-      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
-    status.textContent = !selected.ready ? '索引目前無法查詢。' :
+    for (const [term, value] of [
+      ['識別碼', selected.id], ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
+    ]) technical.append(label('dt', term), label('dd', value));
+    vaultStatus.textContent = selected.ready ? '可搜尋' : '搜尋需要維護';
+    status.textContent = !selected.ready ? '目前無法搜尋此知識庫。' :
       selected.modelEnabled ? '' : '這個版本尚未授權供模型使用。';
     controls();
   }
@@ -126,15 +140,19 @@ export function bindKnowledge() {
     }
   }
 
-  async function refreshVaults(previous = vault.value) {
+  async function refreshVaults(previous = vault.value || localStorage.getItem(vaultPreference)) {
     loading?.abort();
+    pending?.abort();
+    pending = undefined;
     const active = loading = new AbortController();
     models.clear();
     browser.select(undefined);
     quality.select(undefined);
     vault.replaceChildren(new Option('載入中', ''));
-    status.textContent = '正在讀取已發布版本。';
+    status.textContent = vaultStatus.textContent = '正在讀取已發布版本。';
+    find('knowledge-rebuild').hidden = true;
     details.replaceChildren();
+    technical.replaceChildren();
     answer.replaceChildren();
     controls();
     try {
@@ -145,12 +163,12 @@ export function bindKnowledge() {
       demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
       demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
-        new Option(`${item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
+        new Option([vaultTitle(item), item.tag, new Date(item.publishedAt).toLocaleString('zh-Hant')].filter(Boolean).join(' · '), item.id)));
       if (models.has(previous)) vault.value = previous;
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
     } catch {
-      if (!active.signal.aborted) status.textContent = '無法讀取已發布的知識庫。';
+      if (!active.signal.aborted) status.textContent = vaultStatus.textContent = '無法讀取已發布的知識庫。';
     } finally {
       if (loading === active) { loading = undefined; controls(); }
     }
@@ -163,9 +181,11 @@ export function bindKnowledge() {
   });
   repositoryForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const diagnostics = find('knowledge-repository-diagnostics');
     const path = folder.value.trim();
     if (!path || importing) return;
     importing = true;
+    diagnostics.hidden = true;
     for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = true;
     const write = event.submitter === importFolder;
     repositoryStatus.textContent = write ? '正在驗證及匯入發布版本。' : '正在檢查資料夾。';
@@ -173,20 +193,24 @@ export function bindKnowledge() {
       if (write) {
         const report = await request('/api/knowledge/import', { data: { folder: path, allowModel: consent.checked } });
         repositoryStatus.textContent = [
-          `發布標籤 ${report.tag} · 版本 ${report.revision}`,
-          report.active ? (report.state === 'existing' ? '已匯入，索引可用。' : '匯入完成，索引已就緒。') :
+          `發布標籤 ${report.tag}`,
+          report.active ? (report.state === 'existing' ? '這個版本已匯入，可搜尋。' : '匯入完成，可搜尋。') :
             '已保留此版本，目前仍使用較新的發布紀錄。',
           `${report.cards} 張卡片、${report.sources} 個來源、${report.passages} 段證據、${report.relationships} 條關係`,
         ].join('\n');
+        diagnostics.hidden = false;
+        diagnostics.querySelector('p').textContent = `發布版本 ${report.revision}`;
         if (!find('knowledge-view').hidden) await refreshVaults(report.vault);
       } else {
         const { publication, repository, errors } = await request('/api/knowledge/inspect', { data: { folder: path } });
         const states = { resolved: '已解析發布標籤與快照。', 'no published version': '找不到發布紀錄。',
           unresolved: '無法解析發布紀錄。', 'artifact unavailable': '已解析發布標籤，快照尚不可用。' };
         repositoryStatus.textContent = [states[publication.state],
-          repository.type === 'wiki' ? 'Wiki 資料夾目前僅支援檢查。' : '',
-          ...errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`),
+          repository.type === 'wiki' ? '文章資料夾目前僅支援檢查。' : '',
         ].filter(Boolean).join('\n');
+        diagnostics.hidden = !errors.length;
+        diagnostics.querySelector('p').textContent =
+          errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`).join('\n');
       }
     } catch (error) {
       repositoryStatus.textContent = error instanceof RequestError ? error.message : '無法處理此資料夾。';
@@ -195,11 +219,12 @@ export function bindKnowledge() {
       for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = false;
     }
   });
-  vault.addEventListener('change', describe);
+  vault.addEventListener('change', () => { closePreviews(); describe(); });
   find('knowledge-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (ask.disabled || !question.value.trim()) return;
     const active = pending = new AbortController();
+    const selected = models.get(vault.value);
     controls();
     answer.replaceChildren();
     status.textContent = '正在檢索與核對引用。';
@@ -216,19 +241,18 @@ export function bindKnowledge() {
       const box = label('article', '');
       box.className = 'message';
       box.append(label('h2', '答案'), label('p', result.answer));
-      const selected = models.get(vault.value);
-      answer.append(box, label('small', [selected?.title, selected?.tag, `發布版本 ${result.revision}`].filter(Boolean).join(' · ')));
+      const release = label('details', '');
+      release.append(label('summary', '進階'), label('p', `發布版本 ${result.revision}`));
+      answer.append(box, label('small', [vaultTitle(selected), selected?.tag].filter(Boolean).join(' · ')));
       for (const citation of result.citations) {
-        const reference = label('details', '');
-        const trigger = label('summary', `${citation.source} · ${citation.locator}`);
-        trigger.setAttribute('aria-haspopup', 'dialog');
-        trigger.addEventListener('click', (event) => {
-          event.preventDefault();
-          browser.openPassage({ ...citation, text: citation.context }, citation.quote);
-        });
-        reference.append(trigger);
-        answer.append(reference);
+        const trigger = label('button', `${citation.source} · ${citation.locator}`);
+        trigger.type = 'button';
+        trigger.className = 'knowledge-reference';
+        trigger.addEventListener('click', () =>
+          browser.openPassage({ ...citation, text: citation.context }, citation.quote, trigger));
+        answer.append(trigger);
       }
+      answer.append(release);
     } catch {
       if (!active.signal.aborted) status.textContent = '本次詢問無法完成。';
     } finally {
@@ -237,6 +261,7 @@ export function bindKnowledge() {
   });
   open.disabled = false;
   return {
+    refreshReviews,
     disable() {
       showKnowledge(false);
       open.disabled = true;

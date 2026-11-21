@@ -4,7 +4,7 @@ import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
-import { loadJobSummary } from './jobs.js';
+import { bindJobs, loadJobSummary } from './jobs.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -724,11 +724,18 @@ function updatePanelLayout() {
   rightPanel.setAttribute('role', overlay ? 'dialog' : 'complementary');
   if (overlay) rightPanel.setAttribute('aria-modal', 'true');
   else rightPanel.removeAttribute('aria-modal');
-  closeFiles.textContent = panelNarrow.matches ? '返回對話' : '關閉附加資料';
+  closeFiles.textContent = !panelNarrow.matches ? '關閉附加資料' : find('chat-view').hidden ? '返回頁面' : '返回對話';
 }
 
 function showTab(key, opener) {
-  if (opener && !rightPanel.contains(opener)) panelOpener = opener;
+  const target = panelTabs.get(key);
+  if (opener) {
+    target.opener = opener;
+    if (!rightPanel.contains(opener)) {
+      panelOpener = opener;
+      target.externalOpener = opener;
+    } else target.externalOpener = panelTabs.get(activeTab)?.externalOpener ?? panelOpener;
+  }
   activeTab = key;
   for (const [id, { button, panel }] of panelTabs) {
     const active = id === key;
@@ -748,6 +755,35 @@ function openSection(key, opener) {
   showTab(key, opener);
 }
 
+function openFeaturePreview(key, title, opener) {
+  if (panelTabs.has(key)) {
+    showTab(key, opener);
+    return panelTabs.get(key).preview;
+  }
+  const abort = new AbortController();
+  const panel = node('div', undefined, 'knowledge feature-preview');
+  const heading = node('h2', title);
+  const body = node('div', undefined, 'preview-body');
+  panel.append(heading, body);
+  find('file-preview').append(panel);
+  addTab(key, title, panel, () => {
+    abort.abort();
+    panel.remove();
+  });
+  const tab = panelTabs.get(key);
+  const preview = {
+    body,
+    signal: abort.signal,
+    setTitle(value) {
+      heading.textContent = tab.button.textContent = value;
+      tab.item.querySelector('.close-tab').setAttribute('aria-label', `關閉 ${value} 分頁`);
+    },
+  };
+  tab.preview = preview;
+  showTab(key, opener);
+  return preview;
+}
+
 function removeTab(key) {
   const { item, panel, dispose } = panelTabs.get(key);
   panel.hidden = true;
@@ -756,23 +792,42 @@ function removeTab(key) {
   panelTabs.delete(key);
 }
 
+function visibleOpener(opener) {
+  if (opener?.isConnected && opener.getClientRects().length && !opener.closest('[inert]') &&
+      !opener.closest('details:not([open]) :not(summary, summary *)')) return opener;
+  if (opener?.dataset.featureFocus) {
+    const matches = document.querySelectorAll(`[data-feature-focus="${CSS.escape(opener.dataset.featureFocus)}"]`);
+    return [...matches].find((item) => item.getClientRects().length && !item.closest('[hidden], [inert]') &&
+      !item.closest('details:not([open]) :not(summary, summary *)'));
+  }
+}
+
 function closeTab(key) {
   const keys = [...panelTabs.keys()];
   const index = keys.indexOf(key);
+  if (keys.length === 1) {
+    closePanel();
+    return;
+  }
+  const { opener, preview } = panelTabs.get(key);
   removeTab(key);
-  if (!panelTabs.size) closePanel();
-  else showTab(activeTab === key ? keys[index + 1] ?? keys[index - 1] : activeTab);
+  const parent = preview && opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
+  showTab(activeTab === key ? parent?.[0] ?? keys[index + 1] ?? keys[index - 1] : activeTab);
+  if (preview && parent?.[0] === activeTab) visibleOpener(opener)?.focus({ preventScroll: true });
 }
 
 function closePanel(restoreFocus = true) {
+  const tab = panelTabs.get(activeTab);
+  const opener = tab?.preview ? tab.externalOpener ?? panelOpener : panelOpener;
   for (const key of panelTabs.keys()) removeTab(key);
   rightPanel.hidden = true;
   panelToggle.setAttribute('aria-expanded', 'false');
   updatePanelLayout();
   if (restoreFocus) {
-    const opener = panelOpener?.isConnected ? panelOpener
-      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : menuTrigger;
-    (opener ?? menuTrigger).focus({ preventScroll: true });
+    const replacement = opener?.dataset.id && messages.querySelector(`[data-id="${CSS.escape(opener.dataset.id)}"]`);
+    const page = tab?.preview && find('work-area').querySelector('.knowledge:not([hidden]) h1');
+    const target = visibleOpener(opener) || replacement || page || menuTrigger;
+    target.focus({ preventScroll: true });
   }
   panelOpener = undefined;
   activeTab = undefined;
@@ -797,6 +852,14 @@ document.addEventListener('click', (event) => {
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
 panelNarrow.addEventListener('change', updatePanelLayout);
+document.addEventListener('keydown', (event) => {
+  const disclosure = event.target.closest?.('.feature-more[open]');
+  if (event.key === 'Escape' && !event.defaultPrevented && disclosure) {
+    event.preventDefault();
+    disclosure.open = false;
+    disclosure.querySelector('summary').focus();
+  }
+}, { capture: true });
 document.addEventListener('keydown', (event) => {
   if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
   event.preventDefault();
@@ -1414,7 +1477,7 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 
 function showSettings() {
   closePanel(false);
-  for (const id of ['chat-view', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
@@ -1429,7 +1492,7 @@ find('close-settings').addEventListener('click', () => {
   find('open-chat').click();
   if (settingsView.hidden && narrowNavigation.matches) sidebarToggle.focus();
 });
-for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
   find(id).addEventListener('click', (event) => {
     if (settingsView.hidden) return;
     if (!discardSettings()) {
@@ -1478,8 +1541,9 @@ for (const section of document.querySelectorAll('.rail-section')) {
 }
 find('assistant-count').textContent = agent.options.length;
 function syncNavigation() {
-  const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
-  if (visible !== 'open-chat') closePanel(false);
+  const view = ['chat', 'jobs', 'knowledge', 'review'].find((id) => !find(id + '-view').hidden);
+  const visible = 'open-' + view;
+  if (visible !== 'open-chat' || panelTabs.get(activeTab)?.preview) closePanel(false);
   for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
     if (entry === visible) find(entry).setAttribute('aria-current', 'page');
     else find(entry).removeAttribute('aria-current');
@@ -1489,15 +1553,14 @@ function syncNavigation() {
     if (visible === 'open-chat') sessionTitle.focus();
   }
 }
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+  find(id).addEventListener('click', () => { find('review-view').hidden = true; });
+}
 find('open-review').addEventListener('click', () => {
-  find('open-knowledge').click();
-  if (find('knowledge-view').hidden) return;
-  find('knowledge-tab-build').click();
-  const review = find('ingest-review');
-  review.open = true;
-  review.querySelector('summary').focus();
-  find('open-knowledge').removeAttribute('aria-current');
-  find('open-review').setAttribute('aria-current', 'page');
+  for (const id of ['knowledge-view', 'jobs-view', 'chat-view']) find(id).hidden = true;
+  find('review-view').hidden = false;
+  find('review-title').focus();
+  void knowledge?.refreshReviews();
 });
 find('session-search').addEventListener('input', renderSessions);
 find('clear-session-search').addEventListener('click', () => {
@@ -1826,15 +1889,16 @@ try {
   renderSessions();
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
+  bindJobs(openFeaturePreview);
   if (bootstrap.knowledge) {
-    knowledge = bindKnowledge();
+    knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false));
     find('open-review').hidden = false;
   }
   find('open-chat').addEventListener('click', () => {
     find('jobs-view').hidden = true;
     find('chat-view').hidden = false;
   });
-  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).addEventListener('click', syncNavigation);
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

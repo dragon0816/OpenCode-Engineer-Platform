@@ -18,7 +18,7 @@ const statuses = { pending: '待審核', approved: '已核准', rejected: '已�
 
 function advanced(parent) {
   const fold = element('details');
-  fold.append(element('summary', '進階 · JSON'));
+  fold.append(element('summary', '進階'));
   parent.append(fold);
   return fold;
 }
@@ -34,48 +34,57 @@ function showComparison(parent, { previous, candidate }) {
     const oldValues = old ? { '標題': old.title, '類型': old.type, '識別鍵': old.key, '版本': old.version, ...old.fields } : {};
     const newValues = next ? { '標題': next.title, '類型': next.type, '識別鍵': next.key, '版本': next.version, ...next.fields } : {};
     const changes = element('ul');
+    const technical = element('ul');
     const display = (value) => typeof value === 'string' ? value : value === undefined ? '（無）' : JSON.stringify(value);
     for (const field of new Set([...Object.keys(oldValues), ...Object.keys(newValues)])) {
       if (JSON.stringify(oldValues[field]) === JSON.stringify(newValues[field])) continue;
-      changes.append(element('li', field + ' · ' + display(oldValues[field]) + ' → ' + display(newValues[field])));
+      const list = ['類型', '識別鍵', '版本'].includes(field) ? technical : changes;
+      list.append(element('li', field + ' · ' + display(oldValues[field]) + ' → ' + display(newValues[field])));
       counts.fields++;
     }
-    if (!changes.childElementCount) continue;
+    if (!changes.childElementCount && !technical.childElementCount) continue;
     const state = !old ? 'added' : !next ? 'removed' : 'changed';
     counts[state]++;
-    parent.append(element('h4', { added: '新增', removed: '移除', changed: '變更' }[state] + ' · ' + (next ?? old).title), changes);
+    parent.append(element('h4', { added: '新增', removed: '移除', changed: '變更' }[state] + ' · ' + (next ?? old).title));
+    if (changes.childElementCount) parent.append(changes);
+    if (technical.childElementCount) advanced(parent).append(technical);
   }
   parent.prepend(element('p', '新增 ' + counts.added + ' · 變更 ' + counts.changed + ' · 移除 ' + counts.removed + ' · 欄位 ' + counts.fields));
-  const evidence = element('details');
-  evidence.append(element('summary', '證據 · ' + candidate.passages.length + ' 則'));
+  const evidence = element('div');
+  evidence.append(element('h3', '證據 · ' + candidate.passages.length + ' 則'));
   const oldPassages = new Map(previous?.passages.map((item) => [item.id, item]));
   const sources = new Map(candidate.sources.map((item) => [item.id, item.ref]));
   for (const item of candidate.passages) {
     if (JSON.stringify(item) === JSON.stringify(oldPassages.get(item.id))) continue;
-    evidence.append(element('p', sources.get(item.sourceId) + ' · ' + item.text));
+    evidence.append(element('p', sources.get(item.sourceId)), element('blockquote', item.text));
+    if (item.locator) advanced(evidence).append(element('p', item.locator));
   }
   parent.append(evidence);
 }
 
-export function bindReview(anchor, onPublish) {
+export function bindReview(anchor, onPublish, openPreview) {
   const endpoint = '/api/knowledge/reviews';
+  const refreshers = [];
+  const queueStatus = document.getElementById('review-status');
   for (const kind of ['bi', 'wiki']) {
     const panel = element('details');
     panel.id = kind === 'bi' ? 'ingest-review' : 'wiki-review';
-    panel.append(element('summary', kind === 'bi' ? 'BI 匯入與審核' : 'Wiki 草稿與審核'));
+    panel.append(element('summary', kind === 'bi' ? '從來源建立卡片' : '從來源建立文章'));
     anchor.after(panel);
-    const vault = inputLabel(panel, '知識庫 ID');
+    const vault = inputLabel(panel, '知識庫代號');
     const vaultChoices = element('datalist');
     vaultChoices.id = panel.id + '-vaults';
     vault.setAttribute('list', vaultChoices.id);
     panel.append(vaultChoices);
-    const version = inputLabel(panel, 'Schema 版本');
-    const fields = kind === 'bi' ? inputLabel(panel, '必要欄位（逗號分隔）') : null;
-    const source = inputLabel(panel, '選擇 UTF-8 文字或 Markdown');
+    const schemaOptions = advanced(panel);
+    const version = inputLabel(schemaOptions, 'Schema 版本');
+    const fields = kind === 'bi' ? inputLabel(schemaOptions, '必要欄位（逗號分隔）') : null;
+    const source = inputLabel(panel, '選擇文字檔');
     source.type = 'file';
     source.accept = '.txt,.md,.markdown';
     const pasted = inputLabel(panel, '或貼上來源文字', 'textarea');
-    const sourceText = inputLabel(panel, '來源預覽（選取文字可作為引文）', 'textarea');
+    const sourceContent = element('div');
+    const sourceText = inputLabel(sourceContent, '來源預覽（選取文字可作為引文）', 'textarea');
     sourceText.readOnly = true;
     const cardList = element('div');
     panel.append(cardList);
@@ -83,16 +92,17 @@ export function bindReview(anchor, onPublish) {
     candidate.rows = 12;
     const status = element('p');
     status.setAttribute('role', 'status');
-    const list = element('div');
+    const pending = document.getElementById(`review-${kind}-pending`);
+    const history = document.getElementById(`review-${kind}-history`);
 
-    function button(parent, label, work) {
+    function button(parent, label, work, feedback = status) {
       const control = element('button', label);
       control.type = 'button';
       control.addEventListener('click', async () => {
         control.disabled = true;
-        status.textContent = '';
+        feedback.textContent = '';
         try { await work(); }
-        catch (error) { status.textContent = /[\u3400-\u9fff]/.test(error.message) ? error.message : '操作失敗。請檢查輸入後再試一次。'; }
+        catch (error) { feedback.textContent = /[\u3400-\u9fff]/.test(error.message) ? error.message : '操作失敗。請檢查輸入後再試一次。'; }
         finally { control.disabled = false; }
       });
       parent.append(control);
@@ -145,6 +155,102 @@ export function bindReview(anchor, onPublish) {
       }
     }
 
+    const previews = new Map();
+    let reviewRows = new Map();
+
+    function openReview(id, opener, title) {
+      const row = reviewRows.get(id);
+      if (!row) return;
+      const tab = openPreview('review-' + id, title ?? row.vault, opener);
+      if (!previews.has(id)) {
+        const draw = () => drawReview(tab, reviewRows.get(id), id);
+        previews.set(id, draw);
+        tab.signal.addEventListener('abort', () => previews.delete(id), { once: true });
+        draw();
+      }
+    }
+
+    function drawReview(tab, row, id) {
+      const { body, signal } = tab;
+      body.replaceChildren();
+      if (!row) { body.append(element('p', '這筆審核已無法開啟。')); return; }
+      const draft = JSON.parse(row.draft);
+      const heading = element('p', displayedState(row));
+      heading.tabIndex = -1;
+      const metadata = advanced(body);
+      metadata.append(element('p', '審核代號 ' + id), element('p', '前一版本 ' + (row.parent ?? '無')));
+      if (row.publication) metadata.append(element('p', '發布版本 ' + row.publication));
+      const editor = inputLabel(metadata, '審核草稿（JSON）', 'textarea');
+      editor.rows = 12;
+      editor.value = JSON.stringify(draft, null, 2);
+      editor.readOnly = row.status !== 'pending';
+      const feedback = element('p');
+      feedback.setAttribute('role', 'status');
+      const controls = element('div');
+      controls.className = 'review-actions';
+      const comparison = element('div');
+      body.prepend(heading, feedback, controls);
+      body.append(comparison);
+
+      const action = (name, label, extra = () => ({}), parent = controls) => button(parent, label, async () => {
+        await submit({ action: name, id, edit: row.edit, ...extra() });
+        await refresh();
+        if (['publish', 'rollback', 'reactivate'].includes(name)) await onPublish();
+        if (!signal.aborted && !feedback.isConnected && !document.activeElement.closest('#chat-files')) {
+          body.firstElementChild?.focus({ preventScroll: true });
+        }
+      }, feedback);
+
+      let comparisonRequest = 0;
+      async function compare() {
+        const sequence = ++comparisonRequest;
+        const result = await submit({ action: 'compare', id });
+        if (!signal.aborted && comparison.isConnected && sequence === comparisonRequest) showComparison(comparison, result);
+      }
+      if (row.status === 'pending' || row.status === 'approved') {
+        button(controls, '比較版本與證據', compare, feedback);
+        comparison.textContent = '正在讀取版本與證據…';
+        compare().catch(() => { comparison.textContent = '無法讀取版本與證據。'; });
+        if (kind === 'wiki') {
+          const trial = inputLabel(controls, '草稿證據搜尋');
+          button(controls, '搜尋草稿', async () => {
+            const query = trial.value.trim().toLowerCase();
+            if (!query) throw new Error('請輸入搜尋文字。');
+            const sequence = ++comparisonRequest;
+            const { candidate } = await submit({ action: 'compare', id });
+            if (signal.aborted || sequence !== comparisonRequest) return;
+            const hits = candidate.passages.filter(({ text }) => text.toLowerCase().includes(query));
+            comparison.replaceChildren(...hits.map(({ locator, text }) => {
+              const passage = element('div');
+              passage.append(element('p', locator), element('blockquote', text));
+              return passage;
+            }));
+            if (!hits.length) comparison.textContent = '草稿中找不到相符的證據。';
+          }, feedback);
+        }
+      }
+      if (row.status === 'pending') {
+        action('edit', '儲存修訂', () => ({ draft: JSON.parse(editor.value) }), metadata);
+        action('approve', '核准', () => {
+          if (JSON.stringify(JSON.parse(editor.value)) !== JSON.stringify(draft)) throw new Error('請先儲存草稿。');
+          return {};
+        });
+        action('reject', '拒絕');
+        if (kind === 'wiki') action('discard', '捨棄草稿');
+      } else if (row.publication && (row.active || row.inactive)) {
+        const more = element('details');
+        more.className = 'feature-more';
+        more.append(element('summary', '更多'));
+        controls.append(more);
+        if (row.active) action('rollback', '回復前一版本', undefined, more);
+        if (row.inactive) action('reactivate', '重新啟用', undefined, more);
+      } else if (row.status === 'approved' && !row.publication) action('publish', '發布');
+    }
+
+    function displayedState(row) {
+      return row.inactive ? '已停用' : row.publication ? '已發布' : statuses[row.status];
+    }
+
     let refreshSequence = 0;
     async function refresh() {
       const sequence = ++refreshSequence;
@@ -155,82 +261,57 @@ export function bindReview(anchor, onPublish) {
         option.value = item.id;
         return option;
       }));
-      list.replaceChildren();
-      if (kind === 'bi') {
-        for (const job of jobs) {
-          const jobState = job.completed ? '已送審' : job.expires > Date.now() ? '執行中' : '待執行';
-          list.append(element('p', [job.id, jobState].join(' · ')));
-          if (!job.completed) {
-            button(list, 'Run Now · ' + job.id, async () => {
-              await submit({ action: 'run', id: job.id });
-              await refresh();
-            });
-          }
-        }
-      }
+      const before = reviewRows;
+      reviewRows = new Map();
+      pending.replaceChildren();
+      history.replaceChildren();
       for (const row of reviews) {
         const draft = JSON.parse(row.draft);
         if (draft.vault.kind !== kind) continue;
-        const section = element('details');
-        section.append(element('summary', [row.vault, row.inactive ? '已停用' : statuses[row.status], row.id].join(' · ')));
-        section.append(element('p', '前一版本 ' + (row.parent ?? '無')));
-        const editor = inputLabel(advanced(section), '審核草稿', 'textarea');
-        editor.rows = 12;
-        editor.value = JSON.stringify(draft, null, 2);
-        editor.readOnly = row.status !== 'pending';
-        const action = (name, label, extra = () => ({})) => button(section, label, async () => {
-          await submit({ action: name, id: row.id, edit: row.edit, ...extra() });
-          await refresh();
-          if (['publish', 'rollback', 'reactivate'].includes(name)) await onPublish();
-        });
-        const comparison = element('div');
-        const showDiff = async () => {
-          showComparison(comparison, await submit({ action: 'compare', id: row.id }));
-        };
-        if (row.status === 'pending' || row.status === 'approved') {
-          button(section, '比較版本與證據', showDiff);
-          if (kind === 'wiki') {
-            const trial = inputLabel(section, '草稿證據搜尋');
-            button(section, '搜尋草稿', async () => {
-              const query = trial.value.trim().toLowerCase();
-              if (!query) throw new Error('請輸入搜尋文字。');
-              const { candidate } = await submit({ action: 'compare', id: row.id });
-              const hits = candidate.passages.filter(({ text }) => text.toLowerCase().includes(query));
-              comparison.textContent = hits.map(({ locator, text }) => locator + ' · ' + text).join('\n') || '草稿中找不到相符的證據。';
-            });
-          }
-        }
-        if (row.status === 'pending') {
-          button(editor.parentElement.parentElement, '儲存修訂', async () => {
-            await submit({ action: 'edit', id: row.id, edit: row.edit, draft: JSON.parse(editor.value) });
+        reviewRows.set(row.id, row);
+        const item = element('li');
+        const name = draft.vault.title || row.vault;
+        const entry = button(item, name, () => openReview(row.id, entry, name), queueStatus);
+        entry.dataset.featureFocus = 'review-' + row.id;
+        const subject = (draft.cards ?? draft.addCards)?.[0]?.title || draft.updateCards?.[0]?.title || draft.sources?.[0]?.ref;
+        item.append(element('small', [displayedState(row), subject].filter(Boolean).join(' · ')));
+        (row.status === 'pending' || row.status === 'approved' && !row.publication ? pending : history).append(item);
+      }
+      if (!pending.childElementCount) pending.append(element('li', '目前沒有待處理的草稿。'));
+      if (!history.childElementCount) history.append(element('li', '目前沒有審核紀錄。'));
+      if (kind === 'bi') {
+        const work = document.getElementById('review-import-jobs');
+        work.replaceChildren();
+        for (const job of jobs) {
+          const jobState = job.completed ? '已送審' : job.expires > Date.now() ? '執行中' : '待執行';
+          const item = element('li');
+          const details = advanced(item);
+          details.append(element('p', job.id));
+          item.prepend(element('p', jobState));
+          if (!job.completed) button(item, '立即執行', async () => {
+            await submit({ action: 'run', id: job.id });
             await refresh();
-          });
-          action('approve', '核准', () => {
-            if (JSON.stringify(JSON.parse(editor.value)) !== JSON.stringify(draft)) throw new Error('請先儲存草稿。');
-            return {};
-          });
-          action('reject', '拒絕');
-          if (kind === 'wiki') action('discard', '捨棄草稿');
-        } else if (row.publication) {
-          section.append(element('p', row.publication));
-          if (row.active) action('rollback', '回復前一版本');
-          if (row.inactive) action('reactivate', '重新啟用');
-        } else if (row.status === 'approved') action('publish', '發布');
-        section.append(comparison);
-        list.append(section);
+          }, queueStatus);
+          work.append(item);
+        }
+        work.parentElement.hidden = !jobs.length;
+      }
+      for (const [id, draw] of previews) {
+        if (JSON.stringify(before.get(id)) !== JSON.stringify(reviewRows.get(id))) draw();
       }
     }
+    refreshers.push(refresh);
 
-    button(panel, '安裝 Schema 並建立草稿範本', async () => {
+    button(schemaOptions, '安裝 Schema 並建立草稿範本', async () => {
       const names = fields ? fields.value.split(',').map((value) => value.trim()).filter(Boolean) : [];
       const schema = await submit({ action: 'schema', vault: vault.value, schema: 'local-' + kind, version: version.value, fields: names });
       setBase(await submit({ action: 'base', vault: vault.value }));
-      const text = 'Synthetic source';
+      const text = sourceOriginal ?? '';
       candidate.value = JSON.stringify({
         vault: { id: vault.value, title: vault.value, kind },
         schema: schema.sha256,
-        sources: [{ id: 'source', ref: 'source.md', original: text, markdown: text }],
-        cards: kind === 'bi' ? [{ id: 'card', type: 'record', key: 'card', title: 'Record', version: '1',
+        sources: [{ id: 'source', ref: sourceRef ?? '來源.txt', original: text, markdown: text }],
+        cards: kind === 'bi' ? [{ id: 'card', type: 'record', key: 'card', title: '', version: '1',
           fields: Object.fromEntries(names.map((name) => [name, text])) }] : [],
         relationships: [],
         evidence: kind === 'bi' ? names.map((field) => ({ sourceId: 'source', cardId: 'card', field, start: 0, end: text.length }))
@@ -243,27 +324,35 @@ export function bindReview(anchor, onPublish) {
       if (fields) fields.value = base.schema.document.fields.join(', ');
       status.textContent = '已載入知識庫。';
     });
-    button(panel, '載入來源至草稿', async () => {
+    function showSourcePreview(opener) {
+      const { body } = openPreview(`build-source-${kind}`, '來源文字', opener);
+      if (!body.contains(sourceContent)) body.append(sourceContent);
+    }
+    const showSource = button(panel, '查看來源文字', () => showSourcePreview(showSource));
+    showSource.hidden = true;
+    const loadSource = button(panel, '載入來源至草稿', async () => {
       const file = source.files[0];
-      if (file?.size > 1024 * 1024) throw new Error('請選擇 1 MiB 以內的 UTF-8 來源。');
+      if (file?.size > 1024 * 1024) throw new Error('請選擇不超過 1 MB 的文字檔。');
       sourceOriginal = file ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer()) : pasted.value;
       sourceText.value = sourceOriginal;
       sourceRef = file?.name ?? 'pasted.md';
       if (!sourceText.value.trim()) throw new Error('請選擇檔案或貼上來源文字。');
+      showSource.hidden = false;
+      if (loadSource.getClientRects().length) showSourcePreview(loadSource);
     });
     button(panel, '送交審核', async () => {
-      if (!base || baseVaultId !== vault.value) throw new Error('請先載入知識庫或安裝 Schema。');
+      if (!base || baseVaultId !== vault.value) throw new Error('請先載入知識庫，或到進階建立草稿範本。');
       const metadata = base.vault ?? { id: vault.value, title: vault.value, kind };
       const id = crypto.randomUUID();
       if (kind === 'wiki') {
-        if (metadata.kind !== 'wiki') throw new Error('請選擇 Wiki 知識庫。');
+        if (metadata.kind !== 'wiki') throw new Error('請選擇文章知識庫。');
         const text = sourceOriginal ?? '';
-        if (!text.trim() || text.length > 4000) throw new Error('請載入 4,000 字元以內的 Wiki 草稿。');
+        if (!text.trim() || text.length > 4000) throw new Error('請載入 4,000 字元以內的文章草稿。');
         await submit({ action: 'stage', id, draft: { vault: metadata, schema: base.schema.sha256,
           sources: [{ id: 'source', ref: sourceRef, original: text, markdown: text }], cards: [], relationships: [],
           evidence: [{ sourceId: 'source', start: 0, end: text.length }] } });
       } else {
-        if (metadata.kind !== 'bi') throw new Error('請選擇 BI 知識庫。');
+        if (metadata.kind !== 'bi') throw new Error('請選擇卡片知識庫。');
         const draft = { vault: metadata, parent: base.parent, schema: base.schema.sha256, allowModel: base.allowModel,
           addCards: [], updateCards: [], removeCards: [], sources: [], evidence: [], relationships: [] };
         const sourceId = crypto.randomUUID();
@@ -292,8 +381,7 @@ export function bindReview(anchor, onPublish) {
         }
         await submit({ action: 'stage-change', id, draft });
       }
-      status.textContent = '已送交審核。';
-      await refresh();
+      await submitted(id);
     });
     function originalOffset(previewOffset) {
       let offset = previewOffset;
@@ -311,32 +399,51 @@ export function bindReview(anchor, onPublish) {
       return sha256;
     }
     if (kind === 'bi') {
-      const note = element('p', '按下產生提案後，來源文字會透過區域網路的 HTTP Gateway 傳出本機。提案仍須人工核准。');
+      const note = element('p', '產生提案會將來源文字送到本機以外的模型服務。提案須由人工核准。');
       note.id = 'bi-proposal-note';
       panel.append(note);
       const control = button(panel, '產生模型提案', async () => {
-        if (!base?.vault || base.vault.id !== vault.value) throw new Error('請先載入已發布的 BI 知識庫。');
+        if (!base?.vault || base.vault.id !== vault.value) throw new Error('請先載入已發布的卡片知識庫。');
         if (!sourceText.value.trim() || new TextEncoder().encode(sourceOriginal).length > 24_000) {
           throw new Error('請載入 24,000 位元組以內的來源以產生提案。');
         }
         const result = await submit({ action: 'propose', id: crypto.randomUUID(), vault: vault.value,
           parent: base.parent, schema: base.schema.sha256, ref: sourceRef, sha256: await uploadSource() });
         if (result.rejected) throw new Error('提案的引文無法核對。請檢查欄位 ' + result.rejected.join('、') + '。');
+        await submitted(result.id);
         status.textContent = '提案已送交人工審核。';
-        await refresh();
+        if (control.getClientRects().length) openReview(result.id, control, '模型提案');
       });
       control.setAttribute('aria-describedby', note.id);
     }
     button(candidate.parentElement.parentElement, '送交 JSON 審核', async () => {
       const draft = JSON.parse(candidate.value);
       if (draft.vault.kind !== kind) throw new Error('草稿類型不符。');
-      await submit({ action: 'parent' in draft ? 'stage-change' : 'stage', id: crypto.randomUUID(), draft });
-      await refresh();
+      const id = crypto.randomUUID();
+      await submit({ action: 'parent' in draft ? 'stage-change' : 'stage', id, draft });
+      await submitted(id);
     });
-    button(panel, '重新整理清單', refresh);
-    panel.append(status, list);
+    let submittedId;
+    const openSubmitted = button(panel, '查看已送審草稿', () => openReview(submittedId, openSubmitted, '送審草稿'));
+    openSubmitted.hidden = true;
+    panel.append(status);
+    async function submitted(id) {
+      status.textContent = '已送交審核。';
+      await refresh();
+      submittedId = id;
+      openSubmitted.hidden = !reviewRows.has(id);
+    }
     panel.addEventListener('toggle', () => {
-      if (panel.open) refresh().catch(() => { status.textContent = '無法讀取審核清單。請重新整理。'; });
+      if (panel.open) refresh().catch(() => { status.textContent = '無法讀取清單。'; });
     });
   }
+  async function refreshQueue() {
+    queueStatus.textContent = '正在讀取審核清單…';
+    try {
+      await Promise.all(refreshers.map((refresh) => refresh()));
+      queueStatus.textContent = '';
+    } catch { queueStatus.textContent = '無法讀取審核清單。請重新整理。'; }
+  }
+  document.getElementById('review-refresh').addEventListener('click', () => void refreshQueue());
+  return refreshQueue;
 }
