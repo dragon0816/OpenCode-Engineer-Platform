@@ -89,6 +89,10 @@ export class WebStore extends Ledger {
     this.db.prepare('INSERT INTO attachments VALUES (?, ?, ?, ?)').run(record.id, sessionID, bytes, JSON.stringify(record));
   }
 
+  deleteAttachment(sessionID: string, id: string) {
+    return this.db.prepare('DELETE FROM attachments WHERE session_id = ? AND id = ?').run(sessionID, id).changes;
+  }
+
   turn(sessionID: string, id: string) {
     const row = this.db.prepare('SELECT request_hash AS hash FROM web_turns WHERE session_id = ? AND run_id = ?')
       .get(sessionID, id);

@@ -129,3 +129,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 緊湊側欄、鍵盤列選單、安全 Markdown、工具卡、單回合停止，以及取消工作簿的帳本驗收。
 - [ ] 驗收逐 token 顯示、SSE 斷線遺漏活動補齊、執行中工具取消與完整對比稽核。 [Slice 2A 驗收](reviews/PHASE2B_SLICE2A_REPORT.md)
+
+## Phase 2b Slice 2B 進度
+
+- [x] 右側分頁、窄版面板、附件操作與預覽、工作台帳與 BI 摘要、同名 XLSX 產物差異。
+- [x] 生成中顯示等候秒數，保留跨框架機密遮蔽。
+- [ ] 另行驗收逐 token 串流、PDF 首頁及文字產物差異整合。 [Slice 2B 驗收](reviews/PHASE2B_SLICE2B_REPORT.md)

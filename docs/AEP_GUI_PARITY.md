@@ -51,10 +51,11 @@
 |---|---|---|---|---|
 | W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。緊湊會話列、鍵盤選單、搜尋與清除已驗收。會話模型切換仍開放。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
 | W 私有、public 會話及 backend 驗證 | Replace（本機 OpenCode；D04 單使用者） | 左欄、設定／Runtime | 2b | 新會話走本機授權，拒絕未認證及非 loopback 請求。 |
-| W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 安全 Markdown、活動摘要與工具卡展收已驗。逐 token 顯示與 SSE 遺漏事件補齊仍開放。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
+| W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 安全 Markdown、活動摘要與工具卡展收已驗。生成時顯示等候秒數。逐 token 顯示與 SSE 遺漏事件補齊仍開放。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | 停止對話回合 | Adapt to OpenCode | 輸入框 | 2b | 合成慢速 Excel 回合已驗停止、帳本、重複停止及產物拒絕。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
 | W 回覆指定輪次、複製、原因、評分、區段／摘要筆記 | Adapt to OpenCode | 訊息操作、筆記面板 | 2b | 在第二輪引用第一輪，保存評分與筆記並核對原輪定位。 |
-| W 附件、移除、下載、原文／表格／影像／HTML 預覽、Atlas embed | Adapt to OpenCode | 輸入框、檔案／產物面板 | 2／2b | 上傳逐格式預覽，驗下載 hash。HTML 隔離且外部 embed 需使用者明確開啟。 |
+| W 附件、移除、下載、原文／表格／影像／HTML 預覽、Atlas embed | Adapt to OpenCode | 輸入框、檔案／產物面板 | 2／2b | 附件上傳、移除、下載雜湊、文字、表格、影像及隔離 HTML 預覽已驗收。PDF 顯示檔案資料及下載提示。Atlas embed 待驗收。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
+| 產物版本差異 | Adapt to OpenCode | 產物面板／差異 | 2b | 同會話兩版 XLSX 驗證變更儲存格數量及前後值。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | W Slash palette、直接指令及 action card 決定 | Adapt to OpenCode | 輸入框、對話卡 | 2b | 用鍵盤搜尋並執行允許指令，接受／拒絕卡片各一條。 |
 | W 能力清單技能／工作流程／知識／擴充／應用，更新、查找、狀態篩選、詳情、安裝草稿、啟停移除 | Adapt to OpenCode | 設定／能力 | 2b | 合成項目從待啟用到停用、移除，清單與工具狀態一致。 |
 | W Installed Workflow 執行表單、上傳、動態選項、JSON 參數及 Recent runs | Replace（OpenCode 指令及 OEP 工作帳本） | 工作面板 | 4 | 同設定手動執行後，查得輸入及結果的對帳紀錄。 |
@@ -64,7 +65,7 @@
 | W、M 記憶待確認／偏好／筆記／資料／同步進度／紀錄、立即檢查 | Adapt to OpenCode | 面板／記憶 | 2b | 新建與撤銷一筆偏好，確認適用範圍、健康狀態及紀錄。組織同步依 D04/D05 延後。 |
 | W、M 搜尋／標籤／關聯、勾選匯出 Markdown、聯絡人狀態與編輯 | Adapt to OpenCode | 面板／筆記及聯絡人 | 2b | 用兩筆合成聯絡人篩選，只匯出選定筆記。 |
 | W、M、G 名片辨識、更新去重、組織圖檢視及調整 | Adapt to OpenCode | 檔案、資料面板 | 3b | 合成名片更新同一 ID，組織圖重開反映核准關係。 |
-| W Tasks 更新、狀態、待確認變更 | Adapt to OpenCode | 左欄／工作與面板 | 3b／4 | 待審、執行與完成狀態對應同一帳本，重開可查。 |
+| W Tasks 更新、狀態、待確認變更 | Adapt to OpenCode | 左欄／工作與面板 | 3b／4 | 會話執行台帳與 BI 工作、排程摘要可從同一面板查閱。完整待審流程另行驗收。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | W、S 新增或編輯排程、批准／拒絕、時間／週期／IANA zone／參數、暫停／恢復／移除／Run Now／歷史 | Adapt to OpenCode | 左欄／排程 | 4 | 模擬漏跑、重啟、暫停與即時觸發競態，單 occurrence 最多一筆執行。 |
 | W、B、K 知識刷新、BI／Wiki 切換、庫／domain 選擇、Ask 與引用 | Adapt to OpenCode | 左欄／知識，Ask API／MCP | 3a | 選單限一庫，顯示版本、來源、evidence，偽造引文與跨庫版本須拒絕。 |
 | B、G 已發卡片概覽、類別／domain／sample 篩選、詳細資料及關係、全文查詢、重建索引 | Adapt to OpenCode | 知識／卡片、維護 CLI | 3a／2b | 3a 匯入後對帳 IDs、關係、版本、FTS 與恢復，2b 由頁面依條件瀏覽詳細卡片。 |

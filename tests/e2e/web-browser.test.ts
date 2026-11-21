@@ -54,8 +54,10 @@ const synthetic: typeof fetch = async (_target, init) => {
     assert.match(user, /Row 2,SYN-48B,12.5,TRUE/);
     const path = user.match(/generated\/[a-f\d-]+\.json/)?.[0];
     assert.ok(path);
-    if (!messages.some((message) => message.role === 'tool')) {
-      return completion(model, toolCall(0, 'call_browser_xlsx', 'write', { path, content: JSON.stringify(sheets), note: 'token: sample-hidden-value', outside: 'Z:/synthetic/private.txt' }), 'tool_calls');
+    if (!messages.slice(messages.findLastIndex((message) => message.role === 'user') + 1).some((message) => message.role === 'tool')) {
+      const output = structuredClone(sheets);
+      if (user.includes('SYNTHETIC_REVISION')) output[0].rows[1][1] = 13.5;
+      return completion(model, toolCall(0, 'call_browser_xlsx', 'write', { path, content: JSON.stringify(output), note: 'token: sample-hidden-value', outside: 'Z:/synthetic/private.txt' }), 'tool_calls');
     }
   } else assert.ok(user.includes(readFileSync(asset(item.name)).toString('base64')));
   return completion(model, [{ role: 'assistant', content: item.agent === 'workbook'
@@ -255,7 +257,7 @@ try {
         await page.ready("document.querySelector('.tool-card')");
         const capture = async (name: string) => {
           await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
           writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
         };
         const captureLayouts = async (running: boolean) => {
@@ -310,6 +312,7 @@ try {
         })()`);
         await until(async () => slowStarted || undefined, 8_000);
         await page.ready("!document.querySelector('#cancel-turn').hidden && document.querySelector('#send').hidden");
+        await page.ready("/已等候 [1-9] 秒/.test(document.querySelector('#progress').textContent)");
         await captureLayouts(true);
         await page.evaluate("document.querySelector('#cancel-turn').click(); document.querySelector('#cancel-turn').click()");
         await page.ready("document.querySelector('#progress').textContent === '已停止這次處理' && !document.querySelector('#send').disabled");
@@ -331,6 +334,200 @@ try {
           })()`);
           assert.deepEqual(response, ['cancelled', 404]);
         } finally { ledger.close(); }
+        await page.evaluate(String.raw`(() => {
+          const data = new DataTransfer();
+          data.items.add(new File(['合成文字'], 'sample.txt', { type: 'text/plain' }));
+          data.items.add(new File(['# 合成標題\n- 項目'], 'sample.md', { type: 'text/markdown' }));
+          data.items.add(new File(['編號,備註\r\n' + Array.from({ length: 202 }, (_, i) => (i + 1) + ',"甲,乙"').join('\r\n')], 'sample.csv', { type: 'text/csv' }));
+          data.items.add(new File(['<p>合成 HTML</p><script>parent.postMessage("oep-preview-script", "*")</script>'], 'sample.html', { type: 'text/html' }));
+          window.addEventListener('message', event => { if (event.data === 'oep-preview-script') window.previewScript = true; });
+          document.querySelector('#drop').dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: data }));
+        })()`);
+        await page.ready("document.querySelector('#attachments').textContent.includes('sample.html')");
+        const previewAttachment = async (name: string) => {
+          await page.evaluate(`[...document.querySelectorAll('#attachments li')].find(row => row.querySelector('label')?.textContent === ${JSON.stringify(name)})
+            .querySelectorAll('button')[1].click()`);
+        };
+        await page.evaluate("document.querySelector('#toggle-files').click()");
+        await page.ready("document.querySelector('#toggle-files').getAttribute('aria-expanded') === 'true'");
+        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+        await page.ready("document.activeElement.id === 'tab-work' && document.querySelector('#panel-runs').textContent.includes('已完成')");
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
+        await page.evaluate(`(() => {
+          const fetchAPI = window.fetch;
+          window.fetch = (path, options) => {
+            if (path !== '/api/jobs') return fetchAPI(path, options);
+            window.fetch = fetchAPI;
+            return Promise.resolve(Response.json({
+              jobs: [{ completed: 1, review_status: 'pending' }, { completed: 0, expires: Date.now() + 10000 }],
+              schedules: [{ state: 'paused' }],
+            }));
+          };
+          document.querySelector('#tab-work').click();
+        })()`);
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('待審核 1 筆、執行中 1 筆。排程：已暫停 1 筆')");
+        await page.evaluate("document.querySelector('#panel-jobs-link').click()");
+        await page.ready("!document.querySelector('#jobs-view').hidden && document.activeElement.id === 'jobs-title'");
+        await page.evaluate("document.querySelector('#open-jobs').click()");
+
+        await page.evaluate("document.querySelector('#toggle-files').click()");
+        await page.evaluate("document.querySelector('#tab-files').click()");
+        await page.evaluate("window.addEventListener('message', event => { if (event.data === 'oep-preview-script') window.previewScript = true; })");
+        await page.ready("document.querySelector('#attachments').textContent.includes('sample.html')");
+        await previewAttachment('sample.html');
+        await page.ready("document.querySelector('#file-preview iframe')?.getAttribute('sandbox') === ''");
+        await page.evaluate("new Promise(resolve => setTimeout(resolve, 150))");
+        assert.equal(await page.evaluate("!window.previewScript && !document.querySelector('#file-preview iframe').contentDocument"), true);
+        await previewAttachment('sample.md');
+        await page.ready("document.querySelector('#file-preview .preview-body')?.textContent.includes('合成標題')");
+        await previewAttachment('sample.csv');
+        await page.ready("document.querySelectorAll('#file-preview tr').length === 200");
+        await page.evaluate("[...document.querySelectorAll('#file-preview button')].find(b => b.textContent === '顯示更多').click()");
+        assert.equal(await page.evaluate("document.querySelectorAll('#file-preview tr').length"), 203);
+        await previewAttachment('table.xlsx');
+        await page.ready("document.querySelectorAll('#file-preview option').length === 2");
+        await page.evaluate(`(() => {
+          const select = document.querySelector('#file-preview select');
+          select.value = 'Notes';
+          select.dispatchEvent(new Event('change'));
+        })()`);
+        await page.ready("document.querySelector('#file-preview table').textContent.includes('合成資料')");
+        const { root: uploadDocument } = await page.command<{ root: { nodeId: number } }>('DOM.getDocument');
+        const { nodeId: uploadInput } = await page.command<{ nodeId: number }>('DOM.querySelector',
+          { nodeId: uploadDocument.nodeId, selector: '#file-input' });
+        await page.command('DOM.setFileInputFiles', { nodeId: uploadInput, files: [asset('marker.png'), asset('marker.pdf')] });
+        await page.ready("document.querySelector('#upload-status').textContent.includes('已上傳 2')");
+        await page.evaluate(`(async () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 240;
+          canvas.height = 120;
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#254c61';
+          context.fillRect(0, 0, 240, 120);
+          context.fillStyle = 'white';
+          context.font = '24px sans-serif';
+          context.fillText('SYN-42', 30, 65);
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+          const data = new DataTransfer();
+          data.items.add(new File([blob], 'sample.jpg', { type: 'image/jpeg' }));
+          document.querySelector('#drop').dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: data }));
+        })()`);
+        await page.ready("document.querySelector('#attachments').textContent.includes('sample.jpg')");
+        const previews = [
+          ['sample.txt', 'text', "document.querySelector('#file-preview pre')?.textContent === '合成文字'"],
+          ['sample.md', 'markdown', "document.querySelector('#file-preview .preview-body')?.textContent.includes('合成標題')"],
+          ['sample.csv', 'csv', "document.querySelectorAll('#file-preview tr').length === 200"],
+          ['table.xlsx', 'xlsx', "document.querySelectorAll('#file-preview option').length === 2"],
+          ['marker.png', 'png', "document.querySelector('#file-preview img')?.naturalWidth > 0"],
+          ['sample.jpg', 'jpeg', "document.querySelector('#file-preview img')?.naturalWidth > 0"],
+          ['marker.pdf', 'pdf', "document.querySelector('#file-preview').textContent.includes('目前無法預覽 PDF')"],
+          ['sample.html', 'html', "document.querySelector('#file-preview iframe')?.getAttribute('sandbox') === ''"],
+        ];
+        for (const [name, , ready] of previews) {
+          await previewAttachment(name);
+          await page.ready(ready);
+        }
+        const panelLayouts = async (diff: boolean) => {
+          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+            await page.ready(`innerWidth === ${width}`);
+            for (const theme of ['light', 'dark']) {
+              await page.evaluate(`(() => {
+                const theme = document.querySelector('#theme');
+                theme.value = ${JSON.stringify(theme)};
+                theme.dispatchEvent(new Event('change'));
+                window.scrollTo(0, 0);
+                document.querySelectorAll('#chat-files [role=tabpanel]').forEach(panel => { panel.scrollTop = 0; });
+              })()`);
+              if (layout === 'narrow') {
+                await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+                await page.ready("getComputedStyle(document.querySelector('#toggle-files')).display !== 'none'");
+                await page.evaluate("if (!document.querySelector('#chat-files').classList.contains('sheet-open')) document.querySelector('#toggle-files').click()");
+                await page.ready("document.querySelector('#chat-files').getBoundingClientRect().height > 0");
+              }
+              const screenshot = async (view: string) => {
+                if (layout === 'narrow') {
+                  await page.evaluate(`(() => {
+                    const panel = document.querySelector('#chat-files');
+                    if (!panel.classList.contains('sheet-open')) document.querySelector('#toggle-files').click();
+                  })()`);
+                  await page.ready(`(() => {
+                    const bounds = document.querySelector('#chat-files').getBoundingClientRect();
+                    return bounds.height > 0 && bounds.bottom <= innerHeight && bounds.top < innerHeight;
+                  })()`);
+                }
+                await capture(`right-panel-${view}-${theme}-${layout}`);
+              };
+              if (diff) {
+                await screenshot('diff');
+                continue;
+              }
+              await page.evaluate("document.querySelector('#tab-files').click(); document.querySelector('#file-preview button')?.click()");
+              await screenshot('files');
+              await page.evaluate("document.querySelector('#tab-work').click()");
+              await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
+              await screenshot('work');
+              await page.evaluate("document.querySelector('#tab-files').click()");
+              for (const [name, view, ready] of previews) {
+                await previewAttachment(name);
+                await page.ready(ready);
+                await screenshot(view);
+              }
+            }
+          }
+        };
+        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(false);
+        const downloaded = await page.evaluate<{ href: string; hash: string }>(`(() => {
+          const row = [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'));
+          const link = row.querySelector('a');
+          link.click();
+          return { href: link.getAttribute('href'), hash: row.querySelector('button').title };
+        })()`);
+        const attachmentDownload = join(downloads, 'sample.txt');
+        await until(async () => existsSync(attachmentDownload) || undefined, 10_000);
+        assert.equal(sha256(readFileSync(attachmentDownload)), downloaded.hash);
+        const foreign = downloaded.href.replace('/default/', '/secondary/').replace(selected, other);
+        assert.deepEqual(await page.evaluate(`Promise.all([${JSON.stringify(foreign)}, ${JSON.stringify(foreign + '/preview')}]
+          .map(url => fetch(url).then(response => response.status)))`), [404, 404]);
+        const forbidden = await page.evaluate<number[]>(`(async () => {
+          const { csrf } = await fetch('/api/bootstrap').then(response => response.json());
+          const artifact = document.querySelector('#artifacts a').getAttribute('href')
+            .replace('/default/', '/secondary/').replace(${JSON.stringify(selected)}, ${JSON.stringify(other)});
+          const results = await Promise.all([
+            fetch(artifact + '/preview'),
+            fetch(${JSON.stringify(foreign)}, { method: 'POST', headers: {
+              'Content-Type': 'application/json', 'X-OEP-CSRF': csrf
+            }, body: '{}' }),
+          ]);
+          return results.map(response => response.status);
+        })()`);
+        assert.deepEqual(forbidden, [404, 404]);
+        await page.evaluate(`(() => {
+          window.confirm = () => true;
+          [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'))
+            .querySelectorAll('button')[2].click();
+        })()`);
+        await page.ready("!document.querySelector('#attachments').textContent.includes('sample.txt')");
+        assert.equal(await page.evaluate(`fetch(${JSON.stringify(downloaded.href)}).then(response => response.status)`), 404);
+        await page.evaluate(`(() => {
+          const checkbox = [...document.querySelectorAll('#attachments label')].find(label => label.textContent === 'table.xlsx').querySelector('input');
+          for (const selected of document.querySelectorAll('#attachments input:checked')) {
+            if (selected !== checkbox) selected.click();
+          }
+          if (!checkbox.checked) checkbox.click();
+          document.querySelector('#prompt').value = ${JSON.stringify(cases[2].prompt + ' SYNTHETIC_REVISION')};
+          document.querySelector('#workbook').checked = true;
+          document.querySelector('#composer').requestSubmit();
+        })()`);
+        await page.ready("document.querySelectorAll('#artifacts a').length === 2", 130_000);
+        await page.evaluate("document.querySelector('#tab-diff').click(); document.querySelector('#panel-diff button').click()");
+        await page.ready("document.querySelector('#panel-diff').textContent.includes('1 個儲存格') && document.querySelectorAll('.changed-cell').length === 1");
+        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
+        await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+        assert.equal(await page.evaluate("document.activeElement.id === 'toggle-files' && !document.querySelector('#chat-files').classList.contains('sheet-open')"), true);
         await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
           window.confirm = () => true;

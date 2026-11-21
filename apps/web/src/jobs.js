@@ -12,6 +12,11 @@ const labels = {
   approved: '已批准', published: '已發布', discarded: '已捨棄',
 };
 
+function jobState(row) {
+  return row.completed ? row.review_status === 'pending' ? '待審核' : labels[row.review_status] ?? '已送審' :
+      row.expires > Date.now() ? '執行中' : '等待執行';
+}
+
 function node(tag, text) {
   const element = document.createElement(tag);
   element.textContent = text;
@@ -93,8 +98,7 @@ function render(status) {
 
   const jobs = section('工作狀態');
   for (const row of status.jobs) {
-    const state = row.completed ? row.review_status === 'pending' ? '待審核' : labels[row.review_status] ?? '已送審' :
-      row.expires > Date.now() ? '執行中' : '等待執行';
+    const state = jobState(row);
     const line = node('p', `${row.id} · ${state} `);
     if (!row.completed) line.append(button('立即執行', () => update({ action: 'runJob', id: row.id })));
     jobs.append(line);
@@ -169,3 +173,20 @@ open.addEventListener('click', () => {
 });
 
 find('open-knowledge').addEventListener('click', () => { view.hidden = true; });
+export async function loadJobSummary() {
+  const summary = find('panel-jobs');
+  summary.textContent = '正在載入工作與排程…';
+  try {
+    const status = await request('/api/jobs');
+    const counts = (rows, stateLabel) => {
+      const totals = new Map();
+      for (const row of rows) {
+        const state = stateLabel(row);
+        totals.set(state, (totals.get(state) ?? 0) + 1);
+      }
+      return [...totals].map(([state, count]) => `${state} ${count} 筆`).join('、') || '無';
+    };
+    summary.textContent = `BI 工作：${counts(status.jobs, jobState)}。排程：${counts(status.schedules ?? [], (row) => labels[row.state] ?? '其他狀態')}。`;
+  } catch { summary.textContent = '目前無法讀取 BI 工作與排程。'; }
+}
+find('panel-jobs-link').addEventListener('click', () => open.click());

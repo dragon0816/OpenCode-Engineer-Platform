@@ -29,9 +29,13 @@ export function upload(request: IncomingMessage, chat: ChatService, session: Web
 
 export function download(response: ServerResponse, chat: ChatService, session: WebSession, id: string) {
   const output = chat.download(session, id);
+  sendDownload(response, output);
+}
+
+export function sendDownload(response: ServerResponse, output: { name: string; data: Buffer; sha256: string }) {
   response.writeHead(200, {
     'Content-Type': 'application/octet-stream',
-    'Content-Disposition': `attachment; filename="${output.name}"`,
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(output.name).replace(/[!'()*]/g, (character) => '%' + character.charCodeAt(0).toString(16))}`,
     'Content-Length': output.data.length,
     'X-OEP-SHA256': output.sha256,
   }).end(output.data);

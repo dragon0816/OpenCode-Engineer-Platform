@@ -19,6 +19,7 @@ const media = (mime: string) => mime === 'image/png' || mime === 'image/jpeg' ||
 const files = new Map([
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.pdf', 'application/pdf'],
   ['.xlsx', workbookType], ['.txt', 'text/plain'], ['.md', 'text/plain'], ['.csv', 'text/plain'],
+  ['.html', 'text/html'], ['.htm', 'text/html'],
 ]);
 
 export const uuid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
@@ -75,7 +76,7 @@ export function convertWorkbook(data: Buffer): Promise<Buffer> {
 }
 
 function validate(data: Buffer, mime: string) {
-  if (mime === 'text/plain') decodeText(data);
+  if (mime === 'text/plain' || mime === 'text/html') decodeText(data);
   else if (mime === 'image/png' && (!startsWith(data, png) || data.subarray(12, 16).toString() !== 'IHDR') ||
     mime === 'image/jpeg' && !startsWith(data, jpeg) ||
     mime === 'application/pdf' && !startsWith(data, '%PDF-') ||
@@ -86,7 +87,7 @@ function validate(data: Buffer, mime: string) {
 
 export function publicAttachment(record: Attachment) {
   return { id: record.id, name: record.name, mime: record.mime, bytes: record.original.bytes,
-    sha256: record.original.sha256, converted: Boolean(record.projection), projectionSha256: record.projection?.sha256 };
+    createdAt: Number(BigInt(record.original.created) / 1_000_000n), sha256: record.original.sha256, converted: Boolean(record.projection), projectionSha256: record.projection?.sha256 };
 }
 
 export class AttachmentService {
@@ -132,6 +133,24 @@ export class AttachmentService {
         throw error;
       }
     } finally { this.pending--; }
+  }
+
+  read(sessionID: string, workspace: string, id: string, preview: boolean) {
+    const record = this.store.attachment(sessionID, id);
+    if (!record) throw new HttpError(404, 'Attachment not found in this session');
+    const projection = preview && record.projection;
+    const identity = projection || record.original;
+    try {
+      const { data } = openWorkspaceFile(workspace, projection ? projectionName(id) : sourceName(id),
+        preview && !media(record.mime) ? maxProjection : maxUpload, identity);
+      return { data, name: record.name, sha256: identity.sha256, mime: projection ? 'text/plain' : record.mime };
+    } catch { throw new HttpError(409, 'Attachment is missing, too large to preview, or has changed'); }
+  }
+
+  remove(sessionID: string, workspace: string, id: string) {
+    if (!this.store.deleteAttachment(sessionID, id)) throw new HttpError(404, 'Attachment not found in this session');
+    try { this.clean(sessionID, workspace); }
+    catch { /* Startup retries cleanup of unreferenced files. */ }
   }
 
   clean(sessionID: string, workspace: string) {

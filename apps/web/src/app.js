@@ -1,6 +1,6 @@
 import { connect, request, RequestError } from './api.js';
 import { bindKnowledge } from './knowledge.js';
-import './jobs.js';
+import { loadJobSummary } from './jobs.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -212,7 +212,7 @@ function toolCard(tool, previous) {
 }
 
 function render(context) {
-  const { state, selected, id } = context;
+  const { state, id } = context;
   if (state.messages) {
     const follow = !context.renderedMessages || atBottom();
     const offset = messages.scrollTop;
@@ -258,10 +258,22 @@ function render(context) {
   const phase = activeStates.has(latest?.state) ? 'running' : latest?.state === 'failed' ? 'failed' : '';
   context.phase = phase;
   if (row) row.dataset.phase = phase;
-  if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) context.pendingID = undefined;
-  progress.textContent = latest ? statuses[latest.state] : '等待訊息';
+  if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) {
+    context.pendingID = undefined;
+    context.pendingAt = undefined;
+  }
+  updateProgress();
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
+  renderPanel(context);
+  setControls();
+}
+
+function renderPanel(context) {
+  const { state, selected, path } = context;
+  const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
+  if (context.fileKey === fileKey) return;
+  context.fileKey = fileKey;
   attachmentList.replaceChildren();
   for (const attachment of state.attachments) {
     const checkbox = node('input');
@@ -276,20 +288,301 @@ function render(context) {
     const entry = node('li');
     entry.append(label);
     if (attachment.converted) entry.append(node('small', '已轉成含工作表與列號的 CSV'));
+    addFileDetails(entry, attachment, `${path}/attachments/${attachment.id}`, context, true);
     attachmentList.append(entry);
   }
   artifactList.replaceChildren();
   for (const run of state.runs.filter((run) => run.artifact).reverse()) {
     const entry = node('li');
-    const link = node('a', run.artifact.name);
-    link.href = `${sessionPath(id)}/artifacts/${run.id}`;
-    link.download = run.artifact.name;
-    entry.append(link, node('small', new Date(run.createdAt).toLocaleTimeString('zh-Hant')));
+    const artifact = { ...run.artifact, createdAt: run.finishedAt ?? run.createdAt };
+    addFileDetails(entry, artifact, `${path}/artifacts/${run.id}`, context);
     artifactList.append(entry);
   }
   if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
-  setControls();
+  const ledger = find('panel-runs');
+  ledger.replaceChildren(...state.runs.toReversed().map((run) =>
+    node('li', `${formatDate(run.createdAt)} · ${statuses[run.state] ?? '狀態未知'}`)));
+  if (!ledger.children.length) emptyList(ledger, '此會話尚無工作紀錄');
+  renderDiffChoices(context);
 }
+
+function formatDate(at) {
+  return new Date(at).toLocaleString('zh-TW');
+}
+
+function action(text, handler) {
+  const button = node('button', text);
+  button.type = 'button';
+  button.addEventListener('click', handler);
+  return button;
+}
+
+function fileType(file) {
+  return file.name.includes('.') ? file.name.split('.').at(-1).toUpperCase() : file.mime;
+}
+
+function addFileDetails(entry, file, url, context, attachment = false) {
+  const download = node('a', attachment ? '下載' : file.name);
+  download.href = url;
+  download.download = file.name;
+  const actions = node('div', undefined, 'file-actions');
+  const hash = action(file.sha256.slice(0, 12), async () => {
+    try {
+      await navigator.clipboard.writeText(file.sha256);
+      find('upload-status').textContent = '已複製 SHA-256。';
+    } catch { find('upload-status').textContent = '無法複製 SHA-256。'; }
+  });
+  hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
+  hash.title = file.sha256;
+  if (!attachment) entry.append(download);
+  entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
+  const open = action('預覽', () => void openPreview(file, url, context, open));
+  actions.append(hash, open);
+  if (attachment) actions.append(download, action('移除', async () => {
+    if (!confirm(`要移除「${file.name}」嗎？`)) return;
+    try {
+      await request(url, { data: {}, signal: context.abort.signal });
+      if (current !== context) return;
+      context.selected.delete(file.id);
+      if (previewPath === url) closePreview();
+      refresh(context);
+    } catch (error) {
+      if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。'));
+    }
+  }));
+  entry.append(actions);
+}
+
+const preview = find('file-preview');
+let previewURL;
+let previewPath;
+let previewRequest;
+
+function closePreview() {
+  previewRequest?.abort();
+  previewPath = undefined;
+  preview.replaceChildren();
+  find('file-list').hidden = false;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = undefined;
+}
+
+async function previewResponse(url, signal) {
+  const response = await fetch(`${url}/preview`, { signal });
+  if (!response.ok) throw new Error('無法載入預覽');
+  return response;
+}
+
+async function openPreview(file, url, context, opener) {
+  closePreview();
+  previewPath = url;
+  const abort = new AbortController();
+  previewRequest = abort;
+  const body = node('div', undefined, 'preview-body');
+  const title = node('h2', file.name);
+  title.tabIndex = -1;
+  const close = action('關閉預覽', () => {
+    closePreview();
+    (opener.isConnected ? opener : find('panel-files')).focus();
+  });
+  find('file-list').hidden = true;
+  preview.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), close, body);
+  title.focus({ preventScroll: true });
+  find('panel-files').scrollTop = 0;
+  if (file.mime === 'application/pdf') {
+    body.textContent = '目前無法預覽 PDF。請下載後開啟。';
+    return;
+  }
+  body.textContent = '正在載入預覽…';
+  try {
+    const result = await previewResponse(url, AbortSignal.any([abort.signal, context.abort.signal]));
+    const data = file.mime.startsWith('image/') ? await result.blob() : await result.text();
+    if (abort.signal.aborted || current !== context) return;
+    body.replaceChildren();
+    const extension = file.name.split('.').at(-1).toLowerCase();
+    if (data instanceof Blob) {
+      if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
+      const image = node('img');
+      image.alt = file.name;
+      previewURL = URL.createObjectURL(data);
+      image.src = previewURL;
+      body.append(image);
+    } else if (extension === 'html' || extension === 'htm') {
+      const frame = node('iframe');
+      frame.title = file.name;
+      frame.setAttribute('sandbox', '');
+      frame.inert = true;
+      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'">${data}`;
+      body.append(node('p', '隔離預覽，指令碼與外部資源已停用。'), frame);
+    } else if (extension === 'csv' || extension === 'xlsx') {
+      renderSheets(body, readSheets(data, extension === 'xlsx'));
+    } else if (extension === 'md') appendMarkdown(body, data);
+    else body.append(node('pre', data));
+  } catch {
+    if (!abort.signal.aborted && current === context) body.textContent = '無法預覽這個檔案。請下載後開啟。';
+  }
+}
+
+function readCSV(source) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (char === '"') {
+      if (quoted && source[index + 1] === '"') { field += '"'; index++; }
+      else if (quoted || !field) quoted = !quoted;
+      else field += char;
+    } else if (!quoted && char === ',') {
+      row.push(field);
+      field = '';
+    } else if (!quoted && (char === '\n' || char === '\r')) {
+      if (char === '\r' && source[index + 1] === '\n') index++;
+      rows.push([...row, field]);
+      row = [];
+      field = '';
+    } else field += char;
+  }
+  if (row.length || field) rows.push([...row, field]);
+  return rows;
+}
+
+function readSheets(source, workbook) {
+  const rows = readCSV(source);
+  if (!workbook) return new Map([['CSV', rows]]);
+  const sheets = new Map();
+  let sheet;
+  for (const [label, ...cells] of rows) {
+    if (label === 'Sheet') {
+      sheet = [];
+      sheets.set(cells[0], sheet);
+    } else if (sheet && /^Row [1-9]\d*$/.test(label)) {
+      sheet[Number(label.slice(4)) - 1] = cells;
+    }
+  }
+  return sheets;
+}
+
+function renderSheets(target, sheets, before = new Map(), lines = false) {
+  const select = node('select');
+  select.setAttribute('aria-label', '工作表');
+  select.hidden = sheets.size === 1 && (lines || sheets.has('CSV')) && before.size <= 1;
+  for (const name of new Set([...sheets.keys(), ...before.keys()])) {
+    select.append(new Option(name, name));
+  }
+  const content = node('div');
+  target.append(select, content);
+  function renderSheet() {
+    const rows = sheets.get(select.value) ?? [];
+    const prior = before.get(select.value) ?? [];
+    const diff = before.size > 0;
+    const length = Math.max(rows.length, prior.length);
+    const table = node('table');
+    const scroller = node('div', undefined, 'table-scroll');
+    scroller.tabIndex = 0;
+    scroller.setAttribute('aria-label', lines ? '文字差異' : '表格內容');
+    scroller.append(table);
+    const tbody = table.createTBody();
+    let index = 0;
+    let changes = 0;
+    for (let row = 0; diff && row < length; row++) {
+      const old = prior[row] ?? [];
+      const next = rows[row] ?? [];
+      for (let cell = 0; cell < Math.max(old.length, next.length); cell++) {
+        if ((old[cell] ?? '') !== (next[cell] ?? '')) changes++;
+      }
+    }
+    const more = action('顯示更多', appendRows);
+    function appendRows() {
+      const end = Math.min(index + 200, length);
+      for (; index < end; index++) {
+        const tr = tbody.insertRow();
+        const beforeRow = prior[index] ?? [];
+        const afterRow = rows[index] ?? [];
+        const header = node('th', String(index + 1));
+        header.scope = 'row';
+        tr.append(header);
+        for (let cell = 0; cell < Math.min(100, Math.max(beforeRow.length, afterRow.length)); cell++) {
+          const old = beforeRow[cell] ?? '';
+          const next = afterRow[cell] ?? '';
+          const td = tr.insertCell();
+          if (diff && old !== next) {
+            td.className = 'changed-cell';
+            td.append(node('del', old || '（空白）'), node('ins', next || '（空白）'));
+          } else td.textContent = next;
+        }
+      }
+      more.hidden = index >= length;
+    }
+    content.replaceChildren();
+    if (diff) content.append(node('p', lines ? `${changes} 行有變更` : `這張工作表有 ${changes} 個儲存格有變更`));
+    if (rows.some((row) => row.length > 100)) content.append(node('p', '預覽顯示前 100 欄。'));
+    content.append(scroller, more);
+    appendRows();
+  }
+  select.addEventListener('change', renderSheet);
+  renderSheet();
+}
+
+function renderDiffChoices(context) {
+  const target = find('panel-diff');
+  const runs = context.state.runs.filter((run) => run.artifact);
+  const key = runs.map((run) => run.id).join(',');
+  if (context.diffKey === key) return;
+  context.diffKey = key;
+  target.replaceChildren();
+  const earlier = new Map();
+  const pairs = [];
+  for (const run of runs) {
+    const prior = earlier.get(run.artifact.name);
+    if (prior) pairs.unshift([prior, run]);
+    earlier.set(run.artifact.name, run);
+  }
+  if (!pairs.length) {
+    target.append(node('p', '此會話沒有可比較的產物版本。'));
+    return;
+  }
+  const choice = node('select');
+  choice.setAttribute('aria-label', '產物版本');
+  for (const [index, [, run]] of pairs.entries()) {
+    choice.append(new Option(`${run.artifact.name} · 版本 ${pairs.length - index + 1}`, String(index)));
+  }
+  const body = node('div', undefined, 'preview-body');
+  let controller;
+  async function compare() {
+    controller?.abort();
+    const abort = new AbortController();
+    controller = abort;
+    const [prior, run] = pairs[Number(choice.value)];
+    body.textContent = '正在比較版本…';
+    try {
+      const signal = AbortSignal.any([abort.signal, context.abort.signal]);
+      const [before, after] = await Promise.all([prior, run].map(async ({ id }) =>
+        (await previewResponse(`${context.path}/artifacts/${id}`, signal)).text()));
+      if (signal.aborted || !body.isConnected) return;
+      body.replaceChildren(node('small', `比較前 · ${formatDate(prior.createdAt)}`),
+        node('small', `比較後 · ${formatDate(run.createdAt)}`));
+      if (/\.xlsx$/i.test(run.artifact.name)) renderSheets(body, readSheets(after, true), readSheets(before, true));
+      else renderSheets(body, new Map([['文字', after.split(/\r?\n/).map((line) => [line])]]),
+        new Map([['文字', before.split(/\r?\n/).map((line) => [line])]]), true);
+    } catch {
+      if (!abort.signal.aborted) body.textContent = '無法比較這兩個版本。';
+    }
+  }
+  target.append(choice, action('比較版本', () => void compare()), body);
+}
+
+function updateProgress() {
+  if (!current || stopped) return;
+  const latest = current.state?.runs.at(-1);
+  const startedAt = current.pendingAt ?? (activeStates.has(latest?.state) ? latest.createdAt : undefined);
+  const elapsed = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : undefined;
+  const label = current.pendingAt || latest?.state === 'running' ? '正在產生回覆' : statuses[latest?.state];
+  const text = elapsed === undefined ? (label ?? '等待訊息') : `${label}，已等候 ${elapsed} 秒`;
+  if (progress.textContent !== text) progress.textContent = text;
+}
+setInterval(updateProgress, 1000);
 
 function refresh(context) {
   if (context !== current || stopped) return;
@@ -312,12 +605,65 @@ function refresh(context) {
   }, 150);
 }
 
+const rightPanel = find('chat-files');
+const panelToggle = find('toggle-files');
+const panelNarrow = matchMedia('(max-width: 900px)');
+const panelTabs = [...rightPanel.querySelectorAll('[role="tab"]')];
+
+function activatePanel(tab) {
+  for (const candidate of panelTabs) {
+    const active = tab === candidate;
+    candidate.setAttribute('aria-selected', String(active));
+    candidate.tabIndex = active ? 0 : -1;
+    find(candidate.getAttribute('aria-controls')).hidden = !active;
+  }
+  if (current) localStorage.setItem(`oep.panel.${current.path}`, tab.id);
+  if (tab.id === 'tab-work') void loadJobSummary();
+}
+
+function setPanel(open) {
+  rightPanel.classList.toggle('sheet-open', open);
+  panelToggle.setAttribute('aria-expanded', String(open));
+}
+
+panelToggle.addEventListener('click', () => {
+  const open = !rightPanel.classList.contains('sheet-open');
+  setPanel(open);
+  if (open) rightPanel.querySelector('[aria-selected="true"]').focus();
+});
+find('close-files').addEventListener('click', () => { setPanel(false); panelToggle.focus(); });
+panelNarrow.addEventListener('change', () => setPanel(false));
+rightPanel.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && panelNarrow.matches) {
+    event.preventDefault();
+    setPanel(false);
+    panelToggle.focus();
+  }
+});
+for (const [index, tab] of panelTabs.entries()) {
+  tab.addEventListener('click', () => activatePanel(tab));
+  tab.addEventListener('keydown', (event) => {
+    const target = {
+      ArrowRight: (index + 1) % panelTabs.length,
+      ArrowLeft: (index + panelTabs.length - 1) % panelTabs.length,
+      Home: 0, End: panelTabs.length - 1,
+    }[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    activatePanel(panelTabs[target]);
+    panelTabs[target].focus();
+  });
+}
+
 function select(id) {
   if (current) drafts.set(current.id, { text: prompt.value, workbook: workbook.checked });
   current?.events.close();
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  closePreview();
+  find('panel-runs').replaceChildren();
+  find('panel-diff').replaceChildren();
   jump.hidden = true;
   if (!session) {
     sessionTitle.textContent = '對話';
@@ -350,6 +696,7 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
@@ -644,11 +991,15 @@ find('composer').addEventListener('submit', async (event) => {
     await request(`${context.path}/turns`, { data: { id, ...data } });
     submitted.delete(context.id);
     drafts.delete(context.id);
-    if (!context.state?.runs.some((run) => run.id === id)) context.pendingID = id;
+    if (!context.state?.runs.some((run) => run.id === id)) {
+      context.pendingID = id;
+      context.pendingAt = Date.now();
+    }
     context.selected.clear();
+    context.fileKey = undefined;
     if (current === context) {
       prompt.value = '';
-      progress.textContent = statuses.accepted;
+      updateProgress();
     }
   } catch (error) {
     if (error instanceof RequestError) submitted.delete(context.id);
