@@ -1,4 +1,6 @@
+param([string]$DataRoot)
 $ErrorActionPreference = 'Stop'
+if ($DataRoot) { $env:OEP_DATA_DIR = $DataRoot }
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location -LiteralPath $root
 

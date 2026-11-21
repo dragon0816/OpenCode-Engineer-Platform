@@ -150,3 +150,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 ## Phase 2b Slice 3A
 
 - 知識頁概覽、問答、品質、建置與整合設定的驗收及開放項目見 [Slice 3A](reviews/PHASE2B_SLICE3A_REPORT.md)。
+
+## Phase 5B
+
+- [x] 以隔離目錄驗證發行 ZIP 安裝、解除安裝、SQLite 備份及回復。
+- [ ] 乾淨 Windows VM 或 Sandbox 驗開始功能表、登入和備份排程、安裝版工作流程及一般使用者權限。RPO、RTO 維持 UNVERIFIED。 [驗收狀態](reviews/PHASE5_GATE_REPORT.md)

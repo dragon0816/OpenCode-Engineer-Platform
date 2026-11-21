@@ -106,3 +106,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 5 Windows 發行建置
 
 本機分支 `phase-5/release` 從 `c287ce0` 建立，發行建置提交為 `14b85ce`。兩次建置得到相同的 ZIP SHA-256。安裝、備份回復、升級回退、授權清冊、安裝版回歸及 Windows CI 待完成。Technical Lead 使用 `npm run merge-check` 進行合併。 [本機紀錄](validation/p5-release.md) · [驗收狀態](reviews/PHASE5_GATE_REPORT.md)
+
+## Phase 5B 交接
+
+phase-5/install-backup 加入使用者層級的安裝、解除安裝、SQLite 備份與回復。新測試使用暫存目錄和合成資料。開始功能表、排程與實際使用者的 RPO、RTO 仍待乾淨 Windows 環境驗證。Technical Lead 以 npm run merge-check 合併。 [驗收狀態](reviews/PHASE5_GATE_REPORT.md)
