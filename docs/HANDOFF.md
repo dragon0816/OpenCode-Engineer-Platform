@@ -36,3 +36,7 @@
 - [x] **O-3a，本機原生基本驗收**　Windows 11 x64 的固定版 OpenCode、Job Object、mock relay、認證及 SSE 已驗。 [S6](validation/p0-s6-windows.md)
 - **O-3b，WAIVED by owner – not tested**　無 GPT dots、VM 或 Hyper-V 工作。Phase 4 保留啟動／恢復對帳及模擬時鐘跳躍、終止程序／重啟測試，涵蓋模擬條件。使用者文件須說明，owner 於實務驗證前，OEP 對跨真實 OS 睡眠／登出的排程正確性無保證。
 - [x] **O-4，Owner 已核定**　最小煙霧 oracle 只驗管線接線，PDF 對照、13 格型別及值、雜湊測試已通過。需要更改核定值時先取得新的 owner 核准，較完整 oracle 為 Phase 1 可選後續。 [D08 核定與 SHA-256](validation/d08-oracle.md) · [填寫範本](validation/d08-oracle.template.md)
+
+## 2026-11-21　Phase 2 owner 實測與 Phase 3a 開工
+
+Owner 確認已推送的 Phase 2 可做基本對話，從 `main` 的 `a6aa863` 建立 `phase-3/knowledge-read`。先提交唯讀盤點、版面及計畫修訂，再做 Phase 3a 的唯讀快照、檢索與明確 Ask。Phase 2b 先提供規格，在後續階段逐步交付並於 Phase 5 打包前驗收。 [計畫修訂](IMPLEMENTATION_PLAN_V2.md#phase-2b-gui-parity) · [功能矩陣](AEP_GUI_PARITY.md) · [版面](GUI_LAYOUT.md)

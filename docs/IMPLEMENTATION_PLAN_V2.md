@@ -211,3 +211,17 @@ Phase 1 驗收須於目標 Windows 11 x64 VM 以合成資料測通 OpenCode→re
 O-1、O-2 由 Gateway 管理員繼續追蹤，狀態為 **TRACKED KNOWN RISKS**。Gateway 只用於合成 spike，憑證不進 repo、log 或 trace，保留去敏和 secret scan，非 2xx 回應一律視為失敗。O-4 已由 owner 核定為最小 D08 smoke oracle，PDF 一致性與雜湊測試是核定條件。此 oracle 僅供管線接線驗收。Phase 1 編碼以修訂後的 Phase 0 gate 為前置。 [D08 核定](validation/d08-oracle.md) · [驗收證據](reviews/PHASE0_GATE_REPORT.md)
 
 **O-3b – WAIVED by owner – not tested（2026-11-21）**。真實睡眠／喚醒及登出／再登入免測。此項無 GPT dots、VM 或 Hyper-V 工作。D06 的登入常駐、登出暫停、睡眠恢復時對帳、24 小時補跑、RPO ≤24 小時與 RTO ≤30 分鐘為 **UNVERIFIED** 設計假設。Phase 4 的啟動／恢復對帳實作保留，模擬 clock jump 與程序終止／重啟的結果僅適用於模擬條件。此免測決定不改上列三項 gate 條件。 [決策紀錄](DECISIONS.md)
+
+<a id="phase-2b-gui-parity"></a>
+
+## 2026-11-21　修訂：Phase 2b — GUI parity & layout
+
+Phase 2 已推送。Owner 實操作業台，確認簡單對話可用。保留現有 GUI 視覺風格，讓 AEP Web GUI 所有適用於 OpenCode harness 的 Settings 與 Operations 在 OEP 都有對應功能。採 Codex、Claude Code、T3 Code 的操作模式。左欄列出專案、thread、session 並提供新 thread。中央對話以串流顯示，工具呼叫及事件可摺疊。底部輸入框提供附件、agent／model、送出與停止。右側或底部顯示檔案、產物、diff 與工作。設定集中於固定入口，支援鍵盤及淺色／深色。
+
+1. **先盤點**　在 OS 暫存目錄唯讀 clone AEP，固定 commit，記錄設定、作業與來源路徑。逐項列 Keep、Adapt to OpenCode、Replace、Omit-with-reason，標示 OEP 位置、交付階段和可重跑的驗收。D01 繼續適用。 [AEP 功能矩陣](AEP_GUI_PARITY.md)
+2. **分階段交付**　盤點與版面規格提交後即啟動 3a。3a 採新導覽加入唯讀知識頁及 Ask。3b 接手 ingest、審核與發布頁，4 接手 Telegram、工作帳本與排程各自相關操作。其餘工作台版面、設定及通用操作納入 2b，與後續開發分批交付。 [版面規格及驗收](GUI_LAYOUT.md)
+3. **Phase 5 打包前驗收 2b**　逐列對照 AEP 功能矩陣與版面規格，保留頁面／測試證據、例外理由及未覆蓋狀態。以 Phase 2 的 chat／附件／SSE 回歸及鍵盤、主題、窄寬版、專案與會話隔離驗收收尾。
+
+自我一致性檢查已完成。原「前一 Phase 完成才開始下一 Phase」調整為 2b 可並行到 Phase 4 結束，且 2b gate 為 Phase 5 打包前置。Owner 允許 Phase 3a 從已推送 Phase 2 開工，Phase 2 尚未驗證的項目保留原狀態。D01 自寫及合成資料、D03 檢索優先與共用引用驗證、D04 單使用者、D05 已發布快照優先與進階 BI 延後、D07 兩 bot、D09 關閉通用 Automation 均適用。3a gate 完成後交回 owner，接著由後續任務啟動 3b。
+
+本次依 owner 新工作規則取代 Phase 3a 的例行獨立 review／複核與 mutation 要求。保留技術門檻及逐項狀態，維持 lint／typecheck／test／build、hooks 和秘密掃描。 [決策紀錄](DECISIONS.md)
