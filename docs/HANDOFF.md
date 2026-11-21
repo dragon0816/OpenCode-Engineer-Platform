@@ -10,7 +10,7 @@
 | 2　交叉審查 | Codex 完整閱讀 Claude 的兩份報告並回查原始碼。Claude 因 token 限制只讀 Codex §A、§G、§H，§B–§F 未讀。 [Codex 交叉審查](reviews/CODEX_CROSS_REVIEW.md) · [Claude 有限交叉審查](reviews/CLAUDE_CROSS_REVIEW.md) |
 | 3　整合 | 完成 [審查對照](REVIEW_COMPARISON.md)、[ADR](ARCHITECTURE_DECISIONS.md)、[v2 計畫](IMPLEMENTATION_PLAN_V2.md)、[AEP 差距](AEP_FEATURE_GAP_ANALYSIS.md)、[任務](TASKS.md) 與 [決策紀錄](DECISIONS.md)。[v1](IMPLEMENTATION_PLAN.md) 保留作歷史。 |
 | 4　owner 核准 | **已核准**。2026-11-21 owner 回覆「接受所有建議預設並開工」，接受 v2 和 D01–D09。 [決策紀錄](DECISIONS.md) |
-| 5　開發 | `phase-0/spikes` 已完成第 2 輪 Phase 0 修正與開發者重測。Owner 修訂 gate 後，O-3a 通過，仍待獨立複核，本機尚未合併，Phase 1 未開始。 |
+| 5　開發 | `phase-0/spikes` 已完成第 3 輪 Phase 0 修正、重測與故障注入。O-3a 重測通過，仍待獨立複核，本機尚未合併，Phase 1 未開始。 |
 
 ## 來源與驗證狀態
 
@@ -22,8 +22,8 @@
 
 ## 接手操作
 
-1. 在 `phase-0/spikes` 用 `git diff bc61330..HEAD` 取得第 2 輪修正，交由獨立 reviewer 複核。 [獨立審查](reviews/PHASE0_INDEPENDENT_REVIEW.md) · [修正證據](reviews/PHASE0_GATE_REPORT.md)
-2. 依修訂門檻核對修正及 O-3a，取得獨立複核。原 v2 要求 O-1 至 O-4 全結，修訂門檻達成時記錄 **conditionally passed**。合併前執行兩邊 commit tree 與工作樹掃描。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [合併前掃描](validation/p0-s7-licensing.md)
+1. 在 `phase-0/spikes` 用 `git diff 7467fdf..HEAD` 取得第 3 輪修正，交由獨立 reviewer 複核。 [第 2 輪獨立複核](reviews/PHASE0_INDEPENDENT_REREVIEW_R2.md) · [修正證據](reviews/PHASE0_GATE_REPORT.md)
+2. 依修訂門檻核對修正及 O-3a，取得獨立複核。原 v2 要求 O-1 至 O-4 全結，修訂門檻達成時記錄 **conditionally passed**。用受檢合併入口掃描並安裝目標 worktree hooks。首次在拋棄式 clone 的 `main` 證實安裝及拒絕 UTF-16 canary，真正的 `main` 未修改。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [合併程序](validation/p0-s7-licensing.md)
 
 <a id="phase-0-owner-checklist"></a>
 

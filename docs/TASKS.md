@@ -1,6 +1,6 @@
 # OEP 階段與任務清單
 
-日期 2026-11-21（Asia/Taipei）。Phase 0 第 2 輪修正與開發者重測已交付。修訂後的 gate 待獨立複核，本機合併尚未執行。原 v2 的 O-1 至 O-4 全部結清門檻保留作歷史。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+日期 2026-11-21（Asia/Taipei）。Phase 0 第 3 輪修正、負例與故障注入已交付。修訂後的 gate 待獨立複核，本機合併尚未執行。原 v2 的 O-1 至 O-4 全部結清門檻保留作歷史。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
 
 ## Stage 1–4　審查與開工核准
 
@@ -24,8 +24,8 @@
 - [x] 固定 48 題知識合成集、Recall@5、延遲與七份 probe 報告。 [基線](validation/p0-knowledge-baseline.md)
 - [x] 修正第 1 輪　I-1 完整 forced turn、I-2 私網 IPv4 掃描、I-3 Phase 1 出口驗收補充。 [修正證據](reviews/PHASE0_GATE_REPORT.md)
 - [x] O-4　Owner 核定最小 D08 smoke oracle，PDF 對照與雜湊測試通過；核定範圍僅限管線接線。 [D08 核定](validation/d08-oracle.md)
-- [ ] Gate　第 2 輪修正待獨立複核；O-3a 已通過。O-1／O-2 由 Gateway 管理員追蹤為 known risks，O-3b 已免測。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
-- [ ] 合併前掃描來源與目標 commit tree 及工作樹，記錄零命中。 [S7](validation/p0-s7-licensing.md)
+- [ ] Gate　第 3 輪修正待獨立複核；O-3a 重測通過。O-1／O-2 由 Gateway 管理員追蹤為 known risks，O-3b 已免測。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
+- [ ] 複核通過後使用受檢合併入口，先掃來源、目標、工作樹及 index，合併後核對目標 hooks。拋棄式 clone 已驗此程序。 [S7](validation/p0-s7-licensing.md)
 
 ### Phase 1　Runtime 與 SOP→XLSX
 

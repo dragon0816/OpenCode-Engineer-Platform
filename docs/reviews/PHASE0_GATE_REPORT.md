@@ -146,3 +146,34 @@ Claude Code 首輪限定範圍審查已記錄於 `11a18ee`。審查重跑 lint�
 | `node scripts/phase0/windows-native-probe.ts` | exit 0，Windows 11 Pro x64 build 26200。固定 exe、認證 `/api/info` 回 2.3.2、無認證 401、mock prompt 和開始／完成 SSE 成功、IPv4 loopback 1、IPv6 0、Job 4 成員、child/supervisor exit 0、殘留 0。 **O-3a PASS**。 |
 
 O-1／O-2 仍為 Gateway 管理員的 **TRACKED KNOWN RISKS**。O-3b 為 **WAIVED by owner – not tested**，無 GPT dots、VM 或 Hyper-V 工作；D06 的真實 OS 行為與 RPO/RTO 為 **UNVERIFIED**，Phase 4 保留啟動／恢復對帳與模擬測試。O-4 已核定為最小管線 smoke oracle，並通過一致性與雜湊條件。 [決策紀錄](../DECISIONS.md) · [handoff](../HANDOFF.md)
+
+## 2026-11-21　修正第 3 輪（fix round 3）
+
+以獨立複核提交 `7467fdf` 為基線。前輪結果保留；該複核以故障注入證實 R-2、R-3、R-4、R-5、R-8 與 R-9 的第 2 輪驗收不足。以下為第 3 輪修正與開發者證據。**Gate 尚未達 `conditionally passed`**，待 Claude 安排下一次獨立複核。O-3a 重測通過，O-3b 免測、D08 核定及 O-1／O-2 known risks 維持。未使用真 Gateway，未修改或合併真正 `main`，Phase 1 未開始。 [第 2 輪獨立複核](PHASE0_INDEPENDENT_REREVIEW_R2.md)
+
+### 負例與故障注入
+
+分別在暫存副本注入故障。每列的 `exit 1` 為被測命令的實際退出碼；未受修改的測試均通過。
+
+| 項目 | 修正及故障結果 |
+|---|---|
+| R-2 | forced 結果只接受完全相等的文字，或單一且僅含 `type: text` 和精確 `text` 的項目。改回 substring 後，包含正確 token 的錯誤結果使 relay 負例 exit 1。 |
+| R-3 | deadline 與由 transport 明確回報的錯誤分開，未知例外向上傳遞。於 300 ms S2 案例注入無關 `TypeError`，確認 `probe-failed` 在 `failures` 步驟標記 `typeError:true` 且 exit 1。 |
+| R-4　重複送件 | 在實際 HTTP transport 寫出前按 session 路徑和 operation ID 計數。於同一 `submit` 注入 B 的第二次提交，OpenCode 回兩筆 admission，S4 依 `sender` 斷言 exit 1。 |
+| R-4　重連期限 | `server.connected` 前的 EOF 或 abort 會拒絕 `ready`，同一 5 秒期限也限制串流收尾。注入重連 EOF 即刻（0 ms）拒絕；注入忽略 signal 的停滯連線於 5,000 ms 拒絕，兩者 exit 1。 |
+| R-5 | HTTP headers 只寫到核對過的同一條 established socket。Linux 以 server-side inode 對應 OpenCode PID，Windows 以反向 TCP tuple 對應 Job child PID。TCP 四元組負例、被拒 peer 零 HTTP、拒絕 redirect 均測，略過 peer 核對的副本 exit 1。 [S5](../validation/p0-s5-security.md) |
+| R-8 | 拒絕結構外的 row/cell、非 `c` 的 row child 與不符列號／順序的座標，以預檢核定欄寬送入 openpyxl 配置。繞過預檢後測試觀察到進入 openpyxl，exit 1。 |
+| R-9 | 解碼 UTF-16/UTF-32、BOM 與 ASCII 相容舊編碼。拋棄式 clone 的 UTF-16 canary 在來源 tree 以及實際 staged commit 均被攔截；乾淨 merge 後核對 clone `main` hooks 並清理 canary。分別停用檔案解碼、來源掃描及目標 hooks 安裝，三次均 exit 1。 [合併入口](../validation/p0-s7-licensing.md) |
+| Minors | 乾淨環境 staging 測試先建 `.phase0`；授權清冊為 4 個鎖定 wheels；Windows PDF 2 秒為週期檢查的 user-time 配額。分別取消建目錄、還原舊 wheel 數、改回硬性 CPU 上限敘述，三次均 exit 1。 |
+
+### 重跑輸出
+
+| 命令或案例 | 結果 |
+|---|---|
+| `npm run lint`、`npm run typecheck`、`npm test`、`npm run build`、`npm run scan` | 均 exit 0。Lint 40 檔，Node 21 pass／0 fail／0 skip，編譯 12 個 JS，81 檔掃描命中 0。 |
+| `npm run merge-check -- main` | exit 0。來源／目標 commit tree 分別 15、81 檔，工作樹 81 檔，index 無變更，均 0 命中。此命令只預檢。 |
+| `python scripts/phase0/attachment_probe_test.py -v`、`python scripts/phase0/d08_oracle_test.py -v` | 分別 6 與 2 項通過；附件正例仍為兩張表、15 格及相同 CSV SHA-256，D08 核定雜湊不變。 |
+| `run-container.ps1 -Mode contract` | exit 0。300 ms fault 輸出 `deadline`；S4 收斂 253／252／143 ms，送件 6、重複 0、外洩 0；S5 IPv4／IPv6 為 1／0，拒絕 Host／Origin／CSRF 403。 |
+| `run-container.ps1 -Mode contract-relay` | exit 0。在無網路容器中兩合成 alias 各 10 次，兩 forced turn 完成且僅一次工具呼叫，去敏通過。 |
+| `pwsh -NoProfile -File scripts/phase0/windows-job.ps1` | exit 0。正常／強制／readiness 前停止 140／68／72 ms，各 0 殘留。 |
+| `node scripts/phase0/windows-native-probe.ts` | exit 0。OpenCode 2.3.2 的認證、mock prompt、SSE、已連線 PID 核對與停止通過，IPv4／IPv6 listener 1／0，Job 4 成員殘留 0。 |
