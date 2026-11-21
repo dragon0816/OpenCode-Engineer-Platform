@@ -39,7 +39,7 @@ export class WebStore extends Ledger {
   }
 
   turn(sessionID: string, id: string) {
-    const row = this.db.prepare('SELECT request_hash AS hash, workbook FROM web_turns WHERE session_id = ? AND run_id = ?')
+    const row = this.db.prepare('SELECT request_hash AS hash FROM web_turns WHERE session_id = ? AND run_id = ?')
       .get(sessionID, id);
     return row ? { hash: String(row.hash), run: this.get(id) } : undefined;
   }
@@ -48,10 +48,10 @@ export class WebStore extends Ledger {
     return Boolean(this.db.prepare('SELECT 1 FROM web_turns WHERE run_id = ?').get(id));
   }
 
-  saveTurn(sessionID: string, run: RunRecord, hash: string, workbook: boolean) {
+  saveTurn(sessionID: string, run: RunRecord, hash: string) {
     this.transaction(() => {
       this.insert(run);
-      this.db.prepare('INSERT INTO web_turns VALUES (?, ?, ?, ?)').run(sessionID, run.id, hash, Number(workbook));
+      this.db.prepare('INSERT INTO web_turns VALUES (?, ?, ?)').run(sessionID, run.id, hash);
     });
   }
 

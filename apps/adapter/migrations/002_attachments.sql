@@ -18,8 +18,7 @@ CREATE INDEX attachments_by_session ON attachments(session_id);
 CREATE TABLE web_turns (
   session_id TEXT NOT NULL REFERENCES web_sessions(id),
   run_id TEXT PRIMARY KEY REFERENCES runs(id),
-  request_hash TEXT NOT NULL,
-  workbook INTEGER NOT NULL CHECK(workbook IN (0, 1))
+  request_hash TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX web_turns_by_session ON web_turns(session_id);

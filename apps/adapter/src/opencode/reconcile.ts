@@ -15,13 +15,21 @@ export async function submissionCount(client: OpenCodeClient, sessionID: string,
 }
 
 export async function waitForOutcome(client: OpenCodeClient, sessionID: string,
-  onActivity?: (state: 'running' | 'awaiting_permission') => void, timeout = 105_000) {
-  return until(async (signal) => {
+  onActivity?: (state: 'running' | 'awaiting_permission') => void, timeout = 105_000, stop?: AbortSignal,
+  submissionID?: string) {
+  let delivered = !submissionID;
+  return until(async (deadline) => {
+    const signal = stop ? AbortSignal.any([deadline, stop]) : deadline;
     const permission = await client.permission.list({ sessionID }, { signal });
     if (permission.length) {
       onActivity?.('awaiting_permission');
       for (const request of permission) await client.permission.reply({ sessionID, requestID: request.id, decision: 'reject' }, { signal });
       onActivity?.('running');
+    }
+    if (!delivered && submissionID) {
+      const { inbox, messages } = await submissionCount(client, sessionID, submissionID);
+      if (inbox || messages !== 1) return;
+      delivered = true;
     }
     const found = await client.session.get({ sessionID }, { signal });
     if (!found.outcome || (await client.session.active({ signal }))[sessionID]) return;

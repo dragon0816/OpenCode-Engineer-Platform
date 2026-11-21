@@ -7,12 +7,12 @@ import { submissionCount } from './reconcile.ts';
 export type Agent = 'workbook' | 'inspector';
 export const promptID = () => `msg_${randomBytes(16).toString('hex')}`;
 
-export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string) {
-  const readable = ['sop.md', 'marker.txt'].map((resource) => ({ action: 'read', resource, effect: 'allow' as const }));
+export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, web = false) {
+  const readable = (web ? [] : ['sop.md', 'marker.txt']).map((resource) => ({ action: 'read', resource, effect: 'allow' as const }));
   const writer = { action: 'edit', resource: 'program.js', effect: 'allow' as const };
   const session = await client.session.create({
-    title: `OEP synthetic ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
-    permissions: agent === 'workbook' ? [...readable, writer] : readable,
+    title: `OEP ${web ? 'Web' : 'synthetic'} ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
+    permissions: !web && agent === 'workbook' ? [...readable, writer] : readable,
   }, call());
   if (session.agent !== agent || session.location.directory !== directory ||
       session.model?.id !== alias || session.model.providerID !== providerID) {

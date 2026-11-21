@@ -37,7 +37,8 @@ function windowsAttributes(path: string) {
     'for p in reversed(parents):',
     ' result = attributes(p)',
     ' if result == 0xffffffff or result & 0x400: sys.exit(1)',
-  ].join('\n'), path], { windowsHide: true, timeout: 2_000, stdio: 'ignore' });
+  ].join('\n'), path], { windowsHide: true, timeout: 2_000, stdio: 'ignore',
+    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH } });
   if (result.status !== 0) throw unsafe();
 }
 
