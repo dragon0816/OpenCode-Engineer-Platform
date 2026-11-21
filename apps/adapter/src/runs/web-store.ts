@@ -4,7 +4,7 @@ import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Ledger } from './ledger.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
-import type { CustomStdioMcp } from './custom-mcp.ts';
+import type { CustomMcp } from './custom-mcp.ts';
 
 export const projects = [
   { id: 'default', title: '主要工作區' },
@@ -96,14 +96,22 @@ export class WebStore extends Ledger {
 
   customMcpServers() {
     return this.db.prepare('SELECT definition, created_at, updated_at FROM mcp_servers ORDER BY created_at, id').all()
-      .map((row) => ({ ...JSON.parse(String(row.definition)) as CustomStdioMcp,
-        createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) }));
+      .map((row) => {
+        const definition = JSON.parse(String(row.definition)) as CustomMcp;
+        return { ...definition, deniedTools: definition.deniedTools ?? [],
+          createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
+      });
   }
 
   saveCustomStdioMcp(id: string, input: Record<string, unknown>) {
     const definition = validateCustomStdioMcp(id, input, projects.map((project) => project.id));
-    const existing = this.db.prepare('SELECT created_at FROM mcp_servers WHERE id = ?').get(id);
-    const now = Date.now();
+    return this.saveCustomMcp(definition);
+  }
+
+  saveCustomMcp<T extends CustomMcp>(definition: T) {
+    const { id } = definition;
+    const existing = this.db.prepare('SELECT created_at, updated_at FROM mcp_servers WHERE id = ?').get(id);
+    const now = Math.max(Date.now(), Number(existing?.updated_at ?? 0) + 1);
     const createdAt = Number(existing?.created_at ?? now);
     const { changes } = this.db.prepare(`
       INSERT INTO mcp_servers (id, definition, created_at, updated_at)

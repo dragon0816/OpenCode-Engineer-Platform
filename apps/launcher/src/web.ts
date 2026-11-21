@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { startAdapter } from '../../adapter/src/main.ts';
+import { WebStore } from '../../adapter/src/runs/web-store.ts';
 import { checkDirectory } from '../../adapter/src/runs/workspace.ts';
 import { acquireBrowserLauncher, openBrowser, requestedReopen } from './browser.ts';
 import { repo } from './paths.ts';
@@ -30,37 +31,53 @@ async function launch() {
   checkDirectory(root);
   const release = await acquireBrowserLauncher(root);
   if (!release) return;
-  let runtime: Awaited<ReturnType<typeof startRuntime>> | undefined;
-  let adapter: Awaited<ReturnType<typeof startAdapter>> | undefined;
-  let reopen: NodeJS.Timeout | undefined;
   const stop = Promise.withResolvers<void>();
-  process.once('SIGINT', stop.resolve);
-  process.once('SIGTERM', stop.resolve);
+  const requestStop = () => { stopping = true; stop.resolve(); };
+  let stopping = false;
+  process.once('SIGINT', requestStop);
+  process.once('SIGTERM', requestStop);
   try {
     const profile = join(root, 'profile');
     mkdirSync(profile, { recursive: true });
     checkDirectory(profile);
-    runtime = await startRuntime(mkdtempSync(join(root, 'launch-')), undefined, profile);
-    adapter = await startAdapter(root, runtime, stop.resolve, !process.env.NODE_TEST_CONTEXT);
-    requestedReopen(root);
-    await openBrowser(adapter.pairURL());
-    const service = adapter;
-    reopen = setInterval(() => {
+    while (!stopping) {
+      const restart = Promise.withResolvers<void>();
+      const store = new WebStore(join(root, 'web.sqlite'));
+      const customMcp = (() => {
+        try { return store.customMcpServers(); }
+        finally { store.close(); }
+      })();
+      const runtime = await startRuntime(mkdtempSync(join(root, 'launch-')), undefined, profile, customMcp);
+      let adapter: Awaited<ReturnType<typeof startAdapter>> | undefined;
+      let reopen: NodeJS.Timeout | undefined;
       try {
-        if (install && existsSync(join(install, 'stop-' + process.pid + '.request'))) stop.resolve();
-        else if (requestedReopen(root)) void openBrowser(service.pairURL()).catch(() => console.error('OEP could not reopen the browser'));
-      } catch { console.error('OEP could not read its browser reopen request'); }
-    }, 1_000);
-    await Promise.race([stop.promise, runtime.finished.then(() => { throw new Error('OpenCode stopped'); })]);
-  } finally {
-    if (reopen) clearInterval(reopen);
-    try { await adapter?.close(); }
-    finally {
-      try {
-        const result = await runtime?.stop();
-        if (result && (result.supervisorExit !== 0 || result.childExit !== 0 || result.orphans !== 0)) process.exitCode = 1;
-      } finally { await release(); }
+        if (stopping) break;
+        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve);
+        requestedReopen(root);
+        await openBrowser(service.pairURL());
+        reopen = setInterval(() => {
+          try {
+            if (install && existsSync(join(install, 'stop-' + process.pid + '.request'))) requestStop();
+            else if (requestedReopen(root)) void openBrowser(service.pairURL()).catch(() => console.error('OEP could not reopen the browser'));
+          } catch { console.error('OEP could not read its browser reopen request'); }
+        }, 1_000);
+        await Promise.race([stop.promise, restart.promise, runtime.finished.then(() => { throw new Error('OpenCode stopped'); })]);
+      } finally {
+        if (reopen) clearInterval(reopen);
+        try { await adapter?.close(); }
+        finally {
+          const result = await runtime.stop();
+          if (result.supervisorExit !== 0 || result.childExit !== 0 || result.orphans !== 0) {
+            stopping = true;
+            process.exitCode = 1;
+          }
+        }
+      }
     }
+  } finally {
+    process.removeListener('SIGINT', requestStop);
+    process.removeListener('SIGTERM', requestStop);
+    await release();
   }
 }
 

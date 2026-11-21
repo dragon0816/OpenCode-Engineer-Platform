@@ -176,4 +176,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 ## Phase 2b Slice 4B
 
 - [x] 自訂 stdio MCP 定義驗證、儲存與備份回復。
-- [ ] 新會話工具隔離、憑證綁定、設定頁、連線測試、遠端連線與 Chromium 驗收。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)
+
+## Phase 2b Slice 4C
+
+- [x] 自訂 MCP 設定 API、啟動套用、專案與可驗證工具名稱的權限、隔離連線測試及繁體中文設定頁。 [驗收紀錄](reviews/PHASE2B_SLICE4C_REPORT.md)
+- [ ] 補齊遠端成功情境與各遠端失敗原因的 Chromium 驗收。 [驗收紀錄](reviews/PHASE2B_SLICE4C_REPORT.md)

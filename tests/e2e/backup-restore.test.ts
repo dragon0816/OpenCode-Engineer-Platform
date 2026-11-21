@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { saveCustomMcpCredential } from '../../apps/adapter/src/runs/custom-mcp-credentials.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { verifyCitations } from '../../packages/contracts/src/evidence.ts';
 import { canonical, sha256 } from '../../packages/knowledge/src/snapshot.ts';
@@ -18,19 +20,22 @@ test('online backup and staged restore', { skip: process.platform !== 'win32' },
   const backups = join(fixture.root, 'backups');
   const prior = join(fixture.root, 'prior');
   const db = new DatabaseSync(database);
+  const marker = 'synthetic-mcp-backup-' + randomBytes(16).toString('hex');
+  let credential: string | undefined;
   let writer: ReturnType<typeof spawn> | undefined;
   try {
     const web = join(fixture.data, 'web');
     mkdirSync(web);
     const webDatabase = join(web, 'web.sqlite');
     const mcpStore = new WebStore(webDatabase);
-    const marker = 'synthetic-mcp-backup-value';
-    const definition = mcpStore.saveCustomStdioMcp('c'.repeat(32), {
+    const definition = mcpStore.saveCustomStdioMcp(randomBytes(16).toString('hex'), {
       name: '合成 MCP', transport: 'stdio', enabled: true, command: [process.execPath], cwd: fixture.data,
       environment: ['FIXTURE_TOKEN'], timeouts: { startup: 1000, catalog: 1000, execution: 1000 },
       dataScope: '合成資料', appliesToProjects: ['secondary'], ignoredValue: marker,
     });
     mcpStore.close();
+    credential = definition.environment[0].reference;
+    saveCustomMcpCredential(credential, marker);
     db.exec('PRAGMA journal_mode=WAL; PRAGMA user_version=4;');
     const counts = { vaults: 1, publications: 1, cards: 1000, passages: 5000, evidence: 10000,
       relations: 2000, reviews: 20, sessions: 10, run_ledger: 40, bi_jobs: 20, inbox: 40, outbox: 40 };
@@ -79,10 +84,15 @@ test('online backup and staged restore', { skip: process.platform !== 'win32' },
     const manifest = join(backup, 'backup.manifest.json');
     const original = readFileSync(manifest);
     const metadata = JSON.parse(original.toString());
-    const credential = definition.environment[0].reference;
+
     assert.ok(metadata.credentials.includes(credential));
     assert.equal(original.includes(marker), false);
     assert.equal(readFileSync(join(backup, 'web', 'web.sqlite')).includes(marker), false);
+    for (const entry of readdirSync(backup, { recursive: true, withFileTypes: true })) {
+      if (entry.isFile() && readFileSync(join(entry.parentPath, entry.name)).includes(marker)) {
+        assert.fail('Synthetic credential appeared in a backup file');
+      }
+    }
     assert.deepEqual(Object.values(metadata.databases['knowledge.sqlite'].publicationCounts), [{
       cards: snapshot.cards.length, passages: snapshot.passages.length, evidence: 0, relations: snapshot.relationships.length,
     }]);
@@ -139,6 +149,8 @@ test('online backup and staged restore', { skip: process.platform !== 'win32' },
     assert.ok(existsSync(unrelated));
     assert.ok(!existsSync(backup));
   } finally {
+    if (credential) execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `[Environment]::SetEnvironmentVariable('${credential}',$null,'User')`], { stdio: 'ignore', windowsHide: true });
     if (writer) { const ended = once(writer, 'exit'); writer.kill(); await ended; }
     if (db.isOpen) db.close();
     fixture.cleanup();

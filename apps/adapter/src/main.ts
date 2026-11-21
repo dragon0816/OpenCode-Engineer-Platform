@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, validateHeaderValue } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
+import { testCustomMcp } from '../../launcher/src/custom-mcp-probe.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
@@ -26,6 +28,8 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
+import { customMcpName, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
@@ -36,6 +40,7 @@ const assets = new Map([
   ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
   ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
+  ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
   ['/knowledge-quality.js', ['src/knowledge-quality.js', 'text/javascript; charset=utf-8']],
@@ -84,7 +89,7 @@ function secureHeaders(response: ServerResponse) {
   ].join('; '));
 }
 
-export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false) {
+export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false, requestRestart?: () => void) {
   checkDirectory(root);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -114,10 +119,14 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   };
   let auth: LocalAuth;
 
+  let restarting = false;
+  let testingMcp = false;
+  const changedCredentials = new Set<string>();
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
     auth.check(request);
+    if (restarting) throw new HttpError(503, '執行環境正在重新啟動。');
     let path = request.url ?? '';
     if (!path.startsWith('/') || path.startsWith('//') || /[?#\\%]/.test(path)) throw new HttpError(400, 'Invalid request path');
     const method = request.method;
@@ -245,6 +254,123 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }
       send(response, 200, [{ id: knowledgeMcpName, managed: true, status, enabled,
         tools: runtime.knowledge ? [knowledgeToolName] : [] }]);
+      return;
+    }
+    if (path === '/api/settings/mcp/restart' && method === 'POST') {
+      const input = await body(request);
+      if (Object.keys(input).length) throw new HttpError(400, '重新啟動不需要輸入內容。');
+      if (!requestRestart) throw new HttpError(503, '目前無法從設定重新啟動執行環境。');
+      if (restarting || active.size > 1 || chat.busy() || !telegram.pauseForRestart()) {
+        throw new HttpError(409, '請等目前的操作及對話完成，再重新啟動。');
+      }
+      restarting = true;
+      const restart = () => {
+        response.off('finish', restart);
+        response.off('close', restart);
+        requestRestart();
+      };
+      response.once('finish', restart);
+      response.once('close', restart);
+      send(response, 202, { state: 'restarting' });
+      return;
+    }
+    if (path === '/api/settings/mcp/test' && method === 'POST') {
+      const { id } = await body(request);
+      const server = store.customMcpServers().find((entry) => entry.id === id);
+      if (!server) throw new HttpError(404, '找不到伺服器。');
+      if (testingMcp) throw new HttpError(409, '請等目前的連線測試完成。');
+      testingMcp = true;
+      try {
+        const results = await testCustomMcp(server);
+        send(response, 200, results);
+      } catch {
+        throw new HttpError(503, '無法啟動連線測試。');
+      } finally { testingMcp = false; }
+      return;
+    }
+    if (path === '/api/settings/mcp/custom') {
+      let changedId: string | undefined;
+      if (method === 'POST') {
+        const input = await body(request);
+        const existing = store.customMcpServers().find(({ id }) => id === input.id);
+        if (input.action !== 'create' && !existing) throw new HttpError(404, '找不到伺服器。');
+        if (input.action === 'remove' && existing) {
+          store.removeCustomMcp(existing.id);
+        } else if (input.action === 'credential' && existing) {
+          const entry = existing.environment.find(({ name }) => name === input.name);
+          if (!entry) throw new HttpError(404, '找不到憑證欄位。');
+          if (existing.transport === 'remote') {
+            if (typeof input.value !== 'string') throw new HttpError(400, '請輸入有效的 HTTP 標頭憑證。');
+            try { validateHeaderValue(entry.name, input.value); }
+            catch { throw new HttpError(400, '請輸入有效的 HTTP 標頭憑證。'); }
+          }
+          try { saveCustomMcpCredential(entry.reference, input.value); }
+          catch (error) { throw new HttpError(400, (error as Error).message); }
+          changedCredentials.add(existing.id);
+          send(response, 200, { configured: true });
+          return;
+        } else if (input.action === 'tool' && existing) {
+          const { tool, enabled } = input;
+          if (typeof tool !== 'string' || !customMcpTool.test(tool) || typeof enabled !== 'boolean') {
+            throw new HttpError(400, '請選擇有效的工具設定。');
+          }
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          const denied = new Set(existing.deniedTools);
+          if (enabled) denied.delete(tool);
+          else denied.add(tool);
+          if (denied.size > 50) throw new HttpError(400, '每台伺服器最多可停用 50 個工具。');
+          store.saveCustomMcp({ ...definition, deniedTools: [...denied] });
+        } else if (input.action === 'enable' && existing) {
+          if (typeof input.enabled !== 'boolean') throw new HttpError(400, '請選擇啟用或停用。');
+          if (input.enabled && existing.transport === 'remote') {
+            try { await pinCustomRemoteMcp(existing, AbortSignal.timeout(5000)); }
+            catch (error) { throw new HttpError(400, (error as Error).message); }
+          }
+          if (!store.customMcpServers().some(({ id, updatedAt }) => id === existing.id && updatedAt === existing.updatedAt)) {
+            throw new HttpError(409, '設定已變更，請重新載入。');
+          }
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          store.saveCustomMcp({ ...definition, enabled: input.enabled });
+        } else if (input.action === 'create' || input.action === 'update') {
+          const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
+          try {
+            const definitionInput = { ...input, deniedTools: input.action === 'update' ? existing?.deniedTools : [] };
+            const projectIDs = projects.map((project) => project.id);
+            const definition = input.transport === 'remote'
+              ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
+              : validateCustomStdioMcp(id, definitionInput, projectIDs);
+            if (definition.transport === 'remote') await pinCustomRemoteMcp(definition, AbortSignal.timeout(5000));
+            if (existing && !store.customMcpServers().some((server) => server.id === existing.id && server.updatedAt === existing.updatedAt)) {
+              throw new Error('設定已變更，請重新載入。');
+            }
+            store.saveCustomMcp(definition);
+            changedId = id;
+          } catch (error) {
+            const message = (error as Error).message;
+            throw new HttpError(400, /^[\u3400-\u9fff]/.test(message) ? message : '無法儲存伺服器設定。');
+          }
+        } else throw new HttpError(400, '請選擇伺服器操作。');
+      }
+      const servers = store.customMcpServers();
+      const configured = configuredCustomMcpCredentials(servers.flatMap(({ environment }) => environment.map(({ reference }) => reference)));
+      const applied = runtime.customMcp ?? [];
+      const statuses = await runtime.client.mcp.list(undefined, call()).then(({ data }) => data, () => []);
+      const matches = (server: typeof servers[number]) => applied.some((entry) => {
+        const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;
+        return Object.entries(definition).every(([key, value]) =>
+          JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
+      });
+      send(response, 200, {
+        changedId,
+        restartRequired: servers.some((server) => !matches(server)) ||
+          applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
+        servers: servers.map((server) => ({
+          ...server, restartRequired: !matches(server) || changedCredentials.has(server.id),
+          status: !server.enabled ? 'disabled' : server.environment.some(({ reference }) => !configured.has(reference))
+            ? 'needs_auth' : statuses.find(({ name }) => name === customMcpName(server.id))?.status.status ?? 'pending',
+          environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
+        })),
+      });
       return;
     }
     if (path === '/api/settings/knowledge') {

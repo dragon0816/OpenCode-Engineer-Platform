@@ -13,6 +13,7 @@
     "test": "node --test scripts/phase0/*.test.ts tests/contract/*.test.ts",
     "test:contract": "node --test tests/contract/*.test.ts",
     "test:knowledge": "node --disable-warning=ExperimentalWarning --test tests/contract/knowledge*.test.ts",
+    "test:e2e:mcp": "node --disable-warning=ExperimentalWarning tests/e2e/custom-mcp.ts && node --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-probe.ts && node --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-remote.mjs && node --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-browser.ts --leaks",
     "test:e2e:knowledge": "node --disable-warning=ExperimentalWarning --test tests/e2e/knowledge.test.ts",
     "knowledge:migrate": "node --disable-warning=ExperimentalWarning scripts/knowledge/migrate.ts",
     "knowledge:inspect": "node --disable-warning=ExperimentalWarning scripts/knowledge/inspect.ts",

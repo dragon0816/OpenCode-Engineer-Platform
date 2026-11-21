@@ -1,3 +1,4 @@
+import { customMcpName } from '../runs/custom-mcp.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -52,7 +53,7 @@ export function publicSession({ id, agent, alias, createdAt, title, project, kno
     ...(title ? { title } : {}) };
 }
 
-type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
+type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'> & Partial<Pick<Runtime, 'customMcp'>>;
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -102,7 +103,15 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled);
+    const permissions = (this.runtime.customMcp ?? []).filter((server) => server.enabled).flatMap((server) => {
+      const name = customMcpName(server.id);
+      const allowed = server.appliesToProjects.includes(project);
+      return [
+        { action: `${name}_*`, resource: '*', effect: allowed ? 'allow' as const : 'deny' as const },
+        ...server.deniedTools.map((tool) => ({ action: `${name}_${tool}`, resource: '*', effect: 'deny' as const })),
+      ];
+    });
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled, permissions);
     const session = { ...local, upstreamID };
     this.store.createSession(session);
     return session;
@@ -344,6 +353,13 @@ export class ChatService {
       const output = openWorkspaceFile(directory, workbookName, workbookLimit, run.artifact.identity);
       return { name: workbookName, data: output.data, sha256: output.identity.sha256 };
     } catch { throw new HttpError(409, 'Artifact is missing or has changed'); }
+  }
+
+  busy() {
+    return Boolean(this.executing.size || this.recovering.size || this.store.sessions().some((session) => {
+      const last = this.store.turns(session.id).at(-1);
+      return last && active.has(last.state);
+    }));
   }
 
   async close() { this.stop.abort(); await this.queue; }

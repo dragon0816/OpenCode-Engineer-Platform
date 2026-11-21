@@ -150,13 +150,66 @@
           </section>
           <section id="settings-mcp" hidden>
             <h2>MCP</h2>
-            <h3>內建知識庫</h3>
+            <h3>內建知識庫 <span class="runtime-badge">由 OEP 管理</span></h3>
             <p id="mcp-knowledge-status" role="status"></p>
             <p id="mcp-knowledge-tools" hidden>內建工具：BI 查詢</p>
-            <p>由 OEP 管理。變更僅適用於新會話。</p>
+            <p>BI 開關適用於新會話。</p>
             <div class="settings-actions">
               <button id="mcp-open-knowledge-settings" type="button">管理 BI 查詢工具</button>
             </div>
+            <div class="mcp-toolbar">
+              <h3>自訂伺服器</h3>
+              <button type="button" id="mcp-add">新增伺服器</button>
+            </div>
+            <div class="mcp-restart" id="mcp-restart-bar" hidden>
+              <p>設定已儲存。重新啟動執行環境後才會套用，原有對話與檔案會保留。完成後會開啟 OEP。</p>
+              <button type="button" id="mcp-restart">重新啟動執行環境</button>
+            </div>
+            <p id="mcp-status" role="status"></p>
+            <div id="mcp-servers"></div>
+            <dialog id="mcp-editor" aria-labelledby="mcp-editor-title">
+              <form id="mcp-form">
+                <h3 id="mcp-editor-title"></h3>
+                <label>名稱 <input name="name" required maxlength="80" autofocus></label>
+                <label>連線方式
+                  <select name="transport"><option value="stdio">本機程式（stdio）</option><option value="remote">遠端 HTTPS</option></select>
+                </label>
+                <div id="mcp-stdio-fields">
+                  <label>執行檔 <input name="executable" maxlength="2048"></label>
+                  <label>參數，每行一個 <textarea name="args" rows="3"></textarea></label>
+                  <label>工作資料夾 <input name="cwd" maxlength="2048"></label>
+                </div>
+                <div id="mcp-remote-fields" hidden>
+                  <label>HTTPS 網址 <input name="url" type="url" maxlength="2048"></label>
+                  <label><input name="localService" type="checkbox"> 我確認允許連線至本機或私人網路服務</label>
+                </div>
+                <fieldset>
+                  <legend id="mcp-credential-title">環境變數</legend>
+                  <p>值存入 Windows 使用者憑證。已設定的值會保持隱藏。</p>
+                  <div id="mcp-credential-rows"></div>
+                  <button type="button" id="mcp-add-credential">新增憑證欄位</button>
+                </fieldset>
+                <fieldset>
+                  <legend>允許使用的專案</legend>
+                  <div id="mcp-projects"></div>
+                </fieldset>
+                <label>資料範圍說明 <textarea name="dataScope" rows="2" maxlength="2000"></textarea></label>
+                <details class="mcp-timeout-details">
+                  <summary>逾時（毫秒）</summary>
+                  <div class="mcp-timeouts">
+                  <label>啟動 <input name="startup" type="number" min="100" max="120000" required></label>
+                  <label>工具清單 <input name="catalog" type="number" min="100" max="120000" required></label>
+                  <label>執行 <input name="execution" type="number" min="100" max="120000" required></label>
+                  </div>
+                </details>
+                <label><input name="enabled" type="checkbox"> 啟用伺服器</label>
+                <p id="mcp-form-status" role="status"></p>
+                <div class="settings-actions">
+                  <button type="submit">儲存</button>
+                  <button type="button" id="mcp-cancel">取消</button>
+                </div>
+              </form>
+            </dialog>
           </section>
           <section id="settings-integrations" hidden>
             <h2>知識庫整合</h2>

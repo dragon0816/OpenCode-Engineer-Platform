@@ -86,6 +86,11 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   timer.unref();
   tick();
   return {
+    pauseForRestart() {
+      if (chat.busy() || [...active.keys()].some((id) => !id.endsWith('-poll'))) return false;
+      clearInterval(timer);
+      return true;
+    },
     configured: () => Boolean(mainApi || biApi),
     status() {
       return {

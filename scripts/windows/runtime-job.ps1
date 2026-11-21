@@ -44,6 +44,15 @@ try {
         if ($owner.HasExited) { throw 'OEP launcher exited.' }
     }
     $code = $worker.ExitCode
+    $tracked = @($handles | ForEach-Object { $_.Id })
+    foreach ($memberId in $job.Members()) {
+        if ($memberId -in $tracked) { continue }
+        $member = Get-Process -Id $memberId -ErrorAction SilentlyContinue
+        if ($member) {
+            try { $null = $member.Handle; $handles += $member }
+            catch { $member.Dispose() }
+        }
+    }
     $job.Dispose()
     $job = $null
     $orphans = @($handles | Where-Object { !$_.WaitForExit(500) }).Count
