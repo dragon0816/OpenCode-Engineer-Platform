@@ -1,0 +1,16 @@
+{
+  "version": "gold.v2",
+  "base": "gold.v1",
+  "additionalPassages": [
+    {"id":"calibration-neighbor","revision":"synthetic-v2","locator":"合成鄰近料號#row=1","text":"SYN-48BB 零點調校完成後的允收範圍為 ±2.1 dB。"},
+    {"id":"sampling-neighbor","revision":"synthetic-v2","locator":"Synthetic Neighbor Register#row=2","text":"PX-7210 nominal sampling rate is 72 kHz."},
+    {"id":"bias-neighbor","revision":"synthetic-v2","locator":"合成量測補充#row=3","text":"SYN-61 的 bias 預設值為 8.4 V。"},
+    {"id":"ground-neighbor","revision":"synthetic-v2","locator":"合成不同場景#row=4","text":"測試單另有一欄標為接地電阻，空欄由審查員填入。"},
+    {"id":"spacer-neighbor","revision":"synthetic-v2","locator":"合成儲存規則#row=5","text":"墊片空盒放在備品架上，盒內沒有零件。"},
+    {"id":"torque-neighbor","revision":"synthetic-v2","locator":"合成鄰近料號#row=6","text":"TRQ-140 的練習扭力值為 6 N·m。"},
+    {"id":"report-neighbor","revision":"synthetic-v2","locator":"Synthetic Records Routing#row=7","text":"The synthetic acceptance records index is a list of filenames, separate from the storage folders."},
+    {"id":"flag-neighbor","revision":"synthetic-v2","locator":"Synthetic Neighbor Register#row=8","text":"FLAG-2060 clearance was approved for the practice scenario."},
+    {"id":"seal-neighbor","revision":"synthetic-v2","locator":"合成文件目錄#row=9","text":"封條顏色需要記錄於欄位中；空白時須補填。"},
+    {"id":"unrelated-decimal","revision":"synthetic-v2","locator":"Synthetic Formatting#row=10","text":"The synthetic workbook totals use a comma as a thousands separator and do not specify TSV."}
+  ]
+}
