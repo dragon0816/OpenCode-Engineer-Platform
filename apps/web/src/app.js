@@ -1,4 +1,4 @@
-import { connect, request, RequestError } from './api.js';
+import { connect, modelLabel, request, RequestError } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -61,7 +61,7 @@ find('clear-reply').addEventListener('click', () => {
 const renderNotes = bindNotes(find('notes-filter'), find('session-notes'), find('export-notes'), (id) => {
   const message = messages.querySelector('[data-id="' + CSS.escape(id) + '"]');
   if (!message) return;
-  if (panelNarrow.matches) setPanel(false);
+  if (panelNarrow.matches) closePanel(false);
   message.focus();
   message.scrollIntoView({ block: 'center' });
 });
@@ -89,10 +89,11 @@ function setControls() {
   cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
+  find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped;
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped;
   find('project-read-button').disabled = uploadBusy;
-  send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
+  send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
 
@@ -280,7 +281,8 @@ function render(context) {
         renderReply();
         prompt.focus();
       }, showError, (text) => { find('command-toast').textContent = text; },
-      () => { if (current === context) renderNotes(context); }));
+      () => { if (current === context) renderNotes(context); },
+      () => openSection('notes', entry)));
       fragment.append(entry);
     }
     appendEvents(Infinity);
@@ -311,9 +313,20 @@ function render(context) {
 function renderPanel(context) {
   const { state, selected, path } = context;
   find('panel-tools').hidden = !state.session.tools?.includes('oep_knowledge_ask');
+  updateAttachmentCount();
   const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
   if (context.fileKey === fileKey) return;
   context.fileKey = fileKey;
+  const resources = find('chat-resources');
+  const previousButtons = new Map([...resources.children].map((button) => [button.dataset.file, button]));
+  const resourceButtons = [];
+  function addResource(file, url) {
+    const button = previousButtons.get(url)
+      ?? action(file.name, () => void openPreview(file, url, context, button));
+    button.dataset.file = url;
+    button.setAttribute('aria-label', `預覽 ${file.name}`);
+    resourceButtons.push(button);
+  }
   attachmentList.replaceChildren();
   for (const attachment of state.attachments) {
     const checkbox = node('input');
@@ -322,28 +335,43 @@ function renderPanel(context) {
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) selected.add(attachment.id);
       else selected.delete(attachment.id);
+      updateAttachmentCount();
     });
     const label = node('label');
     label.append(checkbox, node('span', attachment.name));
     const entry = node('li');
     entry.append(label);
     if (attachment.converted) entry.append(node('small', '已轉成含工作表與列號的 CSV'));
-    addFileDetails(entry, attachment, `${path}/attachments/${attachment.id}`, context, true);
+    const url = `${path}/attachments/${attachment.id}`;
+    addFileDetails(entry, attachment, url, context, true);
+    addResource(attachment, url);
     attachmentList.append(entry);
   }
   artifactList.replaceChildren();
   for (const run of state.runs.filter((run) => run.artifact).reverse()) {
     const entry = node('li');
     const artifact = { ...run.artifact, createdAt: run.finishedAt ?? run.createdAt };
-    addFileDetails(entry, artifact, `${path}/artifacts/${run.id}`, context);
+    const url = `${path}/artifacts/${run.id}`;
+    addFileDetails(entry, artifact, url, context);
+    addResource(artifact, url);
     artifactList.append(entry);
   }
-  if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
+  if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的檔案');
+  const focused = document.activeElement;
+  resources.replaceChildren(...resourceButtons);
+  resources.hidden = resourceButtons.length === 0;
+  if (resourceButtons.includes(focused)) focused.focus({ preventScroll: true });
   const ledger = find('panel-runs');
   ledger.replaceChildren(...state.runs.toReversed().map((run) =>
     node('li', `${formatDate(run.createdAt)} · ${statuses[run.state] ?? '狀態未知'}`)));
   if (!ledger.children.length) emptyList(ledger, '此會話尚無工作紀錄');
   renderDiffChoices(context);
+}
+
+function updateAttachmentCount() {
+  const button = find('manage-attachments');
+  button.hidden = !current?.state?.attachments.length;
+  button.textContent = `已選附件 ${current?.selected.size ?? 0}`;
 }
 
 function formatDate(at) {
@@ -369,14 +397,15 @@ function addFileDetails(entry, file, url, context, attachment = false) {
   const hash = action(file.sha256.slice(0, 12), async () => {
     try {
       await navigator.clipboard.writeText(file.sha256);
-      find('upload-status').textContent = '已複製 SHA-256。';
-    } catch { find('upload-status').textContent = '無法複製 SHA-256。'; }
+      find('file-status').textContent = '已複製 SHA-256。';
+    } catch { find('file-status').textContent = '無法複製 SHA-256。'; }
   });
   hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
   hash.title = file.sha256;
   if (!attachment) entry.append(download);
   entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
   const open = action('預覽', () => void openPreview(file, url, context, open));
+  open.setAttribute('aria-label', `預覽 ${file.name}`);
   actions.append(hash, open);
   if (attachment) actions.append(download, action('移除', async () => {
     if (!confirm(`要移除「${file.name}」嗎？`)) return;
@@ -384,27 +413,13 @@ function addFileDetails(entry, file, url, context, attachment = false) {
       await request(url, { data: {}, signal: context.abort.signal });
       if (current !== context) return;
       context.selected.delete(file.id);
-      if (previewPath === url) closePreview();
+      if (panelTabs.has(url)) closeTab(url);
       refresh(context);
     } catch (error) {
       if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。'));
     }
   }));
   entry.append(actions);
-}
-
-const preview = find('file-preview');
-let previewURL;
-let previewPath;
-let previewRequest;
-
-function closePreview() {
-  previewRequest?.abort();
-  previewPath = undefined;
-  preview.replaceChildren();
-  find('file-list').hidden = false;
-  if (previewURL) URL.revokeObjectURL(previewURL);
-  previewURL = undefined;
 }
 
 async function previewResponse(url, signal) {
@@ -414,21 +429,35 @@ async function previewResponse(url, signal) {
 }
 
 async function openPreview(file, url, context, opener) {
-  closePreview();
-  previewPath = url;
+  if (panelTabs.has(url)) {
+    showTab(url, opener);
+    return;
+  }
   const abort = new AbortController();
-  previewRequest = abort;
+  let objectURL;
+  const panel = node('div');
+  find('file-preview').append(panel);
   const body = node('div', undefined, 'preview-body');
   const title = node('h2', file.name);
-  title.tabIndex = -1;
-  const close = action('關閉預覽', () => {
-    closePreview();
-    (opener.isConnected ? opener : find('panel-files')).focus();
+  const actions = node('div', undefined, 'file-actions');
+  const download = node('a', '下載');
+  download.href = url;
+  download.download = file.name;
+  if (file.mime !== 'application/pdf') {
+    const browser = node('a', '在瀏覽器開啟');
+    browser.href = `${url}/preview`;
+    browser.target = '_blank';
+    browser.rel = 'noopener noreferrer';
+    actions.append(browser);
+  }
+  actions.append(download);
+  panel.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), actions, body);
+  addTab(url, file.name, panel, () => {
+    abort.abort();
+    if (objectURL) URL.revokeObjectURL(objectURL);
+    panel.remove();
   });
-  find('file-list').hidden = true;
-  preview.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), close, body);
-  title.focus({ preventScroll: true });
-  find('panel-files').scrollTop = 0;
+  showTab(url, opener);
   if (file.mime === 'application/pdf') {
     body.textContent = '目前無法預覽 PDF。請下載後開啟。';
     return;
@@ -444,8 +473,8 @@ async function openPreview(file, url, context, opener) {
       if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
       const image = node('img');
       image.alt = file.name;
-      previewURL = URL.createObjectURL(data);
-      image.src = previewURL;
+      objectURL = URL.createObjectURL(data);
+      image.src = objectURL;
       body.append(image);
     } else if (extension === 'html' || extension === 'htm') {
       const frame = node('iframe');
@@ -521,7 +550,7 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
     const table = node('table');
     const scroller = node('div', undefined, 'table-scroll');
     scroller.tabIndex = 0;
-    scroller.setAttribute('aria-label', lines ? '文字差異' : '表格內容');
+    scroller.setAttribute('aria-label', lines ? '文字變更對照' : '表格內容');
     scroller.append(table);
     const tbody = table.createTBody();
     let index = 0;
@@ -580,11 +609,11 @@ function renderDiffChoices(context) {
     earlier.set(run.artifact.name, run);
   }
   if (!pairs.length) {
-    target.append(node('p', '此會話沒有可比較的產物版本。'));
+    target.append(node('p', '此會話沒有可比較的檔案版本。'));
     return;
   }
   const choice = node('select');
-  choice.setAttribute('aria-label', '產物版本');
+  choice.setAttribute('aria-label', '檔案版本');
   for (const [index, [, run]] of pairs.entries()) {
     choice.append(new Option(`${run.artifact.name} · 版本 ${pairs.length - index + 1}`, String(index)));
   }
@@ -647,53 +676,132 @@ function refresh(context) {
 
 const rightPanel = find('chat-files');
 const panelToggle = find('toggle-files');
+const topMenu = find('top-menu');
+const menuTrigger = find('top-menu-trigger');
 const panelNarrow = matchMedia('(max-width: 900px)');
-const panelTabs = [...rightPanel.querySelectorAll('[role="tab"]')];
+const panelTabs = new Map();
+const panelSections = { files: '檔案與產出', work: '工作', diff: '變更對照', notes: '筆記' };
+const closeFiles = find('close-files');
+let activeTab;
+let panelOpener;
+let nextPreview = 0;
 
-function activatePanel(tab) {
-  for (const candidate of panelTabs) {
-    const active = tab === candidate;
-    candidate.setAttribute('aria-selected', String(active));
-    candidate.tabIndex = active ? 0 : -1;
-    find(candidate.getAttribute('aria-controls')).hidden = !active;
-  }
-  if (current) localStorage.setItem(`oep.panel.${current.path}`, tab.id);
-  if (tab.id === 'tab-work') void loadJobSummary();
-}
-
-function setPanel(open) {
-  rightPanel.classList.toggle('sheet-open', open);
-  panelToggle.setAttribute('aria-expanded', String(open));
-}
-
-panelToggle.addEventListener('click', () => {
-  const open = !rightPanel.classList.contains('sheet-open');
-  setPanel(open);
-  if (open) rightPanel.querySelector('[aria-selected="true"]').focus();
-});
-find('close-files').addEventListener('click', () => { setPanel(false); panelToggle.focus(); });
-panelNarrow.addEventListener('change', () => setPanel(false));
-rightPanel.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && panelNarrow.matches) {
-    event.preventDefault();
-    setPanel(false);
-    panelToggle.focus();
-  }
-});
-for (const [index, tab] of panelTabs.entries()) {
-  tab.addEventListener('click', () => activatePanel(tab));
-  tab.addEventListener('keydown', (event) => {
-    const target = {
-      ArrowRight: (index + 1) % panelTabs.length,
-      ArrowLeft: (index + panelTabs.length - 1) % panelTabs.length,
-      Home: 0, End: panelTabs.length - 1,
-    }[event.key];
-    if (target === undefined) return;
-    event.preventDefault();
-    activatePanel(panelTabs[target]);
-    panelTabs[target].focus();
+function addTab(key, title, panel, dispose) {
+  const item = node('div', undefined, 'panel-tab');
+  item.setAttribute('role', 'presentation');
+  const button = action(title, () => showTab(key));
+  const id = panel.id ? panel.id.slice('panel-'.length) : `preview-${++nextPreview}`;
+  button.id = `tab-${id}`;
+  panel.id ||= `panel-${id}`;
+  panel.tabIndex = 0;
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', button.id);
+  button.setAttribute('role', 'tab');
+  button.setAttribute('aria-controls', panel.id);
+  const close = action('×', () => closeTab(key));
+  close.className = 'close-tab';
+  close.setAttribute('aria-label', `關閉 ${title} 分頁`);
+  item.append(button, close);
+  find('panel-tabs').append(item);
+  panelTabs.set(key, { button, item, panel, dispose });
+  button.addEventListener('keydown', (event) => {
+    const keys = [...panelTabs.keys()];
+    const index = keys.indexOf(key);
+    const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: keys.length - 1 }[event.key];
+    if (event.key === 'Delete') {
+      event.preventDefault();
+      closeTab(key);
+    } else if (target !== undefined) {
+      event.preventDefault();
+      showTab(keys[(target + keys.length) % keys.length]);
+    }
   });
 }
+
+function updatePanelLayout() {
+  const overlay = !rightPanel.hidden && panelNarrow.matches;
+  document.querySelector('.navigation').inert = find('work-area').inert = overlay;
+  rightPanel.setAttribute('role', overlay ? 'dialog' : 'complementary');
+  if (overlay) rightPanel.setAttribute('aria-modal', 'true');
+  else rightPanel.removeAttribute('aria-modal');
+  closeFiles.textContent = panelNarrow.matches ? '返回對話' : '關閉附加資料';
+}
+
+function showTab(key, opener) {
+  if (opener && !rightPanel.contains(opener)) panelOpener = opener;
+  activeTab = key;
+  for (const [id, { button, panel }] of panelTabs) {
+    const active = id === key;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    panel.hidden = !active;
+  }
+  rightPanel.hidden = false;
+  panelToggle.setAttribute('aria-expanded', 'true');
+  updatePanelLayout();
+  panelTabs.get(key).button.focus({ preventScroll: true });
+  if (key === 'work') void loadJobSummary();
+}
+
+function openSection(key, opener) {
+  if (!panelTabs.has(key)) addTab(key, panelSections[key], find(`panel-${key}`));
+  showTab(key, opener);
+}
+
+function removeTab(key) {
+  const { item, panel, dispose } = panelTabs.get(key);
+  panel.hidden = true;
+  item.remove();
+  dispose?.();
+  panelTabs.delete(key);
+}
+
+function closeTab(key) {
+  const keys = [...panelTabs.keys()];
+  const index = keys.indexOf(key);
+  removeTab(key);
+  if (!panelTabs.size) closePanel();
+  else showTab(activeTab === key ? keys[index + 1] ?? keys[index - 1] : activeTab);
+}
+
+function closePanel(restoreFocus = true) {
+  for (const key of panelTabs.keys()) removeTab(key);
+  rightPanel.hidden = true;
+  panelToggle.setAttribute('aria-expanded', 'false');
+  updatePanelLayout();
+  if (restoreFocus) {
+    const opener = panelOpener?.isConnected ? panelOpener
+      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : menuTrigger;
+    (opener ?? menuTrigger).focus({ preventScroll: true });
+  }
+  panelOpener = undefined;
+  activeTab = undefined;
+}
+
+for (const [key, id] of [['files', 'toggle-files'], ['work', 'open-work'], ['diff', 'open-diff'], ['notes', 'open-notes']]) {
+  find(id).addEventListener('click', () => {
+    topMenu.open = false;
+    openSection(key, menuTrigger);
+  });
+}
+find('manage-attachments').addEventListener('click', (event) => openSection('files', event.currentTarget));
+topMenu.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !topMenu.open) return;
+  event.preventDefault();
+  topMenu.open = false;
+  menuTrigger.focus();
+});
+document.addEventListener('click', (event) => {
+  if (!topMenu.contains(event.target)) topMenu.open = false;
+});
+closeFiles.addEventListener('click', () => closePanel());
+find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
+panelNarrow.addEventListener('change', updatePanelLayout);
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
+  event.preventDefault();
+  closePanel();
+});
 
 function select(id) {
   voice.cancel();
@@ -703,10 +811,14 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  updateAttachmentCount();
+  find('file-status').textContent = '';
   renderNotes(null);
   renderReply();
   find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
-  closePreview();
+  closePanel(false);
+  find('chat-resources').replaceChildren();
+  find('chat-resources').hidden = true;
   find('panel-runs').replaceChildren();
   find('panel-diff').replaceChildren();
   jump.hidden = true;
@@ -716,7 +828,7 @@ function select(id) {
     progress.textContent = '從左側新增會話後即可開始。';
     messages.replaceChildren();
     attachmentList.replaceChildren();
-    emptyList(artifactList, '尚無可下載的產物');
+    emptyList(artifactList, '尚無可下載的檔案');
     emptyList(activityList, '等待即時事件');
     uploadStatus.textContent = '';
     prompt.value = '';
@@ -733,7 +845,7 @@ function select(id) {
   find('workbook-option').hidden = session.agent !== 'workbook';
   messages.replaceChildren(node('p', '載入會話中', 'empty'));
   attachmentList.replaceChildren();
-  emptyList(artifactList, '尚無可下載的產物');
+  emptyList(artifactList, '尚無可下載的檔案');
   emptyList(activityList, '等待即時事件');
   uploadStatus.textContent = '';
   showError();
@@ -745,7 +857,6 @@ function select(id) {
   renderReply();
   find('session-model-status').textContent = '';
   updateSessionAlias();
-  activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
@@ -785,6 +896,7 @@ function sessionButton(label, action) {
 
 let collapsedProject;
 function renderSessions() {
+  find('session-count').textContent = knownSessions.size;
   const query = find('session-search').value.trim().toLocaleLowerCase();
   find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
@@ -951,6 +1063,9 @@ function applyPreferences(preferences) {
   for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
   savedAssistant = JSON.stringify(assistantValues());
   find('sidebar-assistant-name').textContent = preferences.name || '助理';
+  const introduction = find('sidebar-assistant-intro');
+  introduction.textContent = preferences.introduction || '本機工程工作助理';
+  introduction.title = introduction.textContent;
 }
 find('assistant-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1053,9 +1168,10 @@ const defaultAlias = find('default-alias');
 const sessionAlias = find('session-alias');
 const modelStatus = find('model-settings-status');
 let modelSettings;
-function aliasOptions(select, selected, aliases) {
+function aliasOptions(select, selected, aliases, configuredDefault) {
   select.replaceChildren(...aliases.map(({ alias }) => {
-    const option = node('option', alias);
+    const label = modelLabel(alias);
+    const option = node('option', alias === configuredDefault ? `設定預設 · ${label}` : label);
     option.value = alias;
     return option;
   }));
@@ -1063,16 +1179,16 @@ function aliasOptions(select, selected, aliases) {
 }
 function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
-  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? []);
-  sessionAlias.disabled = !session || !modelSettings || stopped;
-  if (modelSettings) model.textContent = `模型 ${session?.alias ?? modelSettings.defaultAlias}`;
+  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? [], modelSettings?.defaultAlias);
+  sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
+  if (modelSettings) model.textContent = modelLabel(session?.alias ?? modelSettings.defaultAlias);
 }
 function applyModel(value, draft = value.defaultAlias) {
   modelSettings = value;
   aliasOptions(defaultAlias, draft, value.aliases);
   find('model-credentials').textContent = value.credentialsConfigured ? '憑證已設定' : '憑證未設定';
   find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
-    node('li', `${alias} · ${healthy ? '可用' : '無法通過檢查'}`)));
+    node('li', `${modelLabel(alias)} · ${healthy ? '可用' : '無法通過檢查'}`)));
   updateSessionAlias();
   for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
 }
@@ -1100,14 +1216,21 @@ sessionAlias.addEventListener('change', async () => {
   const context = current;
   const status = find('session-model-status');
   if (!context) return;
-  sessionAlias.disabled = true;
+  context.aliasUpdating = true;
+  setControls();
   try {
     const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
     knownSessions.set(session.id, session);
     if (current === context) status.textContent = '模型已切換';
   } catch (error) {
     if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。';
-  } finally { if (current === context) updateSessionAlias(); }
+  } finally {
+    context.aliasUpdating = false;
+    if (current === context) {
+      updateSessionAlias();
+      setControls();
+    }
+  }
 });
 function modelDirty() {
   return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
@@ -1243,8 +1366,9 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 });
 
 function showSettings() {
-  for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
-  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
+  closePanel(false);
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
   if (!find('settings-mcp').hidden) void loadMcpSettings();
@@ -1268,7 +1392,7 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
     settingsView.hidden = true;
     settingsEntry.removeAttribute('aria-current');
     if (id === 'open-chat') {
-      find('chat-view').hidden = find('chat-files').hidden = false;
+      find('chat-view').hidden = false;
       find(id).setAttribute('aria-current', 'page');
     }
   }, { capture: true });
@@ -1300,9 +1424,38 @@ setSidebar(!narrowNavigation.matches);
 narrowNavigation.addEventListener('change', () => setSidebar(!narrowNavigation.matches));
 sidebarToggle.addEventListener('click', () => setSidebar(find('session-sidebar').hidden));
 find('session-sidebar').addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches) return;
+  event.preventDefault();
   setSidebar(false);
   sidebarToggle.focus();
+});
+for (const section of document.querySelectorAll('.rail-section')) {
+  const key = `oep.${section.id}.open`;
+  section.open = localStorage.getItem(key) !== 'false';
+  section.addEventListener('toggle', () => localStorage.setItem(key, String(section.open)));
+}
+find('assistant-count').textContent = agent.options.length;
+function syncNavigation() {
+  const visible = !find('chat-view').hidden ? 'open-chat' : !find('jobs-view').hidden ? 'open-jobs' : 'open-knowledge';
+  if (visible !== 'open-chat') closePanel(false);
+  for (const entry of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
+    if (entry === visible) find(entry).setAttribute('aria-current', 'page');
+    else find(entry).removeAttribute('aria-current');
+  }
+  if (narrowNavigation.matches) {
+    setSidebar(false);
+    if (visible === 'open-chat') sessionTitle.focus();
+  }
+}
+find('open-review').addEventListener('click', () => {
+  find('open-knowledge').click();
+  if (find('knowledge-view').hidden) return;
+  find('knowledge-tab-build').click();
+  const review = find('ingest-review');
+  review.open = true;
+  review.querySelector('summary').focus();
+  find('open-knowledge').removeAttribute('aria-current');
+  find('open-review').setAttribute('aria-current', 'page');
 });
 find('session-search').addEventListener('input', renderSessions);
 find('clear-session-search').addEventListener('click', () => {
@@ -1545,6 +1698,10 @@ document.addEventListener('keydown', (event) => {
 });
 stop.addEventListener('click', async () => {
   stop.disabled = true;
+  if (topMenu.open) {
+    topMenu.open = false;
+    menuTrigger.focus();
+  }
   try {
     await request('/api/stop', { data: {} });
     stopped = true;
@@ -1564,7 +1721,7 @@ stop.addEventListener('click', async () => {
 try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
-  model.textContent = `模型 ${bootstrap.alias}`;
+  model.textContent = modelLabel(bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
   request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
   request('/api/settings/projects').then((entries) => {
@@ -1614,7 +1771,6 @@ try {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;
   }).catch(() => { find('settings-status').textContent = '無法載入助理設定。'; });
-  if (bootstrap.job.demo && bootstrap.job.state === 'awaiting_review') find('demo-job').hidden = false;
   projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;
@@ -1624,7 +1780,15 @@ try {
   renderSessions();
   if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
   agent.disabled = stop.disabled = false;
-  if (bootstrap.knowledge) knowledge = bindKnowledge();
+  if (bootstrap.knowledge) {
+    knowledge = bindKnowledge();
+    find('open-review').hidden = false;
+  }
+  find('open-chat').addEventListener('click', () => {
+    find('jobs-view').hidden = true;
+    find('chat-view').hidden = false;
+  });
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

@@ -1,5 +1,9 @@
 let csrf;
 
+export function modelLabel(alias) {
+  return alias.startsWith('synthetic-') ? '測試模型' : alias;
+}
+
 export class RequestError extends Error {
   constructor(status, message) {
     super(message);

@@ -71,7 +71,7 @@ export function bindKnowledge() {
     try {
       const { vault: id } = await request('/api/knowledge/demo', { data: { load, allowModel: find('demo-model-consent').checked } });
       await refreshVaults(load ? id : vault.value);
-      feedback.textContent = load ? '已載入合成示範庫。' : '已移除合成示範庫。';
+      feedback.textContent = load ? '已載入範例知識庫。' : '已移除範例知識庫。';
     } catch (error) { feedback.textContent = error.message; }
     finally { demoLoad.disabled = demoRemove.disabled = false; }
   }
@@ -111,7 +111,7 @@ export function bindKnowledge() {
 
   function showKnowledge(show) {
     find('knowledge-view').hidden = !show;
-    find('chat-view').hidden = find('chat-files').hidden = show;
+    find('chat-view').hidden = show;
     if (show) {
       open.setAttribute('aria-current', 'page');
       chat.removeAttribute('aria-current');
@@ -145,7 +145,7 @@ export function bindKnowledge() {
       demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
       demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
-        new Option(`${item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
+        new Option(`${item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title} · ${item.tag || item.revision} · ${new Date(item.publishedAt).toLocaleString('zh-Hant')}`, item.id)));
       if (models.has(previous)) vault.value = previous;
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();

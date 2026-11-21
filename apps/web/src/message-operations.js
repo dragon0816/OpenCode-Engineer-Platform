@@ -26,7 +26,7 @@ async function copy(text) {
   }
 }
 
-export function messageActions(context, item, content, reply, report, notify, updated) {
+export function messageActions(context, item, content, reply, report, notify, updated, openNotes) {
   const details = document.createElement('details');
   details.className = 'message-actions';
   const summary = document.createElement('summary');
@@ -66,6 +66,7 @@ export function messageActions(context, item, content, reply, report, notify, up
     if (value !== null) await save('note', value);
   });
   add('刪除筆記', () => save('note', null));
+  add('查看會話筆記', openNotes);
   details.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && details.open) {
       event.preventDefault();

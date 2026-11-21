@@ -1,4 +1,4 @@
-import { request } from './api.js';
+import { modelLabel, request } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const kinds = { answerable: '可回答', 'no-evidence': '缺乏證據', conflict: '證據衝突', injection: '含注入指令' };
@@ -93,7 +93,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       catalog = data.sets;
       sets.replaceChildren(...catalog.map(({ name }) => new Option(name, name)));
       if (catalog.some(({ name }) => name === preferred)) sets.value = preferred;
-      aliases.replaceChildren(...data.aliases.map((alias) => new Option(alias, alias)));
+      aliases.replaceChildren(...data.aliases.map((alias) => new Option(modelLabel(alias), alias)));
       status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
       render();
     } catch {
