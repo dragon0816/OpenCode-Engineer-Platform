@@ -51,6 +51,8 @@ export function bindKnowledge() {
   const question = find('knowledge-question');
   const ask = find('knowledge-ask');
   const details = find('vault-details');
+  const technical = find('vault-technical');
+  const vaultStatus = find('vault-status');
   const status = find('knowledge-status');
   const answer = find('knowledge-answer');
   const repositoryStatus = find('knowledge-repository-status');
@@ -89,22 +91,28 @@ export function bindKnowledge() {
     answer.replaceChildren();
     const selected = models.get(vault.value);
     details.replaceChildren();
+    technical.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);
+    find('knowledge-rebuild').hidden = !selected;
     browser.select(selected?.id);
     quality.select(selected);
     if (!selected) {
-      status.textContent = '目前沒有已發布的快照。';
+      status.textContent = vaultStatus.textContent = '目前沒有已發布的知識庫。';
       controls();
       return;
     }
     for (const [term, value] of [
-      ['識別碼', selected.id], ...(selected.tag ? [['發布標籤', selected.tag]] : []),
-      ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ...(selected.tag ? [['發布標籤', selected.tag]] : []),
+      ['發布版本', selected.revision],
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
-      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
-    status.textContent = !selected.ready ? '索引目前無法查詢。' :
+    for (const [term, value] of [
+      ['識別碼', selected.id], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
+    ]) technical.append(label('dt', term), label('dd', value));
+    vaultStatus.textContent = selected.ready ? '可搜尋' : '搜尋需要維護';
+    status.textContent = !selected.ready ? '目前無法搜尋此知識庫。' :
       selected.modelEnabled ? '' : '這個版本尚未授權供模型使用。';
     controls();
   }
@@ -133,8 +141,10 @@ export function bindKnowledge() {
     browser.select(undefined);
     quality.select(undefined);
     vault.replaceChildren(new Option('載入中', ''));
-    status.textContent = '正在讀取已發布版本。';
+    status.textContent = vaultStatus.textContent = '正在讀取已發布版本。';
+    find('knowledge-rebuild').hidden = true;
     details.replaceChildren();
+    technical.replaceChildren();
     answer.replaceChildren();
     controls();
     try {
@@ -150,7 +160,7 @@ export function bindKnowledge() {
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
     } catch {
-      if (!active.signal.aborted) status.textContent = '無法讀取已發布的知識庫。';
+      if (!active.signal.aborted) status.textContent = vaultStatus.textContent = '無法讀取已發布的知識庫。';
     } finally {
       if (loading === active) { loading = undefined; controls(); }
     }
