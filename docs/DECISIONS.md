@@ -244,3 +244,13 @@ Generate CycloneDX, third-party license text and NOTICE from the pinned producti
 ## Phase 2b Slice 4B
 
 自訂 stdio 定義儲存於 Web SQLite。憑證參照採用 `OEP_MCP_<ID>_<NAME>`，後續值儲存沿用 Windows User-scope 環境變數。回復時以備份資料庫核對清單中的參照名稱。專案允許清單與資料範圍說明作為 Email 舊設定的替代，維持由 MCP 管理。 [進度](reviews/PHASE2B_SLICE4B_REPORT.md)
+
+## 2026-11-21　自訂 MCP 套用模型（Technical Lead）
+
+Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境，無法為不同專案各自注入 MCP 設定。決定如下。
+
+- **設定在啟動時寫入。** 所有已啟用的自訂 MCP 伺服器在 OEP 啟動 OpenCode 時寫入執行環境設定。新增、修改、停用、移除伺服器後，需「重新啟動執行環境」才會生效，設定頁提供明確按鈕及提示，並說明不會中斷已存在的資料。不使用 OpenCode 的 experimental 動態新增與移除端點。
+- **專案可用清單用會話權限規則實作。** 伺服器對特定專案不可用時，該專案新建立的會話以權限規則拒絕該伺服器的工具，作法與 BI 查詢工具開關相同。模型看不到被拒絕的工具，以合成模型的請求紀錄驗證。
+- **憑證值只經子程序環境變數注入。** 值保存於 User-scope 環境變數（`OEP_MCP_<ID>_<NAME>`），啟動時由啟動器讀入並只交給 OpenCode 子程序，不寫入設定檔。
+- **理由：** 動態端點為 experimental 且固定版本的行為變動風險高；重啟套用行為單純，可測，也和 D06 的啟動／恢復對帳一致。
+- **捨棄的替代方案：** 動態新增與移除（風險高）；每專案各自啟動一個執行環境（資源與單一實例鎖衝突）。
