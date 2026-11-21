@@ -68,6 +68,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 ### Phase 2b　GUI 功能對照與版面
 
 - [x] 唯讀 AEP 功能盤點、owner 意見與版面規格。 [矩陣](AEP_GUI_PARITY.md) · [版面](GUI_LAYOUT.md)
+- [x] GUI 外殼第二版已提交。完成可收合功能欄、對話輸入框、按需附加區、繁中操作文字、Chromium 回歸與合成樣張。 [驗收報告](reviews/PHASE2B_SHELL_V2_REPORT.md)
+- [ ] GUI 外殼第二版完成全部驗收。這次 Web HTTP、安裝、升級遇到執行中服務的鎖定或保護，Excel 真模型驗收暫停。 [驗收結果](reviews/PHASE2B_SHELL_V2_REPORT.md#驗收結果)
 - [ ] 通用工作台與設定分批交付。知識、審核、Telegram、排程功能隨 3a、3b、4 交付。
 - [ ] Phase 5 打包前完成 2b gate，逐項留驗收或省略理由。
 
