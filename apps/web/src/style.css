@@ -48,8 +48,6 @@ body { margin: 0; }
 .sidebar select, #new-session { width: 100%; }
 #new-session { margin: 10px 0 18px; }
 small { display: block; color: var(--muted); overflow-wrap: anywhere; }
-.job { border-top: 1px solid var(--line); margin-top: 17px; padding-top: 15px; }
-.job span { color: #724b13; }
 h1, h2, p { margin: 0; }
 h1 { font-size: 1.28rem; }
 h2 { font-size: 1rem; margin-bottom: 8px; }
@@ -301,7 +299,6 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 
 #new-session { width: 32px; flex: none; }
 #session-search::placeholder, #prompt::placeholder { color: var(--muted); opacity: 1; }
-#session-sidebar .job span { color: var(--muted); }
 .message ul, .message ol { padding-inline-start: 1.5em; }
 @media (max-width: 540px) {
   .messages { padding: 12px; }

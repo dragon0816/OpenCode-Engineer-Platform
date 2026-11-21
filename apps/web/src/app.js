@@ -1,4 +1,4 @@
-import { connect, request, RequestError } from './api.js';
+import { connect, modelLabel, request, RequestError } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -356,7 +356,7 @@ function renderPanel(context) {
     addResource(artifact, url);
     artifactList.append(entry);
   }
-  if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
+  if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的檔案');
   const focused = document.activeElement;
   resources.replaceChildren(...resourceButtons);
   resources.hidden = resourceButtons.length === 0;
@@ -550,7 +550,7 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
     const table = node('table');
     const scroller = node('div', undefined, 'table-scroll');
     scroller.tabIndex = 0;
-    scroller.setAttribute('aria-label', lines ? '文字差異' : '表格內容');
+    scroller.setAttribute('aria-label', lines ? '文字變更對照' : '表格內容');
     scroller.append(table);
     const tbody = table.createTBody();
     let index = 0;
@@ -609,11 +609,11 @@ function renderDiffChoices(context) {
     earlier.set(run.artifact.name, run);
   }
   if (!pairs.length) {
-    target.append(node('p', '此會話沒有可比較的產物版本。'));
+    target.append(node('p', '此會話沒有可比較的檔案版本。'));
     return;
   }
   const choice = node('select');
-  choice.setAttribute('aria-label', '產物版本');
+  choice.setAttribute('aria-label', '檔案版本');
   for (const [index, [, run]] of pairs.entries()) {
     choice.append(new Option(`${run.artifact.name} · 版本 ${pairs.length - index + 1}`, String(index)));
   }
@@ -680,7 +680,7 @@ const topMenu = find('top-menu');
 const menuTrigger = find('top-menu-trigger');
 const panelNarrow = matchMedia('(max-width: 900px)');
 const panelTabs = new Map();
-const panelSections = { files: '檔案與產物', work: '工作', diff: '差異', notes: '筆記' };
+const panelSections = { files: '檔案與產出', work: '工作', diff: '變更對照', notes: '筆記' };
 const closeFiles = find('close-files');
 let activeTab;
 let panelOpener;
@@ -828,7 +828,7 @@ function select(id) {
     progress.textContent = '從左側新增會話後即可開始。';
     messages.replaceChildren();
     attachmentList.replaceChildren();
-    emptyList(artifactList, '尚無可下載的產物');
+    emptyList(artifactList, '尚無可下載的檔案');
     emptyList(activityList, '等待即時事件');
     uploadStatus.textContent = '';
     prompt.value = '';
@@ -845,7 +845,7 @@ function select(id) {
   find('workbook-option').hidden = session.agent !== 'workbook';
   messages.replaceChildren(node('p', '載入會話中', 'empty'));
   attachmentList.replaceChildren();
-  emptyList(artifactList, '尚無可下載的產物');
+  emptyList(artifactList, '尚無可下載的檔案');
   emptyList(activityList, '等待即時事件');
   uploadStatus.textContent = '';
   showError();
@@ -1170,7 +1170,8 @@ const modelStatus = find('model-settings-status');
 let modelSettings;
 function aliasOptions(select, selected, aliases, configuredDefault) {
   select.replaceChildren(...aliases.map(({ alias }) => {
-    const option = node('option', alias === configuredDefault ? `設定預設 · ${alias}` : alias);
+    const label = modelLabel(alias);
+    const option = node('option', alias === configuredDefault ? `設定預設 · ${label}` : label);
     option.value = alias;
     return option;
   }));
@@ -1180,14 +1181,14 @@ function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
   aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? [], modelSettings?.defaultAlias);
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
-  if (modelSettings) model.textContent = `模型 ${session?.alias ?? modelSettings.defaultAlias}`;
+  if (modelSettings) model.textContent = modelLabel(session?.alias ?? modelSettings.defaultAlias);
 }
 function applyModel(value, draft = value.defaultAlias) {
   modelSettings = value;
   aliasOptions(defaultAlias, draft, value.aliases);
   find('model-credentials').textContent = value.credentialsConfigured ? '憑證已設定' : '憑證未設定';
   find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
-    node('li', `${alias} · ${healthy ? '可用' : '無法通過檢查'}`)));
+    node('li', `${modelLabel(alias)} · ${healthy ? '可用' : '無法通過檢查'}`)));
   updateSessionAlias();
   for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
 }
@@ -1720,7 +1721,7 @@ stop.addEventListener('click', async () => {
 try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
-  model.textContent = `模型 ${bootstrap.alias}`;
+  model.textContent = modelLabel(bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
   request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
   request('/api/settings/projects').then((entries) => {
@@ -1770,7 +1771,6 @@ try {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;
   }).catch(() => { find('settings-status').textContent = '無法載入助理設定。'; });
-  if (bootstrap.job.demo && bootstrap.job.state === 'awaiting_review') find('demo-job').hidden = false;
   projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;

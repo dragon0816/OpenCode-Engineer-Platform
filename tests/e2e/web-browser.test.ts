@@ -11,6 +11,7 @@ import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
+import { assertNoForbiddenShellText } from './forbidden-shell-text.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -107,7 +108,8 @@ try {
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
       assert.equal(await page.evaluate("document.cookie.includes('oep_session')"), false);
-      assert.equal(await page.evaluate("document.querySelector('#demo-job').hidden"), false);
+      await page.ready("document.querySelector('#connection').textContent === '已連線'");
+      await assertNoForbiddenShellText(page);
       await page.command('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
       let passed = 0;
       for (const item of cases) {

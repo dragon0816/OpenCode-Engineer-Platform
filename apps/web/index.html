@@ -34,7 +34,6 @@
         <button id="clear-session-search" type="button" aria-label="清除搜尋" hidden>×</button>
       </div>
       <nav id="sessions" aria-label="專案與會話"></nav>
-      <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
       </details>
       <details class="rail-section" id="rail-assistants" open>
         <summary>助理 <span class="rail-count" id="assistant-count"></span></summary>
@@ -59,9 +58,9 @@
           <summary id="top-menu-trigger" aria-label="工作台選單">⋯</summary>
           <div class="top-menu-actions">
             <div class="panel-openers" aria-label="會話附加資料" role="group">
-              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產物</button>
+              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產出</button>
               <button type="button" id="open-work" aria-controls="chat-files">工作</button>
-              <button type="button" id="open-diff" aria-controls="chat-files">差異</button>
+              <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
               <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
             </div>
             <button id="stop" type="button" disabled>停止服務</button>
@@ -301,7 +300,7 @@
             <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
             <span id="attachment-help" hidden>支援 PNG、JPG、PDF、XLSX、HTML 和 UTF-8 文字，單檔最多 20 MiB。也可以拖放。</span>
             <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
-            <label class="composer-model">會話模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
+            <label class="composer-model">模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
             <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
             <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
           </div>
@@ -316,7 +315,7 @@
         </div>
         <div class="composer-footer">
           <small>Enter 送出，Shift + Enter 換行。</small>
-          <details id="shortcuts"><summary>快捷鍵</summary>
+          <details id="shortcuts"><summary>鍵盤快捷鍵</summary>
             <p>Enter 送出<br>Shift + Enter 換行<br>Esc 回到輸入框<br>Ctrl + Shift + S 停止處理</p>
           </details>
         </div>
@@ -338,8 +337,8 @@
         <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
           <dl id="vault-details"></dl>
           <div class="knowledge-pager">
-            <button id="knowledge-demo-load" type="button">載入合成示範庫</button>
-            <button id="knowledge-demo-remove" type="button" hidden>移除合成示範庫</button>
+            <button id="knowledge-demo-load" type="button">載入範例知識庫</button>
+            <button id="knowledge-demo-remove" type="button" hidden>移除範例知識庫</button>
             <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將合成證據送至模型</label>
             <span id="knowledge-demo-status" role="status"></span>
           </div>
@@ -351,7 +350,7 @@
               <label>類型 <select name="type"><option value="">全部</option></select></label>
               <label>分類 <select name="category"><option value="">全部</option></select></label>
               <label>領域／資料夾 <select name="domain"><option value="">全部</option></select></label>
-              <label>資料 <select name="sample"><option value="">全部</option><option value="sample">示範資料</option><option value="regular">一般資料</option></select></label>
+              <label>資料 <select name="sample"><option value="">全部</option><option value="sample">範例資料</option><option value="regular">一般資料</option></select></label>
               <button type="submit">篩選</button>
             </form>
             <div id="knowledge-cards" tabindex="0" role="region" aria-label="卡片預覽"></div>
@@ -391,7 +390,7 @@
               <button type="button" id="quality-run" disabled>執行題集</button>
               <button type="button" id="quality-stop" disabled>取消執行</button>
             </div>
-            <p id="quality-builtin-note" hidden>這組 48 道標準題可在授權模型使用的合成示範庫執行。</p>
+            <p id="quality-builtin-note" hidden>這組 48 道標準題可在允許模型使用的範例知識庫執行。</p>
             <div id="quality-set-actions">
               <form id="quality-add-set">
                 <label>新題集名稱 <input name="name" type="text" maxlength="80" required></label>
@@ -471,8 +470,8 @@
         <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
       </section>
       <section aria-labelledby="artifacts-title">
-        <h2 id="artifacts-title">產物</h2>
-        <ul id="artifacts"><li>尚無可下載的產物</li></ul>
+        <h2 id="artifacts-title">產出</h2>
+        <ul id="artifacts"><li>尚無可下載的檔案</li></ul>
       </section>
         </div>
       </div>
@@ -486,7 +485,7 @@
         <p id="panel-jobs"></p>
         <button id="panel-jobs-link" type="button">開啟工作與排程</button>
       <details open>
-        <summary id="activity-title">即時進度</summary>
+        <summary id="activity-title">進行狀況</summary>
         <ul id="activity" aria-live="polite"></ul>
       </details>
       </div>
