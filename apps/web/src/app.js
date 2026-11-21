@@ -110,20 +110,78 @@ function bindRowMenu(menu, trigger, actions) {
   });
 }
 
+const jump = find('jump-latest');
+const atBottom = () => messages.scrollHeight - messages.clientHeight - messages.scrollTop <= 24;
+messages.addEventListener('scroll', () => { jump.hidden = atBottom(); });
+jump.addEventListener('click', () => { messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
+
+function appendMarkdown(target, text) {
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
+  const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((value) => value.trim());
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i++];
+    if (line.startsWith('```')) {
+      const block = [];
+      while (i < lines.length && !lines[i].startsWith('```')) block.push(lines[i++]);
+      if (i < lines.length) i++;
+      const value = block.join('\n');
+      const section = node('div', '', 'code-block');
+      const copy = sessionButton('複製程式碼', async () => {
+        try { await navigator.clipboard.writeText(value); copy.textContent = '已複製'; }
+        catch { copy.textContent = '無法複製'; }
+      });
+      const pre = node('pre');
+      pre.append(node('code', value));
+      section.append(copy, pre);
+      target.append(section);
+    } else if (/^#{1,6} /.test(line)) {
+      const count = line.indexOf(' ');
+      target.append(node(`h${Math.min(count + 1, 6)}`, line.slice(count + 1)));
+    } else if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
+      const pattern = /^\s*\d+\. /.test(line) ? /^\s*\d+\. / : /^\s*[-*+] /;
+      const list = node(pattern.source.includes('\\d') ? 'ol' : 'ul');
+      list.append(node('li', line.replace(pattern, '')));
+      while (i < lines.length && pattern.test(lines[i])) list.append(node('li', lines[i++].replace(pattern, '')));
+      target.append(list);
+    } else if (line.includes('|') && i < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i]) && cells(lines[i]).every((value) => /^:?-{3,}:?$/.test(value))) {
+      i++;
+      const wrapper = node('div', '', 'message-table');
+      const table = node('table');
+      const head = table.createTHead().insertRow();
+      head.append(...cells(line).map((value) => node('th', value)));
+      const body = table.createTBody();
+      while (i < lines.length && lines[i].includes('|')) {
+        body.insertRow().append(...cells(lines[i++]).map((value) => node('td', value)));
+      }
+      wrapper.append(table);
+      target.append(wrapper);
+    } else if (line.trim()) {
+      target.append(node('p', line));
+    }
+  }
+}
+
 function render(context) {
   const { state, selected, id } = context;
   if (state.messages) {
-    const previous = messages.lastElementChild?.dataset.id;
+    const follow = !context.renderedMessages || atBottom();
+    const offset = messages.scrollTop;
     const fragment = document.createDocumentFragment();
     for (const item of state.messages) {
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
-      entry.append(node('strong', item.role === 'user' ? '你' : labels[state.session.agent]), node('p', item.text));
+      const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
+      if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
+      entry.append(role);
+      if (item.role === 'assistant') appendMarkdown(entry, item.text);
+      else entry.append(node('p', item.text));
       fragment.append(entry);
     }
     messages.replaceChildren(fragment);
     if (!state.messages.length) messages.append(node('p', '上傳附件或直接輸入訊息。', 'empty'));
-    else if (previous !== state.messages.at(-1)?.id) messages.scrollTop = messages.scrollHeight;
+    messages.scrollTop = follow ? messages.scrollHeight : offset;
+    jump.hidden = atBottom();
+    context.renderedMessages = true;
   }
   const latest = state.runs.at(-1);
   if (context.pendingID && state.runs.some((run) => run.id === context.pendingID)) context.pendingID = undefined;
@@ -186,6 +244,7 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  jump.hidden = true;
   if (!session) {
     sessionTitle.textContent = '對話';
     progress.textContent = '從左側新增會話後即可開始。';
@@ -481,6 +540,17 @@ drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
 drop.addEventListener('drop', (event) => {
   drop.classList.remove('dragging');
   void upload([...event.dataTransfer.files]);
+});
+prompt.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (!send.disabled) find('composer').requestSubmit(send);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !event.defaultPrevented && !find('chat-view').hidden && !prompt.disabled) {
+    find('shortcuts').open = false;
+    prompt.focus();
+  }
 });
 find('composer').addEventListener('submit', async (event) => {
   event.preventDefault();

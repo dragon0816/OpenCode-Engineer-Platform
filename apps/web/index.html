@@ -82,11 +82,15 @@
       <div id="messages" class="messages" aria-label="訊息">
         <p class="empty">上傳截圖、文件或工作簿，並輸入想要分析的問題。</p>
       </div>
+      <button id="jump-latest" type="button" hidden>跳到最新訊息</button>
       <form id="composer">
         <label for="prompt">訊息</label>
         <textarea id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
         <div class="compose-actions">
           <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+          <details id="shortcuts"><summary>快捷鍵</summary>
+            <p>Enter 送出<br>Shift + Enter 換行<br>Esc 回到輸入框</p>
+          </details>
           <button id="send" type="submit" disabled>送出</button>
         </div>
       </form>

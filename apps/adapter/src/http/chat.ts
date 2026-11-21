@@ -85,7 +85,7 @@ export class ChatService {
     let runs = this.store.turns(session.id);
     const latest = runs.at(-1);
     let stateError: string | undefined;
-    let messages: { id: string; role: 'user' | 'assistant'; text: string }[] | undefined;
+    let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number }[] | undefined;
     try {
       const pending = latest && (active.has(latest.state) || latest.state === 'indeterminate');
       const [{ data }, inbox, permissions, status] = await Promise.all([
@@ -99,11 +99,11 @@ export class ChatService {
         if (message.type === 'user') {
           const runID = runByMessage.get(message.id);
           const text = runID ? message.text.split(separator(runID))[0] : message.text;
-          return [{ id: message.id, role: 'user', text: this.runtime.redact(text) }];
+          return [{ id: message.id, role: 'user', text: this.runtime.redact(text), createdAt: message.time?.created }];
         }
         if (message.type !== 'assistant') return [];
         const text = message.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('');
-        return text.trim() ? [{ id: message.id, role: 'assistant', text: this.runtime.redact(text) }] : [];
+        return text.trim() ? [{ id: message.id, role: 'assistant', text: this.runtime.redact(text), createdAt: message.time?.created }] : [];
       });
       if (latest?.state === 'indeterminate' && !status?.[sessionID] && !inbox.length && !permissions.length &&
           !this.recovering.has(latest.id)) {

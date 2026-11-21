@@ -6,7 +6,7 @@ import type { Endpoint } from '../opencode/client.ts';
 const activity = new Map([
   ['session.execution.started', 'working'], ['session.execution.succeeded', 'refresh'],
   ['session.execution.failed', 'refresh'], ['session.execution.interrupted', 'refresh'],
-  ['session.step.first-token', 'responding'], ['session.text.ended', 'refresh'],
+  ['session.step.first-token', 'responding'], ['session.text.delta', 'refresh'], ['session.text.ended', 'refresh'],
   ['session.tool.input.started', 'tool-started'], ['session.tool.called', 'tool-running'],
   ['session.tool.success', 'tool-completed'], ['session.tool.failed', 'tool-failed'],
   ['session.retry.scheduled', 'recovering'], ['permission.asked', 'permission'],

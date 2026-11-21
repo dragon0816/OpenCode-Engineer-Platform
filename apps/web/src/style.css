@@ -240,3 +240,14 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .session-list details[open] button + button { top: 66px; }
 .navigation :is(button, input, summary, select):focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 @media (max-width: 540px) { #session-sidebar:not([hidden]) { min-height: 0; } }
+
+.message { width: fit-content; max-width: min(100%, 72ch); }
+.message.user { margin-inline-start: auto; }
+.message strong { display: inline-block; margin-bottom: 4px; }
+.message :is(h2, h3, h4, h5, h6, ul, ol, p) { margin-block: 4px 9px; }
+.message :is(pre, .message-table) { overflow: auto; margin: 6px 0; }
+.message pre { padding: 10px; background: var(--surface); border-radius: 6px; }
+.message table { border-collapse: collapse; }
+.message :is(th, td) { padding: 5px 9px; border: 1px solid var(--line); }
+#jump-latest { align-self: center; margin-block: 4px; }
+#shortcuts { margin-inline-end: auto; font-size: .875rem; }
