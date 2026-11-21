@@ -89,6 +89,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 3a-R1　段落去重並保留多卡出處，降低 frontmatter 單行權重，加入數字、型號及中文詞法加權與雙語合成回歸。 [驗證](reviews/PHASE3A_RETRIEVAL_REPORT.md)
 - [x] 3a-R2　Gateway 回傳不可重試的 4xx 時，Ask 回傳 `gateway-rejected`，Web 顯示繁中說明。 [驗證](reviews/PHASE3A_RETRIEVAL_REPORT.md)
+- [ ] 3b-R6　模型提議擷取只驗證引述存在於原文，不驗證提議的欄位值是否由該引述支持。審核畫面應並排顯示欄位值與引述，並評估要求值出現在引述內或標示差異。上傳來源的保留與清理政策待定。 [Technical Lead 審查 2026-11-21]
 
 ### Phase 4　Telegram 和三種 BI 觸發
 
