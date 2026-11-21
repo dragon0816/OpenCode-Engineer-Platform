@@ -1,4 +1,4 @@
-import { request } from './api.js';
+import { RequestError, request } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const label = (tag, value) => {
@@ -27,9 +27,16 @@ export function bindKnowledge() {
   const details = find('vault-details');
   const status = find('knowledge-status');
   const answer = find('knowledge-answer');
+  const repositoryStatus = find('knowledge-repository-status');
+  const repositoryForm = find('knowledge-repository-form');
+  const folder = find('knowledge-folder');
+  const consent = find('knowledge-model-consent');
+  const checkFolder = find('knowledge-check-folder');
+  const importFolder = find('knowledge-import-folder');
   let models = new Map();
   let loading;
   let pending;
+  let importing;
 
   function controls() {
     const selected = models.get(vault.value);
@@ -48,7 +55,8 @@ export function bindKnowledge() {
       return;
     }
     for (const [term, value] of [
-      ['識別碼', selected.id], ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ['識別碼', selected.id], ...(selected.tag ? [['發布標籤', selected.tag]] : []),
+      ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
@@ -74,11 +82,8 @@ export function bindKnowledge() {
     }
   }
 
-  chat.addEventListener('click', () => showKnowledge(false));
-  open.addEventListener('click', async () => {
-    if (!find('knowledge-view').hidden) return;
-    showKnowledge(true);
-    const previous = vault.value;
+  async function refreshVaults(previous = vault.value) {
+    loading?.abort();
     const active = loading = new AbortController();
     models.clear();
     vault.replaceChildren(new Option('載入中', ''));
@@ -99,6 +104,46 @@ export function bindKnowledge() {
       if (!active.signal.aborted) status.textContent = '無法讀取已發布的知識庫。';
     } finally {
       if (loading === active) { loading = undefined; controls(); }
+    }
+  }
+  chat.addEventListener('click', () => showKnowledge(false));
+  open.addEventListener('click', () => {
+    if (!find('knowledge-view').hidden) return;
+    showKnowledge(true);
+    void refreshVaults();
+  });
+  repositoryForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const path = folder.value.trim();
+    if (!path || importing) return;
+    importing = true;
+    for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = true;
+    const write = event.submitter === importFolder;
+    repositoryStatus.textContent = write ? '正在驗證及匯入發布版本。' : '正在檢查資料夾。';
+    try {
+      if (write) {
+        const report = await request('/api/knowledge/import', { data: { folder: path, allowModel: consent.checked } });
+        repositoryStatus.textContent = [
+          `發布標籤 ${report.tag} · 版本 ${report.revision}`,
+          report.active ? (report.state === 'existing' ? '已匯入，索引可用。' : '匯入完成，索引已就緒。') :
+            '已保留此版本，目前仍使用較新的發布紀錄。',
+          `${report.cards} 張卡片、${report.sources} 個來源、${report.passages} 段證據、${report.relationships} 條關係`,
+        ].join('\n');
+        if (!find('knowledge-view').hidden) await refreshVaults(report.vault);
+      } else {
+        const { publication, repository, errors } = await request('/api/knowledge/inspect', { data: { folder: path } });
+        const states = { resolved: '已解析發布標籤與快照。', 'no published version': '找不到發布紀錄。',
+          unresolved: '無法解析發布紀錄。', 'artifact unavailable': '已解析發布標籤，快照尚不可用。' };
+        repositoryStatus.textContent = [states[publication.state],
+          repository.type === 'wiki' ? 'Wiki 資料夾目前僅支援檢查。' : '',
+          ...errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`),
+        ].filter(Boolean).join('\n');
+      }
+    } catch (error) {
+      repositoryStatus.textContent = error instanceof RequestError ? error.message : '無法處理此資料夾。';
+    } finally {
+      importing = false;
+      for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = false;
     }
   });
   vault.addEventListener('change', describe);

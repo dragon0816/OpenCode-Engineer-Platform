@@ -7,6 +7,8 @@ import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
+import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
+import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
@@ -104,6 +106,26 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {
       send(response, 200, { vaults: runtime.knowledge.overview() });
+      return;
+    }
+    if (runtime.knowledge && (path === '/api/knowledge/inspect' || path === '/api/knowledge/import') && method === 'POST') {
+      const input = await body(request);
+      const { folder, allowModel } = input;
+      const importing = path === '/api/knowledge/import';
+      if (Object.keys(input).some((key) => key !== 'folder' && (!importing || key !== 'allowModel')) ||
+          typeof folder !== 'string' || folder.length > 2048 || !isLocalAbsoluteFolder(folder) ||
+          (allowModel !== undefined && typeof allowModel !== 'boolean')) {
+        throw new HttpError(400, '請輸入本機資料夾的完整路徑。');
+      }
+      try {
+        send(response, 200, importing ? runtime.knowledge.importRepository(folder, allowModel === true) :
+          runtime.knowledge.inspectRepository(folder));
+      } catch (error) {
+        const report = repositoryErrorReport(error, importing);
+        send(response, 422, { error: error instanceof RepositoryError
+          ? [report.path, report.message].filter(Boolean).join(' · ')
+          : '無法驗證或儲存此發布版本。' });
+      }
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/ask' && method === 'POST') {

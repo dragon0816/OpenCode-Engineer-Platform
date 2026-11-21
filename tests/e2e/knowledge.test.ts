@@ -4,13 +4,11 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
-import { knowledgeFile } from '../../apps/launcher/src/knowledge.ts';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
-import { canonical } from '../../packages/knowledge/src/snapshot.ts';
-import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
+import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -22,6 +20,9 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   const profile = join(root, 'profile');
   mkdirSync(profile);
   const { snapshot } = goldFixture();
+  const repository = join(root, 'repository');
+  const fixture = syntheticRepository(repository, { snapshot });
+  const citationId = fixture.evidenceIds.get('calibration')!;
   const vault = snapshot.vault.id;
   const question = 'SYN-48B 零點校正容差是多少？';
   const toolName = 'oep_knowledge_ask';
@@ -31,11 +32,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     if (!stream) {
       const user = JSON.parse(String(messages.find((message) => message.role === 'user')?.content));
-      assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), ['calibration']);
+      assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), [citationId]);
       const quote = user.question === question ? '±0.8 dB' : '±4 kHz';
       knowledgeCalls++;
       return Response.json({ choices: [{ message: { content:
-        JSON.stringify({ state: 'answer', citations: [{ passageID: 'calibration', quote }] }) }, finish_reason: 'stop' }] });
+        JSON.stringify({ state: 'answer', citations: [{ passageID: citationId, quote }] }) }, finish_reason: 'stop' }] });
     }
     const output = messages.find((message) => message.role === 'tool');
     if (output) {
@@ -46,7 +47,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.doesNotMatch(result, /±4 kHz/);
       } else {
         assert.match(result, /verified/);
-        assert.match(result, /calibration/);
+        assert.ok(result.includes(citationId));
         assert.match(result, /±0.8 dB/);
       }
       toolResults++;
@@ -67,6 +68,16 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const api = await webAPI(web.pairURL());
       const anonymous = await fetch(api.origin + '/api/knowledge/vaults');
       assert.equal(anonymous.status, 401);
+      assert.equal((await fetch(api.origin + '/api/knowledge/import', {
+        method: 'POST', headers: { origin: api.origin },
+      })).status, 401);
+      assert.equal((await api.post('/api/knowledge/inspect', { folder: 'relative-path' })).status, 400);
+      assert.equal((await api.post('/api/knowledge/import', { folder: root })).status, 422);
+      const inspection = await api.post('/api/knowledge/inspect', { folder: repository });
+      assert.equal(inspection.status, 200);
+      const structure = await inspection.text();
+      assert.match(structure, /resolved-tag/);
+      assert.doesNotMatch(structure, /tag-a|±0\.8 dB|合成量測手冊/);
       assert.equal((await api.post('/api/knowledge/ask', { vault, question, revision: 'draft' })).status, 400);
       assert.equal(runtime.gatewayCursor(), 0);
       const browser = await chromium(join(root, 'chromium'));
@@ -78,21 +89,28 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-ask').disabled"), true);
         context.diagnostic('Knowledge page displayed the empty published store');
         await browser.evaluate("document.querySelector('#open-chat').click()");
-        const store = new KnowledgeStore(join(root, knowledgeFile));
-        try { store.import(snapshot, Buffer.from(canonical(snapshot)), true); }
-        finally { store.close(); }
-        const live = await api.get('/api/knowledge/vaults');
-        assert.equal(live.status, 200);
-        assert.equal((await live.json()).vaults[0]?.id, vault);
         await browser.evaluate("document.querySelector('#open-knowledge').focus()");
         await browser.command('Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r',
         });
         await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-view').hidden"), false);
-        await browser.ready("!document.querySelector('#knowledge-ask')?.disabled");
         assert.equal(await browser.evaluate("document.activeElement.id"), 'knowledge-title');
-        assert.match(await browser.evaluate<string>("document.querySelector('#vault-details').textContent"), /gold.v2/);
+        await browser.evaluate(`
+          document.querySelector('#knowledge-repository').open = true;
+          document.querySelector('#knowledge-folder').value = ${JSON.stringify(repository)};
+          document.querySelector('#knowledge-check-folder').click();
+        `);
+        await browser.ready("document.querySelector('#knowledge-repository-status').textContent.includes('已解析發布標籤')");
+        await browser.evaluate(`
+          document.querySelector('#knowledge-model-consent').checked = true;
+          document.querySelector('#knowledge-import-folder').click();
+        `);
+        await browser.ready("!document.querySelector('#knowledge-ask')?.disabled");
+        assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-repository-status').textContent"), /tag-a/);
+        assert.match(await browser.evaluate<string>("document.querySelector('#vault-details').textContent"), /tag-a@/);
+        assert.equal((await (await api.get('/api/knowledge/vaults')).json()).vaults[0]?.id, vault);
+        context.diagnostic('Chromium checked and imported the repository, and the authenticated API exposed its active generation');
         await browser.evaluate(`
           document.querySelector('#knowledge-question').value = ${JSON.stringify(question)};
           document.querySelector('#knowledge-ask').click();
