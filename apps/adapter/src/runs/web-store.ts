@@ -28,6 +28,18 @@ export class WebStore extends Ledger {
       name TEXT NOT NULL,
       introduction TEXT NOT NULL,
       instructions TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_settings_audit (
+      id INTEGER PRIMARY KEY,
+      section TEXT NOT NULL,
+      changed_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_appearance (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      theme TEXT NOT NULL,
+      density TEXT NOT NULL,
+      avatar BLOB,
+      mime TEXT
     ) STRICT`);
   }
 
@@ -37,9 +49,33 @@ export class WebStore extends Ledger {
   }
 
   savePreferences(name: string, introduction: string, instructions: string) {
-    this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
-      .run(name, introduction, instructions);
+    this.transaction(() => {
+      this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
+        .run(name, introduction, instructions);
+      this.auditSettings('assistant');
+    });
+  }
+
+  private auditSettings(section: string) {
+    this.db.prepare('INSERT INTO web_settings_audit (section, changed_at) VALUES (?, ?)').run(section, Date.now());
+  }
+
+  appearance() {
+    return this.db.prepare('SELECT theme, density, avatar, mime FROM web_appearance WHERE id = 1').get() as
+      { theme: string; density: string; avatar: Uint8Array | null; mime: string | null } | undefined;
+  }
+
+  saveAppearance(theme: string, density: string, image?: { bytes: Buffer; mime: string } | null) {
+    this.transaction(() => {
+      this.db.prepare(`INSERT INTO web_appearance (id, theme, density) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET theme = excluded.theme, density = excluded.density`).run(theme, density);
+      if (image !== undefined) {
+        this.db.prepare('UPDATE web_appearance SET avatar = ?, mime = ? WHERE id = 1')
+          .run(image?.bytes ?? null, image?.mime ?? null);
+      }
+      this.auditSettings('appearance');
+    });
   }
 
   renameSession(id: string, title: string) {

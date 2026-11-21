@@ -197,11 +197,15 @@ try {
         assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), 1);
         await page.evaluate("document.querySelector('#clear-session-search').click()");
         assert.equal(await page.evaluate("document.querySelectorAll('#sessions [data-session]').length"), cases.length);
+        await page.ready("!document.querySelector('#save-appearance').disabled");
         await page.evaluate(`
           const theme = document.querySelector('#theme');
           theme.value = 'dark';
           theme.dispatchEvent(new Event('change'));
+          document.querySelector('#density').value = 'compact';
+          document.querySelector('#appearance-settings').requestSubmit();
         `);
+        await page.ready("document.querySelector('#appearance-status').textContent === '已儲存'");
         await page.ready("!document.querySelector('#save-assistant').disabled");
         await page.evaluate(`
           document.querySelector('#assistant-name').value = '合成助理';
@@ -210,12 +214,14 @@ try {
           document.querySelector('#assistant-settings').requestSubmit();
         `);
         await page.ready("document.querySelector('#settings-status').textContent === '已儲存'");
+        await page.evaluate("document.documentElement.dataset.beforeSettingsReload = 'true'");
         await page.command('Page.reload');
-        await page.ready("document.querySelector('#assistant-name').value === '合成助理'");
+        await page.ready(`!document.documentElement.dataset.beforeSettingsReload &&
+          document.querySelector('#assistant-name')?.value === '合成助理'`);
         assert.equal(await page.evaluate("document.querySelector('#assistant-introduction').value"), '測試簡介');
         assert.equal(await page.evaluate("document.querySelector('#assistant-instructions').value"), '使用繁體中文');
         await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session === ${JSON.stringify(selected)} &&
-          document.documentElement.dataset.theme === 'dark' &&
+          document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.density === 'compact' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
         await page.evaluate(`
           window.confirm = () => false;

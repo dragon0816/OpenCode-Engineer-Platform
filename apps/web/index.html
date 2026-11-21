@@ -21,6 +21,7 @@
         <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg>知識庫</button>
         <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>工作與排程</button>
       </nav>
+      <div class="sidebar-assistant"><span class="assistant-avatar" aria-hidden="true">O</span><span id="sidebar-assistant-name">助理</span></div>
       <label for="agent">新會話的助理</label>
       <select id="agent" disabled>
         <option value="inspector">資料分析</option>
@@ -60,7 +61,7 @@
               <textarea id="assistant-introduction" maxlength="500"></textarea>
               <label for="assistant-instructions">助理指示</label>
               <textarea id="assistant-instructions" maxlength="4000"></textarea>
-              <p>儲存後，指示會用在接下來送出的回合。</p>
+              <p>新會話會完整套用儲存的指示。先前會話的歷史可能仍包含舊指示。</p>
               <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
               <p id="settings-status" role="status"></p>
             </form>
@@ -69,12 +70,24 @@
           </section>
           <section id="settings-appearance" hidden>
             <h2>外觀</h2>
+            <form id="appearance-settings">
               <label for="theme">外觀主題</label>
               <select id="theme">
                 <option value="system">跟隨系統</option>
                 <option value="light">淺色</option>
                 <option value="dark">深色</option>
               </select>
+              <label for="density">顯示密度</label>
+              <select id="density"><option value="comfortable">寬鬆</option><option value="compact">緊湊</option></select>
+              <label for="avatar-file">助理頭像</label>
+              <input id="avatar-file" type="file" accept="image/png,image/jpeg" aria-describedby="avatar-help">
+              <small id="avatar-help">PNG 或 JPEG，最多 90 KiB，寬高各不超過 1024 像素。</small>
+              <div class="settings-actions">
+                <button id="avatar-reset" type="button">還原預設頭像</button>
+                <button id="save-appearance" type="submit" disabled>儲存外觀</button>
+              </div>
+              <p id="appearance-status" role="status"></p>
+            </form>
           </section>
           <section id="settings-runtime" hidden>
             <h2>執行環境</h2>

@@ -9,6 +9,7 @@ import type { Runtime } from '../../launcher/src/runtime.ts';
 import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
+import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
@@ -116,15 +117,43 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (path === '/api/settings') {
       if (method === 'POST') {
-        const { name, introduction, instructions } = await body(request);
-        if (typeof name !== 'string' || name.length > 80 ||
+        const input = await body(request);
+        const { name, introduction, instructions } = input;
+        if (Object.keys(input).length !== 3 || typeof name !== 'string' || name.length > 80 ||
             typeof introduction !== 'string' || introduction.length > 500 ||
             typeof instructions !== 'string' || instructions.length > 4000) {
           throw new HttpError(400, '請檢查助理名稱、自我介紹及指示的長度。');
         }
+        if ([name, introduction, instructions].some((field) => runtime.redact(field) !== field)) {
+          throw new HttpError(400, '助理設定含有服務憑證或連線資訊。');
+        }
         store.savePreferences(name.trim(), introduction.trim(), instructions.trim());
       }
-      send(response, 200, store.preferences() ?? { name: '', introduction: '', instructions: '' });
+      const { name, introduction, instructions } = store.preferences() ?? { name: '', introduction: '', instructions: '' };
+      send(response, 200, { name: runtime.redact(name), introduction: runtime.redact(introduction),
+        instructions: runtime.redact(instructions) });
+      return;
+    }
+    if (path === '/api/settings/appearance') {
+      if (method === 'POST') {
+        const input = await body(request);
+        const { theme, density, avatar } = input;
+        if ((theme !== 'system' && theme !== 'light' && theme !== 'dark') ||
+            (density !== 'comfortable' && density !== 'compact') ||
+            Object.keys(input).some((key) => !['theme', 'density', 'avatar'].includes(key))) {
+          throw new HttpError(400, '請選擇有效的主題及顯示密度。');
+        }
+        store.saveAppearance(theme, density, parseAvatar(avatar));
+      }
+      const appearance = store.appearance();
+      send(response, 200, { theme: appearance?.theme ?? null, density: appearance?.density ?? 'comfortable',
+        hasAvatar: Boolean(appearance?.avatar) });
+      return;
+    }
+    if (path === '/api/settings/avatar' && method === 'GET') {
+      const appearance = store.appearance();
+      if (!appearance?.avatar || !appearance.mime) throw new HttpError(404, '目前使用預設頭像。');
+      response.writeHead(200, { 'Content-Type': appearance.mime }).end(appearance.avatar);
       return;
     }
     if (path === '/api/jobs') {

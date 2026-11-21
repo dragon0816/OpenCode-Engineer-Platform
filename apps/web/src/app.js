@@ -237,6 +237,7 @@ function render(context) {
       appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
+      if (item.role === 'assistant') entry.append(avatar());
       const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
       if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
       entry.append(role);
@@ -833,32 +834,130 @@ async function upload(files) {
 }
 
 const preferenceFields = ['name', 'introduction', 'instructions'];
+let savedAssistant;
+let settingsSaving = false;
+function assistantValues() {
+  return Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
+}
 function applyPreferences(preferences) {
   for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
+  savedAssistant = JSON.stringify(assistantValues());
+  find('sidebar-assistant-name').textContent = preferences.name || '助理';
 }
 find('assistant-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = find('save-assistant');
   if (button.disabled) return;
-  button.disabled = true;
+  const data = assistantValues();
+  const controls = [...event.currentTarget.elements];
+  controls.forEach((control) => { control.disabled = true; });
+  settingsSaving = true;
+  find('settings-status').textContent = '正在儲存…';
   try {
-    const data = Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
     applyPreferences(await request('/api/settings', { data }));
     find('settings-status').textContent = '已儲存';
   } catch {
     find('settings-status').textContent = '無法儲存助理設定，請再試一次。';
-  } finally { button.disabled = stopped; }
+  } finally {
+    settingsSaving = false;
+    controls.forEach((control) => { control.disabled = stopped; });
+  }
 });
 
 const theme = find('theme');
-const savedTheme = localStorage.getItem('oep.theme');
-if (['system', 'light', 'dark'].includes(savedTheme)) theme.value = savedTheme;
-function applyTheme() {
-  document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem('oep.theme', theme.value);
+const density = find('density');
+const avatarFile = find('avatar-file');
+const appearanceStatus = find('appearance-status');
+const appearanceSave = find('save-appearance');
+const legacyTheme = localStorage.getItem('oep.theme');
+let savedAppearance;
+let avatarReset = false;
+let showingAvatar = false;
+function avatar() {
+  const element = node('span', 'O', 'assistant-avatar');
+  element.setAttribute('aria-hidden', 'true');
+  paintAvatar(element);
+  return element;
 }
-theme.addEventListener('change', applyTheme);
-applyTheme();
+function paintAvatar(element) {
+  if (!showingAvatar) { element.textContent = 'O'; return; }
+  const image = document.createElement('img');
+  image.alt = '';
+  image.src = '/api/settings/avatar';
+  element.replaceChildren(image);
+}
+function previewAppearance() {
+  document.documentElement.dataset.theme = theme.value;
+  document.documentElement.dataset.density = density.value;
+}
+function applyAppearance(value) {
+  savedAppearance = { ...value, theme: value.theme ?? theme.value };
+  theme.value = savedAppearance.theme;
+  density.value = value.density;
+  avatarFile.value = '';
+  avatarReset = false;
+  showingAvatar = value.hasAvatar;
+  document.querySelectorAll('.assistant-avatar').forEach(paintAvatar);
+  previewAppearance();
+}
+if (['system', 'light', 'dark'].includes(legacyTheme)) theme.value = legacyTheme;
+for (const input of [theme, density]) input.addEventListener('change', previewAppearance);
+previewAppearance();
+find('avatar-reset').addEventListener('click', () => {
+  avatarReset = true;
+  avatarFile.value = '';
+  appearanceStatus.textContent = '儲存後會還原預設頭像。';
+});
+avatarFile.addEventListener('change', () => { avatarReset = false; });
+async function encodeAvatar(file) {
+  if (file.size > 90 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let value = '';
+  for (const byte of bytes) value += String.fromCharCode(byte);
+  return btoa(value);
+}
+find('appearance-settings').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (appearanceSave.disabled) return;
+  const fields = [theme, density, avatarFile, find('avatar-reset'), appearanceSave];
+  fields.forEach((field) => { field.disabled = true; });
+  settingsSaving = true;
+  appearanceStatus.textContent = '正在儲存…';
+  try {
+    const data = { theme: theme.value, density: density.value };
+    if (avatarFile.files.length) data.avatar = await encodeAvatar(avatarFile.files[0]);
+    else if (avatarReset) data.avatar = null;
+    applyAppearance(await request('/api/settings/appearance', { data }));
+    localStorage.removeItem('oep.theme');
+    appearanceStatus.textContent = '已儲存';
+  } catch {
+    appearanceStatus.textContent = '無法儲存外觀。請確認圖片格式、檔案大小及寬高。';
+  } finally {
+    settingsSaving = false;
+    fields.forEach((field) => { field.disabled = stopped; });
+  }
+});
+function appearanceDirty() {
+  return savedAppearance && (theme.value !== savedAppearance.theme || density.value !== savedAppearance.density ||
+    avatarReset || avatarFile.files.length > 0);
+}
+function assistantDirty() {
+  return savedAssistant !== undefined && savedAssistant !== JSON.stringify(assistantValues());
+}
+function discardSettings() {
+  if (settingsSaving) return false;
+  if (!assistantDirty() && !appearanceDirty()) return true;
+  if (!window.confirm('設定尚未儲存。要捨棄變更嗎？')) return false;
+  if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
+  if (appearanceDirty()) applyAppearance(savedAppearance);
+  find('settings-status').textContent = appearanceStatus.textContent = '';
+  return true;
+}
+window.addEventListener('beforeunload', (event) => {
+  if (!assistantDirty() && !appearanceDirty()) return;
+  event.preventDefault();
+  event.returnValue = true;
+});
 
 const settingsView = find('settings-view');
 const settingsEntry = find('open-settings');
@@ -881,6 +980,10 @@ find('close-settings').addEventListener('click', () => {
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   find(id).addEventListener('click', (event) => {
     if (settingsView.hidden) return;
+    if (!discardSettings()) {
+      event.stopImmediatePropagation();
+      return;
+    }
     settingsView.hidden = true;
     settingsEntry.removeAttribute('aria-current');
     if (id === 'open-chat') {
@@ -891,7 +994,7 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
 }
 for (const button of settingsSections) {
   button.addEventListener('click', () => {
-    if (button.hasAttribute('aria-current')) return;
+    if (button.hasAttribute('aria-current') || !discardSettings()) return;
     for (const section of settingsSections) {
       if (section === button) section.setAttribute('aria-current', 'page');
       else section.removeAttribute('aria-current');
@@ -1108,6 +1211,10 @@ try {
   connection.textContent = '已連線';
   model.textContent = `模型 ${bootstrap.alias}`;
   find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
+  request('/api/settings/appearance').then((appearance) => {
+    applyAppearance(appearance);
+    appearanceSave.disabled = stopped;
+  }).catch(() => { appearanceStatus.textContent = '無法載入外觀設定。'; });
   request('/api/settings').then((preferences) => {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;
