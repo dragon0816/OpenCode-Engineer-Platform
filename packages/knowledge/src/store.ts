@@ -4,7 +4,7 @@ import type { Candidate } from './ingest.ts';
 import { ingestMigration, jobsMigration } from './ingest-migrations.ts';
 import { DatabaseSync } from 'node:sqlite';
 import type { Passage } from '../../contracts/src/evidence.ts';
-import { indexedTerms, matchQuery } from './retrieval.ts';
+import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './retrieval.ts';
 import { canonical, compareRepositoryPublications, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
 
@@ -37,7 +37,12 @@ type Publication = {
   schema_id: string; schema_version: string; manifest_hash: string; input_hash: string; allow_model: number;
   index_hash: string | null;
 };
-export type Evidence = Passage & { sourceId: string; sourceVersion: string; sourceSha256?: string; cardId?: string };
+type Provenance = Omit<Passage, 'text'> & { sourceId: string; sourceVersion: string; sourceSha256?: string; cardId?: string };
+export type Evidence = Provenance & { text: string; provenance: readonly Provenance[] };
+
+// UTF-8 byte ceiling for passage text, a conservative bound for byte-based model tokenizers.
+const evidenceByteLimit = 20_000;
+const evidenceCountLimit = 5;
 
 export function manifest(snapshot: Snapshot, inputHash: string) {
   return {
@@ -400,20 +405,45 @@ export class KnowledgeStore {
     if (query) {
       const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
       const byId = new Map(snapshot.passages.map((passage) => [passage.id, passage]));
-      const selected = this.db.prepare(`
-        SELECT p.passage, p.source, p.locator, p.hash
+      const groups = new Map<string, Provenance[]>();
+      for (const original of snapshot.passages) {
+        const source = sources.get(original.sourceId)!;
+        const key = normalizedPassage(original.text);
+        const group = groups.get(key) ?? [];
+        group.push({ id: original.id, source: source.ref, locator: original.locator, sha256: original.sha256,
+          sourceId: source.id, sourceVersion: source.version,
+          ...(source.sha256 && { sourceSha256: source.sha256 }), ...(original.cardId && { cardId: original.cardId }) });
+        groups.set(key, group);
+      }
+      const matches = this.db.prepare(`
+        SELECT p.passage, p.source, p.locator, p.hash, bm25(passage_index, 12, 8, 3, 1) AS score
         FROM passage_index JOIN passages p ON p.id=passage_index.rowid
         WHERE passage_index MATCH ? AND passage_index.publication=? AND p.publication=?
-        ORDER BY bm25(passage_index, 12, 8, 3, 1), p.passage LIMIT 5
-      `).all(query, publication.id, publication.id) as { passage: string; source: string; locator: string; hash: string }[];
-      for (const row of selected) {
-        const original = byId.get(row.passage);
-        const source = sources.get(row.source);
-        if (!original || !source || row.hash !== original.sha256 ||
+        ORDER BY p.passage
+      `).iterate(query, publication.id, publication.id);
+      const candidates = new Map<string, { id: string; score: number }>();
+      for (const row of matches) {
+        const original = byId.get(String(row.passage));
+        if (!original || row.hash !== original.sha256 ||
             row.locator !== original.locator || row.source !== original.sourceId) throw new Error('Indexed evidence does not match the publication');
-        passages.push({ id: row.passage, source: source.ref, locator: row.locator, sha256: row.hash,
-          text: this.blob(row.hash).toString('utf8'), sourceId: row.source, sourceVersion: source.version,
-          ...(source.sha256 && { sourceSha256: source.sha256 }), ...(original.cardId && { cardId: original.cardId }) });
+        const key = normalizedPassage(original.text);
+        const score = Number(row.score);
+        const existing = candidates.get(key);
+        if (!existing || score < existing.score) candidates.set(key, { id: original.id, score });
+      }
+      const rank = evidenceRanker(question);
+      const ranked = [...candidates].map(([key, { id, score }]) =>
+        ({ key, id, rank: rank(byId.get(id)!.text, score) }))
+        .sort((a, b) => b.rank - a.rank || (a.id < b.id ? -1 : Number(a.id > b.id)));
+      let remaining = evidenceByteLimit;
+      for (const { key, id } of ranked) {
+        const provenance = groups.get(key)!;
+        const primary = provenance.find((entry) => entry.id === id)!;
+        const size = Buffer.byteLength(byId.get(id)!.text);
+        if (size > remaining) continue;
+        passages.push({ ...primary, text: this.blob(primary.sha256).toString('utf8'), provenance });
+        remaining -= size;
+        if (passages.length === evidenceCountLimit) break;
       }
     }
     return { revision, hash: publication.manifest_hash, allowModel: Boolean(publication.allow_model), passages };

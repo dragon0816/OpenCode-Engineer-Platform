@@ -14,6 +14,7 @@ const messages = {
   unsupported: '已發布的證據不足以支持答案。',
   'invalid-citation': '模型回覆未通過引用驗證。',
   unavailable: '目前無法連線到模型。',
+  'gateway-rejected': '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。',
   empty: '模型未回傳內容。',
   busy: '知識詢問處理中，請稍後再試。',
   'evidence-changed-or-cancelled': '知識庫版本在查詢期間變更，或本次查詢已取消。',

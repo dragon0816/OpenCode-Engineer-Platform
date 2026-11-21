@@ -58,3 +58,7 @@ Owner 確認已推送的 Phase 2 可做基本對話，從 `main` 的 `a6aa863` �
 ## Phase 3b handoff
 
 The local feature branch is based on caf60b9. Core ingest, review, publish, rollback and recovery tests use synthetic BI and Wiki inputs. Knowledge contains the BI and Wiki review panels. The gate report records GUI parity gaps and regression results. [Publish and recovery](validation/p3b-publish.md) · [Gate report](reviews/PHASE3B_GATE_REPORT.md)
+
+## Phase 3a retrieval follow-up
+
+Local branch `phase-3a/retrieval-quality` starts from `00735ef`. Gold mirror Recall@5 is 24/24, and bilingual synthetic forecast recall improved from 0/2 to 2/2. Both live aliases met D03 on the synthetic gold mirror. Chromium verified the Traditional Chinese Gateway rejection message and one upstream request for the synthetic rejected question. The real-repository follow-up and the upstream filter trigger remain **UNVERIFIED**. [Retrieval report](reviews/PHASE3A_RETRIEVAL_REPORT.md)

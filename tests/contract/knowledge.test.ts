@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
+import { knowledgeModel } from '../../apps/adapter/src/opencode/knowledge-model.ts';
 import { KnowledgeAsk, parseAsk } from '../../packages/knowledge/src/ask.ts';
 import type { KnowledgeModel } from '../../packages/knowledge/src/ask.ts';
 import { publishedInput } from '../../packages/knowledge/src/convert-aep.ts';
@@ -121,6 +122,30 @@ test('performs retrieval before inference and fails closed on wrong, stale, or u
     assert.equal((await ask.ask(input, active(), (attempt) => attempts.push(attempt))).state, 'error');
     assert.deepEqual(attempts, ['empty', 'empty']);
   } finally { writer.close(); store.close(); }
+});
+
+test('classifies terminal Gateway 4xx failures without retrying or exposing their bodies', async (context) => {
+  const { snapshot } = goldFixture();
+  const store = new KnowledgeStore(':memory:');
+  let status = 403;
+  const fetch = context.mock.method(globalThis, 'fetch', async () => new Response('synthetic private error', { status }));
+  try {
+    store.import(snapshot, data(snapshot), true);
+    const ask = new KnowledgeAsk(store, knowledgeModel({ baseURL: 'http://example.invalid/v1', key: 'synthetic' }, 'synthetic'));
+    const input = { vault: snapshot.vault.id, question: 'SYN-48B synthetic question' };
+    const attempts: string[] = [];
+    const result = await ask.ask(input, active(), (attempt) => attempts.push(attempt));
+    assert.deepEqual(result, { state: 'error', reason: 'gateway-rejected', vault: input.vault,
+      revision: snapshot.publication.revision, snapshotHash: store.retrieve(input.vault, input.question)?.hash });
+    assert.deepEqual(attempts, ['gateway-rejected']);
+    assert.equal(fetch.mock.callCount(), 1);
+    for (const retryable of [429, 502]) {
+      status = retryable;
+      fetch.mock.resetCalls();
+      assert.equal((await ask.ask(input, active())).reason, 'unavailable');
+      assert.equal(fetch.mock.callCount(), 2);
+    }
+  } finally { store.close(); }
 });
 
 test('converts the synthetic published AEP BI and local Wiki contracts without modifying inputs', () => {

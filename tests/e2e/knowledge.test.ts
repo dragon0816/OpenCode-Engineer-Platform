@@ -27,12 +27,17 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   const question = 'SYN-48B 零點校正容差是多少？';
   const toolName = 'oep_knowledge_ask';
   let knowledgeCalls = 0;
+  let rejectedCalls = 0;
   let toolResults = 0;
   const synthetic: typeof fetch = async (_target, init) => {
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     if (!stream) {
       const user = JSON.parse(String(messages.find((message) => message.role === 'user')?.content));
       assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), [citationId]);
+      if (user.question === 'SYN-48B synthetic rejected question') {
+        rejectedCalls++;
+        return new Response('Synthetic private gateway body', { status: 400 });
+      }
       const quote = user.question === question ? '±0.8 dB' : '±4 kHz';
       knowledgeCalls++;
       return Response.json({ choices: [{ message: { content:
@@ -120,6 +125,14 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         `);
         await browser.ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
+        await browser.evaluate(`
+          document.querySelector('#knowledge-question').value = 'SYN-48B synthetic rejected question';
+          document.querySelector('#knowledge-ask').click();
+        `);
+        await browser.ready("document.querySelector('#knowledge-status').textContent.includes('模型服務拒絕處理這個問題')");
+        assert.equal(await browser.evaluate("document.querySelector('#knowledge-status').textContent"),
+          '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。');
+        assert.equal(rejectedCalls, 1);
         await browser.evaluate(`
           const reviewPanel = document.querySelector('#wiki-review');
           reviewPanel.open = true;

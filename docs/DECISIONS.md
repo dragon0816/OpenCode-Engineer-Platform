@@ -152,3 +152,9 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - Keep the Phase 3a snapshot and SQLite format readable. A vault with an installed review schema accepts new active publications through review. Existing published imports remain available for unmanaged vaults.
 - Use a distinct candidate ID as the job, review and notification deduplication key. Compare the saved edit number during review and the published predecessor during publish and rollback.
 - Normalize known AEP SQLite layouts 8, 9 and 14 in memory. Fail closed on unknown versions and use the OEP data directory for writes.
+
+## 2026-11-21　Phase 3a 檢索與 Gateway 拒絕
+
+- D03 補充。FTS5 匹配結果按 NFC 與空白正規化後的文字合併，保留每筆段落識別碼、卡片、來源與位置。每組以最佳 FTS5 匹配選出代表，再按詞法訊號排序。Ask 對代表段落的原文、來源、位置及雜湊執行既有引用驗證。多來源關聯留在檢索結果內，共用引用契約維持原樣。
+- 每次 Ask 最多提供 5 段、合計 20,000 UTF-8 bytes 的段落正文。這是以 byte 為基礎的 tokenizer 的保守正文 token 上限，問題、JSON 包裝及固定指令另計。既有 SQLite 發布世代可直接查詢。
+- Relay 將不可重試的 4xx 交給 Ask 作為 `gateway-rejected`，一次結束並以固定繁中文案呈現。429 與 5xx 維持原重試策略。 [驗證](reviews/PHASE3A_RETRIEVAL_REPORT.md)

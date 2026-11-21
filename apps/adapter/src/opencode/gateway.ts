@@ -100,7 +100,7 @@ export async function startGateway(options: {
           upstreamStatus = upstream.status;
           if (!upstream.ok) {
             status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
-            await upstream.body?.cancel();
+            await upstream.body?.cancel().catch(() => undefined);
           } else if (body.stream) {
             const frames = await bufferedCompletion(upstream, redact);
             completion = observeCompletion(frames);

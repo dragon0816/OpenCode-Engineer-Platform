@@ -5,9 +5,10 @@ import { identifier } from './snapshot.ts';
 import type { Evidence, KnowledgeStore } from './store.ts';
 
 export type AskRequest = { vault: string; question: string };
-export type ModelResult = { content: string } | { failure: 'unavailable' | 'empty'; retryable: boolean };
+export type ModelResult = { content: string } | { failure: 'unavailable' | 'empty'; retryable: boolean } |
+  { failure: 'gateway-rejected'; retryable: false };
 export type KnowledgeModel = (question: string, evidence: readonly Evidence[], signal: AbortSignal) => Promise<ModelResult>;
-export type Attempt = 'answered' | 'abstained' | 'invalid-citation' | 'empty' | 'unavailable';
+export type Attempt = 'answered' | 'abstained' | 'invalid-citation' | 'empty' | 'unavailable' | 'gateway-rejected';
 
 export function parseAsk(value: unknown): AskRequest | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 2) return;
