@@ -131,7 +131,13 @@ test('the receiver detects foreign delivery and the sender detects duplicate sub
     audit.receive('{"sessionID":"a"}');
     assert.doesNotThrow(() => audit.verify(operations, [3, 5, 8]));
     assert.throws(() => audit.verify(operations, [3, 5, 5001]), /reconnectDeadline/);
-    const duplicateWithinOneSend = async () => { await submit(operations[1]); await submit(operations[1]); };
+    assert.throws(() => audit.verify([{ ...operations[0], id: operations[1].id }, operations[1]], [3, 5, 8]), /sender/);
+    assert.throws(() => audit.verify([operations[1], operations[1]], [3, 5, 8]), /sender/);
+    const duplicateWithinOneSend = async () => {
+      await submit(operations[1]);
+      const raw = new Request(`${receiver.url}/api/session/b/prompt`, { method: 'POST', body: JSON.stringify({ id: operations[1].id }) });
+      assert.equal((await transport(raw)).status, 200);
+    };
     await duplicateWithinOneSend();
     assert.equal(dispatched, 4);
     assert.throws(() => audit.verify(operations, [3, 5, 8]), /sender/);

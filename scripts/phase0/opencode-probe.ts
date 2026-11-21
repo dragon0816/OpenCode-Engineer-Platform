@@ -83,10 +83,14 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
   const listeners = () => child.pid && child.exitCode === null && child.signalCode === null ? processListeners(child.pid) : [];
   const ownsListener = () => onlyExpectedListener(listeners(), port);
   const ownsPeer = (peer: PeerTuple) => !!child.pid && child.exitCode === null && child.signalCode === null && ownsLinuxPeer(child.pid, peer);
-  const guardedFetch = ownerCheckedFetch(url, ownsListener, ownsPeer);
-  const makeClient = (fetch = guardedFetch) => OpenCode.make({ baseUrl: url, headers: { authorization: auth }, fetch });
-  const client = makeClient();
-  const observeClient = (observe: (request: Request, body: Buffer) => void) => makeClient(ownerCheckedFetch(url, ownsListener, ownsPeer, observe));
+  let observer: ((request: Request, body: Buffer) => void) | undefined;
+  const guardedFetch = ownerCheckedFetch(url, ownsListener, ownsPeer, (request, body) => observer?.(request, body));
+  const client = OpenCode.make({ baseUrl: url, headers: { authorization: auth }, fetch: guardedFetch });
+  const observePrompts = (observe: NonNullable<typeof observer>) => {
+    if (observer) throw new Error('Prompt audit already active');
+    observer = observe;
+    return () => { observer = undefined; };
+  };
   try {
     const version = await until(async () => {
       if (child.exitCode !== null) throw new Error('server exited');
@@ -97,7 +101,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
         return info.version;
       } catch (error) { return retryReadiness(error); }
     });
-    return { client, observeClient, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
+    return { client, observePrompts, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
   } catch (error) {
     await stop();
     throw error;
@@ -184,17 +188,21 @@ async function automation(server: Server, probe: Probe, root: string) {
 }
 
 async function reconnection(server: Server) {
-  const { client } = server;
   const a = await createSession(server, 'slow-model');
   const b = await createSession(server, 'slow-model');
-  const owned = new Set([a.id]);
   const audit = reconnectionAudit(a.id);
-  const promptClient = server.observeClient(audit.observePrompt);
+  const stopObserving = server.observePrompts(audit.observePrompt);
+  try { await verifyReconnection(server, a.id, b.id, audit); }
+  finally { stopObserving(); }
+}
+
+async function verifyReconnection(server: Server, a: string, b: string, audit: ReturnType<typeof reconnectionAudit>) {
+  const { client } = server;
   const operation = (sessionID: string, text: string) => ({ id: `msg_${randomBytes(12).toString('hex')}`, sessionID, text });
   const plan = Array.from({ length: 3 }, (_, index) => ({
-    a: operation(a.id, `Synthetic A ${index + 1}`), b: operation(b.id, `Synthetic B ${index + 1}`),
+    a: operation(a, `Synthetic A ${index + 1}`), b: operation(b, `Synthetic B ${index + 1}`),
   }));
-  const submit = (planned: ReturnType<typeof operation>) => promptClient.session.prompt(planned, callOptions());
+  const submit = (planned: ReturnType<typeof operation>) => client.session.prompt(planned, callOptions());
   let foreignDropped = 0;
   const projected = new Set<string>();
   const seenReplies = new Set<string>();
@@ -203,7 +211,7 @@ async function reconnection(server: Server) {
       if (!['session.execution.started', 'session.execution.succeeded'].includes(event.type)) return;
       const owner = event.data?.sessionID;
       if (!owner) return;
-      if (!owned.has(owner)) { foreignDropped++; return; }
+      if (owner !== a) { foreignDropped++; return; }
       audit.receive(JSON.stringify({ sessionID: owner }));
     });
 
@@ -212,17 +220,19 @@ async function reconnection(server: Server) {
     const pre = subscribe();
     try {
       await pre.ready;
-      const previous = foreignDropped;
-      await submit(plan[cycle - 1].b);
-      await until(async () => foreignDropped > previous || undefined, 4000);
-      const capturedBefore = audit.captured;
-      await submit(plan[cycle - 1].a);
-      await until(async () => audit.captured > capturedBefore || undefined, 4000);
-    } catch {
+      await pre.during((async () => {
+        const previous = foreignDropped;
+        await submit(plan[cycle - 1].b);
+        await until(async () => foreignDropped > previous || undefined, 4000);
+        const capturedBefore = audit.captured;
+        await submit(plan[cycle - 1].a);
+        await until(async () => audit.captured > capturedBefore || undefined, 4000);
+      })());
+    } catch (error) {
       report('S4-cycle-failed', { cycle, stage: 'subscribe-and-submit', captured: audit.captured, foreignDropped });
-      throw new Error('subscribe-and-submit');
+      throw error;
     } finally { pre.close(); await pre.completed; }
-    await until(async () => (await client.message.list({ sessionID: a.id, type: 'assistant' }, callOptions()))
+    await until(async () => (await client.message.list({ sessionID: a, type: 'assistant' }, callOptions()))
       .data.some((message) => message.type === 'assistant' && message.time.completed && !seenReplies.has(message.id)) || undefined);
     const started = performance.now();
     const deadline = AbortSignal.timeout(5000);
@@ -230,11 +240,11 @@ async function reconnection(server: Server) {
     try {
       await replay.ready;
       const options = { signal: deadline };
-      const [session, history, inbox, permissions, replies] = await Promise.all([
-        client.session.get({ sessionID: a.id }, options), client.message.list({ sessionID: a.id, type: 'user' }, options),
-        client.session.inbox.list({ sessionID: a.id }, options), client.permission.list({ sessionID: a.id }, options),
-        client.message.list({ sessionID: a.id, type: 'assistant' }, options),
-      ]);
+      const [session, history, inbox, permissions, replies] = await replay.during(Promise.all([
+        client.session.get({ sessionID: a }, options), client.message.list({ sessionID: a, type: 'user' }, options),
+        client.session.inbox.list({ sessionID: a }, options), client.permission.list({ sessionID: a }, options),
+        client.message.list({ sessionID: a, type: 'assistant' }, options),
+      ]));
       deadline.throwIfAborted();
       for (const message of replies.data) seenReplies.add(message.id);
       if (session.outcome !== 'succeeded' || inbox.length !== 0 || history.data.length !== cycle || permissions.length !== 0) {
