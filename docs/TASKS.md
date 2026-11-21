@@ -1,6 +1,6 @@
 # OEP 階段與任務清單
 
-日期 2026-11-21（Asia/Taipei）。Phase 0 第 3 輪修正、負例與故障注入已交付。修訂後的 gate 待獨立複核，本機合併尚未執行。原 v2 的 O-1 至 O-4 全部結清門檻保留作歷史。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
+日期 2026-11-21（Asia/Taipei）。Phase 0 已合併至本機 `main`（`1c45494`），由 owner 豁免結案，原 v2 與修訂後的 gate 均未通過。Owner 已授權 Phase 1。 [決策紀錄](DECISIONS.md) · [Phase 0 gate](reviews/PHASE0_GATE_REPORT.md)
 
 ## Stage 1–4　審查與開工核准
 
@@ -25,10 +25,24 @@
 - [x] 修正第 1 輪　I-1 完整 forced turn、I-2 私網 IPv4 掃描、I-3 Phase 1 出口驗收補充。 [修正證據](reviews/PHASE0_GATE_REPORT.md)
 - [x] O-4　Owner 核定最小 D08 smoke oracle，PDF 對照與雜湊測試通過；核定範圍僅限管線接線。 [D08 核定](validation/d08-oracle.md)
 - [x] 第 4 輪　I-A 至 I-E 與兩項 Minor 已更新，O-3a 重測通過。 [實測與故障注入](reviews/PHASE0_GATE_REPORT.md#fix-round-4)
-- [ ] Gate　等 Claude Code 安排最終獨立複核。O-1／O-2 為 Gateway 管理員追蹤的 known risks，O-3b 已免測，O-4 已核定且測試通過。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
-- [ ] Claude Code 於複核通過後使用受檢合併入口，先掃來源、目標、工作樹與 index，並在移動目標 ref 前設定及核對 hooks 和 `merge.ff=false`。拋棄式 clone 已驗此程序。 [S7](validation/p0-s7-licensing.md)
+- [x] 結案　Owner 豁免 Phase 0 gate，已本機合併。O-1／O-2 繼續追蹤，O-3b 已免測，O-4 維持核定。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
 
 ### Phase 1　Runtime 與 SOP→XLSX
+
+#### Phase 1 前置補強
+
+以下 Phase 0 證據為 **UNVERIFIED**。Phase 1 只在產品測試直接涵蓋時補證據，清單不另作 gate。
+
+- [ ] S4　跨客戶端／路徑的重複送件計數。
+- [ ] S4　串流收到緩衝事件後切斷再重連。
+- [ ] S2　工具失敗回合的內容、call ID 與形狀。
+- [ ] S4／S2　teardown 跳過清理、`SyntaxError` 轉 502 後 exit 0、遺失原始原因。
+- [ ] S6　Job supervisor 遇 worker `null` 退出碼的失敗處理。
+- [ ] Minor　Git 文件區分兩把設定鎖。
+- [ ] Minor　`windows-job.cs` 檢查 `CloseHandle` 回傳值。
+- [ ] Minor　secret scan CLI 無模式時靜默 exit 0。
+
+#### Phase 1 實作及驗收
 
 - [ ] 管理監督程序、OpenCode client/session mapping 與權限。
 - [ ] 通過 Gateway 契約、兩 session 隔離與 evidence stub。

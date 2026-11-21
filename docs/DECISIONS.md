@@ -79,3 +79,19 @@ Phase 0 修訂後的三項 gate 條件維持。R-1 至 R-9 與 4 項 Minor 修�
 Owner 明確回覆「O-4 OK」。核定 `Readings` 的 `A1:C3` 和 `Run` 的 `A1:B2`，共 13 格，精確相等，容差 0，僅用合成資料，禁止公式及額外工作表。Owner 核閱 Markdown SOP 與 oracle；核定以 PDF 抽取結果與兩者一致、逐格與核定雜湊測試通過為條件。O-4 不再開放。更改核定值或規則需事先取得新的 owner 核准。 [核定內容與 SHA-256](validation/d08-oracle.md)
 
 用途限最小管線接線 smoke。含計算的多步驟 oracle 是可另案選擇的 Phase 1 工作，本輪未建立。Phase 0 gate 仍待獨立複核。
+
+## 2026-11-21　Owner 豁免結案並啟動 Phase 1
+
+Owner 已將 Phase 0 合併至本機 `main`（`1c45494`）並授權實作 Phase 1。Phase 0 以 **owner waiver** 結案，原 v2 及修訂後的 gate 均未通過。O-1／O-2 繼續追蹤，O-3b 維持免測，O-4 維持核定的 13 格精確相等最小煙霧 oracle，D01–D09 繼續適用。
+
+下列五項 probe 證據降為 **UNVERIFIED**：
+
+- S4　跨其他客戶端／路徑的重複送件計數。
+- S4　已收到緩衝事件後串流切斷時的重連。
+- S2　工具執行失敗時的回合內容、call ID 與結果形狀。
+- S4／S2　probe teardown 錯誤處理。已知有跳過清理、`SyntaxError` 轉 502 後 exit 0、原始原因遺失的路徑。
+- S6　Windows Job supervisor 將 worker 的 `null` 退出碼當作 0。
+
+三項 Minor 一併列為 **UNVERIFIED**：Git 設定文件未區分兩把鎖、`windows-job.cs` 未檢查 `CloseHandle` 回傳值、secret scan CLI 未給模式時靜默 exit 0。Phase 1 只在現有產品測試直接涵蓋時補證據，這份清單不阻擋開工或另開一輪舊 probe 複核。
+
+Owner 允許 Phase 1 使用設定中的 Gateway URL。測試 Gateway 採 LAN 明文 HTTP，token 傳輸未加密，後續可請 Gateway 管理員提供 HTTPS。
