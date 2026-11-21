@@ -1,4 +1,3 @@
-#requires -Version 7.0
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory)][string]$Source,
@@ -8,6 +7,10 @@ param(
     [switch]$AutoStart,
     [switch]$AllowDowngrade
 )
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::Error.WriteLine('PowerShell 7 is required. Run winget install --id Microsoft.PowerShell --exact, then rerun the installer with pwsh.')
+    exit 1
+}
 . "$PSScriptRoot/OEP-Maintenance.ps1"
 $mutex = $null
 $scratch = $null
@@ -22,10 +25,10 @@ try {
     $sourcePath = Root-OEP $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Source)
     Separate-OEP $sourcePath $InstallRoot
     Separate-OEP $sourcePath $DataRoot
-    Check-Prerequisites
     Stopped-OEP $InstallRoot
     $scratch = Join-Path ([IO.Path]::GetTempPath()) ("OEP-release-" + [guid]::NewGuid())
     $release = Read-ReleaseOEP $sourcePath $scratch
+    Check-Prerequisites $release
     $manifest = $release.manifest
     $manifestHash = $release.hash
     $version = $release.version

@@ -5,11 +5,17 @@ $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location -LiteralPath $root
 
 try {
-    $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+    $bundledNode = Join-Path $root 'vendor/node/node.exe'
+    $bundled = [IO.File]::Exists($bundledNode)
+    $node = if ($bundled) { $bundledNode } else { (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source }
     if ((& $node -p "process.versions.node.split('.')[0] + '/' + process.arch") -ne '24/x64') {
         throw 'Node.js 24 x64 is required.'
     }
     $python = if ($env:OEP_PYTHON) { $env:OEP_PYTHON } else { 'python.exe' }
+    if ($bundled) {
+        $python = Join-Path $root 'vendor/python/python.exe'
+        $env:OEP_PYTHON = $python
+    }
     $release = Test-Path -LiteralPath 'config/release.manifest.json'
     $pythonCheck = if ($release) { 'import ctypes, zipfile, xml.etree.ElementTree, openpyxl, defusedxml' } else { 'import ctypes, zipfile, xml.etree.ElementTree' }
     & $python -I -c $pythonCheck
@@ -18,7 +24,7 @@ try {
     if (!(Test-Path -LiteralPath $pwsh)) {
         $pwsh = (Get-Command pwsh.exe -CommandType Application | Select-Object -First 1).Source
     }
-    if (!(Test-Path -LiteralPath $pwsh)) { throw 'PowerShell 7 is required.' }
+    if (!(Test-Path -LiteralPath $pwsh)) { throw 'Install PowerShell 7 with winget install --id Microsoft.PowerShell --exact.' }
     $env:OEP_PWSH = $pwsh
 
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
