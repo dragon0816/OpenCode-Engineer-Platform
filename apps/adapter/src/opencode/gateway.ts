@@ -56,7 +56,7 @@ function observeCompletion(frames: unknown[]) {
 }
 
 export async function startGateway(options: {
-  url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch;
+  url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch; web?: boolean;
 }) {
   let configured: URL;
   try { configured = new URL(options.url); }
@@ -85,10 +85,10 @@ export async function startGateway(options: {
       const incoming = Buffer.from(request.headers.authorization ?? '');
       if (request.method !== 'POST' || request.url !== '/v1/chat/completions') status = 404;
       else if (incoming.length !== credential.length || !timingSafeEqual(incoming, credential)) status = 401;
-      else if (id > 55) status = 400;
+      else if (!options.web && id > 55) status = 400;
       else {
         let body: RequestBody | undefined;
-        try { body = await jsonInput<RequestBody>(request); }
+        try { body = await jsonInput<RequestBody>(request, options.web ? 64 * 1024 * 1024 : undefined); }
         catch { status = 400; }
         if (body?.model === options.alias && Array.isArray(body.messages)) {
           const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(35_000)]);

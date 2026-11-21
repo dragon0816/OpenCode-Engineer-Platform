@@ -14,9 +14,9 @@ const transitions: Record<RunState, RunState[]> = {
 };
 
 export class Ledger {
-  private readonly db: DatabaseSync;
+  protected readonly db: DatabaseSync;
 
-  constructor(file: string) {
+  constructor(file: string, web = false) {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 4000;');
     const version = this.db.prepare('PRAGMA user_version').get()?.user_version;
@@ -24,10 +24,17 @@ export class Ledger {
       this.db.exec(readFileSync(atRepo('apps/adapter/migrations/001_runs.sql'), 'utf8'));
       this.db.exec('PRAGMA user_version = 1');
     });
-    else if (version !== 1) throw new Error('Unsupported run ledger version');
+    else if (version !== 1 && !(web && version === 2)) throw new Error('Unsupported run ledger version');
+    if (web && version !== 2) {
+      if (version === 1) this.db.prepare('VACUUM INTO ?').run(`${file}.before-v2-${Date.now()}`);
+      this.transaction(() => {
+        this.db.exec(readFileSync(atRepo('apps/adapter/migrations/002_attachments.sql'), 'utf8'));
+        this.db.exec('PRAGMA user_version = 2');
+      });
+    }
   }
 
-  private transaction<T>(work: () => T) {
+  protected transaction<T>(work: () => T) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const value = work();
@@ -45,11 +52,13 @@ export class Ledger {
   }
 
   create(run: RunRecord) {
+    return this.transaction(() => this.insert(run));
+  }
+
+  protected insert(run: RunRecord) {
     if (run.state !== 'accepted') throw new Error('A new run must be accepted');
-    this.transaction(() => {
-      this.db.prepare('INSERT INTO runs VALUES(?, ?, ?)').run(run.id, run.state, JSON.stringify(run));
-      this.append(run);
-    });
+    this.db.prepare('INSERT INTO runs VALUES(?, ?, ?)').run(run.id, run.state, JSON.stringify(run));
+    this.append(run);
     return run;
   }
 

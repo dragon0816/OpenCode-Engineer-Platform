@@ -9,15 +9,15 @@ import { supervise } from './supervisor.ts';
 
 export type Runtime = Awaited<ReturnType<typeof startRuntime>>;
 
-type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace'>;
+type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web'>;
 
-export async function startRuntime(root: string, synthetic?: SyntheticGateway) {
+export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string) {
   const alias = synthetic?.alias ?? process.env.OEP_MODEL_ALIAS ?? gatewayAliases[0];
   if (!synthetic && !gatewayAliases.some((candidate) => candidate === alias)) throw new Error('Model alias is not approved');
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
   const requests: GatewayTrace[] = [];
   const relay = await startGateway({
-    ...(synthetic ?? gatewaySettings()), alias, trace: (value) => {
+    ...(synthetic ?? gatewaySettings()), alias, web: Boolean(profile), trace: (value) => {
       requests.push(value);
       audit('gateway.jsonl', value);
     },
@@ -27,7 +27,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway) {
     'OpenCode startup or model health failed. Inspect status-only audit records.\n');
   let supervisor: Awaited<ReturnType<typeof supervise>>;
   try {
-    supervisor = await supervise(root, relay, alias);
+    supervisor = await supervise(root, relay, alias, profile);
   } catch (error) {
     try { await relay.close(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }
@@ -74,9 +74,11 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway) {
           elapsedMs: Date.now() - started, modelCalls: gatewaySince(cursor) });
       }
     }
-    const firstHealth = await checkHealth(0);
-    const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
-    if (health !== 'passed') throw new Error('Model health turn failed');
+    if (!profile) {
+      const firstHealth = await checkHealth(0);
+      const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
+      if (health !== 'passed') throw new Error('Model health turn failed');
+    }
     return { ...initial, root, alias, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact,
       gatewayCursor: relay.requestCursor, gatewaySince };
   } catch (error) {
