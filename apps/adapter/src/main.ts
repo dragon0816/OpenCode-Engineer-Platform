@@ -109,6 +109,19 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
       return;
     }
+    if (path === '/api/settings') {
+      if (method === 'POST') {
+        const { name, introduction, instructions } = await body(request);
+        if (typeof name !== 'string' || name.length > 80 ||
+            typeof introduction !== 'string' || introduction.length > 500 ||
+            typeof instructions !== 'string' || instructions.length > 4000) {
+          throw new HttpError(400, '請檢查助理名稱、自我介紹及指示的長度。');
+        }
+        store.savePreferences(name.trim(), introduction.trim(), instructions.trim());
+      }
+      send(response, 200, store.preferences() ?? { name: '', introduction: '', instructions: '' });
+      return;
+    }
     if (path === '/api/jobs') {
       if (method === 'POST') {
         const input = await body(request);
@@ -203,13 +216,37 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       return;
     }
     if (item !== undefined) throw new HttpError(404, 'Route not found');
+    if (method === 'POST' && (resource === 'rename' || resource === 'remove')) {
+      const input = await body(request);
+      if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
+      if (resource === 'rename') {
+        const title = typeof input.title === 'string' ? input.title.trim() : '';
+        if (!title || title.length > 80) throw new HttpError(400, '請輸入 1 至 80 字的會話名稱。');
+        store.renameSession(id, title);
+        session.title = title;
+      } else {
+        const latest = store.turns(id).at(-1);
+        if (latest && latest.state !== 'verified' && latest.state !== 'failed') {
+          throw new HttpError(409, '請等這次處理結束後再刪除會話。');
+        }
+        store.hideSession(id);
+        sessions.delete(id);
+        upstreamIDs.delete(session.upstreamID);
+      }
+      send(response, 200, publicSession(session));
+      return;
+    }
     if (method === 'GET' && resource === 'state') send(response, 200, await chat.state(session));
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'attachments') {
       const attachment = await upload(request, chat, session);
       events.notify(session.id);
       send(response, 201, attachment);
-    } else if (method === 'POST' && resource === 'turns') send(response, 202, chat.submit(session, parseTurn(await body(request))));
+    } else if (method === 'POST' && resource === 'turns') {
+      const input = parseTurn(await body(request));
+      if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
+      send(response, 202, chat.submit(session, input));
+    }
     else throw new HttpError(404, 'Route not found');
   }
 

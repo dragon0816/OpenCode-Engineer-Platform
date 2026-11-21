@@ -132,6 +132,67 @@ try {
           writeFileSync(join(audit, `${item.name}.screenshot.png`), Buffer.from(screenshot.data, 'base64'));
         }
       }
+      if (!real) {
+        const selected = await page.evaluate<string>("document.querySelector('#sessions').value");
+        await page.evaluate(`
+          window.prompt = () => '合成會話';
+          document.querySelector('#rename-session').click();
+        `);
+        await page.ready("document.querySelector('#session-title').textContent === '合成會話'");
+        await page.evaluate(`
+          const search = document.querySelector('#session-search');
+          search.value = '合成會話';
+          search.dispatchEvent(new Event('input'));
+        `);
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions option').length"), 2);
+        await page.evaluate(`
+          const theme = document.querySelector('#theme');
+          theme.value = 'dark';
+          theme.dispatchEvent(new Event('change'));
+        `);
+        await page.ready("!document.querySelector('#save-assistant').disabled");
+        await page.evaluate(`
+          document.querySelector('#assistant-name').value = '合成助理';
+          document.querySelector('#assistant-introduction').value = '測試簡介';
+          document.querySelector('#assistant-instructions').value = '使用繁體中文';
+          document.querySelector('#assistant-settings').requestSubmit();
+        `);
+        await page.ready("document.querySelector('#settings-status').textContent === '已儲存'");
+        await page.command('Page.reload');
+        await page.ready("document.querySelector('#assistant-name').value === '合成助理'");
+        assert.equal(await page.evaluate("document.querySelector('#assistant-introduction').value"), '測試簡介');
+        assert.equal(await page.evaluate("document.querySelector('#assistant-instructions').value"), '使用繁體中文');
+        await page.ready(`document.querySelector('#sessions').value === ${JSON.stringify(selected)} &&
+          document.documentElement.dataset.theme === 'dark' &&
+          document.querySelector('#session-title').textContent === '合成會話'`);
+        await page.evaluate(`
+          window.confirm = () => false;
+          document.querySelector('#remove-session').click();
+        `);
+        assert.equal(await page.evaluate("document.querySelector('#sessions').value"), selected);
+        for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+          assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
+          for (const theme of ['light', 'dark']) {
+            await page.evaluate(`(() => {
+              const theme = document.querySelector('#theme');
+              theme.value = ${JSON.stringify(theme)};
+              theme.dispatchEvent(new Event('change'));
+            })()`);
+            const screenshot = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+            writeFileSync(join(audit, `workbench-${theme}-${layout}.png`), Buffer.from(screenshot.data, 'base64'));
+          }
+        }
+        await page.evaluate(`
+          window.confirm = () => true;
+          document.querySelector('#remove-session').click();
+        `);
+        await page.ready(`!Array.from(document.querySelector('#sessions').options)
+          .some((option) => option.value === ${JSON.stringify(selected)})`);
+        assert.equal(await page.evaluate(`fetch('/api/sessions/' + ${JSON.stringify(selected)} + '/state')
+          .then((response) => response.status)`), 404);
+        assert.equal(await page.evaluate("document.querySelectorAll('#sessions option').length"), cases.length);
+      }
       await page.evaluate("document.querySelector('#stop').click()");
       await page.ready("document.querySelector('#connection').textContent === '服務已停止'");
       await stopping.promise;

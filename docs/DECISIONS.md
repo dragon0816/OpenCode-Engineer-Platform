@@ -178,3 +178,8 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - Long poll for 25 seconds per bot. Saved inbox processing and outbox delivery run independently of that request.
 - Treat a configured active BI target as owner authorization for the existing model proposal flow. Preserve the target per intake. Exact-source quote validation and human approval still apply.
 - Allow the owner to resend an uncertain notification from the work view after confirming the duplicate risk.
+
+
+## Phase 2b 工作台實作
+
+會話名稱及刪除標記使用附加 SQLite 表，讓既有會話及稽核資料可保留。主題及最後選擇存於瀏覽器。助理設定依接收回合時的值，沿用既有 OpenCode 文字輸入。

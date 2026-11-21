@@ -23,7 +23,7 @@ export function publicRun(run: RunRecord) {
       ? { name: workbookName, bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
 
-export function publicSession({ id, agent, alias, createdAt }: WebSession) { return { id, agent, alias, createdAt }; }
+export function publicSession({ id, agent, alias, createdAt, title }: WebSession) { return { id, agent, alias, createdAt, ...(title ? { title } : {}) }; }
 
 type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
 
@@ -134,13 +134,14 @@ export class ChatService {
       submissionID: promptID(), retries: 0, errors: [] };
     this.store.saveTurn(session.id, run, hash);
     this.notify(session.id);
-    this.queue = this.queue.then(() => this.execute(session, run, input)).catch(() => {
+    const preferences = this.store.preferences();
+    this.queue = this.queue.then(() => this.execute(session, run, input, preferences)).catch(() => {
       console.error('OEP failed to record a web turn');
     });
     return publicRun(run);
   }
 
-  private async execute(session: WebSession, run: RunRecord, input: Turn) {
+  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
@@ -165,7 +166,12 @@ export class ChatService {
         'Replace the example with the requested sheets. Check that each row and each sheet’s rows array are closed before writing.',
         'Use up to four sheets, 20 rows per sheet and 12 columns per row. Then reply with a brief summary.',
       ].join(' ') : '';
-      const additional = [parts.text, output].filter(Boolean).join('\n\n');
+      const assistant = preferences ? [
+        preferences.name && `助理名稱：${preferences.name}`,
+        preferences.introduction && `自我介紹：${preferences.introduction}`,
+        preferences.instructions && `本回合助理指示：\n${preferences.instructions}`,
+      ].filter(Boolean).join('\n') : '';
+      const additional = [parts.text, output, assistant].filter(Boolean).join('\n\n');
       const text = additional ? input.text + separator(run.id) + additional : input.text;
       update('running');
       sent = true;
