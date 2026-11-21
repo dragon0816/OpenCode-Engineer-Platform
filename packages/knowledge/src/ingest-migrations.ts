@@ -1,4 +1,10 @@
 export const ingestMigration = `
+CREATE TABLE IF NOT EXISTS inactive_vaults (
+  vault TEXT PRIMARY KEY REFERENCES vaults(id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS review_uploads (
+  hash TEXT PRIMARY KEY REFERENCES blobs(hash)
+) STRICT;
 CREATE TABLE IF NOT EXISTS review_schemas (
   vault TEXT NOT NULL, version TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(vault, version)
 ) STRICT;

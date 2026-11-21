@@ -33,6 +33,13 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     if (!stream) {
       const user = JSON.parse(String(messages.find((message) => message.role === 'user')?.content));
+      if (user.question === 'SYN-NEW calibration') {
+        const passage = user.evidence.find(({ text }: { text: string }) => text.includes('SYN-NEW'));
+        assert.ok(passage);
+        return Response.json({ choices: [{ message: { content: JSON.stringify({
+          state: 'answer', citations: [{ passageID: passage.id, quote: '7.2 mm' }],
+        }) } }] });
+      }
       assert.deepEqual(user.evidence.map(({ id }: { id: string }) => id), [citationId]);
       if (user.question === 'SYN-48B synthetic rejected question') {
         rejectedCalls++;
@@ -68,6 +75,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   const runtime = await startRuntime(audit, { url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-knowledge',
     fetch: synthetic, isolatedJob: true }, profile);
   try {
+    const reader = Reflect.get(runtime.knowledge!.ask, 'store');
+    assert.throws(() => reader.installReviewSchema('blocked-write', 'local', '1', []), /readonly/i);
     const web = await startAdapter(root, runtime, () => undefined);
     try {
       const api = await webAPI(web.pairURL());
@@ -89,11 +98,15 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       assert.equal((await api.post('/api/knowledge/ask', { vault, question, revision: 'draft' })).status, 400);
       assert.equal(runtime.gatewayCursor(), 0);
       const browser = await chromium(join(root, 'chromium'));
+      const ready = async (expression: string) => {
+        try { await browser.ready(expression); }
+        catch { assert.fail(expression + '\n' + await browser.evaluate('document.querySelector("#knowledge-view").innerText')); }
+      };
       try {
         await browser.command('Page.navigate', { url: web.pairURL() });
-        await browser.ready("!document.querySelector('#open-knowledge')?.disabled");
+        await ready("!document.querySelector('#open-knowledge')?.disabled");
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
-        await browser.ready("document.querySelector('#knowledge-status').textContent.includes('沒有已發布')");
+        await ready("document.querySelector('#knowledge-status').textContent.includes('沒有已發布')");
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-ask').disabled"), true);
         context.diagnostic('Knowledge page displayed the empty published store');
         await browser.evaluate("document.querySelector('#open-chat').click()");
@@ -109,12 +122,12 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           document.querySelector('#knowledge-folder').value = ${JSON.stringify(repository)};
           document.querySelector('#knowledge-check-folder').click();
         `);
-        await browser.ready("document.querySelector('#knowledge-repository-status').textContent.includes('已解析發布標籤')");
+        await ready("document.querySelector('#knowledge-repository-status').textContent.includes('已解析發布標籤')");
         await browser.evaluate(`
           document.querySelector('#knowledge-model-consent').checked = true;
           document.querySelector('#knowledge-import-folder').click();
         `);
-        await browser.ready("!document.querySelector('#knowledge-ask')?.disabled");
+        await ready("!document.querySelector('#knowledge-ask')?.disabled");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-repository-status').textContent"), /tag-a/);
         assert.match(await browser.evaluate<string>("document.querySelector('#vault-details').textContent"), /tag-a@/);
         assert.equal((await (await api.get('/api/knowledge/vaults')).json()).vaults[0]?.id, vault);
@@ -123,13 +136,13 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           document.querySelector('#knowledge-question').value = ${JSON.stringify(question)};
           document.querySelector('#knowledge-ask').click();
         `);
-        await browser.ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
+        await ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
         await browser.evaluate(`
           document.querySelector('#knowledge-question').value = 'SYN-48B synthetic rejected question';
           document.querySelector('#knowledge-ask').click();
         `);
-        await browser.ready("document.querySelector('#knowledge-status').textContent.includes('模型服務拒絕處理這個問題')");
+        await ready("document.querySelector('#knowledge-status').textContent.includes('模型服務拒絕處理這個問題')");
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-status').textContent"),
           '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。');
         assert.equal(rejectedCalls, 1);
@@ -139,24 +152,67 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           const [reviewVault, reviewVersion] = reviewPanel.querySelectorAll('input');
           reviewVault.value = 'synthetic-wiki';
           reviewVersion.value = '1';
-          reviewPanel.querySelector('button').click();
+          [...reviewPanel.querySelectorAll('button')].find(button => button.textContent === '安裝 Schema 並建立草稿範本').click();
         `);
-        await browser.ready("document.querySelector('#wiki-review textarea').value.includes('synthetic-wiki')");
+        await ready("document.querySelector('#wiki-review details textarea').value.includes('synthetic-wiki')");
         const clickReview = (label: string) => browser.evaluate(
           `[...document.querySelectorAll('#wiki-review button')].find(element => element.textContent === ${JSON.stringify(label)}).click()`);
+        await browser.evaluate(`
+          document.querySelector('#wiki-review textarea').value = 'Synthetic Wiki source.';
+        `);
+        await clickReview('載入來源至草稿');
+        await ready("document.querySelector('#wiki-review textarea[readonly]').value.includes('Synthetic Wiki')");
         await clickReview('送交審核');
-        await browser.ready("document.querySelector('#wiki-review').textContent.includes('pending')");
+        await ready("document.querySelector('#wiki-review').textContent.includes('待審核')");
         const reviewList = await (await api.get(reviewsPath)).json();
         const id = reviewList.reviews[0].id;
         assert.equal((await api.post(reviewsPath, { action: 'publish', id })).status, 422);
         await clickReview('核准');
-        await browser.ready("document.querySelector('#wiki-review').textContent.includes('approved')");
+        await ready("document.querySelector('#wiki-review').textContent.includes('已核准')");
         await clickReview('發布');
-        await browser.ready("document.querySelector('#wiki-review').textContent.includes('回復前一版本')");
+        await ready("document.querySelector('#wiki-review').textContent.includes('回復前一版本')");
         assert.equal((await (await api.get(reviewsPath)).json()).intents.length, 1);
         await clickReview('回復前一版本');
         await until(async () => !(await (await api.get('/api/knowledge/vaults')).json()).vaults
           .some(({ id }: { id: string }) => id === 'synthetic-wiki'), 5000);
+        const bi = (label: string) => browser.evaluate(
+          `[...document.querySelectorAll('#ingest-review button')].find(element => element.textContent === ${JSON.stringify(label)}).click()`);
+        await browser.evaluate(`
+          const panel = document.querySelector('#ingest-review');
+          panel.open = true;
+          const [vaultInput, version, fields] = panel.querySelectorAll('input');
+          vaultInput.value = ${JSON.stringify(vault)};
+          version.value = '1';
+          fields.value = 'setting';
+          panel.querySelector('textarea').value = 'Synthetic SYN-NEW calibration is 7.2 mm.';
+        `);
+        await bi('安裝 Schema 並建立草稿範本');
+        await ready("[...document.querySelectorAll('#ingest-review button')].some(button => button.textContent === '新增卡片')");
+        await bi('載入來源至草稿');
+        await bi('新增卡片');
+        await browser.evaluate(`
+          const card = [...document.querySelectorAll('#ingest-review fieldset')].at(-1);
+          const [title, setting] = card.querySelectorAll('input');
+          title.value = 'Synthetic new calibration';
+          setting.value = '7.2 mm';
+          document.querySelector('#ingest-review textarea[readonly]').select();
+          card.querySelector('button').click();
+        `);
+        await bi('送交審核');
+        await ready("document.querySelector('#ingest-review').textContent.includes('待審核')");
+        await bi('比較版本與證據');
+        await ready("document.querySelector('#ingest-review').textContent.includes('新增 1 · 變更 0 · 移除 0')");
+        await bi('核准');
+        await ready("document.querySelector('#ingest-review').textContent.includes('已核准')");
+        await bi('發布');
+        await ready("document.querySelector('#ingest-review').textContent.includes('回復前一版本')");
+        const biAnswer = await (await api.post('/api/knowledge/ask', { vault, question: 'SYN-NEW calibration' })).json();
+        assert.equal(biAnswer.state, 'verified');
+        assert.equal(biAnswer.citations[0].quote, '7.2 mm');
+        assert.equal(biAnswer.citations[0].source, 'pasted.md');
+        await bi('回復前一版本');
+        await until(async () => (await (await api.get('/api/knowledge/vaults')).json()).vaults
+          .some(({ id, tag }: { id: string; tag?: string }) => id === vault && tag === 'tag-a'), 5000);
         await browser.evaluate("document.querySelector('#open-chat').click()");
         assert.equal(await browser.evaluate("document.querySelector('#chat-view').hidden"), false);
         assert.equal(await browser.evaluate("document.activeElement.id"), 'open-chat');

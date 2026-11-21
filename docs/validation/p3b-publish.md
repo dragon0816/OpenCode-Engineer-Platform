@@ -4,12 +4,22 @@ Use an OEP data directory with a writable knowledge database. Back it up before 
 
 ## Local workflow
 
-1. Open Knowledge, then BI Ingest and Review or Wiki Review. Install a schema with a vault ID and version. BI schemas require a list of fields. Wiki schemas use an empty list.
-2. Load a UTF-8 text or Markdown file into the generated draft. Check the original, Markdown, card fields, relationships and evidence ranges. Ranges are half-open UTF-16 offsets in the Markdown. One or more valid excerpts are required for every BI field. Content and excerpts have separate SHA-256 digests. Model use defaults to off. An explicit `allowModel: true` in the draft enables Ask for the published version.
-3. Submit, inspect the previous and candidate versions and save any edits. Approval and rejection use the saved edit number. A Wiki draft can be searched locally or discarded. BI immediate submission and Run Now use the same 30-second claim. After an interrupted claim expires, refresh and select Run Now.
-4. Approve, then publish. Rolling back a current review revision restores its recorded predecessor. Rolling back the first revision removes the active pointer. Retained revisions stay readable by identifier in the store. Replaying a publish after rollback returns its earlier result without activating it.
+1. Open Knowledge, then BI Ingest and Review or Wiki Review. Select a visible vault by ID and load it. To start a new vault, install a schema with an ID and version. BI schemas require field names. Wiki schemas use an empty list.
+2. Select a UTF-8 text or Markdown file, or paste text, and load the source preview. Add a card or change or remove an existing card. For each field of an added or updated card, enter the value and select or paste its exact source quote. The form computes the half-open UTF-16 offsets. Wiki form drafts support one source excerpt of up to 4,000 UTF-16 code units.
+3. Submit the changes, compare the card and field counts, read the old and new values and inspect changed evidence. Approve the saved draft before publishing. The advanced fold provides JSON submission and draft edits. Wiki drafts can be searched and discarded. Legacy full BI submissions use the existing 30-second job claim and Run Now recovery.
+4. Rollback restores the recorded predecessor. Rolling back a first publication deactivates the vault, preserving its pointer, revisions, blobs, and review record. Ask reports `vault-unavailable`. Publish another approved revision or choose 重新啟用 on the deactivated review. Replaying the first publish keeps its original result and leaves the vault inactive.
 
-The review candidate describes a full vault revision. Include all cards, relationships and source material intended for that revision. A competing publication changes the base and requires a new candidate. A schema update invalidates candidates carrying the previous digest.
+### Source upload and changes
+
+- `POST /api/knowledge/review-sources` accepts a raw `application/octet-stream` body of 1 byte to 1 MiB, with `Content-Length` and `X-OEP-SHA256` (lowercase hexadecimal). The adapter requires the local session and CSRF token. The server checks the digest and valid UTF-8, then stores the blob by digest. Identical uploads reuse the blob. Uploads are retained in the local database and count toward its size.
+- Send `action: stage-change` to the existing review endpoint with a unique review ID and a draft containing `vault`, `parent` (active revision or null), `schema` (review schema SHA-256), `addCards`, `updateCards`, `removeCards`, `sources`, `evidence`, and `relationships`. Source entries reference uploads by `id`, `ref`, and `sha256`. Evidence supplies `sourceId`, `cardId`, `field`, `start`, and `end`. Each passage remains limited to 4,000 UTF-16 code units.
+- The server applies the change set to the recorded parent. Updated cards replace their fields and evidence. Added evidence can also extend a retained card. Removing a card removes its passages and incident relationships. An untouched card retains its existing verified metadata and evidence exactly as published. New and replaced cards must supply evidence for every required field. Relationships in the change set add edges.
+- The 128 KiB JSON request limit still applies to metadata. The legacy full-revision `stage` API still accepts inline sources and retains its 100,000-code-unit per-source limit. A competing publication invalidates the staged parent. Installing another review schema invalidates drafts carrying the prior digest.
+- Imported BI vaults without a review schema use the source schema field list when present, or the union of published card field names. Install a review schema if the imported vault lacks usable field names or needs a different set. Published Ask model permission is independent of proposal availability.
+
+### Model proposals
+
+Choose 產生模型提案 explicitly on an active BI vault after loading a source up to 24,000 UTF-8 bytes. The source text leaves this machine through the LAN HTTP Gateway. The model proposes one card with an exact quote per required field. If any required quote fails exact matching, the server lists the affected fields and creates no review. A valid proposal creates a pending change set and follows the regular approval and publication process.
 
 ## Reconciliation
 

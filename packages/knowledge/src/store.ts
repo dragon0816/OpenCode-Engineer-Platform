@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { key, materialize, reviewSchema } from './ingest.ts';
-import type { Candidate } from './ingest.ts';
+import { key, materialize, materializeChange, reviewSchema, sourceUploadLimit } from './ingest.ts';
+import type { Candidate, ChangeSet } from './ingest.ts';
 import { ingestMigration, jobsMigration } from './ingest-migrations.ts';
 import { DatabaseSync } from 'node:sqlite';
 import type { Passage } from '../../contracts/src/evidence.ts';
 import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './retrieval.ts';
-import { canonical, compareRepositoryPublications, sha256, validateSnapshot } from './snapshot.ts';
+import { canonical, compareRepositoryPublications, digestPattern, string, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
 
 const schema = `
@@ -57,6 +57,7 @@ export function manifest(snapshot: Snapshot, inputHash: string) {
 
 export class KnowledgeStore {
   private db: DatabaseSync;
+  private activeFilter: string;
 
   constructor(path: string, readOnly = false) {
     this.db = new DatabaseSync(path, { readOnly, timeout: 5000 });
@@ -67,6 +68,8 @@ export class KnowledgeStore {
         this.transaction(() => this.db.exec(`${schema} PRAGMA user_version=1;`));
       } else if (version !== 1) throw new Error('Unsupported knowledge database schema');
       if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration));
+      this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
+        ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
     } catch (error) {
       this.db.close();
       throw error;
@@ -99,7 +102,7 @@ export class KnowledgeStore {
 
   private publication(vault: string, revision?: string) {
     return (revision === undefined
-      ? this.db.prepare('SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication WHERE v.id=?').get(vault)
+      ? this.db.prepare(`SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication WHERE v.id=? AND ${this.activeFilter}`).get(vault)
       : this.db.prepare('SELECT * FROM publications WHERE vault=? AND revision=?').get(vault, revision)) as Publication | undefined;
   }
 
@@ -126,11 +129,17 @@ export class KnowledgeStore {
 
   private activate(vault: string, publication: number) {
     this.db.prepare('INSERT INTO vaults VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET publication=excluded.publication').run(vault, publication);
+    this.db.prepare('DELETE FROM inactive_vaults WHERE vault=?').run(vault);
+  }
+
+  private managedVault(vault: string) {
+    return this.db.prepare(`SELECT 1 FROM review_schema_heads WHERE vault=?
+      UNION ALL SELECT 1 FROM reviews WHERE vault=? AND publication IS NOT NULL LIMIT 1`).get(vault, vault);
   }
 
   restoreRepositoryGeneration(vault: string, revision: string) {
     return this.transaction(() => {
-      if (this.db.prepare('SELECT 1 FROM review_schema_heads WHERE vault=?').get(vault)) {
+      if (this.managedVault(vault)) {
         throw new Error('Use review rollback for a managed vault');
       }
       const generation = this.publication(vault, revision);
@@ -143,7 +152,7 @@ export class KnowledgeStore {
 
   import(snapshot: Snapshot, input: Uint8Array, allowModel = false) {
     return this.transaction(() => {
-      if (this.db.prepare('SELECT 1 FROM review_schema_heads WHERE vault=?').get(snapshot.vault.id)) {
+      if (this.managedVault(snapshot.vault.id)) {
         throw new Error('This vault requires a reviewed publication');
       }
       return this.writeSnapshot(snapshot, input, allowModel);
@@ -157,7 +166,8 @@ export class KnowledgeStore {
     const inputHash = sha256(input);
     const { vault, publication, schema } = snapshot;
     const current = this.publication(vault.id);
-    if (current && current.kind !== vault.kind) throw new Error('Published vault kind cannot change');
+    const registered = this.db.prepare('SELECT p.kind FROM vaults v JOIN publications p ON p.id=v.publication WHERE v.id=?').get(vault.id);
+    if (registered && registered.kind !== vault.kind) throw new Error('Published vault kind cannot change');
     let activateRepository = false;
     if (snapshot.repository) {
       const previous = current && this.readSnapshot(current).repository;
@@ -212,14 +222,52 @@ export class KnowledgeStore {
     });
   }
 
-  private reviewSchema(vault: string): Snapshot['schema'] {
+  private reviewSchema(vault: string, base?: Snapshot): Snapshot['schema'] {
     const row = this.db.prepare(`SELECT s.body FROM review_schema_heads h
       JOIN review_schemas s USING (vault, version) WHERE h.vault=?`).get(vault);
-    if (!row) throw new Error('Install a review schema first');
-    return JSON.parse(String(row.body));
+    if (row) return JSON.parse(String(row.body));
+    if (base?.vault.kind === 'bi') {
+      if (Array.isArray(base.schema.document.fields)) {
+        return reviewSchema('local-bi', 'derived', base.schema.document.fields);
+      }
+      const fields = [...new Set(base.cards.flatMap((card) => Object.keys(card.fields)))].sort();
+      return reviewSchema('local-bi', 'derived', fields);
+    }
+    throw new Error('Install a review schema first');
   }
 
-  private stageCandidate(id: string, input: Candidate) {
+  uploadReviewSource(hash: string, bytes: Uint8Array) {
+    if (bytes.length > sourceUploadLimit || sha256(bytes) !== hash) throw new Error('Invalid source checksum or size');
+    string(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), 'source', sourceUploadLimit);
+    return this.transaction(() => {
+      this.putBlob(hash, bytes);
+      this.db.prepare('INSERT OR IGNORE INTO review_uploads VALUES (?)').run(hash);
+      return { sha256: hash };
+    });
+  }
+
+  reviewSource(hash: string) {
+    if (typeof hash !== 'string' || !digestPattern.test(hash) ||
+        !this.db.prepare('SELECT 1 FROM review_uploads WHERE hash=?').get(hash)) throw new Error('Unknown uploaded source');
+    return this.blob(hash).toString('utf8');
+  }
+
+  reviewBase(vault: string) {
+    const base = this.snapshot(key(vault));
+    const schema = this.reviewSchema(vault, base);
+    return { vault: base?.vault, parent: base?.publication.revision ?? null, schema, cards: base?.cards ?? [],
+      allowModel: this.publication(vault)?.allow_model === 1 };
+  }
+
+  private reviewSnapshot(input: Candidate | ChangeSet, revision: string, parent?: string) {
+    const base = parent && 'parent' in input ? this.snapshot(input.vault.id, parent) : undefined;
+    const schema = this.reviewSchema(input.vault.id, base);
+    return 'parent' in input
+      ? materializeChange(input, base, schema, revision, (hash) => this.reviewSource(hash))
+      : materialize(input, schema, revision, parent);
+  }
+
+  private stageCandidate(id: string, input: Candidate | ChangeSet) {
     const original = canonical(input);
     const existing = this.db.prepare('SELECT original FROM reviews WHERE id=?').get(key(id));
     if (existing) {
@@ -229,12 +277,12 @@ export class KnowledgeStore {
     const vault = key(input.vault.id);
     const parent = this.publication(vault);
     if (parent && parent.kind !== input.vault.kind) throw new Error('Vault kind cannot change');
-    materialize(input, this.reviewSchema(vault), 'review-' + sha256(id), parent?.revision);
+    this.reviewSnapshot(input, 'review-' + sha256(id), parent?.revision);
     this.db.prepare('INSERT INTO reviews(id,vault,parent,original,draft) VALUES (?,?,?,?,?)')
       .run(id, vault, parent?.revision ?? null, original, original);
   }
 
-  stage(id: string, input: Candidate) {
+  stage(id: string, input: Candidate | ChangeSet) {
     return this.transaction(() => this.stageCandidate(id, input));
   }
 
@@ -276,7 +324,11 @@ export class KnowledgeStore {
   }
 
   reviews() {
-    return this.db.prepare('SELECT id,vault,parent,edit,status,publication,draft FROM reviews ORDER BY rowid DESC').all();
+    return this.db.prepare(`SELECT r.id,r.vault,r.parent,r.edit,r.status,r.publication,r.draft,
+      p.revision=r.publication AND i.vault IS NULL AS active,
+      p.revision=r.publication AND i.vault IS NOT NULL AS inactive
+      FROM reviews r LEFT JOIN vaults v ON v.id=r.vault LEFT JOIN publications p ON p.id=v.publication
+      LEFT JOIN inactive_vaults i ON i.vault=v.id ORDER BY r.rowid DESC`).all();
   }
 
   reconciliation() {
@@ -297,25 +349,28 @@ export class KnowledgeStore {
     const review = this.review(id);
     const vault = String(review.vault);
     const previous = review.parent === null ? null : this.snapshot(vault, String(review.parent));
-    const draft = JSON.parse(String(review.draft)) as Candidate;
-    const candidate = materialize(draft, this.reviewSchema(vault), 'review-' + sha256(id));
+    const draft = JSON.parse(String(review.draft)) as Candidate | ChangeSet;
+    const candidate = this.reviewSnapshot(draft, 'review-' + sha256(id), previous?.publication.revision);
     return {
       previous: previous && { sources: previous.sources, cards: previous.cards, passages: previous.passages, relationships: previous.relationships },
       candidate: { sources: candidate.sources, cards: candidate.cards, passages: candidate.passages, relationships: candidate.relationships },
     };
   }
 
-  editReview(id: string, edit: number, draft: Candidate) {
+  editReview(id: string, edit: number, draft: Candidate | ChangeSet) {
     this.transaction(() => {
       const review = this.review(id);
       if (review.status !== 'pending' || review.edit !== edit) throw new Error('Review has changed');
-      const original = JSON.parse(String(review.original)) as Candidate;
+      const original = JSON.parse(String(review.original)) as Candidate | ChangeSet;
+      if ('parent' in original !== ('parent' in draft)) throw new Error('Draft format cannot change');
+      const sourceIdentity = (input: Candidate | ChangeSet) => 'parent' in input
+        ? { parent: input.parent, sources: input.sources }
+        : input.sources.map(({ id, ref, original }) => ({ id, ref, original }));
       if (canonical(draft.vault) !== canonical(original.vault) ||
-          canonical(draft.sources.map(({ id, ref, original }) => ({ id, ref, original }))) !==
-          canonical(original.sources.map(({ id, ref, original }) => ({ id, ref, original })))) {
+          canonical(sourceIdentity(draft)) !== canonical(sourceIdentity(original))) {
         throw new Error('Original sources and vault cannot change');
       }
-      materialize(draft, this.reviewSchema(String(review.vault)), 'review-' + sha256(id));
+      this.reviewSnapshot(draft, 'review-' + sha256(id), review.parent === null ? undefined : String(review.parent));
       const body = canonical(draft);
       this.db.prepare('INSERT INTO review_edits VALUES (?,?,?)').run(id, edit + 1, body);
       this.db.prepare('UPDATE reviews SET draft=?, edit=edit+1 WHERE id=?').run(body, id);
@@ -350,8 +405,8 @@ export class KnowledgeStore {
       if ((parent ?? null) !== review.parent) throw new Error('Published base has changed');
       const revision = 'review-' + sha256(id);
       if (this.publication(vault, revision)) throw new Error('Revision already exists');
-      const draft = JSON.parse(String(review.draft)) as Candidate;
-      const snapshot = materialize(draft, this.reviewSchema(vault), revision, parent);
+      const draft = JSON.parse(String(review.draft)) as Candidate | ChangeSet;
+      const snapshot = this.reviewSnapshot(draft, revision, parent);
       fault?.('before-blob');
       this.writeSnapshot(snapshot, Buffer.from(String(review.draft)), draft.allowModel === true,
         true, () => fault?.('mid-commit'));
@@ -363,7 +418,21 @@ export class KnowledgeStore {
     return result;
   }
 
-  rollbackReview(id: string) {
+  reactivateReview(id: string) {
+    this.transaction(() => {
+      const review = this.review(id);
+      const vault = String(review.vault);
+      const publication = this.db.prepare(`SELECT p.* FROM inactive_vaults i JOIN vaults v ON v.id=i.vault
+        JOIN publications p ON p.id=v.publication WHERE v.id=?`).get(vault) as Publication | undefined;
+      if (!publication || publication.revision !== review.publication || publication.index_hash !== publication.manifest_hash ||
+          this.readSnapshot(publication).schema.sha256 !== this.reviewSchema(vault, this.readSnapshot(publication)).sha256) {
+        throw new Error('Review cannot be reactivated');
+      }
+      this.activate(vault, publication.id);
+    });
+  }
+
+  rollbackReview(id: string, beforeCommit?: () => void) {
     return this.transaction(() => {
       const review = this.review(id);
       const vault = String(review.vault);
@@ -371,18 +440,20 @@ export class KnowledgeStore {
         throw new Error('Review publication is no longer active');
       }
       if (review.parent === null) {
-        this.db.prepare('DELETE FROM vaults WHERE id=?').run(vault);
+        this.db.prepare('INSERT INTO inactive_vaults VALUES (?)').run(vault);
+        beforeCommit?.();
         return;
       }
       const parent = this.publication(vault, String(review.parent));
       if (!parent || parent.index_hash !== parent.manifest_hash) throw new Error('Previous revision is unavailable');
       this.activate(vault, parent.id);
+      beforeCommit?.();
     });
   }
 
   overview() {
     const publications = this.db.prepare(`
-      SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication ORDER BY p.title, p.vault
+      SELECT p.* FROM vaults v JOIN publications p ON p.id=v.publication WHERE ${this.activeFilter} ORDER BY p.title, p.vault
     `).all() as unknown as Publication[];
     return publications.map((publication) => {
       const snapshot = this.readSnapshot(publication);

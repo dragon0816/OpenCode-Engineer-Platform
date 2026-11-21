@@ -1,6 +1,6 @@
 import { appendFileSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { knowledgeModel } from '../../adapter/src/opencode/knowledge-model.ts';
+import { knowledgeCompletion, knowledgeModel } from '../../adapter/src/opencode/knowledge-model.ts';
 import { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
 import { startGateway } from '../../adapter/src/opencode/gateway.ts';
 import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
@@ -58,20 +58,25 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
   const path = join(databaseRoot, knowledgeFile);
   verifyKnowledgePath(path);
   const store = new KnowledgeStore(path);
+  let reader: KnowledgeStore | undefined;
   let relay: Awaited<ReturnType<typeof startGateway>> | undefined;
   let mcp: Awaited<ReturnType<typeof startKnowledgeMcp>> | undefined;
   const close = async () => {
     const results = await Promise.allSettled([mcp?.close(), relay?.close()]);
+    reader?.close();
     store.close();
     if (results.some((result) => result.status === 'rejected')) throw new Error('Knowledge services could not close');
   };
   try {
     relay = await startGateway({ ...options, web: true,
       trace: (row) => appendFileSync(join(audit, 'knowledge-gateway.jsonl'), JSON.stringify(row) + '\n') });
-    const ask = new KnowledgeAsk(store, knowledgeModel(relay, options.alias));
+    const queryStore = reader = new KnowledgeStore(path, true);
+    const ask = new KnowledgeAsk(queryStore, knowledgeModel(relay, options.alias));
     mcp = await startKnowledgeMcp(ask);
-    return { ask, reviewStore: store, overview: () => store.overview(), inspectRepository,
+    return { ask, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
+      propose: (prompt: string, input: unknown, signal: AbortSignal) =>
+        knowledgeCompletion(relay!, options.alias, prompt, input, signal),
       config: mcp.config, close };
   } catch (error) {
     try { await close(); }

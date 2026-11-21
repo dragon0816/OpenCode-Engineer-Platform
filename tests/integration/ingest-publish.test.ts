@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+import { proposeReview } from '../../apps/adapter/src/http/review.ts';
 import { KnowledgeAsk } from '../../packages/knowledge/src/ask.ts';
 import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
 import { sha256 } from '../../packages/knowledge/src/snapshot.ts';
@@ -225,5 +226,130 @@ test('Wiki sandbox discard leaves another sandbox and the approved revision inta
     assert.equal(store.snapshot('wiki')?.publication.revision, revision);
     const comparison = store.compareReview('sandbox-b');
     assert.deepEqual(comparison.previous?.passages, comparison.candidate.passages);
+  } finally { store.close(); }
+});
+
+test('first rollback survives process death and retains the publication for reactivation', async () => {
+  const path = join(folder(), 'knowledge.sqlite');
+  const store = new KnowledgeStore(path);
+  const schema = store.installReviewSchema('bi', 'local', '1', ['setting']);
+  stage(store, 'run', candidate('bi', schema.sha256));
+  store.decideReview('run', 0, 'approved');
+  const { revision } = store.publishReview('run');
+  const rollbackChild = child.slice(0, child.indexOf('  const result')) +
+    "store.rollbackReview('run', () => process.exit(78));";
+  const args = command(path);
+  args[3] = rollbackChild;
+  assert.equal(spawnSync(process.execPath, args).status, 78);
+  assert.equal(store.snapshot('bi')?.publication.revision, revision);
+  store.rollbackReview('run');
+  store.close();
+  const reopened = new KnowledgeStore(path);
+  try {
+    assert.deepEqual(await ask(reopened, 'bi'), { state: 'abstain', reason: 'vault-unavailable' });
+    assert.ok(reopened.snapshot('bi', revision));
+    assert.equal(reopened.reviews()[0].publication, revision);
+    assert.equal(reopened.publishReview('run').replay, true);
+    assert.equal(reopened.snapshot('bi'), undefined);
+    reopened.reactivateReview('run');
+    assert.equal((await ask(reopened, 'bi')).state, 'verified');
+    assert.equal(reopened.reconciliation().intents.length, 1);
+    reopened.rollbackReview('run');
+    stage(reopened, 'later', candidate('bi', schema.sha256, 'Synthetic calibration uses green.'));
+    reopened.decideReview('later', 0, 'approved');
+    const later = reopened.publishReview('later').revision;
+    assert.equal(reopened.snapshot('bi')?.publication.revision, later);
+    assert.ok(reopened.snapshot('bi', revision));
+  } finally { reopened.close(); }
+});
+
+for (const point of ['before-blob', 'mid-commit', 'after-commit']) {
+  test('incremental publication preserves the parent and replays after ' + point, async () => {
+    const path = join(folder(), 'knowledge.sqlite');
+    const store = new KnowledgeStore(path);
+    const schema = store.installReviewSchema('bi', 'local', '1', ['setting']);
+    const seed = candidate('bi', schema.sha256);
+    seed.cards = Array.from({ length: 500 }, (_, index) => ({
+      ...seed.cards[0], id: 'card-' + index, key: 'card-' + index, fields: { setting: 'amber '.repeat(60) },
+    }));
+    seed.evidence = seed.cards.map((card) => ({ ...seed.evidence[0], cardId: card.id }));
+    assert.ok(Buffer.byteLength(JSON.stringify(seed)) > 128 * 1024);
+    store.stage('seed', seed);
+    store.decideReview('seed', 0, 'approved');
+    const parent = store.publishReview('seed').revision;
+    const text = 'Synthetic calibration uses violet. ' + 'z'.repeat(140_000);
+    const bytes = Buffer.from(text);
+    const hash = sha256(bytes);
+    assert.throws(() => store.uploadReviewSource(sha256('wrong'), bytes), /checksum/);
+    assert.throws(() => store.uploadReviewSource(hash, Buffer.alloc(1024 * 1024 + 1)), /size/);
+    store.uploadReviewSource(hash, bytes);
+    const card = { ...seed.cards[0], id: 'new', key: 'new', fields: { setting: 'violet' } };
+    const change = { vault: seed.vault, schema: schema.sha256, parent, allowModel: true,
+      addCards: [card], updateCards: [{ ...seed.cards[3], fields: { setting: 'violet' } }], removeCards: ['card-2'],
+      sources: [{ id: 'upload', ref: 'synthetic.md', sha256: hash }],
+      evidence: [card.id, 'card-3', 'card-4'].map((cardId) =>
+        ({ sourceId: 'upload', cardId, field: 'setting', start: 0, end: 34 })),
+      relationships: [{ from: 'card-1', to: card.id, kind: 'related' }] };
+    assert.throws(() => store.stage('bad', { ...change, evidence: [] }), /evidence/i);
+    store.stage('run', change);
+    assert.throws(() => store.publishReview('run'), /approval/);
+    store.stage('stale-change', change);
+    store.decideReview('stale-change', 0, 'approved');
+    store.decideReview('run', 0, 'approved');
+    store.close();
+    assert.equal(spawnSync(process.execPath, command(path, point)).status, 78);
+    const submit = promisify(execFile);
+    const attempts = await Promise.all(Array.from({ length: 10 }, () => submit(process.execPath, command(path))));
+    const results = attempts.map(({ stdout }) => JSON.parse(stdout));
+    assert.equal(new Set(results.map(({ revision }) => revision)).size, 1);
+    assert.equal(results.filter(({ replay }) => !replay).length, point === 'after-commit' ? 0 : 1);
+    const reopened = new KnowledgeStore(path);
+    try {
+      const current = reopened.snapshot('bi')!;
+      assert.equal(current.publication.parent, parent);
+      assert.equal(current.cards.length, 500);
+      assert.ok(current.cards.some(({ id }) => id === 'new'));
+      assert.ok(!current.cards.some(({ id }) => id === 'card-2'));
+      assert.equal(current.cards.find(({ id }) => id === 'card-3')?.fields.setting, 'violet');
+      assert.equal(current.passages.filter(({ cardId }) => cardId === 'card-3').length, 1);
+      assert.equal(current.passages.filter(({ cardId }) => cardId === 'card-4').length, 2);
+      assert.equal(current.sources.length, 2);
+      assert.equal(current.relationships.length, 1);
+      assert.equal(reopened.reconciliation().intents.length, 2);
+      assert.throws(() => reopened.publishReview('stale-change'), /base has changed/);
+      reopened.stage('run', change);
+      const db = new DatabaseSync(path, { readOnly: true });
+      try {
+        assert.equal(db.prepare('SELECT count(*) AS total FROM publications').get()?.total, 2);
+        assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+      } finally { db.close(); }
+    } finally { reopened.close(); }
+  });
+}
+
+test('explicit proposal checks exact quotes with Ask model permission disabled and never publishes', async () => {
+  const store = new KnowledgeStore(':memory:');
+  try {
+    const schema = store.installReviewSchema('bi', 'local', '1', ['setting']);
+    stage(store, 'seed', { ...candidate('bi', schema.sha256), allowModel: false });
+    store.decideReview('seed', 0, 'approved');
+    const parent = store.publishReview('seed').revision;
+    const source = 'Synthetic calibration uses violet.';
+    const hash = sha256(source);
+    store.uploadReviewSource(hash, Buffer.from(source));
+    const input = { action: 'propose', id: 'model', vault: 'bi', parent, schema: schema.sha256, sha256: hash, ref: 'synthetic.md' };
+    const signal = AbortSignal.timeout(1000);
+    const fake = (quote: string) => async (_prompt: string, payload: unknown) => {
+      assert.deepEqual(payload, { source, fields: ['setting'] });
+      return { content: JSON.stringify({ title: 'Synthetic Calibration', fields: { setting: { value: 'violet', quote } } }) };
+    };
+    assert.deepEqual(await proposeReview(store, input, fake('Synthetic calibration uses indigo.'), signal), { rejected: ['setting'] });
+    assert.equal(store.reviews().length, 1);
+    assert.deepEqual(await proposeReview(store, input, fake(source), signal), { id: 'model' });
+    assert.equal(store.reviews()[0].status, 'pending');
+    assert.equal(store.compareReview('model').candidate.passages.at(-1)?.text, source);
+    assert.throws(() => store.publishReview('model'), /approval/);
+    assert.equal(store.snapshot('bi')?.publication.revision, parent);
+    assert.equal(store.reconciliation().intents.length, 1);
   } finally { store.close(); }
 });
