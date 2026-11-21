@@ -30,14 +30,18 @@ function useDatabase(path, operation) {
   return Promise.resolve().then(() => operation(db)).finally(() => db.close());
 }
 
+function excluded(name) {
+  const parts = name.split(sep);
+  return parts[0] === 'maintenance.log' || parts[0] === 'backup.manifest.json' ||
+    (parts[0] === 'web' && (/^launch-/.test(parts[1]) || /^open-.*\.request$/.test(parts[1]))) ||
+    basename(name).toLowerCase() === 'auth.json';
+}
+
 async function snapshot() {
   const candidates = [...files(root)];
   for (const path of candidates) {
     const name = relative(root, path);
-    const parts = name.split(sep);
-    if (parts[0] === 'maintenance.log' || parts[0] === 'backup.manifest.json' ||
-      (parts[0] === 'web' && (/^launch-/.test(parts[1]) || /^open-.*\.request$/.test(parts[1])))) continue;
-    if (basename(path).toLowerCase() === 'auth.json') continue;
+    if (excluded(name)) continue;
     const sidecar = /-(?:wal|shm|journal)$/.exec(path);
     if (sidecar && candidates.includes(path.slice(0, sidecar.index)) && sqlite(path.slice(0, sidecar.index))) continue;
     const output = join(destination, name);
@@ -50,11 +54,13 @@ async function snapshot() {
   }
 }
 
-async function describe() {
+async function describe({ live = false } = {}) {
   const databases = {};
   const inventory = [];
   for (const path of [...files(root)].sort()) {
-    const name = relative(root, path).split(sep).join('/');
+    const local = relative(root, path);
+    if (live && excluded(local)) continue;
+    const name = local.split(sep).join('/');
     if (name === 'backup.manifest.json') continue;
     const bytes = readFileSync(path);
     inventory.push({ path: name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
@@ -88,9 +94,89 @@ async function describe() {
   return { inventory, databases };
 }
 
+function rowDigests(db, table, columns) {
+  const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table));
+  statement.setReadBigInts(true);
+  return [...statement.iterate()].map((row) => createHash('sha256').update(JSON.stringify(
+    Object.values(row).map((value) => typeof value === 'bigint' ? ['integer', String(value)] :
+      value instanceof Uint8Array ? ['blob', Buffer.from(value).toString('base64')] : value),
+  )).digest('hex')).sort();
+}
+
+const columnsOf = (db, table) => db.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid')
+  .all(table).map(({ name }) => name);
+
+// These stores create empty tables on first open when upgrading an older schema.
+const webAdditions = new Set([
+  'web_session_display', 'web_session_project', 'web_preferences', 'web_settings_audit',
+  'web_turn_limits', 'web_model_settings', 'web_project_folders', 'web_action_decisions',
+  'web_message_annotations', 'web_turn_replies', 'web_session_knowledge_disabled',
+  'web_knowledge_settings', 'web_appearance', 'web_sessions', 'attachments', 'web_turns',
+]);
+const knowledgeAdditions = new Set([
+  'benchmark_sets', 'inactive_vaults', 'review_uploads', 'review_schemas', 'review_schema_heads',
+  'reviews', 'review_edits', 'notification_intents', 'ingest_jobs', 'ingest_effects',
+]);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+async function reconcileUpgrade() {
+  const before = JSON.parse(readFileSync(join(destination, 'backup.manifest.json'), 'utf8'));
+  const after = await describe({ live: true });
+  for (const file of before.inventory) {
+    if (!before.databases[file.path] && !after.inventory.some((entry) => same(entry, file))) {
+      throw new Error('File changed');
+    }
+  }
+  for (const [name, prior] of Object.entries(before.databases)) {
+    const next = after.databases[name];
+    if (!next || next.userVersion < prior.userVersion || !same(prior.revisions, next.revisions) ||
+        !same(prior.publicationCounts, next.publicationCounts)) throw new Error('Database changed');
+    const allowed = /(?:^|\/)(web|telegram-chat)\.sqlite$/.test(name) ? webAdditions :
+      basename(name) === 'knowledge.sqlite' ? knowledgeAdditions : new Set();
+    for (const [table, count] of Object.entries(next.counts)) {
+      if (!(table in prior.counts) && (count !== 0 || !allowed.has(table))) throw new Error('Unexpected new table');
+    }
+    await useDatabase(join(destination, name), (oldDb) =>
+      useDatabase(join(root, name), (newDb) => {
+        for (const [table, count] of Object.entries(prior.counts)) {
+          if (next.counts[table] !== count) throw new Error('Row count changed');
+          const columns = columnsOf(oldDb, table);
+          const newColumns = columnsOf(newDb, table);
+          if (columns.some((column) => !newColumns.includes(column)) ||
+              !same(rowDigests(oldDb, table, columns), rowDigests(newDb, table, columns))) {
+            throw new Error('Rows changed');
+          }
+        }
+      }));
+  }
+}
+
+async function intentDiff(report) {
+  const before = JSON.parse(readFileSync(join(destination, 'backup.manifest.json'), 'utf8'));
+  const live = await describe({ live: true });
+  const changes = [];
+  for (const [database, metadata] of Object.entries(live.databases)) {
+    await useDatabase(join(root, database), async (db) => {
+      for (const table of ['notification_intents', 'outbox', 'inbox', 'bi_jobs', 'ingest_jobs']) {
+        if (!(table in metadata.counts)) continue;
+        const previous = before.databases[database]?.counts[table] !== undefined
+          ? await useDatabase(join(destination, database), (old) => {
+            const columns = columnsOf(old, table);
+            return { columns, digests: new Set(rowDigests(old, table, columns)) };
+          }) : { columns: columnsOf(db, table), digests: new Set() };
+        const addedOrChanged = rowDigests(db, table, previous.columns).filter((hash) => !previous.digests.has(hash));
+        if (addedOrChanged.length) changes.push({ database, table, columns: previous.columns, addedOrChanged });
+      }
+    });
+  }
+  writeFileSync(report, JSON.stringify({ changes }));
+}
+
 try {
   if (mode === 'copy') await snapshot();
   else if (mode === 'describe') writeFileSync(destination, JSON.stringify(await describe()), { flag: 'wx' });
+  else if (mode === 'reconcile-upgrade') await reconcileUpgrade();
+  else if (mode === 'intent-diff') await intentDiff(process.argv[5]);
   else throw new Error('Unknown mode');
 } catch {
   process.exitCode = 1;

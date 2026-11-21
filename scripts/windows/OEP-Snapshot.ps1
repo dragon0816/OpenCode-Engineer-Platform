@@ -76,9 +76,12 @@ function Copy-RestoreStage($Backup, $Manifest, $Stage) {
     Reconcile-Snapshot $Stage $Manifest
 }
 
-function Move-RestoreStage($Stage, $DataRoot, $Original) {
+function Move-RestoreStage($Stage, $DataRoot, $Original, [scriptblock]$BeforeSwap) {
     if ([IO.Directory]::Exists($DataRoot)) { [IO.Directory]::Move($DataRoot, $Original) }
-    try { [IO.Directory]::Move($Stage, $DataRoot) }
+    try {
+        if ($BeforeSwap) { & $BeforeSwap }
+        [IO.Directory]::Move($Stage, $DataRoot)
+    }
     catch {
         if ([IO.Directory]::Exists($Original) -and ![IO.Directory]::Exists($DataRoot)) {
             [IO.Directory]::Move($Original, $DataRoot)
