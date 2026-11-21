@@ -79,11 +79,11 @@
           <button type="button" data-section="appearance">外觀</button>
           <button type="button" data-section="model">模型</button>
           <button type="button" data-section="limits">回合限制</button>
-          <button type="button" data-section="runtime">執行環境</button>
-          <button type="button" data-section="mcp">MCP</button>
-          <button type="button" data-section="integrations">整合說明</button>
-          <button type="button" data-section="input">輸入</button>
           <button type="button" data-section="projects">專案與資料夾</button>
+          <button type="button" data-section="integrations">整合</button>
+          <button type="button" data-section="input">輸入</button>
+          <button type="button" data-section="mcp">MCP</button>
+          <button type="button" data-section="runtime">執行環境</button>
           <button type="button" data-section="about">關於</button>
         </nav>
         <div class="settings-content">
@@ -105,7 +105,7 @@
             </form>
             <details class="settings-advanced">
               <summary>進階</summary>
-              <p>助理指示儲存在 <code>soul.md</code>。</p>
+              <p>助理指示用來定義角色與工作方式，也就是 <code>soul.md</code> 的用途。</p>
               <label><input id="assistant-delegation" type="checkbox" disabled> 多助理委派</label>
               <small>目前只允許主要助理執行工作。</small>
             </details>
@@ -166,13 +166,9 @@
               <p>超出歷史上限時會省略較舊的完整對話回合，仍會納入新訊息與本次工具結果。</p>
             </details>
           </section>
-          <section id="settings-input" hidden>
-            <h2>輸入</h2>
-            <label><input type="checkbox" id="enable-microphone"> 啟用麥克風語音輸入</label>
-            <p id="microphone-settings-status"></p>
-          </section>
-          <section id="settings-projects" hidden>
-            <h2>專案與資料夾</h2>
+          <section id="settings-projects" aria-labelledby="settings-projects-title" hidden>
+            <h2 id="settings-projects-title">專案與資料夾</h2>
+            <p class="settings-help">查看專案的工作資料夾，並選擇可用來附加檔案的唯讀資料夾。</p>
             <label>專案 <select id="folder-project"></select></label>
             <p id="project-working-root"></p>
             <h3>唯讀資料夾</h3>
@@ -180,20 +176,58 @@
             <form id="project-folder-form">
               <label for="project-folder">本機資料夾的絕對路徑</label>
               <input id="project-folder" type="text" required>
-              <button type="submit">加入唯讀資料夾</button>
+              <div class="settings-actions">
+                <button type="submit">加入唯讀資料夾</button>
+                <p id="project-folder-status" role="status"></p>
+              </div>
             </form>
-            <p id="project-folder-status" role="status"></p>
           </section>
-          <section id="settings-about" hidden>
-            <h2>關於</h2>
-            <dl id="about-details"></dl>
-            <p id="about-status" role="status"></p>
+          <section id="settings-integrations" aria-labelledby="settings-integrations-title" hidden>
+            <h2 id="settings-integrations-title">整合</h2>
+            <p class="settings-help">管理知識庫連結，並查看 Telegram 機器人的設定狀態。</p>
+            <form id="knowledge-settings">
+              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用 BI 查詢工具</label>
+              <label for="atlas-url">Atlas 網址（選填）</label>
+              <input id="atlas-url" type="url" maxlength="2048">
+              <div class="settings-actions">
+                <button type="submit">儲存知識庫設定</button>
+                <button id="open-atlas" type="button" disabled>開啟 Atlas</button>
+                <p id="knowledge-settings-status" role="status"></p>
+              </div>
+            </form>
+            <dl>
+              <dt>知識庫</dt><dd id="knowledge-configured">正在讀取…</dd>
+              <dt>Telegram 助理機器人</dt><dd id="telegram-main-status">正在讀取…</dd>
+              <dt>Telegram BI 機器人</dt><dd id="telegram-bi-status">正在讀取…</dd>
+            </dl>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <h3>整合說明</h3>
+              <p id="telegram-configured"></p>
+              <ul>
+                <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
+                <li>SSH 決策依賴 AEP 的專用服務，因此未接入。</li>
+                <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
+                <li>共用資料庫和資產庫訂閱需要公司服務及組織權限，因此未接入。</li>
+              </ul>
+            </details>
           </section>
-          <section id="settings-runtime" hidden>
-            <h2>執行環境</h2>
+          <section id="settings-input" aria-labelledby="settings-input-title" hidden>
+            <h2 id="settings-input-title">輸入</h2>
+            <p class="settings-help">開啟聽寫後，可用麥克風將語音填入對話輸入框。</p>
+            <label><input type="checkbox" id="enable-microphone"> 啟用麥克風語音輸入</label>
+            <p id="microphone-settings-status" role="status"></p>
+          </section>
+          <section id="settings-runtime" aria-labelledby="settings-runtime-title" hidden>
+            <h2 id="settings-runtime-title">執行環境</h2>
+            <p class="settings-help">查看本機服務使用的版本及啟動檢查結果。</p>
             <p id="runtime-status" role="status">正在載入執行環境…</p>
             <dl id="runtime-details"></dl>
             <p id="runtime-agent"></p>
+            <details class="settings-advanced">
+              <summary>進階</summary>
+              <dl id="runtime-fingerprints"></dl>
+            </details>
           </section>
           <section id="settings-mcp" hidden>
             <h2>MCP</h2>
@@ -258,25 +292,11 @@
               </form>
             </dialog>
           </section>
-          <section id="settings-integrations" hidden>
-            <h2>知識庫整合</h2>
-            <form id="knowledge-settings">
-              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用 BI 查詢工具</label>
-              <label for="atlas-url">Atlas 網址（選填）</label>
-              <input id="atlas-url" type="url" maxlength="2048">
-              <div class="settings-actions">
-                <button type="submit">儲存知識庫設定</button>
-                <button id="open-atlas" type="button" disabled>開啟 Atlas</button>
-              </div>
-              <p id="knowledge-settings-status" role="status"></p>
-            </form>
-            <h2>整合說明</h2>
-            <ul>
-              <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
-              <li>SSH 決策依賴 AEP 的專用服務，因此未接入。</li>
-              <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
-              <li>共用資料庫和資產庫訂閱需要公司服務及組織權限，因此未接入。</li>
-            </ul>
+          <section id="settings-about" aria-labelledby="settings-about-title" hidden>
+            <h2 id="settings-about-title">關於</h2>
+            <p class="settings-help">查看 OEP 版本、資料存放位置、授權與使用說明。</p>
+            <dl id="about-details"></dl>
+            <p id="about-status" role="status"></p>
           </section>
         </div>
       </div>

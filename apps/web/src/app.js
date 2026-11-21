@@ -1324,8 +1324,20 @@ async function loadKnowledgeSettings() {
   try { applyKnowledgeSettings(await request('/api/settings/knowledge')); }
   catch { knowledgeSettingsStatus.textContent = '無法讀取知識庫設定。'; }
 }
+const configuredLabel = (configured) => configured ? '已設定' : '未設定';
+async function loadTelegramStatus() {
+  const mainStatus = find('telegram-main-status');
+  const biStatus = find('telegram-bi-status');
+  mainStatus.textContent = biStatus.textContent = '正在讀取…';
+  try {
+    const { main, bi } = await request('/api/jobs');
+    mainStatus.textContent = configuredLabel(main);
+    biStatus.textContent = configuredLabel(bi);
+  } catch { mainStatus.textContent = biStatus.textContent = '暫時無法讀取'; }
+}
 knowledgeSettings.addEventListener('submit', async (event) => {
   event.preventDefault();
+  knowledgeSettingsStatus.textContent = '正在儲存…';
   try {
     applyKnowledgeSettings(await request('/api/settings/knowledge', {
       data: { atlasUrl: atlasInput.value, toolbox: find('knowledge-toolbox').checked },
@@ -1371,6 +1383,7 @@ function showSettings() {
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
+  if (!find('settings-integrations').hidden) void loadTelegramStatus();
   if (!find('settings-mcp').hidden) void loadMcpSettings();
   settingsEntry.setAttribute('aria-current', 'page');
   if (narrowNavigation.matches) setSidebar(false);
@@ -1406,6 +1419,7 @@ for (const button of settingsSections) {
       find(`settings-${section.dataset.section}`).hidden = section !== button;
     }
     if (button.dataset.section === 'mcp') void loadMcpSettings();
+    if (button.dataset.section === 'integrations') void loadTelegramStatus();
   });
 }
 document.addEventListener('keydown', (event) => {
@@ -1749,20 +1763,24 @@ try {
     }
   }).catch(() => { find('about-status').textContent = '無法載入版本資訊。'; });
   request('/api/settings/runtime').then((runtime) => {
-    const configured = (value) => value ? '已設定' : '未設定';
     find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
     const details = find('runtime-details');
-    for (const [name, value] of [
-      ['OpenCode 固定版本', runtime.pin], ['執行版本', runtime.version], ['提交雜湊', runtime.commit],
-      ['介面雜湊', runtime.openapi], ['Windows 執行檔雜湊', runtime.binary], ['用戶端雜湊', runtime.client],
-      ['階段 3 知識庫', configured(runtime.knowledgeConfigured)], ['階段 4 Telegram', configured(runtime.telegramConfigured)],
-    ]) {
-      const detail = node('dd');
-      if (name.startsWith('階段')) detail.append(node('span', value, 'runtime-badge'));
-      else detail.textContent = value;
-      details.append(node('dt', name), detail);
+    for (const [name, value] of [['OpenCode 固定版本', runtime.pin], ['執行版本', runtime.version]]) {
+      details.append(node('dt', name), node('dd', value));
     }
-  }).catch(() => { find('runtime-status').textContent = '無法載入執行環境。'; });
+    const fingerprints = find('runtime-fingerprints');
+    for (const [name, value] of [
+      ['提交雜湊', runtime.commit],
+      ['介面雜湊', runtime.openapi], ['Windows 執行檔雜湊', runtime.binary], ['用戶端雜湊', runtime.client],
+    ]) {
+      fingerprints.append(node('dt', name), node('dd', value));
+    }
+    find('knowledge-configured').textContent = configuredLabel(runtime.knowledgeConfigured);
+    find('telegram-configured').textContent = 'Telegram 整合：' + configuredLabel(runtime.telegramConfigured);
+  }).catch(() => {
+    find('runtime-status').textContent = '無法載入執行環境。';
+    find('knowledge-configured').textContent = '暫時無法讀取';
+  });
   request('/api/settings/appearance').then((appearance) => {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;

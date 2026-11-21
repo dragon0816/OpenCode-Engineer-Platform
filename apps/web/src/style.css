@@ -373,6 +373,7 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .settings-help { color: var(--muted); margin-bottom: 18px; }
 .settings-content label { display: block; font-weight: 600; }
 .settings-content textarea { display: block; width: 100%; resize: vertical; min-height: 4rem; }
+.settings-content :is(input, select) { max-width: 100%; }
 .settings-content dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; }
 .settings-content dt { color: var(--muted); }
 .settings-content dd { margin: 0; }
@@ -383,6 +384,12 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 #assistant-settings input { width: 100%; }
 #model-settings { margin-top: 12px; }
 #limit-fields { display: grid; gap: 10px; }
+#project-folder-list { margin-bottom: 12px; }
+#project-folder-list:empty { display: none; }
+#project-folder, #atlas-url { width: 100%; margin-top: 4px; }
+#knowledge-settings label + label { margin-top: 12px; }
+#atlas-url { font: inherit; padding: 7px 10px; border-radius: 7px; color: inherit; background: var(--surface); }
+#microphone-settings-status:not(:empty) { margin-top: 8px; }
 @media (max-width: 540px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
   #settings-nav { display: flex; flex-wrap: wrap; }
