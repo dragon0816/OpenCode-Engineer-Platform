@@ -3,6 +3,8 @@ import type { Agent } from '../opencode/sessions.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Ledger } from './ledger.ts';
+import { validateCustomStdioMcp } from './custom-mcp.ts';
+import type { CustomStdioMcp } from './custom-mcp.ts';
 
 export const projects = [
   { id: 'default', title: '主要工作區' },
@@ -77,6 +79,12 @@ export class WebStore extends Ledger {
       atlas_url TEXT NOT NULL,
       toolbox INTEGER NOT NULL CHECK(toolbox IN (0, 1))
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id TEXT PRIMARY KEY NOT NULL,
+      definition TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS web_appearance (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       theme TEXT NOT NULL,
@@ -84,6 +92,31 @@ export class WebStore extends Ledger {
       avatar BLOB,
       mime TEXT
     ) STRICT`);
+  }
+
+  customMcpServers() {
+    return this.db.prepare('SELECT definition, created_at, updated_at FROM mcp_servers ORDER BY created_at, id').all()
+      .map((row) => ({ ...JSON.parse(String(row.definition)) as CustomStdioMcp,
+        createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) }));
+  }
+
+  saveCustomStdioMcp(id: string, input: Record<string, unknown>) {
+    const definition = validateCustomStdioMcp(id, input, projects.map((project) => project.id));
+    const existing = this.db.prepare('SELECT created_at FROM mcp_servers WHERE id = ?').get(id);
+    const now = Date.now();
+    const createdAt = Number(existing?.created_at ?? now);
+    const { changes } = this.db.prepare(`
+      INSERT INTO mcp_servers (id, definition, created_at, updated_at)
+      SELECT ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM mcp_servers WHERE id = ?) OR (SELECT count(*) FROM mcp_servers) < 20
+      ON CONFLICT(id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at
+    `).run(id, JSON.stringify(definition), createdAt, now, id);
+    if (!changes) throw new Error('最多可設定 20 個自訂 MCP 伺服器。');
+    return { ...definition, createdAt, updatedAt: now };
+  }
+
+  removeCustomMcp(id: string) {
+    return Boolean(this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes);
   }
 
   knowledgeSettings() {
