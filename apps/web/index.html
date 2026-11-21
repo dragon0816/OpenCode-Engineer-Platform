@@ -75,6 +75,7 @@
     </aside>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
+        <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>
         <h1 id="session-title">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
       </header>
@@ -131,8 +132,15 @@
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
     <aside class="sidebar files" id="chat-files">
-      <details open>
-        <summary>檔案與產物</summary>
+      <div class="panel-header">
+      <div role="tablist" aria-label="會話面板">
+        <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="true">檔案與產物</button>
+        <button type="button" role="tab" id="tab-work" aria-controls="panel-work" aria-selected="false" tabindex="-1">工作</button>
+        <button type="button" role="tab" id="tab-diff" aria-controls="panel-diff" aria-selected="false" tabindex="-1">差異</button>
+      </div>
+        <button type="button" id="close-files" aria-label="關閉會話面板">關閉</button>
+      </div>
+      <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0">
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
         <div id="drop">
@@ -148,11 +156,14 @@
         <h2 id="artifacts-title">產物</h2>
         <ul id="artifacts"><li>尚無可下載的產物</li></ul>
       </section>
-      </details>
+      </div>
+      <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
       <details open>
         <summary id="activity-title">即時進度</summary>
         <ul id="activity" aria-live="polite"></ul>
       </details>
+      </div>
+      <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" tabindex="0" hidden><p>此會話沒有可比較的產物版本。</p></div>
     </aside>
   </main>
 </body>

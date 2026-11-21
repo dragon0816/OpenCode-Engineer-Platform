@@ -312,6 +312,55 @@ function refresh(context) {
   }, 150);
 }
 
+const rightPanel = find('chat-files');
+const panelToggle = find('toggle-files');
+const panelNarrow = matchMedia('(max-width: 900px)');
+const panelTabs = [...rightPanel.querySelectorAll('[role="tab"]')];
+
+function activatePanel(tab) {
+  for (const candidate of panelTabs) {
+    const active = tab === candidate;
+    candidate.setAttribute('aria-selected', String(active));
+    candidate.tabIndex = active ? 0 : -1;
+    find(candidate.getAttribute('aria-controls')).hidden = !active;
+  }
+  if (current) localStorage.setItem(`oep.panel.${current.path}`, tab.id);
+}
+
+function setPanel(open) {
+  rightPanel.classList.toggle('sheet-open', open);
+  panelToggle.setAttribute('aria-expanded', String(open));
+}
+
+panelToggle.addEventListener('click', () => {
+  const open = !rightPanel.classList.contains('sheet-open');
+  setPanel(open);
+  if (open) rightPanel.querySelector('[aria-selected="true"]').focus();
+});
+find('close-files').addEventListener('click', () => { setPanel(false); panelToggle.focus(); });
+panelNarrow.addEventListener('change', () => setPanel(false));
+rightPanel.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && panelNarrow.matches) {
+    event.preventDefault();
+    setPanel(false);
+    panelToggle.focus();
+  }
+});
+for (const [index, tab] of panelTabs.entries()) {
+  tab.addEventListener('click', () => activatePanel(tab));
+  tab.addEventListener('keydown', (event) => {
+    const target = {
+      ArrowRight: (index + 1) % panelTabs.length,
+      ArrowLeft: (index + panelTabs.length - 1) % panelTabs.length,
+      Home: 0, End: panelTabs.length - 1,
+    }[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    activatePanel(panelTabs[target]);
+    panelTabs[target].focus();
+  });
+}
+
 function select(id) {
   if (current) drafts.set(current.id, { text: prompt.value, workbook: workbook.checked });
   current?.events.close();
@@ -350,6 +399,7 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
