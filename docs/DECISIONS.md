@@ -236,3 +236,7 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 ## Phase 5D release decisions
 
 Generate CycloneDX, third-party license text and NOTICE from the pinned production inventory. Retain PowerShell 7 for maintenance and Job supervision. The bundled variant uses relative runtime paths and Windows Script Host for hidden launch. Chromium verification remains manual pending evidence of a usable hosted-runner browser.
+
+## Phase 2b Slice 4A
+
+內建知識 MCP 由啟動器管理，設定頁沿用既有 BI 查詢開關。OEP 僅公開固定工具名稱與 OpenCode 的狀態代碼，連線錯誤原文留在執行環境。通用 MCP 的憑證與專案隔離設計待實作。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)

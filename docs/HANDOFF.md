@@ -118,3 +118,7 @@ phase-5/install-backup 加入使用者層級的安裝、解除安裝、SQLite �
 ## Phase 5D handoff
 
 The Windows workflow is **UNVERIFIED** until GitHub runs it. Review the [license findings](validation/p5-license-review.md), then use the [release checklist](RELEASE_CHECKLIST.md) to record the manual outcomes before release approval.
+
+## Phase 2b Slice 4A
+
+本機分支 `phase-2b/mcp-capabilities` 由 `86538c1` 建立。設定新增內建知識 MCP 狀態。通用 MCP 管理與能力管理仍開放。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)

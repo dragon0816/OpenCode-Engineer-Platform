@@ -51,6 +51,7 @@
           <button type="button" data-section="model">模型</button>
           <button type="button" data-section="limits">回合限制</button>
           <button type="button" data-section="runtime">執行環境</button>
+          <button type="button" data-section="mcp">MCP</button>
           <button type="button" data-section="integrations">整合說明</button>
           <button type="button" data-section="input">輸入</button>
           <button type="button" data-section="projects">專案與資料夾</button>
@@ -146,6 +147,16 @@
             <p id="runtime-status" role="status">正在載入執行環境…</p>
             <dl id="runtime-details"></dl>
             <p id="runtime-agent"></p>
+          </section>
+          <section id="settings-mcp" hidden>
+            <h2>MCP</h2>
+            <h3>內建知識庫</h3>
+            <p id="mcp-knowledge-status" role="status"></p>
+            <p id="mcp-knowledge-tools" hidden>內建工具：BI 查詢</p>
+            <p>由 OEP 管理。變更僅適用於新會話。</p>
+            <div class="settings-actions">
+              <button id="mcp-open-knowledge-settings" type="button">管理 BI 查詢工具</button>
+            </div>
           </section>
           <section id="settings-integrations" hidden>
             <h2>知識庫整合</h2>

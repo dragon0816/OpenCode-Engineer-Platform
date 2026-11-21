@@ -13,6 +13,7 @@ import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
 import { call } from './opencode/client.ts';
+import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { gatewayAliases, providerID } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -228,6 +229,22 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const { version, license } = JSON.parse(readFileSync(atRepo('package.json'), 'utf8'));
       const { tag } = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
       send(response, 200, { version, license, pin: tag, root });
+      return;
+    }
+    if (path === '/api/settings/mcp' && method === 'GET') {
+      const enabled = Boolean(runtime.knowledge) && store.knowledgeSettings().toolbox;
+      let status: 'connected' | 'disabled' | 'failed' | 'needs_auth' | 'pending' | 'unconfigured' =
+        runtime.knowledge ? 'disabled' : 'unconfigured';
+      if (enabled) {
+        try {
+          const { data } = await runtime.client.mcp.list(undefined, call());
+          status = data.find(({ name }) => name === knowledgeMcpName)?.status.status ?? 'pending';
+        } catch {
+          status = 'failed';
+        }
+      }
+      send(response, 200, [{ id: knowledgeMcpName, managed: true, status, enabled,
+        tools: runtime.knowledge ? [knowledgeToolName] : [] }]);
       return;
     }
     if (path === '/api/settings/knowledge') {

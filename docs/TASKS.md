@@ -166,3 +166,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] Technical Lead verifies the first Windows CI run and all release hashes.
 - [ ] Owner completes license and provenance review and the clean Windows VM run, including credential rebinding and RPO/RTO evidence.
 - [ ] Complete the [release checklist](RELEASE_CHECKLIST.md) before designating a release candidate.
+
+## Phase 2b Slice 4A
+
+- [x] 設定頁列出內建知識 MCP，連至現有 BI 查詢開關。
+- [ ] 完成通用 MCP、專案授權、資料範圍、憑證與備份驗收。
+- [ ] 完成能力清單、技能安裝與新會話有效工具驗收。 [驗收紀錄](reviews/PHASE2B_SLICE4A_REPORT.md)

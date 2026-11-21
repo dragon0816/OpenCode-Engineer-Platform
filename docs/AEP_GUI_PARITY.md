@@ -36,7 +36,7 @@
 | W Shared Platform portal／bridge URL、Personal Agent code、帳密登入、enroll、teams | Omit-with-reason（AEP 公司 Bridge 與組織帳號） | 設定／整合說明 | 2b | 頁面沒有公司登入、授權或登錄請求。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W Shared Platform 憑證 fingerprint／信任／下載／忘記 | Omit-with-reason（AEP 自訂 Bridge 信任） | 設定／整合說明 | 2b | OEP 連線無此信任寫入，無效 HTTPS 憑證拒連。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W Laya SSH host／ports／account／mode／threshold／timeout／approval／auto／check | Omit-with-reason（AEP 專用 SSH 決策服務） | 設定／整合說明 | 2b | OEP 不啟動 Laya 或 SSH tunnel。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
-| W MCP 名稱、stdio command／args／cwd／env／secret env、remote URL／headers／token、timeout、啟停、重連、移除與狀態 | Adapt to OpenCode | 設定／MCP | 2b | 兩種合成 transport 各驗連線、啟停、逾時及憑證遮罩。3a 先提供內建唯讀知識工具。 |
+| W MCP 名稱、stdio command／args／cwd／env／secret env、remote URL／headers／token、timeout、啟停、重連、移除與狀態 | Adapt to OpenCode | 設定／MCP | 2b | 內建唯讀知識工具有管理項目與狀態。通用管理仍開放。 [Chromium 測試](../tests/e2e/knowledge.test.ts) · [截圖](reviews/PHASE2B_SLICE4A_REPORT.md#截圖) |
 | W、C Coding agents 安裝、移除、狀態；A 的 Claude Code／Codex／Copilot 開關與登入 | Replace（OpenCode 固定版本與 OEP agents） | 設定／Runtime | 2b | 顯示 pin、相容性與健康，切換 OEP agent 後識別新 session。安裝與升級由 5 交付。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、A Agent mode 預設根目錄、會話工作與唯讀資料夾 | Adapt to OpenCode | 設定／專案與會話面板 | 2b | 兩專案分別開新會話，驗唯讀目錄、跨會話拒絕及有效工作根。 [Slice 2D](reviews/PHASE2B_SLICE2D_REPORT.md) |
 | W、A Email folders、days、舊 exclusions、會話 mail grant | Replace（核准的郵件 MCP 與專案設定，舊欄位已停用） | 設定／MCP | 2b | 合成 connector 限定資料夾和天數，未允許時查詢拒絕。 |
