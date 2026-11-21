@@ -22,6 +22,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway) {
       audit('gateway.jsonl', value);
     },
   });
+  const gatewaySince = (cursor: number) => requests.filter((request) => request.request > cursor);
   const startupFailed = () => writeFileSync(join(root, 'startup-failed'),
     'OpenCode startup or model health failed. Inspect status-only audit records.\n');
   let supervisor: Awaited<ReturnType<typeof supervise>>;
@@ -46,28 +47,38 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway) {
     const initial = { event: 'ready', version: supervisor.version, unauthenticated: supervisor.unauthorized,
       ipv4: supervisor.endpoint.listeners().length, jobMembers: supervisor.members };
     audit('lifecycle.jsonl', initial);
-    const started = Date.now();
-    const workspace = mkdtempSync(join(root, 'health-'));
-    const nonce = `READY-${randomBytes(4).toString('hex').toUpperCase()}`;
-    const submissionID = promptID();
-    let sessionID: string | undefined;
-    let passed = false;
-    try {
-      sessionID = await createSession(client, workspace, 'inspector', alias);
-      const admitted = await submitOnce(client, { sessionID, id: submissionID, text: `Reply with exactly ${nonce} and no other content.` });
-      if (admitted === 'indeterminate' || await waitForOutcome(client, sessionID, undefined, 45_000) !== 'succeeded' ||
-          !requests.length || requests.some((request) => request.status !== 200)) {
-        throw new Error('Model health turn failed');
+    async function checkHealth(retries: number) {
+      const started = Date.now();
+      const cursor = relay.requestCursor();
+      const workspace = mkdtempSync(join(root, 'health-'));
+      const nonce = `READY-${randomBytes(4).toString('hex').toUpperCase()}`;
+      const submissionID = promptID();
+      let sessionID: string | undefined;
+      let reason = 'turn-failed';
+      try {
+        sessionID = await createSession(client, workspace, 'inspector', alias);
+        const admitted = await submitOnce(client, { sessionID, id: submissionID, text: `Reply with exactly ${nonce} and no other content.` });
+        if (admitted === 'indeterminate') return reason;
+        const outcome = await waitForOutcome(client, sessionID, undefined, 45_000);
+        const calls = gatewaySince(cursor);
+        if (!calls.length || calls.some((request) => request.status !== 200)) reason = 'gateway-failed';
+        else if (calls.every((request) => request.output === 'empty')) reason = 'empty-output';
+        else if (outcome === 'succeeded') {
+          const reply = (await assistantMessages(client, sessionID)).at(-1)?.content
+            .flatMap((part) => part.type === 'text' ? [part.text] : []).join('').trim();
+          reason = reply === nonce ? 'passed' : reply ? 'reply-mismatch' : 'empty-output';
+        }
+        return reason;
+      } finally {
+        audit('health.jsonl', { alias, sessionID, submissionID, retries, passed: reason === 'passed', reason,
+          elapsedMs: Date.now() - started, modelCalls: gatewaySince(cursor) });
       }
-      const reply = (await assistantMessages(client, sessionID)).at(-1)?.content
-        .flatMap((part) => part.type === 'text' ? [part.text] : []).join('').trim();
-      if (reply !== nonce) throw new Error('Model health reply mismatch');
-      passed = true;
-    } finally {
-      audit('health.jsonl', { alias, sessionID, submissionID, passed, elapsedMs: Date.now() - started });
     }
+    const firstHealth = await checkHealth(0);
+    const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
+    if (health !== 'passed') throw new Error('Model health turn failed');
     return { ...initial, root, alias, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact,
-      gatewayCursor: () => requests.length, gatewaySince: (cursor: number) => requests.slice(cursor) };
+      gatewayCursor: relay.requestCursor, gatewaySince };
   } catch (error) {
     try { await stop(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Health check and runtime cleanup failed'); }

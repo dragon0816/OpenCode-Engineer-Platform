@@ -57,10 +57,12 @@ export function verifyWorkbookReceipt(ledger: Ledger, id: string, receipt: NonNu
   }
 }
 
-export async function excelRun(runtime: Runtime, ledger: Ledger, format: 'markdown' | 'pdf') {
+type FaultInjection = { name: string; inject: (workspace: string) => void };
+
+export async function excelRun(runtime: Runtime, ledger: Ledger, format: 'markdown' | 'pdf', fault?: FaultInjection) {
   const { client, root, alias } = runtime;
   const gatewayCursor = runtime.gatewayCursor();
-  const { id, workspace } = newRun(ledger, root, format, alias);
+  const { id, workspace } = newRun(ledger, root, fault?.name ?? format, alias);
   let sessionID: string | undefined;
   let stage = 'prepare input';
   let mayBeActive = false;
@@ -86,13 +88,24 @@ export async function excelRun(runtime: Runtime, ledger: Ledger, format: 'markdo
     mayBeActive = false;
     const count = await submissionCount(client, sessionID, submissionID);
     if (count.inbox !== 0 || count.messages !== 1) return failRun(ledger, id, 'Unexpected durable submission count');
-    if (outcome !== 'succeeded') return failRun(ledger, id, `OpenCode outcome: ${outcome}`);
     const requests = runtime.gatewaySince(gatewayCursor);
     if (!requests.length || requests.some((request) => request.status !== 200)) {
       return failRun(ledger, id, 'Gateway request failed during the run');
     }
+    if (requests.every((request) => request.output === 'empty') ||
+        requests.at(-1)?.output === 'empty' && !existsSync(join(workspace, 'program.js'))) {
+      return failRun(ledger, id, 'Model returned empty output');
+    }
+    if (outcome !== 'succeeded') return failRun(ledger, id, `OpenCode outcome: ${outcome}`);
     stage = 'run workbook program';
     if (existsSync(join(workspace, 'output.xlsx'))) return failRun(ledger, id, 'Workbook was present before execution');
+    if (fault) {
+      const generated = localFile(workspace, 'program.js', 16 * 1024);
+      const preserved = join(workspace, 'model-program.js');
+      copyFileSync(generated.file.path, preserved);
+      ledger.change(id, 'running', { generatedProgram: { ...generated.file, path: preserved } });
+      fault.inject(workspace);
+    }
     return await finishWorkbook(ledger, id, runtime.redact);
   } catch {
     if (sessionID && mayBeActive) {
@@ -105,6 +118,19 @@ export async function excelRun(runtime: Runtime, ledger: Ledger, format: 'markdo
     }
     return failRun(ledger, id, `Run failed during ${stage}`);
   } finally {
-    rawRecord(root, ledger.get(id));
+    const recorded = ledger.get(id);
+    if (!recorded.program && !recorded.generatedProgram) {
+      try { recorded.generatedProgram = localFile(workspace, 'program.js', 16 * 1024).file; }
+      catch { /* A failed turn may not have written a readable program. */ }
+    }
+    if (!recorded.artifact) {
+      try { recorded.artifact = localFile(workspace, 'output.xlsx', 256 * 1024).file; }
+      catch { /* A failed turn may not have produced a readable artifact. */ }
+    }
+    rawRecord(root, {
+      ...recorded,
+      modelRequestRange: { after: gatewayCursor, through: runtime.gatewayCursor() },
+      modelCalls: runtime.gatewaySince(gatewayCursor),
+    });
   }
 }

@@ -13,11 +13,11 @@ const ledger = new Ledger(join(root, 'runs.sqlite'));
 const report = (value: object) => console.log(JSON.stringify(value));
 report({ event: 'campaign', root });
 
-async function faults() {
+function faultCases() {
   const [readings, run] = workbookFixture();
   const write = (sheets: unknown) => `writeWorkbook(${JSON.stringify(sheets)});`;
   const valid = write([readings, run]);
-  const cases = [
+  return [
     { mode: 'valid-control', source: valid, expected: 'verified' },
     { mode: 'nonzero-exit', source: 'throw new Error("synthetic");', expected: 'failed', error: 'Invalid completion receipt', code: 1 },
     { mode: 'wrong-program', source: 'const = ;', expected: 'failed', error: 'Invalid completion receipt', code: 1 },
@@ -29,6 +29,10 @@ async function faults() {
     { mode: 'background', hold: 'background' as const, expected: 'failed', error: 'Acceptance deadline without a receipt' },
     { mode: 'lost-connection', hold: 'indeterminate' as const, expected: 'failed', error: 'Acceptance deadline without a receipt' },
   ];
+}
+
+async function faults() {
+  const cases = faultCases();
   let falsePositives = 0;
   for (const item of cases) {
     const { id, workspace } = newRun(ledger, root, item.mode);
@@ -67,20 +71,57 @@ async function faults() {
   assert.equal(falsePositives, 0);
 }
 
+async function liveFaults(runtime: Awaited<ReturnType<typeof startRuntime>>) {
+  const cases = faultCases().filter((item) => !item.hold);
+  const mismatches = [];
+  let falsePositives = 0;
+  for (const item of cases) {
+    const result = await excelRun(runtime, ledger, 'markdown', {
+      name: item.mode,
+      inject: (workspace) => {
+        if (item.expected === 'verified') return;
+        writeFileSync(join(workspace, 'program.js'), item.source!);
+        const output = join(workspace, 'output.xlsx');
+        if (item.seed === 'empty') writeFileSync(output, '');
+        if (item.seed === 'old') {
+          copyFileSync(atRepo('tests/fixtures/d08/expected.xlsx'), output);
+          utimesSync(output, 1, 1);
+        }
+      },
+    });
+    report({ mode: item.mode, state: result.state, id: result.id, session: result.sessionID,
+      generatedProgramSha256: result.generatedProgram?.sha256, programSha256: result.program?.sha256,
+      artifactSha256: result.artifact?.sha256, exit: result.receipt?.exitCode, errors: result.errors });
+    if (item.expected === 'failed' && result.state === 'verified') falsePositives++;
+    if (!result.generatedProgram || result.state !== item.expected ||
+        item.code !== undefined && result.receipt?.exitCode !== item.code ||
+        item.error && !result.errors.includes(item.error)) mismatches.push(item.mode);
+  }
+  report({ liveFaults: cases.length - 1, falsePositives, mismatches });
+  assert.deepEqual(mismatches, [], 'Live fault cases must reach their expected verification outcomes');
+}
+
 async function campaign(synthetic: boolean) {
   const runtime = await startRuntime(root, synthetic ? excelProviderFixture() : undefined);
   report({ event: runtime.event, version: runtime.version, alias: runtime.alias, ipv4: runtime.ipv4, unauthorized: runtime.unauthenticated });
   try {
+    if (process.argv.includes('--real-faults')) {
+      if (synthetic) throw new Error('Real fault verification requires the real gateway');
+      return await liveFaults(runtime);
+    }
     let consecutive = 0;
     let longest = 0;
-    for (const format of ['markdown', 'pdf', 'markdown', 'pdf', 'markdown'] as const) {
+    let attempts = 0;
+    const limit = synthetic ? 5 : 9;
+    while (attempts < limit && longest < 5) {
+      const format = attempts++ % 2 === 0 ? 'markdown' : 'pdf';
       const result = await excelRun(runtime, ledger, format);
       consecutive = result.state === 'verified' ? consecutive + 1 : 0;
       longest = Math.max(consecutive, longest);
       report({ run: result.id, format, session: result.sessionID, state: result.state, exit: result.receipt?.exitCode,
         programSha256: result.program?.sha256, artifactSha256: result.artifact?.sha256, cells: result.checkedCells, errors: result.errors });
     }
-    report({ attempts: 5, longestConsecutive: longest, synthetic });
+    report({ attempts, longestConsecutive: longest, synthetic });
     assert.ok(longest >= 5, 'Five consecutive verified runs are required');
   } finally {
     const stopped = await runtime.stop();

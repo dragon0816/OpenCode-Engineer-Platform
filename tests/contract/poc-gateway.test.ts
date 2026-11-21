@@ -45,3 +45,30 @@ test('Relay restricts path, credential, model and redirects, and reports all ups
     assert.equal(traces.length, 11);
   } finally { await relay.close(); }
 });
+
+test('An empty upstream completion stays HTTP 200 and records usage without content', async () => {
+  const trace = Promise.withResolvers<GatewayTrace>();
+  const body = [
+    { choices: [{ index: 0, delta: { role: 'assistant', content: '', reasoning_content: 'Internal reasoning' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 30, completion_tokens: 7, total_tokens: 37 } },
+  ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n';
+  const relay = await startGateway({
+    url: 'http://example.invalid/v1', key: randomBytes(24).toString('hex'), alias: 'synthetic-model', trace: trace.resolve,
+    fetch: async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
+  });
+  try {
+    const response = await fetch(`${relay.baseURL}/chat/completions`, {
+      method: 'POST', headers: { authorization: `Bearer ${relay.key}` },
+      body: JSON.stringify({ model: 'synthetic-model', stream: true, messages: [{ role: 'user', content: 'Synthetic only' }] }),
+    });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /\[DONE\]/);
+    const result = await trace.promise;
+    assert.equal(result.upstreamStatus, 200);
+    assert.equal(result.output, 'empty');
+    assert.equal(result.finishReason, 'stop');
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.tokens, { prompt: 30, completion: 7, total: 37 });
+  } finally { await relay.close(); }
+});

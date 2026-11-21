@@ -3,15 +3,13 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import type { ModelCall } from '../../../../packages/contracts/src/run.ts';
 import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
 import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson } from '../../../../scripts/phase0/probe-redaction.ts';
 
 export const providerID = 'oep-relay';
 export const gatewayAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'] as const;
-export type GatewayTrace = {
-  request: number; status: number; upstreamStatus: number | null; elapsedMs: number;
-  error?: 'cancelled' | 'timeout' | 'transport' | 'invalid-completion';
-};
+export type GatewayTrace = ModelCall;
 
 export function gatewaySettings() {
   let url = process.env.OEP_LITELLM_BASE_URL;
@@ -30,6 +28,32 @@ export function gatewaySettings() {
 }
 
 type RequestBody = { model?: string; stream?: boolean; messages?: unknown[] };
+
+function observeCompletion(frames: unknown[]) {
+  type Payload = { content?: unknown; tool_calls?: unknown[] };
+  type Frame = {
+    choices?: { delta?: Payload; message?: Payload; finish_reason?: string }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  };
+  const observation: Pick<GatewayTrace, 'output' | 'finishReason' | 'tokens'> = { output: 'empty' };
+  for (const frame of frames as Frame[]) {
+    for (const choice of frame.choices ?? []) {
+      const payload = choice.delta ?? choice.message;
+      if (Array.isArray(payload?.tool_calls) && payload.tool_calls.length) observation.output = 'tool';
+      if (observation.output === 'empty' && typeof payload?.content === 'string' && payload.content.trim()) observation.output = 'text';
+      if (choice.finish_reason && ['stop', 'length', 'tool_calls', 'content_filter', 'function_call'].includes(choice.finish_reason)) {
+        observation.finishReason = choice.finish_reason;
+      }
+    }
+    if (frame.usage) {
+      const { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total } = frame.usage;
+      if (typeof prompt === 'number' && typeof completion === 'number' && typeof total === 'number') {
+        observation.tokens = { prompt, completion, total };
+      }
+    }
+  }
+  return observation;
+}
 
 export async function startGateway(options: {
   url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch;
@@ -53,6 +77,7 @@ export async function startGateway(options: {
     let status = 500;
     let upstreamStatus: number | null = null;
     let error: GatewayTrace['error'];
+    let completion: ReturnType<typeof observeCompletion> | undefined;
     const abort = new AbortController();
     response.once('close', () => abort.abort());
     outages.add(abort);
@@ -78,6 +103,7 @@ export async function startGateway(options: {
             await upstream.body?.cancel();
           } else if (body.stream) {
             const frames = await bufferedCompletion(upstream, redact);
+            completion = observeCompletion(frames);
             status = 200;
             response.writeHead(status, { 'content-type': 'text/event-stream' });
             response.end(`${frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('')}data: [DONE]\n\n`);
@@ -85,6 +111,7 @@ export async function startGateway(options: {
           } else {
             const value = upstreamJson(await boundedUpstreamText(upstream)) as { choices?: unknown[]; error?: unknown } | null;
             if (!Array.isArray(value?.choices) || !value.choices.length || value.error) throw new Error('Invalid completion');
+            completion = observeCompletion([value]);
             status = 200;
             send(response, status, redactJson(value, redact));
             return;
@@ -98,7 +125,7 @@ export async function startGateway(options: {
         upstreamStatus === null ? 'transport' : 'invalid-completion';
     } finally {
       outages.delete(abort);
-      options.trace({ request: id, status, upstreamStatus, elapsedMs: Date.now() - started, error });
+      options.trace({ request: id, status, upstreamStatus, elapsedMs: Date.now() - started, error, ...completion });
     }
     if (!response.destroyed && !response.headersSent) send(response, status, { error: { message: `OEP relay status ${status}` } });
   });
@@ -108,6 +135,7 @@ export async function startGateway(options: {
   });
   return {
     baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, key, redact,
+    requestCursor: () => requests,
     close: () => new Promise<void>((resolve, reject) => {
       for (const request of outages) request.abort();
       server.close((error) => error ? reject(error) : resolve());
