@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 const scanner = fileURLToPath(new URL('./secret-scan.mjs', import.meta.url));
+const installer = fileURLToPath(new URL('./install-hooks.mjs', import.meta.url));
 const node = (script, ...args) => execFileSync(process.execPath, [script, ...args], { stdio: ['ignore', 'inherit', 'inherit'] });
 
 try {
@@ -14,7 +13,6 @@ try {
   if (args.length !== 1 || !args[0]) throw new Error('Pass exactly one source ref.');
   const target = git('rev-parse', '--verify', 'HEAD^{commit}');
   const source = git('rev-parse', '--verify', '--end-of-options', `${args[0]}^{commit}`);
-  const root = git('rev-parse', '--show-toplevel');
   if (merge && git('status', '--porcelain')) throw new Error('Target must be clean.');
 
   node(scanner, '--ref', target);
@@ -24,18 +22,9 @@ try {
   if (merge) {
     if (git('rev-parse', '--verify', 'HEAD^{commit}') !== target || git('status', '--porcelain')) throw new Error('Target changed after scanning.');
     git('symbolic-ref', '--quiet', 'HEAD');
-    for (const file of ['.githooks/pre-commit', '.githooks/pre-merge-commit', 'scripts/phase0/install-hooks.mjs']) {
-      git('cat-file', '-e', `${source}:${file}`);
-    }
-    let hooksPath;
-    try { hooksPath = git('config', '--get', 'core.hooksPath'); }
-    catch (error) { if (error.status !== 1) throw error; }
-    if (hooksPath && hooksPath !== '.githooks') throw new Error('An existing hook configuration would prevent activation.');
-    const installer = join(root, 'scripts/phase0/install-hooks.mjs');
-    if (existsSync(installer)) node(installer);
+    node(installer, '--from-ref', source);
+    if (git('rev-parse', '--verify', 'HEAD^{commit}') !== target || git('status', '--porcelain')) throw new Error('Target changed during hook setup.');
     execFileSync('git', ['merge', '--no-ff', '--no-edit', source], { stdio: ['ignore', 'inherit', 'inherit'] });
-    node(installer);
-    if (git('config', '--worktree', '--get', 'core.hooksPath') !== '.githooks') throw new Error('Target hooks are inactive.');
   }
   console.log(merge ? 'Scanned merge complete; target hooks active.' : 'Merge preflight scans passed.');
 } catch {

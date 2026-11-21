@@ -1,0 +1,13 @@
+#!/bin/sh
+[ "$1" = prepared ] || exit 0
+scanner="$(dirname "$0")/secret-scan.mjs"
+if [ ! -f "$scanner" ]; then scanner=scripts/phase0/secret-scan.mjs; fi
+while read -r old new ref; do
+  case "$ref" in
+    refs/heads/*)
+      case "$new" in
+        *[!0]*) node "$scanner" --ref "$new" </dev/null || exit 1 ;;
+      esac
+      ;;
+  esac
+done

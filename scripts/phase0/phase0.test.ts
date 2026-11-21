@@ -173,7 +173,7 @@ test('installed pre-commit hook blocks a real staged canary and accepts clean co
     assert.equal(git('init', '-q').status, 0);
     mkdirSync(join(scratch, 'scripts/phase0'), { recursive: true });
     mkdirSync(join(scratch, '.githooks'));
-    for (const file of ['scripts/phase0/install-hooks.mjs', 'scripts/phase0/secret-scan.mjs', '.githooks/pre-commit', '.githooks/pre-merge-commit']) {
+    for (const file of ['scripts/phase0/install-hooks.mjs', 'scripts/phase0/secret-scan.mjs', '.githooks/pre-commit', '.githooks/pre-merge-commit', '.githooks/reference-transaction']) {
       copyFileSync(file, join(scratch, file));
     }
     assert.equal(run(process.execPath, 'scripts/phase0/install-hooks.mjs').status, 0);

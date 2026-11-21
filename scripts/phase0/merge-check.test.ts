@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 const script = resolve('scripts/phase0/merge-check.mjs');
+const installer = resolve('scripts/phase0/install-hooks.mjs');
+const hooks = ['.githooks/pre-commit', '.githooks/pre-merge-commit', '.githooks/reference-transaction'];
 const syntheticHost = ['fixture', 'internal'].join('.');
 
 test('scanner detects UTF BOMs, BOM-less UTF-16, and ASCII-compatible legacy text', async () => {
@@ -22,7 +24,7 @@ test('scanner detects UTF BOMs, BOM-less UTF-16, and ASCII-compatible legacy tex
   assert.deepEqual(scanner.detect(scanner.decodeText(Buffer.from('approved fixture', 'utf16le'))), []);
 });
 
-test('scanned merge blocks a dirty ref and installs hooks on throwaway main for a real UTF-16 canary commit', () => {
+test('scanned merge installs atomically and real Git blocks tainted commits, merges and fast-forwards in throwaway clones', () => {
   mkdirSync('.phase0', { recursive: true });
   const scratch = mkdtempSync(resolve('.phase0', 'merge-canary-'));
   const origin = join(scratch, 'origin');
@@ -47,13 +49,13 @@ test('scanned merge blocks a dirty ref and installs hooks on throwaway main for 
     correct(origin, 'add', 'README.md');
     correct(origin, 'commit', '-m', 'Create target fixture');
     correct(origin, 'switch', '-c', 'clean-source');
-    for (const file of ['scripts/phase0/install-hooks.mjs', 'scripts/phase0/secret-scan.mjs', 'scripts/phase0/merge-check.mjs', '.githooks/pre-commit', '.githooks/pre-merge-commit']) {
+    for (const file of ['scripts/phase0/install-hooks.mjs', 'scripts/phase0/secret-scan.mjs', 'scripts/phase0/merge-check.mjs', ...hooks]) {
       const target = join(origin, file);
       mkdirSync(dirname(target), { recursive: true });
       copyFileSync(file, target);
     }
     correct(origin, 'add', '.');
-    correct(origin, 'add', '--chmod=+x', '.githooks/pre-commit', '.githooks/pre-merge-commit');
+    correct(origin, 'add', '--chmod=+x', ...hooks);
     correct(origin, 'commit', '-m', 'Add clean source fixture');
     correct(origin, 'switch', '-c', 'scan-canary');
     writeFileSync(join(origin, 'canary.txt'), utf16);
@@ -68,10 +70,27 @@ test('scanned merge blocks a dirty ref and installs hooks on throwaway main for 
     assert.notEqual(blockedMerge.status, 0);
     assert.match(blockedMerge.stdout, /"hits":1/);
     assert.equal(correct(clone, 'rev-parse', 'HEAD'), before);
+    for (const name of ['config.lock', 'config.worktree.lock']) {
+      const lock = join(clone, '.git', name);
+      writeFileSync(lock, 'Synthetic lock', { flag: 'wx' });
+      const locked = run(clone, process.execPath, script, '--merge', 'origin/clean-source');
+      assert.notEqual(locked.status, 0);
+      assert.match(locked.stderr, /Could not activate Phase 0 hooks/);
+      assert.equal(correct(clone, 'rev-parse', 'refs/heads/main'), before);
+      assert.equal(correct(clone, 'status', '--porcelain'), '');
+      assert.equal(git(clone, 'config', '--get', 'core.hooksPath').status, 1);
+      assert.equal(git(clone, 'config', '--get', 'merge.ff').status, 1);
+      assert.equal(readFileSync(lock, 'utf8'), 'Synthetic lock');
+      rmSync(lock);
+    }
+
     const merged = run(clone, process.execPath, script, '--merge', 'origin/clean-source');
     assert.equal(merged.status, 0, merged.stdout + merged.stderr);
     assert.equal(correct(clone, 'branch', '--show-current'), 'main');
-    assert.equal(correct(clone, 'config', '--worktree', '--get', 'core.hooksPath'), '.githooks');
+    const installed = correct(clone, 'config', '--worktree', '--get', 'core.hooksPath');
+    assert.match(installed, /phase0-hook-snapshots\/phase0-[\w-]+$/);
+    assert.ok(hooks.every((hook) => existsSync(join(installed, hook.split('/')[1]))));
+    assert.equal(correct(clone, 'config', '--worktree', '--get', 'merge.ff'), 'false');
     const verified = correct(clone, 'rev-parse', 'HEAD');
 
     writeFileSync(join(clone, 'canary.txt'), utf16);
@@ -83,5 +102,20 @@ test('scanned merge blocks a dirty ref and installs hooks on throwaway main for 
     correct(clone, 'restore', '--staged', 'canary.txt');
     rmSync(join(clone, 'canary.txt'));
     assert.equal(correct(clone, 'status', '--porcelain'), '');
+
+    for (const [name, options] of [['direct-merge', []], ['direct-ff', ['--ff-only']]] as const) {
+      const direct = join(scratch, name);
+      correct(scratch, 'clone', '--branch', 'main', '--no-local', origin, direct);
+      setupAuthor(direct);
+      const source = correct(direct, 'rev-parse', 'origin/clean-source');
+      const setup = run(direct, process.execPath, installer, '--from-ref', source);
+      assert.equal(setup.status, 0, setup.stdout + setup.stderr);
+      assert.equal(correct(direct, 'config', '--worktree', '--get', 'merge.ff'), 'false');
+      correct(direct, 'merge-base', '--is-ancestor', 'HEAD', 'origin/scan-canary');
+      const unsafe = git(direct, 'merge', ...options, 'origin/scan-canary');
+      assert.notEqual(unsafe.status, 0);
+      assert.match(unsafe.stdout + unsafe.stderr, /"hits":1/);
+      assert.equal(correct(direct, 'rev-parse', 'refs/heads/main'), before);
+    }
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 });
