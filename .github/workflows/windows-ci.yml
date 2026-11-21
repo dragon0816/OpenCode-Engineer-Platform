@@ -54,3 +54,23 @@ jobs:
             dist/OEP-*-windows-x64.zip
             dist/sbom.cdx.json
             dist/SHA256SUMS
+      - name: Try Chromium with synthetic data
+        continue-on-error: true
+        run: |
+          $browser = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'),
+            (Join-Path $env:ProgramFiles 'Google/Chrome/Application/chrome.exe')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (!$browser) { Write-Output 'Chromium unavailable. Run the manual browser gate.'; exit 0 }
+          $env:OEP_TEST_BROWSER = $browser
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Get-Item dist/OEP-*-windows-x64.zip
+          $assets = New-Item -ItemType Directory -Force .phase0/assets/unpacked
+          $source = New-Item -ItemType Directory -Force .phase0/source
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry('vendor/opencode/opencode.exe'), (Join-Path $assets.FullName 'opencode.exe'))
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry('vendor/opencode/openapi.json'), (Join-Path $source.FullName 'openapi.json'))
+          } finally { $archive.Dispose() }
+          $env:OEP_DATA_DIR = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ([guid]::NewGuid()))).FullName
+          npm run test:e2e:browser
