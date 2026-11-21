@@ -21,6 +21,7 @@
         <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg>知識庫</button>
         <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>工作與排程</button>
       </nav>
+      <div class="sidebar-assistant"><span class="assistant-avatar" aria-hidden="true">O</span><span id="sidebar-assistant-name">助理</span></div>
       <label for="agent">新會話的助理</label>
       <select id="agent" disabled>
         <option value="inspector">資料分析</option>
@@ -35,49 +36,111 @@
       <nav id="sessions" aria-label="專案與會話"></nav>
       <small id="model"></small>
       <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
-      <details id="settings">
-        <summary>設定</summary>
-        <label for="theme">外觀主題</label>
-        <select id="theme">
-          <option value="system">跟隨系統</option>
-          <option value="light">淺色</option>
-          <option value="dark">深色</option>
-        </select>
-        <form id="assistant-settings">
-          <h2>助理</h2>
-          <label for="assistant-name">助理名稱</label>
-          <input id="assistant-name" type="text" maxlength="80">
-          <label for="assistant-introduction">自我介紹</label>
-          <textarea id="assistant-introduction" maxlength="500"></textarea>
-          <label for="assistant-instructions">助理指示</label>
-          <textarea id="assistant-instructions" maxlength="4000"></textarea>
-          <p>儲存後，指示會用在接下來送出的回合。</p>
-          <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
-          <p id="settings-status" role="status"></p>
-        </form>
-        <label><input type="checkbox" disabled> 多助理委派</label>
-        <small>目前工作台尚未接入可受控的多助理委派。</small>
-        <details>
-          <summary>服務狀態</summary>
-          <p id="runtime-status"></p>
-        </details>
-        <details>
-          <summary>整合說明</summary>
-          <ul>
-            <li>公司登入、橋接與憑證信任需要 AEP 組織服務。</li>
-            <li>SSH 決策功能需要 AEP 專用服務。</li>
-            <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
-            <li>共享資料庫與資產庫訂閱需要公司服務及組織權限。</li>
-          </ul>
-        </details>
-      </details>
+      <button id="open-settings" type="button" aria-keyshortcuts="Control+,">設定</button>
       </div>
     </aside>
+    <section class="conversation knowledge" id="settings-view" aria-labelledby="settings-title" hidden>
+      <header class="settings-heading">
+        <h1 id="settings-title" tabindex="-1">設定</h1>
+        <button id="close-settings" type="button">返回對話</button>
+      </header>
+      <div class="settings-layout">
+        <nav id="settings-nav" aria-label="設定分類">
+          <button type="button" data-section="assistant" aria-current="page">助理</button>
+          <button type="button" data-section="appearance">外觀</button>
+          <button type="button" data-section="model">模型</button>
+          <button type="button" data-section="limits">回合限制</button>
+          <button type="button" data-section="runtime">執行環境</button>
+          <button type="button" data-section="integrations">整合說明</button>
+        </nav>
+        <div class="settings-content">
+          <section id="settings-assistant">
+            <form id="assistant-settings">
+              <h2>助理</h2>
+              <label for="assistant-name">助理名稱</label>
+              <input id="assistant-name" type="text" maxlength="80">
+              <label for="assistant-introduction">自我介紹</label>
+              <textarea id="assistant-introduction" maxlength="500"></textarea>
+              <label for="assistant-instructions">助理指示</label>
+              <textarea id="assistant-instructions" maxlength="4000"></textarea>
+              <p>新會話會完整套用儲存的指示。先前會話的歷史可能仍包含舊指示。</p>
+              <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
+              <p id="settings-status" role="status"></p>
+            </form>
+            <label><input type="checkbox" disabled> 多助理委派</label>
+            <small>目前固定版本的 OEP 設定只允許主要助理執行，委派工具未獲授權。</small>
+          </section>
+          <section id="settings-appearance" hidden>
+            <h2>外觀</h2>
+            <form id="appearance-settings">
+              <label for="theme">外觀主題</label>
+              <select id="theme">
+                <option value="system">跟隨系統</option>
+                <option value="light">淺色</option>
+                <option value="dark">深色</option>
+              </select>
+              <label for="density">顯示密度</label>
+              <select id="density"><option value="comfortable">寬鬆</option><option value="compact">緊湊</option></select>
+              <label for="avatar-file">助理頭像</label>
+              <input id="avatar-file" type="file" accept="image/png,image/jpeg" aria-describedby="avatar-help">
+              <small id="avatar-help">PNG 或 JPEG，最多 90 KiB，寬高各不超過 1024 像素。</small>
+              <div class="settings-actions">
+                <button id="avatar-reset" type="button">還原預設頭像</button>
+                <button id="save-appearance" type="submit" disabled>儲存外觀</button>
+              </div>
+              <p id="appearance-status" role="status"></p>
+            </form>
+          </section>
+          <section id="settings-model" hidden>
+            <h2>模型</h2>
+            <p>模型閘道是外部服務，請由維運端管理。OEP 不提供閘道管理操作。</p>
+            <p id="model-credentials"></p>
+            <ul id="model-health"></ul>
+            <form id="model-settings">
+              <label for="default-alias">新會話的預設模型</label>
+              <select id="default-alias" disabled></select>
+              <div class="settings-actions">
+                <button id="save-model" type="submit" disabled>儲存預設模型</button>
+                <button id="recheck-model" type="button" disabled>立即重新檢查</button>
+              </div>
+              <p id="model-settings-status" role="status"></p>
+            </form>
+          </section>
+          <section id="settings-limits" hidden>
+            <h2>回合限制</h2>
+            <p>超出歷史上限時會省略較舊的完整對話回合。新訊息及當回合工具結果仍會納入。</p>
+            <form id="limits-settings">
+              <div id="limit-fields"></div>
+              <button id="save-limits" type="submit" disabled>儲存回合限制</button>
+              <p id="limits-status" role="status"></p>
+            </form>
+          </section>
+          <section id="settings-runtime" hidden>
+            <h2>執行環境</h2>
+            <p id="runtime-status" role="status">正在載入執行環境…</p>
+            <dl id="runtime-details"></dl>
+            <p id="runtime-agent"></p>
+          </section>
+          <section id="settings-integrations" hidden>
+            <h2>整合說明</h2>
+            <ul>
+              <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
+              <li>SSH 決策依賴 AEP 的專用服務，因此未接入。</li>
+              <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
+              <li>共用資料庫和資產庫訂閱需要公司服務及組織權限，因此未接入。</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </section>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
         <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">會話面板</button>
         <h1 id="session-title">對話</h1>
         <p id="progress" role="status">從左側新增會話後即可開始。</p>
+        <label for="session-alias">會話模型</label>
+        <select id="session-alias" disabled></select>
+        <small id="session-model-status" role="status"></small>
       </header>
       <div id="error" role="alert" hidden></div>
       <div id="messages" class="messages" aria-label="訊息">

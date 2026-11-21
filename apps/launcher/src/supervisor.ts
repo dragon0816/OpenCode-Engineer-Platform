@@ -25,11 +25,11 @@ async function freePort() {
 
 type KnowledgeMcp = Awaited<ReturnType<typeof startKnowledgeMcp>>['config'];
 
-function config(relay: { baseURL: string; key: string }, alias: string, web: boolean, knowledge?: KnowledgeMcp) {
+function config(relay: { baseURL: string; key: string }, aliases: readonly string[], web: boolean, knowledge?: KnowledgeMcp) {
   const template = JSON.parse(readFileSync(atRepo('config/opencode.example.jsonc'), 'utf8'));
   const provider = template.providers[providerID];
   provider.settings = { baseURL: relay.baseURL, apiKey: relay.key };
-  provider.models[alias] = {
+  for (const alias of aliases) provider.models[alias] = {
     modelID: alias, capabilities: { tools: true, input: ['text', 'image', 'pdf'], output: ['text'] },
     limit: { context: 32_000, output: 2048 },
   };
@@ -44,7 +44,7 @@ function config(relay: { baseURL: string; key: string }, alias: string, web: boo
   return JSON.stringify(template);
 }
 
-export async function supervise(root: string, relay: { baseURL: string; key: string }, alias: string, profile?: string,
+export async function supervise(root: string, relay: { baseURL: string; key: string }, aliases: readonly string[], profile?: string,
   knowledge?: KnowledgeMcp, isolatedJob = false) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || process.versions.node.split('.')[0] !== '24') {
     throw new Error('OEP runtime requires Windows x64 and Node.js 24');
@@ -83,7 +83,7 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
       ...baseEnv, HOME: profile ?? control, USERPROFILE: profile ?? control, APPDATA: persistent('roaming'), LOCALAPPDATA: persistent('local'), TEMP: temp, TMP: temp,
       XDG_CONFIG_HOME: persistent('config'), XDG_DATA_HOME: persistent('data'), XDG_CACHE_HOME: persistent('cache'), XDG_STATE_HOME: persistent('state'),
       OPENCODE_TEST_HOME: profile ?? control, OPENCODE_PASSWORD: password,
-      OPENCODE_CONFIG_CONTENT: config(relay, alias, Boolean(profile), knowledge),
+      OPENCODE_CONFIG_CONTENT: config(relay, aliases, Boolean(profile), knowledge),
       OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_CONFIG_PROJECT_DISABLE: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_FLAGS: '-automations',
       OEP_JOB_EXE: exe, OEP_JOB_PORT: String(port), ...(testScope && { OEP_JOB_TEST_SCOPE: testScope }),

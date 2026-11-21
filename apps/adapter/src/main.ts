@@ -9,6 +9,10 @@ import type { Runtime } from '../../launcher/src/runtime.ts';
 import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { repositoryErrorReport } from '../../../packages/knowledge/src/repository.ts';
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
+import { call } from './opencode/client.ts';
+import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
+import { providerID } from './opencode/gateway.ts';
+import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
@@ -88,6 +92,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
   const telegram = startTelegram(root, runtime, telegramEnabled);
   const active = new Set<Promise<void>>();
+  const changingModel = new Set<string>();
+  const approvedAlias = (alias: unknown) => {
+    if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, '請選擇核准的模型。');
+    return alias;
+  };
+  const defaultAlias = () => {
+    const saved = store.defaultAlias();
+    return saved && runtime.aliases.includes(saved) ? saved : runtime.alias;
+  };
   let auth: LocalAuth;
 
   async function handle(request: IncomingMessage, response: ServerResponse) {
@@ -116,15 +129,75 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (path === '/api/settings') {
       if (method === 'POST') {
-        const { name, introduction, instructions } = await body(request);
-        if (typeof name !== 'string' || name.length > 80 ||
+        const input = await body(request);
+        const { name, introduction, instructions } = input;
+        if (Object.keys(input).length !== 3 || typeof name !== 'string' || name.length > 80 ||
             typeof introduction !== 'string' || introduction.length > 500 ||
             typeof instructions !== 'string' || instructions.length > 4000) {
           throw new HttpError(400, '請檢查助理名稱、自我介紹及指示的長度。');
         }
+        if ([name, introduction, instructions].some((field) => runtime.redact(field) !== field)) {
+          throw new HttpError(400, '助理設定含有服務憑證或連線資訊。');
+        }
         store.savePreferences(name.trim(), introduction.trim(), instructions.trim());
       }
-      send(response, 200, store.preferences() ?? { name: '', introduction: '', instructions: '' });
+      const { name, introduction, instructions } = store.preferences() ?? { name: '', introduction: '', instructions: '' };
+      send(response, 200, { name: runtime.redact(name), introduction: runtime.redact(introduction),
+        instructions: runtime.redact(instructions) });
+      return;
+    }
+    if (path === '/api/settings/appearance') {
+      if (method === 'POST') {
+        const input = await body(request);
+        const { theme, density, avatar } = input;
+        if ((theme !== 'system' && theme !== 'light' && theme !== 'dark') ||
+            (density !== 'comfortable' && density !== 'compact') ||
+            Object.keys(input).some((key) => !['theme', 'density', 'avatar'].includes(key))) {
+          throw new HttpError(400, '請選擇有效的主題及顯示密度。');
+        }
+        store.saveAppearance(theme, density, parseAvatar(avatar));
+      }
+      const appearance = store.appearance();
+      send(response, 200, { theme: appearance?.theme ?? null, density: appearance?.density ?? 'comfortable',
+        hasAvatar: Boolean(appearance?.avatar) });
+      return;
+    }
+    if (path === '/api/settings/avatar' && method === 'GET') {
+      const appearance = store.appearance();
+      if (!appearance?.avatar || !appearance.mime) throw new HttpError(404, '目前使用預設頭像。');
+      response.writeHead(200, { 'Content-Type': appearance.mime }).end(appearance.avatar);
+      return;
+    }
+    if (path === '/api/settings/model' || (path === '/api/settings/model/recheck' && method === 'POST')) {
+      if (method === 'POST') {
+        const input = await body(request);
+        if (path.endsWith('/recheck')) {
+          if (Object.keys(input).length) throw new HttpError(400, '重新檢查不需要輸入內容。');
+          if (!await runtime.checkAliases()) throw new HttpError(429, '請等候 30 秒再重新檢查。');
+        } else {
+          if (Object.keys(input).length !== 1) throw new HttpError(400, '請選擇一個模型。');
+          store.saveDefaultAlias(approvedAlias(input.alias));
+        }
+      }
+      send(response, 200, { defaultAlias: defaultAlias(), aliases: runtime.aliasHealth(), credentialsConfigured: true });
+      return;
+    }
+    if (path === '/api/settings/limits') {
+      if (method === 'POST') {
+        const limits = parseTurnLimits(await body(request));
+        if (!limits) throw new HttpError(400, '請輸入範圍內的整數。');
+        store.saveTurnLimits(limits);
+      }
+      send(response, 200, { values: store.turnLimits(), fields: turnLimitFields });
+      return;
+    }
+    if (path === '/api/settings/runtime' && method === 'GET') {
+      const pin = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
+      send(response, 200, { pin: pin.tag, version: runtime.version, compatible: runtime.version === pin.tag.slice(1),
+        commit: pin.commit.slice(0, 12), openapi: pin.openapi.sha256.slice(0, 12),
+        binary: pin.windowsX64.binarySha256.slice(0, 12),
+        client: pin.client.integrity.slice(7, 19), health: 'ready',
+        knowledgeConfigured: Boolean(runtime.knowledge), telegramConfigured: telegram.configured() });
       return;
     }
     if (path === '/api/jobs') {
@@ -219,7 +292,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     if (path === '/api/sessions' && method === 'POST') {
       const { agent } = await body(request);
       if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'Select a supported agent');
-      const session = await chat.create(agent, project);
+      const session = await chat.create(agent, project, defaultAlias());
       sessions.set(session.id, session);
       upstreamIDs.set(session.upstreamID, session.id);
       send(response, 201, publicSession(session));
@@ -272,12 +345,32 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         if (latest && latest.state !== 'verified' && latest.state !== 'failed' && latest.state !== 'cancelled') {
           throw new HttpError(409, '請等這次處理結束後再刪除會話。');
         }
+        if (changingModel.has(id)) throw new HttpError(409, '請等模型切換完成。');
         store.hideSession(id);
         sessions.delete(id);
         events.forget(id);
         upstreamIDs.delete(session.upstreamID);
       }
       send(response, 200, publicSession(session));
+      return;
+    }
+    if (method === 'POST' && resource === 'model') {
+      const input = await body(request);
+      if (Object.keys(input).length !== 1) throw new HttpError(400, '請選擇一個模型。');
+      const alias = approvedAlias(input.alias);
+      if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
+      const latest = store.turns(id).at(-1);
+      if (changingModel.has(id) || latest && !['verified', 'failed', 'cancelled'].includes(latest.state)) {
+        throw new HttpError(409, '請等這次處理結束後再切換模型。');
+      }
+      changingModel.add(id);
+      try {
+        await runtime.client.session.switchModel({ sessionID: session.upstreamID, model: { id: alias, providerID } }, call());
+        store.saveSessionAlias(id, alias);
+        session.alias = alias;
+        events.notify(id);
+        send(response, 200, publicSession(session));
+      } finally { changingModel.delete(id); }
       return;
     }
     if (method === 'GET' && resource === 'state') send(response, 200, { ...await chat.state(session), activity: events.cards(id) });
@@ -289,6 +382,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     } else if (method === 'POST' && resource === 'turns') {
       const input = parseTurn(await body(request));
       if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
+      if (changingModel.has(id)) throw new HttpError(409, '請等模型切換完成。');
       send(response, 202, chat.submit(session, input));
     }
     else if (method === 'POST' && resource === 'cancel-turn') {

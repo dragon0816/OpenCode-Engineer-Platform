@@ -135,3 +135,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 右側分頁、窄版面板、附件操作與預覽、工作台帳與 BI 摘要、同名 XLSX 產物差異。
 - [x] 生成中顯示等候秒數，保留跨框架機密遮蔽。
 - [ ] 另行驗收逐 token 串流、PDF 首頁及文字產物差異整合。 [Slice 2B 驗收](reviews/PHASE2B_SLICE2B_REPORT.md)
+
+## Phase 2b Slice 2C 進度
+
+- [x] 設定頁、助理、外觀、模型、回合限制、執行環境、整合說明。 [驗收報告](reviews/PHASE2B_SLICE2C_REPORT.md)
+- [ ] 輸入、專案與資料夾、關於，以及其餘設定矩陣項目。Telegram 語音留在原階段。

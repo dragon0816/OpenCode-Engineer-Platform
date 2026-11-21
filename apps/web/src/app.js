@@ -237,6 +237,7 @@ function render(context) {
       appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
+      if (item.role === 'assistant') entry.append(avatar());
       const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
       if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
       entry.append(role);
@@ -661,11 +662,13 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
   closePreview();
   find('panel-runs').replaceChildren();
   find('panel-diff').replaceChildren();
   jump.hidden = true;
   if (!session) {
+    updateSessionAlias();
     sessionTitle.textContent = '對話';
     progress.textContent = '從左側新增會話後即可開始。';
     messages.replaceChildren();
@@ -696,6 +699,8 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  find('session-model-status').textContent = '';
+  updateSessionAlias();
   activatePanel(panelTabs.find((tab) => tab.id === localStorage.getItem(`oep.panel.${path}`)) ?? panelTabs[0]);
   renderSessions();
   events.onopen = () => {
@@ -833,32 +838,299 @@ async function upload(files) {
 }
 
 const preferenceFields = ['name', 'introduction', 'instructions'];
+let savedAssistant;
+let settingsSaving = false;
+function assistantValues() {
+  return Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
+}
 function applyPreferences(preferences) {
   for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
+  savedAssistant = JSON.stringify(assistantValues());
+  find('sidebar-assistant-name').textContent = preferences.name || '助理';
 }
 find('assistant-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = find('save-assistant');
   if (button.disabled) return;
-  button.disabled = true;
+  const data = assistantValues();
+  const controls = [...event.currentTarget.elements];
+  controls.forEach((control) => { control.disabled = true; });
+  settingsSaving = true;
+  find('settings-status').textContent = '正在儲存…';
   try {
-    const data = Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
     applyPreferences(await request('/api/settings', { data }));
     find('settings-status').textContent = '已儲存';
   } catch {
     find('settings-status').textContent = '無法儲存助理設定，請再試一次。';
-  } finally { button.disabled = stopped; }
+  } finally {
+    settingsSaving = false;
+    controls.forEach((control) => { control.disabled = stopped; });
+  }
 });
 
 const theme = find('theme');
-const savedTheme = localStorage.getItem('oep.theme');
-if (['system', 'light', 'dark'].includes(savedTheme)) theme.value = savedTheme;
-function applyTheme() {
-  document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem('oep.theme', theme.value);
+const density = find('density');
+const avatarFile = find('avatar-file');
+const appearanceStatus = find('appearance-status');
+const appearanceSave = find('save-appearance');
+const legacyTheme = localStorage.getItem('oep.theme');
+let savedAppearance;
+let avatarReset = false;
+let showingAvatar = false;
+function avatar() {
+  const element = node('span', 'O', 'assistant-avatar');
+  element.setAttribute('aria-hidden', 'true');
+  paintAvatar(element);
+  return element;
 }
-theme.addEventListener('change', applyTheme);
-applyTheme();
+function paintAvatar(element) {
+  if (!showingAvatar) { element.textContent = 'O'; return; }
+  const image = document.createElement('img');
+  image.alt = '';
+  image.src = '/api/settings/avatar';
+  element.replaceChildren(image);
+}
+function previewAppearance() {
+  document.documentElement.dataset.theme = theme.value;
+  document.documentElement.dataset.density = density.value;
+}
+function applyAppearance(value) {
+  savedAppearance = { ...value, theme: value.theme ?? theme.value };
+  theme.value = savedAppearance.theme;
+  density.value = value.density;
+  avatarFile.value = '';
+  avatarReset = false;
+  showingAvatar = value.hasAvatar;
+  document.querySelectorAll('.assistant-avatar').forEach(paintAvatar);
+  previewAppearance();
+}
+if (['system', 'light', 'dark'].includes(legacyTheme)) theme.value = legacyTheme;
+for (const input of [theme, density]) input.addEventListener('change', previewAppearance);
+previewAppearance();
+find('avatar-reset').addEventListener('click', () => {
+  avatarReset = true;
+  avatarFile.value = '';
+  appearanceStatus.textContent = '儲存後會還原預設頭像。';
+});
+avatarFile.addEventListener('change', () => { avatarReset = false; });
+async function encodeAvatar(file) {
+  if (file.size > 90 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let value = '';
+  for (const byte of bytes) value += String.fromCharCode(byte);
+  return btoa(value);
+}
+find('appearance-settings').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (appearanceSave.disabled) return;
+  const fields = [theme, density, avatarFile, find('avatar-reset'), appearanceSave];
+  fields.forEach((field) => { field.disabled = true; });
+  settingsSaving = true;
+  appearanceStatus.textContent = '正在儲存…';
+  try {
+    const data = { theme: theme.value, density: density.value };
+    if (avatarFile.files.length) data.avatar = await encodeAvatar(avatarFile.files[0]);
+    else if (avatarReset) data.avatar = null;
+    applyAppearance(await request('/api/settings/appearance', { data }));
+    localStorage.removeItem('oep.theme');
+    appearanceStatus.textContent = '已儲存';
+  } catch {
+    appearanceStatus.textContent = '無法儲存外觀。請確認圖片格式、檔案大小及寬高。';
+  } finally {
+    settingsSaving = false;
+    fields.forEach((field) => { field.disabled = stopped; });
+  }
+});
+function appearanceDirty() {
+  return savedAppearance && (theme.value !== savedAppearance.theme || density.value !== savedAppearance.density ||
+    avatarReset || avatarFile.files.length > 0);
+}
+const defaultAlias = find('default-alias');
+const sessionAlias = find('session-alias');
+const modelStatus = find('model-settings-status');
+let modelSettings;
+function aliasOptions(select, selected, aliases) {
+  select.replaceChildren(...aliases.map(({ alias }) => {
+    const option = node('option', alias);
+    option.value = alias;
+    return option;
+  }));
+  select.value = selected ?? '';
+}
+function updateSessionAlias() {
+  const session = current && knownSessions.get(current.id);
+  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? []);
+  sessionAlias.disabled = !session || !modelSettings || stopped;
+  if (modelSettings) model.textContent = `模型 ${session?.alias ?? modelSettings.defaultAlias}`;
+}
+function applyModel(value, draft = value.defaultAlias) {
+  modelSettings = value;
+  aliasOptions(defaultAlias, draft, value.aliases);
+  find('model-credentials').textContent = value.credentialsConfigured ? '憑證已設定' : '憑證未設定';
+  find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
+    node('li', `${alias} · ${healthy ? '可用' : '無法通過檢查'}`)));
+  updateSessionAlias();
+  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
+}
+async function updateModel(recheck) {
+  const draft = defaultAlias.value;
+  if (!recheck) settingsSaving = true;
+  modelStatus.textContent = recheck ? '正在檢查…' : '正在儲存…';
+  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = true;
+  try {
+    const path = '/api/settings/model' + (recheck ? '/recheck' : '');
+    const value = await request(path, { data: recheck ? {} : { alias: draft } });
+    applyModel(value, recheck ? defaultAlias.value : undefined);
+    modelStatus.textContent = recheck ? '已重新檢查' : '已儲存';
+  } catch (error) {
+    modelStatus.textContent = error.status === 429 ? '請等候 30 秒再重新檢查。' : '無法更新模型設定。';
+    for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
+  } finally { if (!recheck) settingsSaving = false; }
+}
+find('model-settings').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!find('save-model').disabled) void updateModel(false);
+});
+find('recheck-model').addEventListener('click', () => void updateModel(true));
+sessionAlias.addEventListener('change', async () => {
+  const context = current;
+  const status = find('session-model-status');
+  if (!context) return;
+  sessionAlias.disabled = true;
+  try {
+    const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
+    knownSessions.set(session.id, session);
+    if (current === context) status.textContent = '模型已切換';
+  } catch (error) {
+    if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。';
+  } finally { if (current === context) updateSessionAlias(); }
+});
+function modelDirty() {
+  return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
+}
+const limitLabels = {
+  recentMessages: '最近訊息則數', historyBytes: '歷史位元組上限',
+  toolCalls: '工具呼叫次數上限', timeoutSeconds: '回合時限（秒）',
+};
+const limitsStatus = find('limits-status');
+const saveLimits = find('save-limits');
+let savedLimits;
+const limitInputs = new Map();
+function applyLimits({ values, fields }) {
+  savedLimits = values;
+  for (const [key, field] of Object.entries(fields)) {
+    if (!limitInputs.has(key)) {
+      const id = `limit-${key}`;
+      const label = node('label', limitLabels[key]);
+      label.htmlFor = id;
+      const input = node('input');
+      input.id = id;
+      input.type = 'number';
+      input.min = field.min;
+      input.max = field.max;
+      input.required = true;
+      const help = node('small', `範圍 ${field.min} 至 ${field.max}，預設 ${field.initial}。`);
+      help.id = `${id}-help`;
+      input.setAttribute('aria-describedby', help.id);
+      const row = node('div');
+      row.append(label, input, help);
+      find('limit-fields').append(row);
+      limitInputs.set(key, input);
+    }
+    limitInputs.get(key).value = values[key];
+  }
+  saveLimits.disabled = stopped;
+}
+function limitsDirty() {
+  return savedLimits && [...limitInputs].some(([key, input]) => input.valueAsNumber !== savedLimits[key]);
+}
+find('limits-settings').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (saveLimits.disabled) return;
+  saveLimits.disabled = true;
+  settingsSaving = true;
+  limitsStatus.textContent = '正在儲存…';
+  const data = Object.fromEntries([...limitInputs].map(([key, input]) => [key, input.valueAsNumber]));
+  for (const input of limitInputs.values()) input.disabled = true;
+  try {
+    applyLimits(await request('/api/settings/limits', { data }));
+    limitsStatus.textContent = '已儲存';
+  } catch {
+    limitsStatus.textContent = '無法儲存回合限制。請檢查數值範圍。';
+  } finally {
+    settingsSaving = false;
+    for (const input of limitInputs.values()) input.disabled = stopped;
+    saveLimits.disabled = stopped;
+  }
+});
+function assistantDirty() {
+  return savedAssistant !== undefined && savedAssistant !== JSON.stringify(assistantValues());
+}
+function discardSettings() {
+  if (settingsSaving) return false;
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return true;
+  if (!window.confirm('設定尚未儲存。要捨棄變更嗎？')) return false;
+  if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
+  if (appearanceDirty()) applyAppearance(savedAppearance);
+  if (modelDirty()) applyModel(modelSettings);
+  if (limitsDirty()) for (const [key, input] of limitInputs) input.value = savedLimits[key];
+  find('settings-status').textContent = appearanceStatus.textContent = modelStatus.textContent = limitsStatus.textContent = '';
+  return true;
+}
+window.addEventListener('beforeunload', (event) => {
+  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return;
+  event.preventDefault();
+  event.returnValue = true;
+});
+
+const settingsView = find('settings-view');
+const settingsEntry = find('open-settings');
+const settingsSections = [...find('settings-nav').querySelectorAll('button')];
+
+function showSettings() {
+  for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
+  settingsView.hidden = false;
+  settingsEntry.setAttribute('aria-current', 'page');
+  if (narrowNavigation.matches) setSidebar(false);
+  find('settings-title').focus();
+}
+
+settingsEntry.addEventListener('click', showSettings);
+find('close-settings').addEventListener('click', () => {
+  find('open-chat').click();
+  if (settingsView.hidden && narrowNavigation.matches) sidebarToggle.focus();
+});
+for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
+  find(id).addEventListener('click', (event) => {
+    if (settingsView.hidden) return;
+    if (!discardSettings()) {
+      event.stopImmediatePropagation();
+      return;
+    }
+    settingsView.hidden = true;
+    settingsEntry.removeAttribute('aria-current');
+    if (id === 'open-chat') {
+      find('chat-view').hidden = find('chat-files').hidden = false;
+      find(id).setAttribute('aria-current', 'page');
+    }
+  }, { capture: true });
+}
+for (const button of settingsSections) {
+  button.addEventListener('click', () => {
+    if (button.hasAttribute('aria-current') || !discardSettings()) return;
+    for (const section of settingsSections) {
+      if (section === button) section.setAttribute('aria-current', 'page');
+      else section.removeAttribute('aria-current');
+      find(`settings-${section.dataset.section}`).hidden = section !== button;
+    }
+  });
+}
+document.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey || event.altKey || event.shiftKey || event.key !== ',') return;
+  event.preventDefault();
+  showSettings();
+});
 
 const narrowNavigation = matchMedia('(max-width: 540px)');
 const sidebarToggle = find('toggle-sidebar');
@@ -1062,7 +1334,27 @@ try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
   model.textContent = `模型 ${bootstrap.alias}`;
-  find('runtime-status').textContent = `OpenCode ${bootstrap.version} · 已連線 · 模型 ${bootstrap.alias}`;
+  request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
+  request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
+  request('/api/settings/runtime').then((runtime) => {
+    const configured = (value) => value ? '已設定' : '未設定';
+    find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
+    const details = find('runtime-details');
+    for (const [name, value] of [
+      ['OpenCode 固定版本', runtime.pin], ['執行版本', runtime.version], ['提交雜湊', runtime.commit],
+      ['介面雜湊', runtime.openapi], ['Windows 執行檔雜湊', runtime.binary], ['用戶端雜湊', runtime.client],
+      ['階段 3 知識庫', configured(runtime.knowledgeConfigured)], ['階段 4 Telegram', configured(runtime.telegramConfigured)],
+    ]) {
+      const detail = node('dd');
+      if (name.startsWith('階段')) detail.append(node('span', value, 'runtime-badge'));
+      else detail.textContent = value;
+      details.append(node('dt', name), detail);
+    }
+  }).catch(() => { find('runtime-status').textContent = '無法載入執行環境。'; });
+  request('/api/settings/appearance').then((appearance) => {
+    applyAppearance(appearance);
+    appearanceSave.disabled = stopped;
+  }).catch(() => { appearanceStatus.textContent = '無法載入外觀設定。'; });
   request('/api/settings').then((preferences) => {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;

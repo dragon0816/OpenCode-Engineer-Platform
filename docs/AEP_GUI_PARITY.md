@@ -24,20 +24,20 @@
 
 | 來源與設定 | OEP 決策 | 位置 | 階段 | 驗收 |
 |---|---|---|---|---|
-| W Agent 名稱、自介、soul.md | Adapt to OpenCode | 設定／助理 | 2b | 保存三值並重開，僅後續回合用更新後指令。 |
-| W Avatar 上傳、挑選、重設 | Keep | 設定／外觀 | 2b | 以合成 PNG 更換、重開、還原預設，拒絕無效圖片。 |
-| W Gateway Start／Restart／Refresh token／開機自啟 | Omit-with-reason（Gateway 為外部服務，無管理權） | 設定／模型狀態 | 2b | 不顯示管理動作，測試只命中允許的推論路徑。 |
-| W Gateway Test、provider、alias、URL、模型清單／手填、context capacity | Adapt to OpenCode | 設定／模型，輸入框 | 2b | 切換核准模型並成功送合成 turn。拒絕未知 alias，錯誤僅報狀態。 |
-| W SecretRef／環境變數選擇 | Replace（使用 OEP 憑證繫結） | 設定／模型 | 2b | 顯示已設定狀態，HTML、API、log 都沒有值。 |
-| W 最近訊息、歷史 byte budget、工具次數、回合時限 | Adapt to OpenCode | 設定／回合限制 | 2b | 驗上下界，下一回合達界時呈現對應狀態。 |
+| W Agent 名稱、自介、soul.md | Adapt to OpenCode | 設定／助理 | 2b | 保存三值並重開，僅後續回合用更新後指令。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W Avatar 上傳、挑選、重設 | Keep | 設定／外觀 | 2b | 以合成 PNG 更換、重開、還原預設，拒絕無效圖片。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W Gateway Start／Restart／Refresh token／開機自啟 | Omit-with-reason（Gateway 為外部服務，無管理權） | 設定／整合說明 | 2b | 不顯示管理動作，測試只命中允許的推論路徑。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W Gateway Test、provider、alias、URL、模型清單／手填、context capacity | Adapt to OpenCode | 設定／模型、對話頁首 | 2b | 切換核准模型並成功送合成 turn。拒絕未知 alias，錯誤僅報狀態。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W SecretRef／環境變數選擇 | Replace（使用 OEP 憑證繫結） | 設定／模型 | 2b | 顯示已設定狀態，HTML、API、log 都沒有值。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W 最近訊息、歷史 byte budget、工具次數、回合時限 | Adapt to OpenCode | 設定／回合限制 | 2b | 驗上下界，下一回合達界時呈現對應狀態。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W 已存會話選擇與刪除 | Keep | 左欄／會話管理 | 2b | 取消保留原會話，確認僅清除目標會話。已驗證 Web 清單與存取範圍，保留稽核資料。 [Chromium 驗收](../tests/e2e/web-browser.test.ts) |
-| W 多 Agent 委派開關 | Adapt to OpenCode | 設定／助理 | 2b | 開啟時受限子代理可執行合成任務，關閉時無委派。 |
+| W 多 Agent 委派開關 | Adapt to OpenCode | 設定／助理 | 2b | 固定版 OEP 只設定主要助理及既有許可工具，委派開關停用並顯示原因。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、T Telegram 開關、token、sender／actor、查詢聯絡 bot 的人 | Adapt to OpenCode | 設定／兩個 bot | 4 | 開關、換值、發送者核對與拒收各測一次，憑證不回傳。 |
-| W Shared Platform portal／bridge URL、Personal Agent code、帳密登入、enroll、teams | Omit-with-reason（AEP 公司 Bridge 與組織帳號） | 設定／整合說明 | 2b | 頁面沒有公司登入、授權或登錄請求。 |
-| W Shared Platform 憑證 fingerprint／信任／下載／忘記 | Omit-with-reason（AEP 自訂 Bridge 信任） | 設定／整合說明 | 2b | OEP 連線無此信任寫入，無效 HTTPS 憑證拒連。 |
-| W Laya SSH host／ports／account／mode／threshold／timeout／approval／auto／check | Omit-with-reason（AEP 專用 SSH 決策服務） | 設定／整合說明 | 2b | OEP 不啟動 Laya 或 SSH tunnel。 |
+| W Shared Platform portal／bridge URL、Personal Agent code、帳密登入、enroll、teams | Omit-with-reason（AEP 公司 Bridge 與組織帳號） | 設定／整合說明 | 2b | 頁面沒有公司登入、授權或登錄請求。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W Shared Platform 憑證 fingerprint／信任／下載／忘記 | Omit-with-reason（AEP 自訂 Bridge 信任） | 設定／整合說明 | 2b | OEP 連線無此信任寫入，無效 HTTPS 憑證拒連。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
+| W Laya SSH host／ports／account／mode／threshold／timeout／approval／auto／check | Omit-with-reason（AEP 專用 SSH 決策服務） | 設定／整合說明 | 2b | OEP 不啟動 Laya 或 SSH tunnel。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W MCP 名稱、stdio command／args／cwd／env／secret env、remote URL／headers／token、timeout、啟停、重連、移除與狀態 | Adapt to OpenCode | 設定／MCP | 2b | 兩種合成 transport 各驗連線、啟停、逾時及憑證遮罩。3a 先提供內建唯讀知識工具。 |
-| W、C Coding agents 安裝、移除、狀態；A 的 Claude Code／Codex／Copilot 開關與登入 | Replace（OpenCode 固定版本與 OEP agents） | 設定／Runtime | 2b | 顯示 pin、相容性與健康，切換 OEP agent 後識別新 session。安裝與升級由 5 交付。 |
+| W、C Coding agents 安裝、移除、狀態；A 的 Claude Code／Codex／Copilot 開關與登入 | Replace（OpenCode 固定版本與 OEP agents） | 設定／Runtime | 2b | 顯示 pin、相容性與健康，切換 OEP agent 後識別新 session。安裝與升級由 5 交付。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、A Agent mode 預設根目錄、會話工作與唯讀資料夾 | Adapt to OpenCode | 設定／專案與會話面板 | 2b | 兩專案分別開新會話，驗唯讀目錄、跨會話拒絕及有效工作根。 |
 | W、A Email folders、days、舊 exclusions、會話 mail grant | Replace（核准的郵件 MCP 與專案設定，舊欄位已停用） | 設定／MCP | 2b | 合成 connector 限定資料夾和天數，未允許時查詢拒絕。 |
 | W Agent profile／Capability management | Adapt to OpenCode | 設定／助理與能力 | 2b | 顯示有效 agent、工具與 skill 狀態，停用後新回合不列該能力。 |
@@ -49,7 +49,7 @@
 
 | 來源與操作 | OEP 決策 | 位置 | 階段 | 驗收 |
 |---|---|---|---|---|
-| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與輸入框 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。緊湊會話列、鍵盤選單、搜尋與清除已驗收。會話模型切換仍開放。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
+| W 新會話、搜尋、切換、會話模型選擇 | Adapt to OpenCode | 左欄與對話頁首 | 2／2b | 專案清單、新增、搜尋、切換、改名、刪除及跨專案路由隔離已驗收。緊湊會話列、鍵盤選單、搜尋與清除已驗收。會話模型切換已驗收。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) · [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md) |
 | W 私有、public 會話及 backend 驗證 | Replace（本機 OpenCode；D04 單使用者） | 左欄、設定／Runtime | 2b | 新會話走本機授權，拒絕未認證及非 loopback 請求。 |
 | W 送訊息、排隊、進度、delegation、資料夾操作 | Adapt to OpenCode | 中央、輸入框、工作面板 | 2／2b | 安全 Markdown、活動摘要與工具卡展收已驗。生成時顯示等候秒數。逐 token 顯示與 SSE 遺漏事件補齊仍開放。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | 停止對話回合 | Adapt to OpenCode | 輸入框 | 2b | 合成慢速 Excel 回合已驗停止、帳本、重複停止及產物拒絕。 [Slice 2A](reviews/PHASE2B_SLICE2A_REPORT.md) |
@@ -59,7 +59,7 @@
 | W Slash palette、直接指令及 action card 決定 | Adapt to OpenCode | 輸入框、對話卡 | 2b | 用鍵盤搜尋並執行允許指令，接受／拒絕卡片各一條。 |
 | W 能力清單技能／工作流程／知識／擴充／應用，更新、查找、狀態篩選、詳情、安裝草稿、啟停移除 | Adapt to OpenCode | 設定／能力 | 2b | 合成項目從待啟用到停用、移除，清單與工具狀態一致。 |
 | W Installed Workflow 執行表單、上傳、動態選項、JSON 參數及 Recent runs | Replace（OpenCode 指令及 OEP 工作帳本） | 工作面板 | 4 | 同設定手動執行後，查得輸入及結果的對帳紀錄。 |
-| W Share Platform Library 分類／查找／狀態／同步、安裝、Portal 授權與提交審核 | Omit-with-reason（需 AEP 公司服務與資產權限，OEP 使用本機能力管理） | 設定／整合說明 | 2b | 本機能力管理可用，未發 Bridge／Portal 請求。 |
+| W Share Platform Library 分類／查找／狀態／同步、安裝、Portal 授權與提交審核 | Omit-with-reason（需 AEP 公司服務與資產權限，OEP 使用本機能力管理） | 設定／整合說明 | 2b | 整合說明交代服務與組織依賴。未發 Bridge／Portal 請求。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、R Reviews 清單、刷新、接受／延後／拒絕／完成、原會話與知識缺口 | Adapt to OpenCode | 左欄／審核 | 3b | 兩筆候選分別接受與拒絕。接受前與拒絕後均無法由 Ask 取回。 |
 | W、R 案例回顧 Review now、保留天數、夜間、建議 skills、比較上限 | Adapt to OpenCode | 審核設定、工作 | 4 | 合成重複案例依設定進入手動或定時回顧，建議須經核准。 |
 | W、M 記憶待確認／偏好／筆記／資料／同步進度／紀錄、立即檢查 | Adapt to OpenCode | 面板／記憶 | 2b | 新建與撤銷一筆偏好，確認適用範圍、健康狀態及紀錄。組織同步依 D04/D05 延後。 |

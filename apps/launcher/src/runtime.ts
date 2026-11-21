@@ -18,8 +18,9 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
   const requests: GatewayTrace[] = [];
   const settings = { ...(synthetic ?? gatewaySettings()), alias };
+  const aliases: readonly string[] = profile ? synthetic?.aliases ?? (synthetic ? [alias] : gatewayAliases) : [alias];
   const relay = await startGateway({
-    ...settings, web: Boolean(profile), trace: (value) => {
+    ...settings, aliases, web: Boolean(profile), trace: (value) => {
       requests.push(value);
       audit('gateway.jsonl', value);
     },
@@ -35,7 +36,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   }
   try {
     if (profile) knowledge = await startKnowledgeRuntime(profile, root, settings);
-    supervisor = await supervise(root, relay, alias, profile, knowledge?.config, synthetic?.isolatedJob);
+    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob);
   } catch (error) {
     try { await closeRelays(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }
@@ -87,8 +88,25 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
       if (health !== 'passed') throw new Error('Model health turn failed');
     }
-    return { ...initial, root, alias, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge,
-      gatewayCursor: relay.requestCursor, gatewaySince };
+    let aliasHealth = aliases.map((name) => ({ alias: name, healthy: false }));
+    let nextCheck = 0;
+    let checking = false;
+    async function checkAliases() {
+      if (checking || Date.now() < nextCheck) return false;
+      checking = true;
+      nextCheck = Date.now() + 30_000;
+      try {
+        aliasHealth = await Promise.all(aliases.map(async (name) => ({ alias: name, healthy: await relay.ping(name) })));
+        audit('health.jsonl', { checkedAt: Date.now(), aliases: aliasHealth });
+        return true;
+      } finally { checking = false; }
+    }
+    if (profile && (!synthetic || synthetic.aliases)) {
+      await checkAliases();
+      nextCheck = 0;
+    }
+    return { ...initial, root, alias, aliases, aliasHealth: () => aliasHealth, checkAliases, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge,
+      gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince };
   } catch (error) {
     try { await stop(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Health check and runtime cleanup failed'); }

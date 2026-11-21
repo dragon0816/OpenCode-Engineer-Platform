@@ -13,10 +13,11 @@ import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookInput, workbookLimit, workbookName } from '../runs/web-workbook.ts';
 import { until } from '../../../../scripts/phase0/probe-http.ts';
 import { HttpError } from './errors.ts';
+import { turnMarker } from '../opencode/turn-limits.ts';
+import type { TurnLimits } from '../opencode/turn-limits.ts';
 
 export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean };
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
-const separator = (id: string) => `\n\n[OEP attachment and output instructions for ${id}]\n`;
 
 type ToolCard = {
   id: string; name: string; status: 'running' | 'done' | 'failed' | 'cancelled'; startedAt: number; finishedAt?: number;
@@ -47,7 +48,7 @@ export function publicRun(run: RunRecord) {
 
 export function publicSession({ id, agent, alias, createdAt, title, project }: WebSession) { return { id, agent, alias, createdAt, project, ...(title ? { title } : {}) }; }
 
-type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
+type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'>;
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -84,10 +85,10 @@ export class ChatService {
   workspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'sessions'), session.id); }
   private modelWorkspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'model-work'), session.id); }
 
-  async create(agent: Agent, project: ProjectID = 'default') {
+  async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias) {
     const id = randomUUID();
     const createdAt = Date.now();
-    const local = { id, project, agent, alias: this.runtime.alias, createdAt };
+    const local = { id, project, agent, alias, createdAt };
     const workspace = this.workspace(local);
     const modelWorkspace = this.modelWorkspace(local);
     checkDirectory(join(this.projectRoot(project), 'sessions'));
@@ -96,7 +97,7 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, this.runtime.alias, true);
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true);
     const session = { ...local, upstreamID };
     this.store.createSession(session);
     return session;
@@ -123,7 +124,7 @@ export class ChatService {
         if (message.type === 'user') {
           const runID = runByMessage.get(message.id);
           turn = runs.find((run) => run.id === runID);
-          const text = runID ? message.text.split(separator(runID))[0] : message.text;
+          const text = runID ? message.text.split(turnMarker(runID))[0] : message.text;
           return [{ id: message.id, role: 'user', text: this.runtime.redact(text), createdAt: message.time?.created }];
         }
         if (message.type !== 'assistant') return [];
@@ -165,7 +166,7 @@ export class ChatService {
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'Message ID is unavailable');
     const prior = this.store.turns(session.id).at(-1);
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'A turn in this session is still pending');
-    if (session.alias !== this.runtime.alias) throw new HttpError(409, 'This session uses a different model. Create a session for the current model');
+    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(409, 'This session uses a different model. Create a session for the current model');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'Select the workbook agent to generate a workbook');
     for (const id of input.attachments) {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'Attachment not found in this session');
@@ -176,10 +177,11 @@ export class ChatService {
     this.store.saveTurn(session.id, run, hash);
     this.notify(session.id);
     const preferences = this.store.preferences();
+    const limits = this.store.turnLimits();
     this.queue = this.queue.then(async () => {
       if (this.store.get(run.id).state === 'cancelled') return;
       const stop = new AbortController();
-      const done = this.execute(session, run, input, preferences, stop.signal);
+      const done = this.execute(session, run, input, preferences, limits, stop.signal);
       this.executing.set(run.id, { stop, done });
       try { await done; }
       finally { this.executing.delete(run.id); }
@@ -203,10 +205,23 @@ export class ChatService {
     return publicRun(this.store.get(id));
   }
 
-  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>, cancelled: AbortSignal) {
+  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>, limits: TurnLimits, cancelled: AbortSignal) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
+    const boundary = new AbortController();
+    let exceeded: string | undefined;
+    let tools = 0;
+    const stopAtLimit = (message: string) => {
+      exceeded ??= message;
+      boundary.abort();
+    };
+    const timeout = setTimeout(() => stopAtLimit('已停止：達到回合時限。'), limits.timeoutSeconds * 1000);
+    const signal = AbortSignal.any([this.stop.signal, cancelled, boundary.signal]);
+    this.runtime.setTurnBoundary({ marker: turnMarker(run.id), limits, signal, addTools(count) {
+      tools += count;
+      if (tools > limits.toolCalls) stopAtLimit('已停止：達到工具呼叫次數上限。');
+    } });
     let state: 'verified' | 'failed' | 'indeterminate' | 'cancelled' = 'failed';
     let error: string | undefined;
     let sent = false;
@@ -234,18 +249,18 @@ export class ChatService {
         preferences.instructions && `本回合助理指示：\n${preferences.instructions}`,
       ].filter(Boolean).join('\n') : '';
       const additional = [parts.text, output, assistant].filter(Boolean).join('\n\n');
-      const text = additional ? input.text + separator(run.id) + additional : input.text;
-      cancelled.throwIfAborted();
+      const text = input.text + turnMarker(run.id) + additional;
+      signal.throwIfAborted();
       update('running');
       sent = true;
       this.recovering.add(run.id);
       const admission = await submitOnce(client, { sessionID, id: run.submissionID!, text, files: parts.files });
-      cancelled.throwIfAborted();
+      signal.throwIfAborted();
       if (admission === 'indeterminate') throw new Error('Uncertain admission');
-      const outcome = await waitForOutcome(client, sessionID, update, 105_000, AbortSignal.any([this.stop.signal, cancelled]), run.submissionID);
+      const outcome = await waitForOutcome(client, sessionID, update, limits.timeoutSeconds * 1000 + 1000, signal, run.submissionID);
       const count = await submissionCount(client, sessionID, run.submissionID!);
       if (count.inbox !== 0 || count.messages !== 1) throw new Error('Unexpected durable submission count');
-      cancelled.throwIfAborted();
+      signal.throwIfAborted();
       sent = false;
       const calls = this.runtime.gatewaySince(cursor);
       const replied = async () => {
@@ -260,15 +275,15 @@ export class ChatService {
         else if (calls.length && calls.every((call) => call.output === 'empty')) error = 'The model returned an empty response. Try again';
         else error = 'The model request failed. Try again when the service is available';
       } else {
-        cancelled.throwIfAborted();
+        signal.throwIfAborted();
         if (input.workbook) {
           update('background');
-          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run, cancelled);
+          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run, signal);
         }
         state = 'verified';
       }
     } catch (reason) {
-      if (cancelled.aborted) state = 'cancelled';
+      if (cancelled.aborted || exceeded) state = 'cancelled';
       else if (sent) {
         state = 'indeterminate';
         error = this.runtime.gatewaySince(cursor).some((call) => call.error === 'timeout')
@@ -280,13 +295,14 @@ export class ChatService {
       else if (this.stop.signal.aborted) error = 'OEP stopped before this turn could finish';
       else error = input.workbook ? 'Workbook data could not be verified. The model must write valid workbook data' : 'The turn could not be completed';
     }
+    clearTimeout(timeout);
     if (input.workbook) {
       try { await client.session.update({ sessionID, permissions: [] }, call()); }
       catch { /* Every subsequent workbook-agent turn explicitly replaces its permission set before admission. */ }
     }
-    if (cancelled.aborted) {
+    if (cancelled.aborted || exceeded) {
       state = 'cancelled';
-      error = undefined;
+      error = exceeded;
       result = {};
       if (sent) {
         try {
@@ -296,7 +312,7 @@ export class ChatService {
           await until(async (signal) => (await client.session.active({ signal }))[sessionID] ? undefined : true, 5_000);
         } catch {
           state = 'indeterminate';
-          error = '暫時無法確認這次處理是否已停止，正在核對。';
+          error = exceeded ? `${exceeded}正在核對上游狀態。` : '暫時無法確認這次處理是否已停止，正在核對。';
         }
       }
     }
@@ -307,6 +323,7 @@ export class ChatService {
       appendFileSync(this.audit, `${JSON.stringify({ runID: run.id, sessionID, submissionID: run.submissionID, alias: run.alias,
         state, error, elapsedMs: Date.now() - run.createdAt, modelCalls, artifact: result.artifact })}\n`);
     } finally {
+      this.runtime.setTurnBoundary();
       this.recovering.delete(run.id);
       this.notify(session.id);
     }

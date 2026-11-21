@@ -90,3 +90,7 @@ The Technical Lead follow-up adds a durable 120-second or 20-attempt processing 
 ## Phase 2b Slice 2B
 
 分支 `phase-2b/right-panel` 從 `1782464` 開始。右側檔案、工作及差異分頁已整合既有會話與工作資料，附窄版及深淺色 Chromium 驗收。生成中會顯示等候秒數，Relay 保留完整欄位遮蔽。PDF 提供檔案資料及下載。合併由 Technical Lead 執行 `npm run merge-check`。 [驗收報告](reviews/PHASE2B_SLICE2B_REPORT.md)
+
+## Phase 2b Slice 2C
+
+本機分支 `phase-2b/settings` 包含由側欄或 Ctrl+, 開啟的設定頁。助理、外觀、模型、回合限制、執行環境與整合說明的驗收、截圖及未完成項目見 [Slice 2C 驗收報告](reviews/PHASE2B_SLICE2C_REPORT.md)。合併由 Technical Lead 使用 `npm run merge-check`。
