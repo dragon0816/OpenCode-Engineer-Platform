@@ -15,8 +15,8 @@ import type { Turn } from './http/chat.ts';
 import { proposeReview, reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError } from './http/errors.ts';
 import { WebEvents } from './http/events.ts';
-import { download, upload } from './http/files.ts';
-import { uuid } from './runs/attachments.ts';
+import { download, sendDownload, upload } from './http/files.ts';
+import { convertWorkbook, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
 import { checkDirectory } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
@@ -65,7 +65,7 @@ function secureHeaders(response: ServerResponse) {
   response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   response.setHeader('Content-Security-Policy', [
     "default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'",
-    "img-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'",
+    "img-src 'self' blob:", "frame-src 'self' about:", "object-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'",
   ].join('; '));
 }
 
@@ -227,12 +227,38 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     const [, key, group, id, resource, item, extra] = path.split('/');
     const session = key === 'api' && group === 'sessions' && uuid.test(id ?? '') ? sessions.get(id) : undefined;
-    if (!session || session.project !== project || extra !== undefined) throw new HttpError(404, 'Route or session not found');
+    if (!session || session.project !== project || (extra !== undefined && extra !== 'preview')) throw new HttpError(404, 'Route or session not found');
     if (method === 'GET' && resource === 'artifacts' && item && uuid.test(item)) {
-      download(response, chat, session, item);
+      if (extra === 'preview') {
+        const output = chat.download(session, item);
+        const projection = await convertWorkbook(output.data);
+        response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(projection);
+      } else download(response, chat, session, item);
       return;
     }
-    if (item !== undefined) throw new HttpError(404, 'Route not found');
+    if (resource === 'attachments' && item && uuid.test(item)) {
+      if (method === 'GET') {
+        const output = chat.attachments.read(id, chat.workspace(session), item, extra === 'preview');
+        if (extra === 'preview') {
+          const mime = output.mime === 'image/png' || output.mime === 'image/jpeg' ? output.mime : 'text/plain; charset=utf-8';
+          response.writeHead(200, { 'Content-Type': mime }).end(output.data);
+        } else sendDownload(response, output);
+        return;
+      }
+      if (extra === undefined) {
+        await body(request);
+        if (!sessions.has(id) || !store.attachment(id, item)) throw new HttpError(404, '找不到附件。');
+        const latest = store.turns(id).at(-1);
+        if (latest && !['verified', 'failed', 'cancelled'].includes(latest.state)) {
+          throw new HttpError(409, '請等這次處理結束後再移除附件。');
+        }
+        chat.attachments.remove(id, chat.workspace(session), item);
+        events.notify(id);
+        send(response, 200, { removed: true });
+        return;
+      }
+    }
+    if (item !== undefined || extra !== undefined) throw new HttpError(404, 'Route not found');
     if (method === 'POST' && (resource === 'rename' || resource === 'remove')) {
       const input = await body(request);
       if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');

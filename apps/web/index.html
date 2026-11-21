@@ -141,14 +141,15 @@
         <button type="button" id="close-files" aria-label="關閉會話面板">關閉</button>
       </div>
       <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0">
+        <div id="file-list">
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
         <div id="drop">
           <button id="pick" type="button" disabled>選擇檔案</button>
-          <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv" multiple hidden>
+          <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
           <span>也可拖曳到此處</span>
         </div>
-        <small>PNG、JPG、PDF、XLSX、UTF-8 文字。單檔最多 20 MiB。</small>
+        <small>PNG、JPG、PDF、XLSX、HTML、UTF-8 文字。單檔最多 20 MiB。</small>
         <p id="upload-status" role="status"></p>
         <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
       </section>
@@ -156,6 +157,8 @@
         <h2 id="artifacts-title">產物</h2>
         <ul id="artifacts"><li>尚無可下載的產物</li></ul>
       </section>
+        </div>
+        <div id="file-preview"></div>
       </div>
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
       <details open>

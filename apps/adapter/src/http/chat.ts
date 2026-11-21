@@ -42,7 +42,7 @@ function toolText(value: unknown, redact: (text: string) => string): string {
 export function publicRun(run: RunRecord) {
   return { id: run.id, state: run.state, createdAt: run.createdAt, error: run.errors.at(-1), finishedAt: run.finishedAt,
     artifact: run.state === 'verified' && run.artifact
-      ? { name: workbookName, bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
+      ? { name: workbookName, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
 
 export function publicSession({ id, agent, alias, createdAt, title, project }: WebSession) { return { id, agent, alias, createdAt, project, ...(title ? { title } : {}) }; }

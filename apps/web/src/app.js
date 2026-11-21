@@ -212,7 +212,7 @@ function toolCard(tool, previous) {
 }
 
 function render(context) {
-  const { state, selected, id } = context;
+  const { state, id } = context;
   if (state.messages) {
     const follow = !context.renderedMessages || atBottom();
     const offset = messages.scrollTop;
@@ -262,6 +262,15 @@ function render(context) {
   progress.textContent = latest ? statuses[latest.state] : '等待訊息';
   if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
+  renderPanel(context);
+  setControls();
+}
+
+function renderPanel(context) {
+  const { state, selected, path } = context;
+  const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
+  if (context.fileKey === fileKey) return;
+  context.fileKey = fileKey;
   attachmentList.replaceChildren();
   for (const attachment of state.attachments) {
     const checkbox = node('input');
@@ -276,19 +285,216 @@ function render(context) {
     const entry = node('li');
     entry.append(label);
     if (attachment.converted) entry.append(node('small', '已轉成含工作表與列號的 CSV'));
+    addFileDetails(entry, attachment, `${path}/attachments/${attachment.id}`, context, true);
     attachmentList.append(entry);
   }
   artifactList.replaceChildren();
   for (const run of state.runs.filter((run) => run.artifact).reverse()) {
     const entry = node('li');
-    const link = node('a', run.artifact.name);
-    link.href = `${sessionPath(id)}/artifacts/${run.id}`;
-    link.download = run.artifact.name;
-    entry.append(link, node('small', new Date(run.createdAt).toLocaleTimeString('zh-Hant')));
+    const artifact = { ...run.artifact, createdAt: run.finishedAt ?? run.createdAt };
+    addFileDetails(entry, artifact, `${path}/artifacts/${run.id}`, context);
     artifactList.append(entry);
   }
   if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的產物');
-  setControls();
+
+}
+
+function formatDate(at) {
+  return new Date(at).toLocaleString('zh-TW');
+}
+
+function action(text, handler) {
+  const button = node('button', text);
+  button.type = 'button';
+  button.addEventListener('click', handler);
+  return button;
+}
+
+function fileType(file) {
+  return file.name.includes('.') ? file.name.split('.').at(-1).toUpperCase() : file.mime;
+}
+
+function addFileDetails(entry, file, url, context, attachment = false) {
+  const download = node('a', attachment ? '下載' : file.name);
+  download.href = url;
+  download.download = file.name;
+  const actions = node('div', undefined, 'file-actions');
+  const hash = action(file.sha256.slice(0, 12), async () => {
+    try {
+      await navigator.clipboard.writeText(file.sha256);
+      find('upload-status').textContent = '已複製 SHA-256。';
+    } catch { find('upload-status').textContent = '無法複製 SHA-256。'; }
+  });
+  hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
+  hash.title = file.sha256;
+  if (!attachment) entry.append(download);
+  entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
+  const open = action('預覽', () => void openPreview(file, url, context, open));
+  actions.append(hash, open);
+  if (attachment) actions.append(download, action('移除', async () => {
+    if (!confirm(`要移除「${file.name}」嗎？`)) return;
+    try {
+      await request(url, { data: {}, signal: context.abort.signal });
+      if (current !== context) return;
+      context.selected.delete(file.id);
+      if (previewPath === url) closePreview();
+      refresh(context);
+    } catch (error) {
+      if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。'));
+    }
+  }));
+  entry.append(actions);
+}
+
+const preview = find('file-preview');
+let previewURL;
+let previewPath;
+let previewRequest;
+
+function closePreview() {
+  previewRequest?.abort();
+  previewPath = undefined;
+  preview.replaceChildren();
+  find('file-list').hidden = false;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = undefined;
+}
+
+async function previewResponse(url, signal) {
+  const response = await fetch(`${url}/preview`, { signal });
+  if (!response.ok) throw new Error('無法載入預覽');
+  return response;
+}
+
+async function openPreview(file, url, context, opener) {
+  closePreview();
+  previewPath = url;
+  const abort = new AbortController();
+  previewRequest = abort;
+  const body = node('div', undefined, 'preview-body');
+  const title = node('h2', file.name);
+  title.tabIndex = -1;
+  const close = action('關閉預覽', () => {
+    closePreview();
+    (opener.isConnected ? opener : find('panel-files')).focus();
+  });
+  find('file-list').hidden = true;
+  preview.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), close, body);
+  title.focus({ preventScroll: true });
+  find('panel-files').scrollTop = 0;
+  if (file.mime === 'application/pdf') {
+    body.textContent = '目前無法預覽 PDF。請下載後開啟。';
+    return;
+  }
+  body.textContent = '正在載入預覽…';
+  try {
+    const result = await previewResponse(url, AbortSignal.any([abort.signal, context.abort.signal]));
+    const data = file.mime.startsWith('image/') ? await result.blob() : await result.text();
+    if (abort.signal.aborted || current !== context) return;
+    body.replaceChildren();
+    const extension = file.name.split('.').at(-1).toLowerCase();
+    if (data instanceof Blob) {
+      if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
+      const image = node('img');
+      image.alt = file.name;
+      previewURL = URL.createObjectURL(data);
+      image.src = previewURL;
+      body.append(image);
+    } else if (extension === 'html' || extension === 'htm') {
+      const frame = node('iframe');
+      frame.title = file.name;
+      frame.setAttribute('sandbox', '');
+      frame.inert = true;
+      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'">${data}`;
+      body.append(node('p', '隔離預覽，指令碼與外部資源已停用。'), frame);
+    } else if (extension === 'csv' || extension === 'xlsx') {
+      renderSheets(body, readSheets(data, extension === 'xlsx'));
+    } else if (extension === 'md') appendMarkdown(body, data);
+    else body.append(node('pre', data));
+  } catch {
+    if (!abort.signal.aborted && current === context) body.textContent = '無法預覽這個檔案。請下載後開啟。';
+  }
+}
+
+function readCSV(source) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (char === '"') {
+      if (quoted && source[index + 1] === '"') { field += '"'; index++; }
+      else if (quoted || !field) quoted = !quoted;
+      else field += char;
+    } else if (!quoted && char === ',') {
+      row.push(field);
+      field = '';
+    } else if (!quoted && (char === '\n' || char === '\r')) {
+      if (char === '\r' && source[index + 1] === '\n') index++;
+      rows.push([...row, field]);
+      row = [];
+      field = '';
+    } else field += char;
+  }
+  if (row.length || field) rows.push([...row, field]);
+  return rows;
+}
+
+function readSheets(source, workbook) {
+  const rows = readCSV(source);
+  if (!workbook) return new Map([['CSV', rows]]);
+  const sheets = new Map();
+  let sheet;
+  for (const [label, ...cells] of rows) {
+    if (label === 'Sheet') {
+      sheet = [];
+      sheets.set(cells[0], sheet);
+    } else if (sheet && /^Row [1-9]\d*$/.test(label)) {
+      sheet[Number(label.slice(4)) - 1] = cells;
+    }
+  }
+  return sheets;
+}
+
+function renderSheets(target, sheets) {
+  const select = node('select');
+  select.setAttribute('aria-label', '工作表');
+  select.hidden = sheets.has('CSV') && sheets.size === 1;
+  for (const name of sheets.keys()) {
+    select.append(new Option(name, name));
+  }
+  const content = node('div');
+  target.append(select, content);
+  function renderSheet() {
+    const rows = sheets.get(select.value) ?? [];
+    const table = node('table');
+    const scroller = node('div', undefined, 'table-scroll');
+    scroller.tabIndex = 0;
+    scroller.setAttribute('aria-label', '表格內容');
+    scroller.append(table);
+    const tbody = table.createTBody();
+    let index = 0;
+    const more = action('顯示更多', appendRows);
+    function appendRows() {
+      const end = Math.min(index + 200, rows.length);
+      for (; index < end; index++) {
+        const tr = tbody.insertRow();
+        const afterRow = rows[index] ?? [];
+        const header = node('th', String(index + 1));
+        header.scope = 'row';
+        tr.append(header);
+        for (const cell of afterRow.slice(0, 100)) tr.insertCell().textContent = cell;
+      }
+      more.hidden = index >= rows.length;
+    }
+    content.replaceChildren();
+    if (rows.some((row) => row.length > 100)) content.append(node('p', '預覽顯示前 100 欄。'));
+    content.append(scroller, more);
+    appendRows();
+  }
+  select.addEventListener('change', renderSheet);
+  renderSheet();
 }
 
 function refresh(context) {
@@ -367,6 +573,7 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  closePreview();
   jump.hidden = true;
   if (!session) {
     sessionTitle.textContent = '對話';
@@ -696,6 +903,7 @@ find('composer').addEventListener('submit', async (event) => {
     drafts.delete(context.id);
     if (!context.state?.runs.some((run) => run.id === id)) context.pendingID = id;
     context.selected.clear();
+    context.fileKey = undefined;
     if (current === context) {
       prompt.value = '';
       progress.textContent = statuses.accepted;
