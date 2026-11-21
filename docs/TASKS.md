@@ -140,3 +140,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 設定頁、助理、外觀、模型、回合限制、執行環境、整合說明。 [驗收報告](reviews/PHASE2B_SLICE2C_REPORT.md)
 - [ ] 輸入、專案與資料夾、關於，以及其餘設定矩陣項目。Telegram 語音留在原階段。
+
+## Phase 2b Slice 2D
+
+- 對話操作與剩餘設定的實作、測試及開放項目見 [Slice 2D 驗收](reviews/PHASE2B_SLICE2D_REPORT.md)。

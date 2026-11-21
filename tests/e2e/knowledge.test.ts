@@ -157,6 +157,14 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-status').textContent"),
           '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。');
         assert.equal(rejectedCalls, 1);
+        await browser.evaluate("document.querySelector('#open-chat').click(); document.querySelector('#new-session').click()");
+        await ready("!document.querySelector('#prompt').disabled");
+        await browser.evaluate(`
+          document.querySelector('#prompt').value = ${JSON.stringify('/ask ' + vault + ' ' + question)};
+          document.querySelector('#composer').requestSubmit();
+        `);
+        await ready("document.querySelector('#knowledge-status').textContent.includes('引用已通過驗證')");
+        assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
         await browser.evaluate(`
           const reviewPanel = document.querySelector('#wiki-review');
           reviewPanel.open = true;
@@ -232,7 +240,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       assert.equal((await noEvidence.json()).reason, 'no-evidence');
       const forged = await api.post('/api/knowledge/ask', { vault, question: 'Does SYN-48B have the wrong limit?' });
       assert.equal((await forged.json()).reason, 'invalid-citation');
-      assert.equal(knowledgeCalls, 2);
+      assert.equal(knowledgeCalls, 3);
       for (const [prompt, reply] of [[question, '合成驗收結果 ±0.8 dB'],
         ['Does SYN-48B have the wrong limit?', '合成驗收拒答']]) {
         const created = await api.post('/api/sessions', { agent: 'inspector' });
@@ -250,7 +258,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(state.runs.at(-1).state, 'verified');
         assert.ok(state.messages.some((entry: { text: string }) => entry.text.includes(reply)));
       }
-      assert.equal(knowledgeCalls, 4);
+      assert.equal(knowledgeCalls, 5);
       assert.equal(toolResults, 2);
       const inbox = new TelegramInbox(join(root, 'test-telegram.sqlite'));
       const sessions = new WebStore(join(root, 'test-telegram-chat.sqlite'));

@@ -44,6 +44,31 @@ export class WebStore extends Ledger {
       id INTEGER PRIMARY KEY CHECK(id = 1),
       alias TEXT NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_project_folders (
+      project TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      PRIMARY KEY(project, folder)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_action_decisions (
+      id INTEGER PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES web_sessions(id),
+      action TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_message_annotations (
+      session_id TEXT NOT NULL REFERENCES web_sessions(id),
+      message_id TEXT NOT NULL,
+      note TEXT,
+      rating TEXT,
+      reason TEXT,
+      PRIMARY KEY(session_id, message_id)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_turn_replies (
+      run_id TEXT PRIMARY KEY REFERENCES runs(id),
+      message_id TEXT NOT NULL,
+      text TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS web_appearance (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       theme TEXT NOT NULL,
@@ -51,6 +76,54 @@ export class WebStore extends Ledger {
       avatar BLOB,
       mime TEXT
     ) STRICT`);
+  }
+
+  projectFolders() {
+    return this.db.prepare('SELECT project, folder FROM web_project_folders ORDER BY folder')
+      .all() as { project: ProjectID; folder: string }[];
+  }
+
+  addProjectFolder(project: ProjectID, folder: string) {
+    this.db.prepare('INSERT INTO web_project_folders VALUES (?, ?)').run(project, folder);
+  }
+
+  removeProjectFolder(project: ProjectID, folder: string) {
+    return this.db.prepare('DELETE FROM web_project_folders WHERE project = ? AND folder = ?').run(project, folder).changes > 0;
+  }
+
+  actionDecisions(sessionID: string) {
+    return this.db.prepare('SELECT action, decision, created_at AS createdAt FROM web_action_decisions WHERE session_id = ? ORDER BY id')
+      .all(sessionID);
+  }
+
+  decideSessionRemoval(sessionID: string, decision: 'accept' | 'reject') {
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO web_action_decisions (session_id, action, decision, created_at) VALUES (?, 'remove-session', ?, ?)")
+        .run(sessionID, decision, Date.now());
+      if (decision === 'accept') this.hideSession(sessionID);
+    });
+  }
+
+  annotations(sessionID: string) {
+    return this.db.prepare('SELECT message_id AS messageID, note, rating, reason FROM web_message_annotations WHERE session_id = ?')
+      .all(sessionID);
+  }
+
+  annotate(sessionID: string, messageID: string, field: 'note' | 'rating', value: string | null, reason: string | null) {
+    this.transaction(() => {
+      this.db.prepare('INSERT OR IGNORE INTO web_message_annotations (session_id, message_id) VALUES (?, ?)').run(sessionID, messageID);
+      if (field === 'note') this.db.prepare('UPDATE web_message_annotations SET note = ? WHERE session_id = ? AND message_id = ?')
+        .run(value, sessionID, messageID);
+      else this.db.prepare('UPDATE web_message_annotations SET rating = ?, reason = ? WHERE session_id = ? AND message_id = ?')
+        .run(value, reason, sessionID, messageID);
+      this.db.prepare('DELETE FROM web_message_annotations WHERE session_id = ? AND message_id = ? AND note IS NULL AND rating IS NULL')
+        .run(sessionID, messageID);
+    });
+  }
+
+  reply(runID: string) {
+    return this.db.prepare('SELECT message_id AS id, text FROM web_turn_replies WHERE run_id = ?').get(runID) as
+      { id: string; text: string } | undefined;
   }
 
   preferences() {
@@ -180,10 +253,11 @@ export class WebStore extends Ledger {
     return Boolean(this.db.prepare('SELECT 1 FROM web_turns WHERE run_id = ?').get(id));
   }
 
-  saveTurn(sessionID: string, run: RunRecord, hash: string) {
+  saveTurn(sessionID: string, run: RunRecord, hash: string, reply?: { id: string; text: string }) {
     this.transaction(() => {
       this.insert(run);
       this.db.prepare('INSERT INTO web_turns VALUES (?, ?, ?)').run(sessionID, run.id, hash);
+      if (reply) this.db.prepare('INSERT INTO web_turn_replies VALUES (?, ?, ?)').run(run.id, reply.id, reply.text);
     });
   }
 

@@ -184,8 +184,23 @@ export function bindKnowledge() {
     }
   });
   open.disabled = false;
-  return () => {
-    showKnowledge(false);
-    open.disabled = true;
+  return {
+    disable() {
+      showKnowledge(false);
+      open.disabled = true;
+    },
+    async ask(id, text) {
+      if (pending) throw new Error('知識詢問處理中，請稍後再試。');
+      showKnowledge(true);
+      await refreshVaults();
+      if (!models.has(id)) {
+        status.textContent = messages['vault-unavailable'];
+        return;
+      }
+      vault.value = id;
+      describe();
+      question.value = text;
+      if (!ask.disabled) find('knowledge-form').requestSubmit(ask);
+    },
   };
 }

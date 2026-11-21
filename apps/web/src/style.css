@@ -388,3 +388,51 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 }
 
 .runtime-badge { display: inline-block; padding: 1px 8px; border: 1px solid var(--line); border-radius: 12px; }
+
+#slash-palette {
+  list-style: none;
+  margin: 0;
+  max-height: min(16rem, 35vh);
+  overflow: auto;
+  padding: .25rem;
+}
+#slash-palette [role="option"] {
+  cursor: pointer;
+  padding: .2rem .6rem;
+}
+#slash-palette [aria-selected="true"] {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+  border-radius: .25rem;
+}
+#command-toast { white-space: pre-line; }
+#command-toast:empty { display: none; }
+
+.clipboard-fallback { position: fixed; opacity: 0; }
+.message-actions { opacity: 0; }
+.message:hover .message-actions,
+.message:focus-within .message-actions,
+.message-actions[open] { opacity: 1; }
+.message-actions button { margin: .25rem; }
+.message-actions summary { cursor: pointer; }
+.message-quote { border-inline-start: .2rem solid currentColor; padding-inline-start: .65rem; margin-inline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#reply-chip, #session-notes { overflow-wrap: anywhere; }
+@media (any-pointer: coarse), (hover: none) {
+  .message-actions { opacity: 1; }
+}
+
+#project-folder-list, #project-working-root, #about-details { overflow-wrap: anywhere; }
+#project-read select { max-width: 100%; }
+#remove-session-card {
+  color: inherit;
+  background: var(--surface);
+  max-width: min(28rem, calc(100% - 2rem));
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+}
+#remove-session-card p { margin-block-end: .75rem; }
+#remove-session-card button + button { margin-inline-start: .4rem; }
+#remove-session-card::backdrop { background: rgb(0 0 0 / .4); }
+#session-notes { padding-inline-start: 0; list-style: none; }
+#session-notes li + li { margin-block-start: .75rem; }

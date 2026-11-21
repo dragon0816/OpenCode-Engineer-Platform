@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
@@ -20,13 +20,17 @@ import { proposeReview, reviewAction, uploadReviewSource } from './http/review.t
 import { HttpError } from './http/errors.ts';
 import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
-import { convertWorkbook, uuid } from './runs/attachments.ts';
+import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { checkDirectory } from './runs/workspace.ts';
+import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
+import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/voice.js', ['src/voice.js', 'text/javascript; charset=utf-8']],
+  ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
+  ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
@@ -51,14 +55,15 @@ async function body(request: IncomingMessage) {
 }
 
 function parseTurn(input: Record<string, unknown>): Turn {
-  const { id, text, attachments, workbook } = input;
-  if (Object.keys(input).length !== 4 || typeof id !== 'string' || !uuid.test(id) ||
+  const { id, text, attachments, workbook, replyTo } = input;
+  if (Object.keys(input).some((key) => !['id', 'text', 'attachments', 'workbook', 'replyTo'].includes(key)) ||
+      (replyTo !== undefined && (typeof replyTo !== 'string' || !replyTo || replyTo.length > 128)) || typeof id !== 'string' || !uuid.test(id) ||
       typeof text !== 'string' || !text.trim() || text.length > 16_000 ||
       !Array.isArray(attachments) || attachments.length > 10 || new Set(attachments).size !== attachments.length ||
       !attachments.every((item) => typeof item === 'string' && uuid.test(item)) || typeof workbook !== 'boolean') {
     throw new HttpError(400, 'Provide a message and up to ten attachment IDs');
   }
-  return { id, text, attachments, workbook };
+  return { id, text, attachments, workbook, ...(replyTo === undefined ? {} : { replyTo }) };
 }
 
 function secureHeaders(response: ServerResponse) {
@@ -189,6 +194,34 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         store.saveTurnLimits(limits);
       }
       send(response, 200, { values: store.turnLimits(), fields: turnLimitFields });
+      return;
+    }
+    if (path === '/api/settings/projects') {
+      if (method === 'POST') {
+        const input = await body(request);
+        const project = projects.find(({ id }) => id === input.project);
+        if (!project) throw new HttpError(404, '找不到專案。');
+        if (input.action === 'remove' && typeof input.folder === 'string') {
+          if (!store.removeProjectFolder(project.id, input.folder)) throw new HttpError(404, '找不到資料夾。');
+        } else if (input.action === 'add') {
+          const folder = validateProjectFolder(input.folder, root);
+          if (store.projectFolders().some((entry) => foldersOverlap(folder, entry.folder))) {
+            throw new HttpError(409, '這個路徑與已設定的資料夾重疊。');
+          }
+          store.addProjectFolder(project.id, folder);
+        } else throw new HttpError(400, '請選擇資料夾操作。');
+      }
+      const saved = store.projectFolders();
+      send(response, 200, projects.map((project) => ({
+        ...project, workingRoot: join(chat.projectRoot(project.id), 'model-work'),
+        folders: saved.filter((entry) => entry.project === project.id).map((entry) => entry.folder),
+      })));
+      return;
+    }
+    if (path === '/api/settings/about' && method === 'GET') {
+      const { version, license } = JSON.parse(readFileSync(atRepo('package.json'), 'utf8'));
+      const { tag } = JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
+      send(response, 200, { version, license, pin: tag, root });
       return;
     }
     if (path === '/api/settings/runtime' && method === 'GET') {
@@ -341,12 +374,18 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         store.renameSession(id, title);
         session.title = title;
       } else {
+        if (input.decision === 'reject') {
+          store.decideSessionRemoval(id, 'reject');
+          send(response, 200, publicSession(session));
+          return;
+        }
+        if (input.decision !== undefined && input.decision !== 'accept') throw new HttpError(400, '請選擇確認或取消。');
         const latest = store.turns(id).at(-1);
         if (latest && latest.state !== 'verified' && latest.state !== 'failed' && latest.state !== 'cancelled') {
           throw new HttpError(409, '請等這次處理結束後再刪除會話。');
         }
         if (changingModel.has(id)) throw new HttpError(409, '請等模型切換完成。');
-        store.hideSession(id);
+        store.decideSessionRemoval(id, 'accept');
         sessions.delete(id);
         events.forget(id);
         upstreamIDs.delete(session.upstreamID);
@@ -373,7 +412,39 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       } finally { changingModel.delete(id); }
       return;
     }
-    if (method === 'GET' && resource === 'state') send(response, 200, { ...await chat.state(session), activity: events.cards(id) });
+    if (method === 'POST' && resource === 'read-project-file') {
+      const input = await body(request);
+      const folder = store.projectFolders().find((entry) => entry.project === project && entry.folder === input.folder);
+      if (!folder || typeof input.file !== 'string' || !sessions.has(id)) throw new HttpError(404, '找不到檔案。');
+      const safeRoot = validateProjectFolder(folder.folder, root);
+      const name = basename(input.file);
+      const mime = uploadType(name, 'application/octet-stream');
+      let data: Buffer;
+      try { data = openWorkspaceFile(safeRoot, input.file, 20 * 1024 * 1024).data; }
+      catch { throw new HttpError(404, '找不到可讀取的檔案。'); }
+      const attachment = await chat.attachments.upload(id, chat.workspace(session), name, mime, data.length, async () => data);
+      events.notify(id);
+      send(response, 201, attachment);
+      return;
+    }
+    if (method === 'POST' && resource === 'annotation') {
+      const { messageID, field, value, reason = null } = await body(request);
+      if (typeof messageID !== 'string' || (field !== 'note' && field !== 'rating') ||
+          (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 500)) ||
+          (field === 'rating' && value !== null && value !== 'up' && value !== 'down') ||
+          (reason !== null && (typeof reason !== 'string' || reason.length > 200))) {
+        throw new HttpError(400, '筆記或評價格式不正確。');
+      }
+      if (!(await chat.state(session)).messages?.some((message) => message.id === messageID) || !sessions.has(id)) {
+        throw new HttpError(404, '找不到這則訊息。');
+      }
+      store.annotate(id, messageID, field, value, value === null ? null : reason);
+      events.notify(id);
+      send(response, 200, { annotations: store.annotations(id) });
+      return;
+    }
+    if (method === 'GET' && resource === 'action-decisions') send(response, 200, store.actionDecisions(id));
+    else if (method === 'GET' && resource === 'state') send(response, 200, { ...await chat.state(session), activity: events.cards(id) });
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'attachments') {
       const attachment = await upload(request, chat, session);
@@ -381,9 +452,12 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 201, attachment);
     } else if (method === 'POST' && resource === 'turns') {
       const input = parseTurn(await body(request));
+      const reference = input.replyTo && ((store.turn(id, input.id) && store.reply(input.id)) ??
+        (await chat.state(session)).messages?.find((message) => message.id === input.replyTo));
+      if (input.replyTo && !reference) throw new HttpError(404, '找不到引用的訊息。');
       if (!sessions.has(id)) throw new HttpError(404, '找不到會話。');
       if (changingModel.has(id)) throw new HttpError(409, '請等模型切換完成。');
-      send(response, 202, chat.submit(session, input));
+      send(response, 202, chat.submit(session, input, reference ? { id: reference.id, text: reference.text.slice(0, 8000) } : undefined));
     }
     else if (method === 'POST' && resource === 'cancel-turn') {
       const input = await body(request);
