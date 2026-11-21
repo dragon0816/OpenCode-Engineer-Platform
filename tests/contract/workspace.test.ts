@@ -89,6 +89,11 @@ test('XLSX conversion keeps both worksheet names, all fixture cells and row loca
   const item = book.match(/<sheet .*?\/>/)![0];
   parts['xl/workbook.xml'] = strToU8(book.replace('</sheets>', item.repeat(9) + '</sheets>'));
   await assert.rejects(convertWorkbook(Buffer.from(zipSync(parts))), /Unsupported XLSX/);
+  const inflated = Buffer.from(source);
+  const directoryEntry = inflated.indexOf(Buffer.from('504b0102', 'hex'));
+  assert.notEqual(directoryEntry, -1);
+  inflated.writeUInt32LE(100 * 1024 * 1024 + 1, directoryEntry + 24);
+  await assert.rejects(convertWorkbook(inflated), /Unsupported XLSX/);
 });
 
 test('upload quota includes projections and staging cleanup preserves indexed files', async () => {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -67,13 +67,20 @@ try {
   const records = opened(primary.data);
   assert.deepEqual(records[0], records[1]);
   assert.ok(alive(records[0].pid));
+  const sockets = execFileSync(join(system, 'netstat.exe'), ['-ano'], { encoding: 'utf8', windowsHide: true, timeout: 4_000 })
+    .split(/\r?\n/).map((line) => line.trim().split(/\s+/))
+    .filter(([protocol, , , state, pid]) => protocol === 'TCP' && state === 'LISTENING' && Number(pid) === records[0].pid)
+    .map(([, address]) => address);
+  assert.ok(sockets.includes(new URL(records[0].origin).host));
+  assert.ok(sockets.every((address) => address.startsWith('127.0.0.1:')));
   assert.equal(jobRecords(primary.data).length, 1);
   const { memberPIDs, supervisorPID } = jobRecords(primary.data)[0];
   assert.ok(memberPIDs.length >= 2 && memberPIDs.every(alive));
   const started = performance.now();
   writeFileSync(join(primary.data, 'stop-test'), '', { flag: 'wx' });
   assert.equal(await waitForExit(primary.ended, 15_000), 0);
-  console.log(JSON.stringify({ launch: 'normal', browserRequests: records.length, supervisors: 1, members: memberPIDs.length,
+  console.log(JSON.stringify({ launch: 'normal', browserRequests: records.length, supervisors: 1, loopbackListeners: sockets.length,
+    members: memberPIDs.length,
     orphanElapsedMs: await orphanTime([...memberPIDs, supervisorPID], started), orphans: 0, data: primary.data }));
 } finally { if (primary.wrapper.exitCode === null) primary.wrapper.kill(); }
 
