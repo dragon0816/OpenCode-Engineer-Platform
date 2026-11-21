@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -610,6 +610,19 @@ try {
         await page.command('Emulation.clearDeviceMetricsOverride');
         await click('#settings-nav [data-section="appearance"]');
 
+        const saveSettingsShots = process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
+        const settingsPaths = ['#project-working-root', '#about-details dd:nth-of-type(2)'];
+        const originalPaths = saveSettingsShots ? await page.evaluate<string[]>(`(() => {
+          const syntheticPaths = ['工作根目錄 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
+          return ${JSON.stringify(settingsPaths)}.map((selector, index) => {
+            const element = document.querySelector(selector);
+            const original = element.textContent;
+            element.textContent = syntheticPaths[index];
+            return original;
+          });
+        })()`) : [];
+        const capturedSections = saveSettingsShots ? settingsPages.map(([section]) => section)
+          : ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations'];
         for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
           await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
           for (const theme of ['light', 'dark']) {
@@ -619,13 +632,18 @@ try {
               document.querySelector('#appearance-settings').requestSubmit();
             `);
             await page.ready("document.querySelector('#appearance-status').textContent === '已儲存'");
-            for (const section of ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations']) {
+            for (const section of capturedSections) {
               await selectSetting(section);
               assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
-              await capture(`settings-${section}-${theme}-${layout}`);
+              const name = `settings-${section}-${theme}-${layout}`;
+              await capture(name);
+              if (saveSettingsShots) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
             }
           }
         }
+        if (saveSettingsShots) await page.evaluate(`${JSON.stringify(settingsPaths)}.forEach((selector, index) => {
+          document.querySelector(selector).textContent = ${JSON.stringify(originalPaths)}[index];
+        })`);
         await page.evaluate("document.querySelector('#open-chat').click()");
         await page.command('Emulation.clearDeviceMetricsOverride');
         const captureLayouts = async (running: boolean) => {
