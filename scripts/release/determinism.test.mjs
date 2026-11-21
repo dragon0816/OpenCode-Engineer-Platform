@@ -22,6 +22,11 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
     });
     assert.equal(sha256(archives[0]), sha256(archives[1]));
     const files = unzipSync(archives[0]);
+    const second = unzipSync(archives[1]);
+    for (const path of ['sbom.cdx.json', 'THIRD_PARTY_LICENSES.md', 'NOTICE']) {
+      assert.ok(files[path]?.length);
+      assert.deepEqual(files[path], second[path]);
+    }
     const manifestPath = 'config/release.manifest.json';
     const manifest = JSON.parse(Buffer.from(files[manifestPath]));
     assert.deepEqual(Object.keys(files), Object.keys(files).sort());

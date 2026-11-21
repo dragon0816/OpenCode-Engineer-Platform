@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
 import { decodeText, detect } from '../phase0/secret-scan.mjs';
+import { complianceArtifacts, npmComponent, openCodeComponent, productionPackages, pythonComponents } from './compliance.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const read = (path) => readFileSync(join(root, path));
@@ -97,23 +98,23 @@ async function main() {
       { cwd: scratch, stdio: 'ignore' });
 
     const components = [];
-    for (const [path, entry] of Object.entries(lock.packages).sort()) {
-      if (!path || entry.dev) continue;
+    for (const [path, entry] of productionPackages(lock)) {
       collectPackage(files, scratch, path);
-      const metadata = JSON.parse(files[path + '/package.json']);
-      components.push({ name: metadata.name, version: entry.version, source: entry.resolved,
-        license: metadata.license ?? 'UNKNOWN', integrity: entry.integrity });
+      components.push(npmComponent(path, entry, files, pin));
     }
     const [archive, openapi] = await Promise.all([download(asset, pin.windowsX64.sha256), download(spec, pin.openapi.sha256)]);
     files['vendor/opencode/opencode.exe'] = verified(unzipSync(archive, { filter: ({ name }) => name === 'opencode.exe' })['opencode.exe'],
       pin.windowsX64.binarySha256);
     files['vendor/opencode/openapi.json'] = openapi;
-    components.push({ name: 'OpenCode', version: pin.tag, source: asset, license: 'MIT',
+    components.push(openCodeComponent({ name: 'OpenCode', version: pin.tag, source: asset, license: 'MIT',
       sha256: pin.windowsX64.sha256, binarySha256: pin.windowsX64.binarySha256,
-      openapi: { source: spec, sha256: pin.openapi.sha256 } });
+      openapi: { source: spec, sha256: pin.openapi.sha256 } }, pin));
+    components.push(...pythonComponents(read('tests/oracles/requirements.txt').toString('utf8')));
+    Object.assign(files, complianceArtifacts(components));
 
     const manifestPath = 'config/release.manifest.json';
-    files[manifestPath] = json({ format: 1, version, platform: 'windows-x64', components,
+    files[manifestPath] = json({ format: 1, version, platform: 'windows-x64',
+      components: components.map(({ text, ...component }) => component),
       files: Object.keys(files).sort().map((path) => ({ path, size: files[path].byteLength, sha256: sha256(files[path]) })) });
     const zip = zipSync(Object.fromEntries(Object.keys(files).sort().map((path) =>
       [path, files[path]])), { level: 0, mtime: new Date(2000, 0, 1) });
