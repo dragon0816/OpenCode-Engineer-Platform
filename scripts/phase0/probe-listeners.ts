@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { Agent, request as sendRequest } from 'node:http';
 import { createConnection } from 'node:net';
 import { Readable } from 'node:stream';
-import { ProbeDeadlineError, ProbeTransportError, until } from './probe-http.ts';
+import { isConnectionError, ProbeDeadlineError, ProbeTransportError, until } from './probe-http.ts';
 
 type Listener = { family: 4 | 6; address: string; port: number };
 
@@ -73,10 +73,19 @@ export function ownerCheckedFetch(origin: string, ownsListener: () => boolean, o
     const signal = request.signal;
     signal.throwIfAborted();
     const socket = createConnection({ host: '127.0.0.1', port: serverPort, family: 4 });
-    socket.on('error', () => {});
+    let socketError: Error | undefined;
+    socket.on('error', (error) => { socketError = error; });
+    const verifySocket = () => {
+      if (socketError) throw isConnectionError(socketError) ? new ProbeTransportError() : socketError;
+      if (socket.destroyed) throw new ProbeTransportError();
+    };
     try {
       try { await once(socket, 'connect', { signal }); }
-      catch { signal.throwIfAborted(); throw new ProbeTransportError(); }
+      catch (error) {
+        if (error instanceof Error && error.name === 'AbortError' && error.cause === signal.reason) signal.throwIfAborted();
+        if (isConnectionError(error)) throw new ProbeTransportError();
+        throw error;
+      }
       const clientPort = socket.localPort;
       if (socket.remoteAddress !== '127.0.0.1' || socket.remotePort !== serverPort || !clientPort) throw new ProbeTransportError();
       // Wake deferred accepts with a single HTTP-tolerated empty line, before any headers or credentials.
@@ -84,15 +93,18 @@ export function ownerCheckedFetch(origin: string, ownsListener: () => boolean, o
       try {
         await until(async () => {
           signal.throwIfAborted();
-          return !socket.destroyed && ownsPeer({ serverPort, clientPort }) ? true : undefined;
+          verifySocket();
+          return ownsPeer({ serverPort, clientPort }) ? true : undefined;
         }, 750);
       } catch (error) {
-        signal.throwIfAborted();
-        if (error instanceof ProbeDeadlineError) throw new ProbeTransportError('OpenCode peer ownership not verified');
+        if (error instanceof ProbeDeadlineError) {
+          signal.throwIfAborted();
+          throw new ProbeTransportError('OpenCode peer ownership not verified');
+        }
         throw error;
       }
       signal.throwIfAborted();
-      if (socket.destroyed) throw new ProbeTransportError();
+      verifySocket();
 
       const agent = new Agent({ keepAlive: false });
       // The agent receives the already-connected socket. It cannot open a replacement connection.
@@ -100,7 +112,10 @@ export function ownerCheckedFetch(origin: string, ownsListener: () => boolean, o
       beforeSend?.(request, body);
       return await new Promise<Response>((resolve, reject) => {
         const outgoing = sendRequest(url, { agent, method: request.method, signal, headers: Object.fromEntries(request.headers) });
-        outgoing.once('error', () => reject(signal.aborted ? signal.reason : new ProbeTransportError()));
+        outgoing.once('error', (error) => {
+          if (error.name === 'AbortError' && error.cause === signal.reason) reject(signal.reason);
+          else reject(isConnectionError(error) ? new ProbeTransportError() : error);
+        });
         outgoing.once('response', (incoming) => {
           const status = incoming.statusCode ?? 502;
           if (status >= 300 && status < 400 && incoming.headers.location) {

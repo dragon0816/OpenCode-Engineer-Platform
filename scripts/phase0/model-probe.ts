@@ -1,7 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { listen, jsonInput, pause, send } from './probe-http.ts';
-import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson } from './probe-redaction.ts';
+import { isConnectionError, listen, jsonInput, pause, ProbeTransportError, send } from './probe-http.ts';
+import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, UpstreamFormatError, upstreamJson } from './probe-redaction.ts';
 
 export const workingAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'];
 export const candidateAliases = ['qwen-36-27b', 'gemma-4-31b', 'gpt-5.5', 'gpt-5.6', 'claude-sonnet-5', 'claude-opus-5'];
@@ -106,7 +106,11 @@ export function fixtureGateway(body: Request): Promise<Response> {
 
 export function requireGatewayURL(value: string) {
   let url: URL;
-  try { url = new URL(value); } catch { throw new Error('invalid gateway configuration'); }
+  try { url = new URL(value); }
+  catch (error) {
+    if (error instanceof TypeError && 'code' in error && error.code === 'ERR_INVALID_URL') throw new Error('invalid gateway configuration');
+    throw error;
+  }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('gateway requires HTTPS');
   return url;
 }
@@ -124,8 +128,18 @@ function gatewayConfig(input: GatewayInput) {
     if (keyMode !== 'none') headers.authorization = `Bearer ${keyMode === 'valid' ? key : 'phase0-deliberately-invalid'}`;
     if (body) headers['content-type'] = 'application/json';
     const deadline = AbortSignal.timeout(body ? 24_000 : 8_000);
-    return fetch(target, { headers, method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), redirect: 'error',
-      signal: turnSignal ? AbortSignal.any([deadline, turnSignal]) : deadline });
+    const signal = turnSignal ? AbortSignal.any([deadline, turnSignal]) : deadline;
+    try {
+      const response = await fetch(target, { headers, method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), redirect: 'manual', signal });
+      if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+        await response.body?.cancel();
+        throw new ProbeTransportError('Upstream redirect refused');
+      }
+      return response;
+    } catch (error) {
+      if (error === signal.reason || error instanceof TypeError && isConnectionError(error.cause)) throw new ProbeTransportError('Upstream connection failed');
+      throw error;
+    }
   };
   return { request, redact };
 }
@@ -229,17 +243,19 @@ export async function startModelProbe(gateway?: GatewayInput, synthetic?: { requ
       if (!upstream.ok) {
         trace.modelMissing = upstream.status === 400 && /model not found/i.test(await boundedUpstreamText(upstream));
         trace.status = upstream.status;
-        await upstream.body?.cancel().catch(() => {});
+        if (upstream.status !== 400) await upstream.body?.cancel();
         return failure(response, trace.status);
       }
       if (body.stream) await forwardStream(upstream, response, trace, redact, scope?.signal);
       else {
-        const payload = redactJson(JSON.parse(await boundedUpstreamText(upstream)), redact);
+        const payload = redactJson(upstreamJson(await boundedUpstreamText(upstream)), redact);
         scope?.signal.throwIfAborted();
         send(response, 200, payload);
       }
       trace.status = 200;
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ProbeTransportError || error instanceof UpstreamFormatError ||
+          error instanceof Error && isConnectionError(error.cause) || scope?.signal.aborted && error === scope.signal.reason)) throw error;
       trace.status = trace.upstreamStatus === undefined ? 504 : 502;
       if (response.headersSent) response.destroy();
       else failure(response, trace.status);
@@ -265,6 +281,9 @@ export async function startModelProbe(gateway?: GatewayInput, synthetic?: { requ
       return send(response, 200, { jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Unknown fixture method' } });
     }
     send(response, 200, { jsonrpc: '2.0', id: body.id, result });
+  }).catch((error: unknown) => {
+    endpoint.close();
+    throw error;
   });
 
   return {
@@ -291,10 +310,13 @@ export async function startModelProbe(gateway?: GatewayInput, synthetic?: { requ
           const response = await gatewayConnection.request(path, keyMode);
           status[label] = response.status;
           if (label === 'modelsValid' && response.ok) {
-            const payload = await response.json() as { data?: Array<{ id?: string }> };
+            const payload = upstreamJson(await boundedUpstreamText(response)) as { data?: Array<{ id?: string }> };
+            if (!payload || !Array.isArray(payload.data)) throw new UpstreamFormatError('Invalid upstream model list');
             for (const { id } of payload.data ?? []) if (id && allowedModels.has(id)) listed.add(id);
           } else await response.body?.cancel();
-        } catch {
+        } catch (error) {
+          if (!(error instanceof ProbeTransportError || error instanceof UpstreamFormatError ||
+              error instanceof Error && isConnectionError(error.cause))) throw error;
           status[label] = 'transport';
         }
       }

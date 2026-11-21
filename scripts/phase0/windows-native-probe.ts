@@ -6,7 +6,7 @@ import { createServer, type AddressInfo } from 'node:net';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { startModelProbe } from './model-probe.ts';
 import { check } from './probe-assertions.ts';
-import { pause, sse, until } from './probe-http.ts';
+import { retryReadiness, sse, until, waitForExit } from './probe-http.ts';
 import { ownerCheckedFetch, ownsWindowsPeer } from './probe-listeners.ts';
 
 const providerID = 'phase-zero-native';
@@ -93,7 +93,7 @@ async function main() {
         const result = await client.server.info(options());
         await client.session.active(options());
         return result.version;
-      } catch { return undefined; }
+      } catch (error) { return retryReadiness(error); }
     });
     const unauthorized = await guarded(`${url}/api/info`, options());
     await unauthorized.body?.cancel();
@@ -104,7 +104,8 @@ async function main() {
       model: { id: 'probe-model', providerID } }, options());
     const eventsSignal = new AbortController();
     const connected = Promise.withResolvers<void>();
-    void connected.promise.catch(() => {});
+    // The event task may reject readiness before the caller starts to await it.
+    void connected.promise.catch(() => undefined);
     const events = (async () => {
       const response = await guarded(`${url}/api/event`, { headers: { authorization: auth }, signal: AbortSignal.any([eventsSignal.signal, AbortSignal.timeout(10000)]) });
       if (!response.ok || !response.body) throw new Error('Native event connection failed');
@@ -134,7 +135,7 @@ async function main() {
     check('native listeners', { onlyExpected: ownership() });
     stage = 'graceful-stop';
     writeFileSync(join(root, 'stop'), '', { flag: 'wx' });
-    const code = await Promise.race([finished, pause(12000).then(() => null)]);
+    const code = await waitForExit(finished, 12000);
     const stopped = JSON.parse(readFileSync(join(root, 'stopped.json'), 'utf8'));
     const exited = JSON.parse(readFileSync(join(root, 'exit.json'), 'utf8'));
     check('native stop', { supervisor: code === 0, child: exited.code === 0 && exited.requested,

@@ -7,7 +7,8 @@ export function redactFields(secrets: string[]) {
     for (let layer = 0; layer < 8; layer++) {
       if (markers.some((secret) => decoded.toLowerCase().includes(secret.toLowerCase()))) return '[redacted]';
       const next = decoded.replace(/(?:%[a-f\d]{2})+/gi, (part) => {
-        try { return decodeURIComponent(part); } catch { return part; }
+        try { return decodeURIComponent(part); }
+        catch (error) { if (error instanceof URIError) return part; throw error; }
       }).replace(/\\u([a-f\d]{4})|\\(["/\\])/gi, (_, code: string | undefined, escaped: string) =>
         code ? String.fromCharCode(Number.parseInt(code, 16)) : escaped);
       if (next === decoded) return value;
@@ -27,21 +28,44 @@ export function redactJson(value: unknown, redact: Redact): unknown {
 
 export const upstreamByteLimit = 2 * 1024 * 1024;
 
+export class UpstreamFormatError extends Error {}
+
+export function upstreamJson(text: string): unknown {
+  try { return JSON.parse(text); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new UpstreamFormatError('Invalid upstream JSON');
+    throw error;
+  }
+}
+
 export async function boundedUpstreamText(response: Response) {
-  if (!response.body) throw new Error('empty upstream body');
+  if (!response.body) throw new UpstreamFormatError('empty upstream body');
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decode = (value?: Uint8Array, stream = false) => {
+    try { return decoder.decode(value, { stream }); }
+    catch (error) {
+      if (error instanceof TypeError && 'code' in error && error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA') throw new UpstreamFormatError('Invalid upstream UTF-8');
+      throw error;
+    }
+  };
   let bytes = 0;
   let value = '';
+  let cancel = true;
   try {
     for (;;) {
+      cancel = false;
       const next = await reader.read();
-      if (next.done) return value + decoder.decode();
+      if (next.done) return value + decode();
+      cancel = true;
       bytes += next.value.byteLength;
-      if (bytes > upstreamByteLimit) throw new Error('upstream body limit');
-      value += decoder.decode(next.value, { stream: true });
+      if (bytes > upstreamByteLimit) throw new UpstreamFormatError('upstream body limit');
+      value += decode(next.value, true);
     }
-  } finally { await reader.cancel().catch(() => {}); }
+  } finally {
+    try { if (cancel) await reader.cancel(); }
+    finally { reader.releaseLock(); }
+  }
 }
 
 type JsonObject = Record<string, unknown>;
@@ -72,23 +96,23 @@ export async function bufferedCompletion(response: Response, redact: Redact) {
     }
   };
   for await (const data of sse(new Response(source).body!)) {
-    if (done || frames.length >= 4096) throw new Error('unexpected upstream frame');
+    if (done || frames.length >= 4096) throw new UpstreamFormatError('unexpected upstream frame');
     if (data === '[DONE]') { done = true; continue; }
-    const frame = JSON.parse(data) as JsonObject;
-    if (!frame || typeof frame !== 'object' || frame.error || !Array.isArray(frame.choices)) throw new Error('invalid completion frame');
+    const frame = upstreamJson(data) as JsonObject;
+    if (!frame || typeof frame !== 'object' || frame.error || !Array.isArray(frame.choices)) throw new UpstreamFormatError('invalid completion frame');
     for (const choice of frame.choices as JsonObject[]) {
-      if (!choice || !Number.isSafeInteger(choice.index)) throw new Error('invalid choice index');
+      if (!choice || !Number.isSafeInteger(choice.index)) throw new UpstreamFormatError('invalid choice index');
       group(choice.delta, `choice/${choice.index}`, 'delta', choice);
     }
     frames.push(frame);
   }
-  if (!done || !frames.length) throw new Error('incomplete upstream stream');
+  if (!done || !frames.length) throw new UpstreamFormatError('incomplete upstream stream');
   for (const pieces of groups.values()) {
     const joined = pieces.map((piece) => piece.text).join('');
     const first = pieces[0];
     let clean = redact(joined);
     if (first.field === 'arguments' && joined) {
-      const parsed: unknown = JSON.parse(joined);
+      const parsed = upstreamJson(joined);
       const normalized = JSON.stringify(parsed);
       const sanitized = JSON.stringify(redactJson(parsed, redact));
       clean = sanitized === normalized ? (clean === joined ? joined : JSON.stringify('[redacted]')) : sanitized;

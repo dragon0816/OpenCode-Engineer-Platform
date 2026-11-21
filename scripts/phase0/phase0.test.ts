@@ -6,7 +6,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { inspectStagedFile, maxUploadBytes, uploadPolicy } from './attachment-probe.ts';
 import { evaluate, fixture } from './knowledge-baseline.ts';
-import { listen, ProbeDeadlineError, ProbeTransportError, send, sse, subscribeEventStream, turnFailure, until } from './probe-http.ts';
+import { finishFailedTurn, listen, ProbeDeadlineError, ProbeTransportError, send, sse, subscribeEventStream, turnFailure, until, waitForExit } from './probe-http.ts';
 import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
 import type { Trace } from './model-probe.ts';
 import { onlyExpectedListener, ownerCheckedFetch, ownsWindowsPeer, parseListeners } from './probe-listeners.ts';
@@ -63,6 +63,27 @@ test('a real deadline is distinct from transport failure and an unrelated TypeEr
   const bug = new TypeError('unrelated synthetic program failure');
   assert.throws(() => turnFailure(bug), (error) => error === bug);
   assert.throws(() => turnFailure(wrapped(bug)), (error) => error === bug);
+});
+
+test('turn cleanup preserves the original deadline and rejects unexpected wrapped or direct failures', async () => {
+  const deadline = new ProbeDeadlineError();
+  assert.equal(await finishFailedTurn(deadline, async () => undefined), 'deadline');
+  const defect = new TypeError('Synthetic interrupt defect');
+  for (const failure of [defect, Object.assign(new Error('SDK transport', { cause: defect }), { name: 'ClientError', reason: 'Transport' }),
+    new ProbeTransportError(), new ProbeDeadlineError(), new DOMException('unrelated timeout', 'TimeoutError')]) {
+    await assert.rejects(finishFailedTurn(deadline, async () => { throw failure; }),
+      (error) => error instanceof AggregateError && error.errors[0] === deadline && error.errors[1] === failure);
+  }
+});
+
+test('supervisor exit cancels its deadline timer and a real timeout returns null', async () => {
+  const moduleUrl = pathToFileURL(resolve('scripts/phase0/probe-http.ts')).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { waitForExit } from ${JSON.stringify(moduleUrl)}; if (await waitForExit(Promise.resolve(7), 12000) !== 7) process.exitCode = 1;`],
+  { encoding: 'utf8', timeout: 5000 });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(await waitForExit(new Promise(() => undefined), 10), null);
 });
 
 test('probe assertions reject incomplete contracts, unhealthy aliases and incorrect tool answers', () => {
@@ -130,6 +151,33 @@ test('SSE EOF and abort before connected reject readiness and finish under the s
     await assert.rejects(stalled.ready, ProbeDeadlineError);
     await assert.rejects(stalled.completed, ProbeDeadlineError);
   } finally { clearTimeout(timer); }
+});
+
+test('SSE rejects EOF or read errors after connected and only suppresses probe-initiated cancellation', { timeout: 1000 }, async () => {
+  const hello = new TextEncoder().encode('data: {"type":"server.connected"}\n\n');
+  for (const earlyEOF of [true, false]) {
+    const fixture = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(hello);
+      if (earlyEOF) controller.close();
+    } });
+    const stream = subscribeEventStream(async () => new Response(fixture), AbortSignal.timeout(500), () => undefined);
+    await stream.ready;
+    if (earlyEOF) {
+      await assert.rejects(stream.during(new Promise(() => undefined)), /before reconciliation/);
+      stream.close();
+      await assert.rejects(stream.completed, /before reconciliation/);
+    } else {
+      assert.equal(await stream.during(Promise.resolve('reconciled')), 'reconciled');
+      stream.close();
+      await stream.completed;
+    }
+  }
+  const defect = new TypeError('Synthetic stream cancellation defect');
+  const fixture = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(hello); }, cancel() { throw defect; } });
+  const stream = subscribeEventStream(async () => new Response(fixture), AbortSignal.timeout(500), () => undefined);
+  await stream.ready;
+  stream.close();
+  await assert.rejects(stream.completed, (error) => error === defect);
 });
 
 test('secret scan detects private IPv4 with or without a scheme or port using no runtime values', async () => {

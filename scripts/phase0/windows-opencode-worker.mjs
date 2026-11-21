@@ -16,7 +16,11 @@ const poll = setInterval(() => {
   clearInterval(poll);
   child.stdin.end();
 }, 50);
-child.stdin.on('error', () => {});
+child.stdin.on('error', (error) => {
+  // The child can close stdin while the requested shutdown is in flight.
+  if (existsSync(`${control}/stop`) && ['EPIPE', 'ERR_STREAM_DESTROYED'].includes(error.code)) return;
+  process.exitCode = 1;
+});
 child.once('spawn', () => record('child', { pid: child.pid }));
 child.once('error', () => { clearInterval(poll); process.exitCode = 1; });
 child.once('exit', (code) => {

@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { candidateAliases, fixtureGateway, forcedChoice, mockAliases, startModelProbe, syntheticMarker, tokenFor, workingAliases } from './model-probe.ts';
 import { redactFields } from './probe-redaction.ts';
-import { listen, pause, send, subscribeEventStream, turnFailure, until } from './probe-http.ts';
+import { finishFailedTurn, listen, pause, retryReadiness, send, subscribeEventStream, until, waitForExit } from './probe-http.ts';
 import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
 import { onlyExpectedListener, ownerCheckedFetch, ownsLinuxPeer, processListeners, type PeerTuple } from './probe-listeners.ts';
 
@@ -74,7 +74,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
   const stopped = once(child, 'exit');
   const stop = async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-    await Promise.race([stopped, pause(1500)]);
+    await waitForExit(stopped, 1500);
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGKILL');
       await stopped;
@@ -95,7 +95,7 @@ async function startOpenCode(probe: Probe, root: string, automation = false, mod
         const info = await client.server.info(callOptions());
         await client.session.active(callOptions());
         return info.version;
-      } catch { return undefined; }
+      } catch (error) { return retryReadiness(error); }
     });
     return { client, observeClient, version, stop, url, directory, auth, fetch: guardedFetch, listeners, ownsListener };
   } catch (error) {
@@ -129,8 +129,8 @@ async function turn(server: Server, model: string, text: string, files?: Session
       message.content.flatMap((part) => part.type === 'text' ? [part.text] : []));
     return { outcome, transcript: assistantText.flat().join('\n'), finalText: assistantText.at(-1)?.join('') ?? '' };
   } catch (error) {
-    await client.session.interrupt({ sessionID }, callOptions()).catch(() => {});
-    return { outcome: turnFailure(error), transcript: '', finalText: '' };
+    const outcome = await finishFailedTurn(error, (signal) => client.session.interrupt({ sessionID }, { signal }));
+    return { outcome, transcript: '', finalText: '' };
   }
 }
 
@@ -145,7 +145,8 @@ async function contract(server: Server, probe: Probe) {
   await client.session.interrupt({ sessionID }, callOptions());
   const interrupted = await waitForTurn(client, sessionID);
   const pending = client.permission.create({ sessionID, action: 'phase-zero-review', resources: ['synthetic'] }, { signal: AbortSignal.timeout(5000) });
-  void pending.catch(() => {});
+  // Observe early rejection until the permission reply is sent and the original promise is awaited.
+  void pending.catch(() => undefined);
   const ask = await until(async () => (await client.permission.list({ sessionID }, callOptions()))[0], 4000);
   await client.permission.reply({ sessionID, requestID: ask.id, decision: 'reject' }, callOptions());
   const effect = (await pending).effect;
@@ -392,7 +393,7 @@ async function gateway(server: Server, probe: Probe, listed: Set<string>, capabi
           const decoded: unknown = JSON.parse(result.finalText);
           schemaValid = typeof decoded === 'object' && decoded !== null && Object.keys(decoded).length === 1 &&
             'code' in decoded && decoded.code === 'VIOLET-92';
-        } catch { /* A non-JSON response fails the schema check. */ }
+        } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
         ok = probe.traces.at(from)?.format === 'json_schema' && schemaValid;
       } else if (test === 'tool-failure') {
         ({ result } = await scopedTurn(model, 'default', 'Call the fixture lookup tool for slot missing exactly once, then report the failure marker verbatim.'));
