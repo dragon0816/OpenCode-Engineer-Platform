@@ -52,6 +52,19 @@
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
       </header>
       <div class="knowledge-body">
+        <details id="knowledge-repository">
+          <summary>從儲存庫資料夾匯入</summary>
+          <form id="knowledge-repository-form">
+            <label for="knowledge-folder">本機資料夾完整路徑</label>
+            <input type="text" id="knowledge-folder" maxlength="2048" autocomplete="off" spellcheck="false" required>
+            <label><input type="checkbox" id="knowledge-model-consent"> 允許詢問時將此發布版本的證據送至模型</label>
+            <div class="compose-actions">
+              <button id="knowledge-check-folder" type="submit">檢查資料夾</button>
+              <button id="knowledge-import-folder" type="submit">匯入發布版本</button>
+            </div>
+          </form>
+          <p id="knowledge-repository-status" role="status"></p>
+        </details>
         <label for="vault">已發布的知識庫</label>
         <select id="vault" disabled><option value="">載入中</option></select>
         <dl id="vault-details"></dl>

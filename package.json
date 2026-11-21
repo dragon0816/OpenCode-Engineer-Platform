@@ -15,6 +15,7 @@
     "test:knowledge": "node --disable-warning=ExperimentalWarning --test tests/contract/knowledge*.test.ts",
     "test:e2e:knowledge": "node --disable-warning=ExperimentalWarning --test tests/e2e/knowledge.test.ts",
     "knowledge:migrate": "node --disable-warning=ExperimentalWarning scripts/knowledge/migrate.ts",
+    "knowledge:inspect": "node --disable-warning=ExperimentalWarning scripts/knowledge/inspect.ts",
     "knowledge:benchmark": "node --disable-warning=ExperimentalWarning scripts/knowledge/benchmark.ts",
     "test:contract:native": "node --disable-warning=ExperimentalWarning tests/e2e/native-contract.ts",
     "test:e2e:excel": "node --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts",

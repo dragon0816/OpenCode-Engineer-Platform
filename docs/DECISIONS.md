@@ -139,3 +139,9 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - 使用 Node 24 內建 SQLite，原始快照、正規化快照及證據依 SHA-256 存 blob，與 FTS5、發布指標合為同一交易。相同修訂內容固定，較舊版本保留。CLI 匯入時以 `--allow-model` 明確授權該修訂送模型。唯一 Python 步驟為核對 AEP BI 舊封裝的數字正規化與 digest。
 - 明確 Ask 使用與聊天同規格的獨立 LiteLLM relay，一次只讀一座 vault。每一項公開答案均由已驗證的逐字摘錄組成，可開展原段；另檢測顯式引文指令及中英混合的技術詞匹配。OpenCode 保有一般聊天 harness，MCP 呼叫同一 Ask 及 verifier。保留 Phase 3a 計畫中「透過 OpenCode 生成」與實際採 relay 生成的差異。 [驗收報告](reviews/PHASE3A_GATE_REPORT.md)
 - 以 Phase 0 的 48 題加 10 段合成干擾語料重跑真模型。第一輪 Haiku 的錯誤證據保留，後兩輪兩個 alias 達門檻。現行 OEP 服務持有 Windows 單實例鎖，原生合成測試經明確注入使用專用 mutex，正式啟動仍採原本的鎖。 [操作與評分](validation/p3a-knowledge.md)
+
+## 2026-11-21　Phase 3a 儲存庫資料夾取捨
+
+- 先支援 BI 的已發布 SQLite。以發布紀錄順序解析標籤，僅驗選中標籤與其成品。發布紀錄無法判讀、最新 tag 缺件或成品不符時，保留目前的 OEP 世代。沒有發布紀錄時回報未發布。Wiki 資料夾提供結構檢查，既有 Wiki manifest 與合成快照匯入沿用原契約。
+- 在既有 OEP SQLite 以每筆發布事件建立不可變世代。原始 SQLite、卡片、欄位出處、關係、證據與 FTS5 同交易持久化，最後切換指標。發布排序以 clock 為準，可重發舊 tag。保留既有世代供明確回復，較舊輸入不取代目前的發布。證據出處以快照內資訊為準，原始文件的獨立核對與撤回紀錄重播留待實際版本確認。
+- Web 以現有同源配對及 CSRF 驗證接收本機完整路徑。結構檢查預設遮蔽 tag 及深層路徑，CLI `--show-names` 在本機解除名稱遮蔽。預設匯入只供本機持有，獲明確模型授權的世代才供 Ask 使用。 [格式與操作](validation/p3a-repo-reader.md)

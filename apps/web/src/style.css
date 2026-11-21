@@ -55,8 +55,8 @@ h2 { font-size: 1rem; margin-bottom: 8px; }
 #composer > label { font-weight: 650; }
 #prompt { display: block; width: 100%; margin: 6px 0 10px; resize: vertical; min-height: 72px; }
 .compose-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
-button, textarea, select { font: inherit; }
-button, textarea, select {
+button, textarea, select, input[type="text"] { font: inherit; }
+button, textarea, select, input[type="text"] {
   border: 1px solid #b8c8d0; border-radius: 7px; color: inherit; background: white; padding: 7px 10px;
 }
 button:not(:disabled) { cursor: pointer; }
@@ -64,7 +64,7 @@ button:disabled { opacity: .55; }
 button:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible {
   outline: 2px solid #11729b; outline-offset: 2px;
 }
-#send, #new-session, #knowledge-ask { color: white; background: var(--blue); border-color: var(--blue); }
+#send, #new-session, #knowledge-ask, #knowledge-import-folder { color: white; background: var(--blue); border-color: var(--blue); }
 .views { display: grid; gap: 6px; margin-bottom: 16px; }
 .views button { text-align: left; }
 .views button[aria-current="page"] { background: #e9f2f6; border-color: var(--blue); font-weight: 650; }
@@ -72,6 +72,11 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visi
 .knowledge-body { padding: 20px; }
 .knowledge label { display: block; font-weight: 650; margin-bottom: 4px; }
 .knowledge textarea { display: block; width: 100%; resize: vertical; margin-bottom: 10px; }
+#knowledge-repository { border-bottom: 1px solid var(--line); margin: 0 0 14px; padding-bottom: 12px; }
+#knowledge-repository-form { display: grid; gap: 8px; margin-top: 10px; }
+#knowledge-folder { min-width: 0; }
+#knowledge-repository-status { margin-top: 8px; white-space: pre-line; }
+#knowledge-repository-status:empty { display: none; }
 .knowledge dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; }
 .knowledge dd { margin: 0; overflow-wrap: anywhere; }
 .knowledge dt, #knowledge-status { color: var(--muted); }

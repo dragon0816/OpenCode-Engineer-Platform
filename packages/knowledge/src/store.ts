@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Passage } from '../../contracts/src/evidence.ts';
 import { indexedTerms, matchQuery } from './retrieval.ts';
-import { canonical, sha256, validateSnapshot } from './snapshot.ts';
+import { canonical, compareRepositoryPublications, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
 
 const schema = `
@@ -114,6 +114,20 @@ export class KnowledgeStore {
     this.db.prepare('UPDATE publications SET index_hash=? WHERE id=?').run(hash, publication);
   }
 
+  private activate(vault: string, publication: number) {
+    this.db.prepare('INSERT INTO vaults VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET publication=excluded.publication').run(vault, publication);
+  }
+
+  restoreRepositoryGeneration(vault: string, revision: string) {
+    return this.transaction(() => {
+      const generation = this.publication(vault, revision);
+      if (!generation || generation.index_hash !== generation.manifest_hash || !this.readSnapshot(generation).repository) {
+        throw new Error('Repository generation is missing or its index is unavailable');
+      }
+      this.activate(vault, generation.id);
+    });
+  }
+
   import(snapshot: Snapshot, input: Uint8Array, allowModel = false) {
     validateSnapshot(snapshot);
     const bytes = Buffer.from(canonical(snapshot));
@@ -121,14 +135,26 @@ export class KnowledgeStore {
     const inputHash = sha256(input);
     const { vault, publication, schema } = snapshot;
     return this.transaction(() => {
-      const known = this.publication(vault.id, publication.revision);
-      if (known) {
-        if (known.manifest_hash !== hash) throw new Error('Published revision already exists with different content');
-        if (allowModel && !known.allow_model) this.db.prepare('UPDATE publications SET allow_model=1 WHERE id=?').run(known.id);
-        return { state: 'existing', ...manifest(snapshot, known.input_hash) } as const;
-      }
       const current = this.publication(vault.id);
       if (current && current.kind !== vault.kind) throw new Error('Published vault kind cannot change');
+      let activateRepository = false;
+      if (snapshot.repository) {
+        const previous = current && this.readSnapshot(current).repository;
+        const order = previous ? compareRepositoryPublications(snapshot.repository, previous) : 1;
+        if (order === 0 && current?.revision !== publication.revision) {
+          throw new Error('Repository publication conflicts with the active generation');
+        }
+        activateRepository = order >= 0;
+      }
+      const known = this.publication(vault.id, publication.revision);
+      if (known) {
+        if (known.manifest_hash !== hash || (snapshot.repository && known.input_hash !== inputHash)) {
+          throw new Error('Published revision already exists with different content');
+        }
+        if (allowModel && !known.allow_model) this.db.prepare('UPDATE publications SET allow_model=1 WHERE id=?').run(known.id);
+        if (activateRepository && known.id !== current?.id && known.index_hash === known.manifest_hash) this.activate(vault.id, known.id);
+        return { state: 'existing', ...manifest(snapshot, known.input_hash) } as const;
+      }
       const publishedAt = Date.parse(publication.publishedAt);
       this.putBlob(hash, bytes);
       this.putBlob(inputHash, input);
@@ -142,9 +168,7 @@ export class KnowledgeStore {
         (publication.revision < current.revision ? -1 : 1) : 0;
       const newer = current && (publishedAt > current.published_at ||
         publishedAt === current.published_at && revisionOrder > 0);
-      if (!current || newer) {
-        this.db.prepare('INSERT INTO vaults VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET publication=excluded.publication').run(vault.id, id);
-      }
+      if (snapshot.repository ? activateRepository : !current || newer) this.activate(vault.id, id);
       return { state: 'imported', ...manifest(snapshot, inputHash) } as const;
     });
   }
@@ -159,6 +183,7 @@ export class KnowledgeStore {
         schema: publication.schema_id, schemaVersion: publication.schema_version, publishedAt: snapshot.publication.publishedAt,
         cards: snapshot.cards.length, sources: snapshot.sources.length, passages: snapshot.passages.length,
         relationships: snapshot.relationships.length, modelEnabled: Boolean(publication.allow_model),
+        ...(snapshot.repository && { tag: snapshot.repository.tag }),
         ready: publication.index_hash === publication.manifest_hash };
     });
   }

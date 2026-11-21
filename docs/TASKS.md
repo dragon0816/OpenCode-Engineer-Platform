@@ -76,7 +76,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 合成快照乾跑／shadow 遷移、provenance、備份還原與 Web 唯讀概覽。
 - [x] FTS5 繁中與料號查詢、明確 Ask 檢索優先、共用 verifier、原生聊天 MCP。
 - [x] 固定 48 題，兩個真 Gateway alias 各三輪，保留所有嘗試與未驗項目。最終各為 24/24 可答、24/24 不可答拒答、24/24 引用可重現。 [驗收報告](reviews/PHASE3A_GATE_REPORT.md)
-- [ ] 在目標 Windows 11 x64 VM 補測。由 owner 提供核准 AEP 快照本機路徑及使用權限後，驗真實遷移差異。 [操作](validation/p3a-knowledge.md)
+- [x] 在 `phase-3a/repo-reader` 交付 BI 儲存庫發布解析、唯讀匯入、世代回復、結構檢查及 Web 入口。合成鏡像與兩個真 Gateway alias 的 48 題驗收已完成。 [資料夾操作](validation/p3a-repo-reader.md) · [驗收報告](reviews/PHASE3A_REPO_READER_REPORT.md)
+- [ ] Owner 在自己的同步資料夾執行去敏檢查及選擇性的本機匯入，比對實際結構與遷移差異。目標 Windows 11 x64 VM 仍待補測。 [Owner 驗證步驟](reviews/PHASE3A_REPO_READER_REPORT.md#owner-本機驗證)
 
 ### Phase 3b　Ingest／review／publish
 
