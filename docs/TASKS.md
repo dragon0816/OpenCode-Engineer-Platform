@@ -24,8 +24,9 @@
 - [x] 固定 48 題知識合成集、Recall@5、延遲與七份 probe 報告。 [基線](validation/p0-knowledge-baseline.md)
 - [x] 修正第 1 輪　I-1 完整 forced turn、I-2 私網 IPv4 掃描、I-3 Phase 1 出口驗收補充。 [修正證據](reviews/PHASE0_GATE_REPORT.md)
 - [x] O-4　Owner 核定最小 D08 smoke oracle，PDF 對照與雜湊測試通過；核定範圍僅限管線接線。 [D08 核定](validation/d08-oracle.md)
-- [ ] Gate　第 3 輪修正待獨立複核；O-3a 重測通過。O-1／O-2 由 Gateway 管理員追蹤為 known risks，O-3b 已免測。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
-- [ ] 複核通過後使用受檢合併入口，先掃來源、目標、工作樹及 index，合併後核對目標 hooks。拋棄式 clone 已驗此程序。 [S7](validation/p0-s7-licensing.md)
+- [x] 第 4 輪　I-A 至 I-E 與兩項 Minor 已更新，O-3a 重測通過。 [實測與故障注入](reviews/PHASE0_GATE_REPORT.md#fix-round-4)
+- [ ] Gate　等 Claude Code 安排最終獨立複核。O-1／O-2 為 Gateway 管理員追蹤的 known risks，O-3b 已免測，O-4 已核定且測試通過。 [責任人清單](HANDOFF.md#phase-0-owner-checklist)
+- [ ] Claude Code 於複核通過後使用受檢合併入口，先掃來源、目標、工作樹與 index，並在移動目標 ref 前設定及核對 hooks 和 `merge.ff=false`。拋棄式 clone 已驗此程序。 [S7](validation/p0-s7-licensing.md)
 
 ### Phase 1　Runtime 與 SOP→XLSX
 

@@ -177,3 +177,54 @@ O-1／O-2 仍為 Gateway 管理員的 **TRACKED KNOWN RISKS**。O-3b 為 **WAIVE
 | `run-container.ps1 -Mode contract-relay` | exit 0。在無網路容器中兩合成 alias 各 10 次，兩 forced turn 完成且僅一次工具呼叫，去敏通過。 |
 | `pwsh -NoProfile -File scripts/phase0/windows-job.ps1` | exit 0。正常／強制／readiness 前停止 140／68／72 ms，各 0 殘留。 |
 | `node scripts/phase0/windows-native-probe.ts` | exit 0。OpenCode 2.3.2 的認證、mock prompt、SSE、已連線 PID 核對與停止通過，IPv4／IPv6 listener 1／0，Job 4 成員殘留 0。 |
+
+<a id="fix-round-4"></a>
+
+## 2026-11-21　修正第 4 輪（fix round 4）
+
+基線為 `04da09a`。第 3 輪獨立複核證實先前對 S4 重送與重連、S2 工具結果與清理、Git 合併保護的驗收不足。保留既有輸出供比對。**Gate 尚未達 `conditionally passed`**。O-3a 本輪通過，Claude Code 將安排最終獨立複核，通過後才依 owner 決定合併。O-1／O-2 仍為 known risks，O-3b 維持免測，O-4 維持核定。真 Gateway 本輪未使用，真正 `main` SHA 仍為 `60bbe8816f7b3b121396e025adc8f4c9ded1aba3`。 [第 3 輪獨立複核](PHASE0_INDEPENDENT_REREVIEW_R3.md)
+
+| 項目 | 修正與涵蓋範圍 |
+|---|---|
+| I-A | S4 的 SDK 與原始請求共用 HTTP 寫出前的 observer。以 session ID、operation ID 配對比對完整多重集合，缺件、多件、歸錯 session、計畫中重複 ID 或任何重送都會失敗。 |
+| I-B | `interrupt` 只容許同一次清理發出的 timeout，其他異常以 `AggregateError` 保留原始回合及清理原因。Readiness、位元組流、socket 與 relay 各自只處理可辨識的傳輸、取消或格式錯誤，未知錯誤會使 probe 非零退出。 |
+| I-C | 工具回合只接受一個成功呼叫步驟及一個成功回傳步驟。兩 alias 的一般、並行及 forced 回合逐一用 call ID 配對 slot 的完整文字與結構，同時驗證工具名稱、步驟完成、最終答案、重複及額外結果。 |
+| I-D | 從連線開始到對帳結束，非主動 EOF 均拒絕，包括握手成功後及 EOF 與清理排入同一輪的情況。重連 HTTP 對帳與 SSE 共用 5 秒期限。 |
+| I-E | 掃描及原子設定 hooks 和 `merge.ff=false` 後才移動 ref。拋棄式 clone 的兩種 Git 設定鎖都讓入口失敗且 ref 保持原 SHA。一般合併由合併 hook 擋下，明確 fast-forward 由 reference-transaction hook 擋下。實際 staged UTF-16 canary 也被拒。 [合併程序與範圍](../validation/p0-s7-licensing.md) |
+| Minor（wheel） | Windows 文件與鎖定檔均列四個固定 wheel。5.16 MB 標明為第 2 輪之前三個 wheel 的量測，四個 wheel 容量尚未重測。 |
+| Minor（timer） | supervisor 結束後清除 12 秒 timer，另測實際逾時仍會回 `null`。O-3a 整個 Node 程序本次用時 2,945 ms。 |
+
+I-B 以 `rg -n 'catch|finally|\.on\(' scripts/phase0 -g '*probe*.ts' -g '*probe*.mjs'` 回查，再掃空 catch／error handler，結果 0。保留的提前拒絕 handler 用來防止未處理拒絕，原 promise 仍由驗收等待，早先步驟失敗則整體非零。入口的通用 catch 僅輸出去敏階段並設 exit 1。掃描器及安裝入口的通用 catch 同樣回報非零。
+
+### 重跑輸出
+
+| 命令 | 實測結果 |
+|---|---|
+| `npm run lint`、`npm run typecheck`、`npm test`、`npm run build`、`npm run scan` | 均 exit 0。Lint 40 檔、Node 25 pass／0 fail／0 skip、編譯 12 個 JS、工作樹 83 檔掃描命中 0。 |
+| `python scripts/phase0/attachment_probe_test.py -v`、`python scripts/phase0/d08_oracle_test.py -v` | 以固定依賴路徑執行，分別 6 與 2 項通過。 |
+| `pwsh -NoProfile -File scripts/phase0/windows-job.ps1` | exit 0。正常／強制／readiness 前停止 143／72／55 ms，殘留均 0；同 SID 衝突 exit 23。 |
+| `node scripts/phase0/windows-native-probe.ts` | exit 0。Windows 11 x64，固定 OpenCode 2.3.2，未認證 401，mock prompt 與 SSE 成功，IPv4／IPv6 1／0，Job 4 成員、child／supervisor exit 0、殘留 0。 |
+| `pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode contract` | exit 0。S1、S5 通過。S2 300 ms 負例輸出 `deadline`；S4 收斂 141／142／248 ms，operation 6、重複 0、外洩 0。 |
+| `pwsh -NoProfile -File scripts/phase0/run-container.ps1 -Mode contract-relay` | exit 0。兩 alias 各 10/10，分段 20、並行 10，forced 2/2，分別 361／455 ms，各一次工具呼叫並有末則文字，去敏通過。 |
+
+### 暫存副本故障注入
+
+以 `python .phase0/run-round4-mutations.py` 的分批執行建立隔離副本，先停用各斷言驗負例，再以固定 OpenCode 在無網路容器執行完整 `contract` 與 `contract-relay`。I-A 至 I-D 直接走含故障的呼叫路徑，另一模式以測試副本加跑同一路徑。Git 與兩項 Minor 在主機副本執行對應驗收，兩容器模式各跑完整原有流程後，讀取主機驗收退出碼，確認同一故障讓端到端執行失敗。runner 及副本位於忽略的 `.phase0/`。
+
+| 案例 | 定向測試／`contract`／`contract-relay` | 故障證據 |
+|---|---|---|
+| I-A（SDK） | 1／1／1 | 同一 B operation 經 SDK 再送一次。兩次 admission 均觀測到，兩模式均命中 `S4: sender`。 |
+| I-A（原始 HTTP） | 1／1／1 | 同一 B operation 經原始 HTTP 再送。兩次 admission 均觀測到，兩模式均命中 `S4: sender`。 |
+| I-B | 1／1／1 | 實際逾時後，在 `interrupt` 的 HTTP 路徑拋出 `TypeError`。兩模式均保留原 deadline 與清理例外。 |
+| I-C | 1／1／1 | 每個結果改成含正確 token 的錯誤文字。兩模式的 20 個一般／並行回合都產生正常上游完成狀態，驗收 0/20，兩個 forced 回合亦未通過。第一次外層測試 runner 110 秒即停止。重跑只延長 runner 限時，probe 各回合期限維持原值。 |
+| I-D | 1／1／1 | 使用真重連 SSE 收到 `server.connected` 後截斷，兩模式均命中 `SSE ended before reconciliation`。 |
+| I-E（先移 ref） | 1／1／1 | 在持有設定鎖時把安裝移到合併之後，拋棄式 clone 的 ref 保護斷言失敗。 |
+| I-E（略過 ref hook） | 1／1／1 | 停用 `reference-transaction`，拋棄式 clone 的 UTF-16 來源可 fast-forward，測試因此失敗。 |
+| Minor（wheel） | 1／1／1 | 還原 Windows 文件的三個 wheel 敘述，與鎖定清冊比對失敗。 |
+| Minor（timer） | 1／1／1 | 拿掉退出 timer 的取消，定向測試用獨立 Node 程序證明 supervisor 已結束時 timer 仍阻止退出。 |
+
+### 複核定位
+
+優先讀 `opencode-probe.ts`、`probe-http.ts`、`probe-assertions.ts`、`model-probe.ts`、`probe-listeners.ts`、`install-hooks.mjs`、`merge-check.mjs`、`.githooks/reference-transaction`、`merge-check.test.ts` 和 `phase0.test.ts`。
+
+以 `git diff 04da09a..HEAD` 查閱第 4 輪。程式、驗收及相關操作文件的範圍 `04da09a..028b869` 為 17 檔、+528／−154 行。提交為 `75f92e1`（合併保護）、`1c35fa2`（清理）、`2bca4b5`（S4 HTTP）、`d954de1`（工具結果）、`ee36906`（wheel）、`028b869`（EOF 與清理競態）。此報告與任務交接另行提交。

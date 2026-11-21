@@ -10,20 +10,20 @@
 | 2　交叉審查 | Codex 完整閱讀 Claude 的兩份報告並回查原始碼。Claude 因 token 限制只讀 Codex §A、§G、§H，§B–§F 未讀。 [Codex 交叉審查](reviews/CODEX_CROSS_REVIEW.md) · [Claude 有限交叉審查](reviews/CLAUDE_CROSS_REVIEW.md) |
 | 3　整合 | 完成 [審查對照](REVIEW_COMPARISON.md)、[ADR](ARCHITECTURE_DECISIONS.md)、[v2 計畫](IMPLEMENTATION_PLAN_V2.md)、[AEP 差距](AEP_FEATURE_GAP_ANALYSIS.md)、[任務](TASKS.md) 與 [決策紀錄](DECISIONS.md)。[v1](IMPLEMENTATION_PLAN.md) 保留作歷史。 |
 | 4　owner 核准 | **已核准**。2026-11-21 owner 回覆「接受所有建議預設並開工」，接受 v2 和 D01–D09。 [決策紀錄](DECISIONS.md) |
-| 5　開發 | `phase-0/spikes` 已完成第 3 輪 Phase 0 修正、重測與故障注入。O-3a 重測通過，仍待獨立複核，本機尚未合併，Phase 1 未開始。 |
+| 5　開發 | `phase-0/spikes` 已完成第 4 輪 Phase 0 修正及本機驗證。O-3a 重測通過，gate 仍待最終獨立複核。複核通過後由 Claude Code 使用受檢入口合併。 |
 
 ## 來源與驗證狀態
 
 - 已讀 AEP 固定快照 `c9961b2d0d66eef3892375213ce305883ebde960`。BI/Wiki in-process plugins、Inbox、`bi_overview`、staging/vault/FTS5 及 Telegram cursor 都有原始碼證據，AEP root 無通用 LICENSE。既有測試未重跑。 [AEP 快照](https://github.com/dragon0816/agentic-engineering-platform/tree/c9961b2d0d66eef3892375213ce305883ebde960)
 - 已讀 OpenCode `v2.3.2`（`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`）原始碼、release metadata 與固定 OpenAPI。Automation 存在但實驗性，BI 維持 OEP ledger。SSE 無重播，重連需對帳。XLSX 須轉換，OpenCode 應在 OEP 同源代理之後。 [OpenCode 發行](https://github.com/anomalyco/opencode/releases/tag/v2.3.2)
-- 先前真 Gateway 紀錄保留。舊 20 回合 PASS 依獨立審查降為 **UNVERIFIED**。新斷言已在固定版 OpenCode 的無網路合成 relay 通過兩 alias 各 10 次及完整 forced turn。真 Gateway 模式因 HTTPS 前置條件拒絕目前設定，scope 及 500／400 根因待結。 [S2](validation/p0-s2-gateway.md)
+- 先前真 Gateway 紀錄保留。舊 20 回合 PASS 依獨立審查降為 **UNVERIFIED**。第 4 輪無網路合成 relay 重測兩個 alias 各 10 次及各一次完整 forced turn，以 call ID 核對每個 slot 的完整結果形狀與文字。真 Gateway 模式先前因 HTTPS 前置條件拒絕設定，scope 及 500／400 根因仍由 Gateway 管理員追蹤。 [S2](validation/p0-s2-gateway.md)
 - Windows pin、合成 Job tree 與 O-3a 本機 native OpenCode 已驗。O-3b 為 **WAIVED by owner – not tested**。D06 登入常駐、登出暫停、睡眠恢復、24 小時補跑、RPO/RTO 仍為 **UNVERIFIED**。SSE 三次斷線在容器收斂，upstream overflow 待驗。 [S4](validation/p0-s4-sse.md) · [S6](validation/p0-s6-windows.md)
 - 48 題基線 Recall@5 為 24/24。Phase 0 只新增 probes、合成 fixtures 與 repo hygiene。本地分支有 commits，未 push、未開 PR。公司程式、秘密、位址、真實資料與 AEP benchmark 排除。 [知識基線](validation/p0-knowledge-baseline.md)
 
 ## 接手操作
 
-1. 在 `phase-0/spikes` 用 `git diff 7467fdf..HEAD` 取得第 3 輪修正，交由獨立 reviewer 複核。 [第 2 輪獨立複核](reviews/PHASE0_INDEPENDENT_REREVIEW_R2.md) · [修正證據](reviews/PHASE0_GATE_REPORT.md)
-2. 依修訂門檻核對修正及 O-3a，取得獨立複核。原 v2 要求 O-1 至 O-4 全結，修訂門檻達成時記錄 **conditionally passed**。用受檢合併入口掃描並安裝目標 worktree hooks。首次在拋棄式 clone 的 `main` 證實安裝及拒絕 UTF-16 canary，真正的 `main` 未修改。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [合併程序](validation/p0-s7-licensing.md)
+1. 在 `phase-0/spikes` 用 `git diff 04da09a..HEAD` 取得第 4 輪修正，交由獨立 reviewer 複核 I-A 至 I-E 與兩項 Minor。 [第 3 輪獨立複核](reviews/PHASE0_INDEPENDENT_REREVIEW_R3.md) · [第 4 輪證據](reviews/PHASE0_GATE_REPORT.md#fix-round-4)
+2. 依修訂門檻核對修正及 O-3a。獨立複核無未結 Critical／Important 時才記錄 **conditionally passed**，並由 Claude Code 用受檢入口合併已複核的 SHA。入口先掃描並啟用目標 worktree hooks，再移動 ref。拋棄式 clone 已驗 Git 設定鎖、UTF-16 canary、一般合併及明確 fast-forward。 [Owner 核准修訂](IMPLEMENTATION_PLAN_V2.md#phase-0-owner-amendment) · [合併程序](validation/p0-s7-licensing.md)
 
 <a id="phase-0-owner-checklist"></a>
 
