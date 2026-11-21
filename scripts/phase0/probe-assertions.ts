@@ -1,4 +1,4 @@
-import type { Trace } from './model-probe.ts';
+import { matchesToolResult, tokenFor, type Trace } from './model-probe.ts';
 
 export function check(name: string, conditions: Record<string, boolean>) {
   const failed = Object.entries(conditions).filter(([, passed]) => passed !== true).map(([key]) => key);
@@ -28,6 +28,35 @@ export function verifyToolAnswer(traces: Trace[], finalText: string, tokens: str
   const calls = traces.flatMap((trace) => trace.calls);
   return calls.length === tokens.length && calls.every((call) => call.name === 'fixture_lookup') &&
     finalText.trim().split(/[\s,]+/).sort().join(',') === [...tokens].sort().join(',');
+}
+
+export function validCalls(traces: Trace[], slots: string[]) {
+  if (traces.length !== 2) return false;
+  const [first, followUp] = traces;
+  if (first.model !== followUp.model || !traces.every((trace) => trace.status === 200 && trace.streaming && trace.done) ||
+      first.finish !== 'tool_calls' || followUp.finish !== 'stop' || first.returned.length !== 0 || followUp.calls.length !== 0 ||
+      first.calls.length !== slots.length || followUp.returned.length !== slots.length) return false;
+  const expectedSlots = new Set(slots);
+  const expectedResults = new Map<string, string>();
+  try {
+    for (const call of first.calls) {
+      const args: unknown = JSON.parse(call.args);
+      if (!call.id || expectedResults.has(call.id) || call.name !== 'fixture_lookup' || !args || typeof args !== 'object' ||
+          Object.keys(args).length !== 1 || !('slot' in args) || typeof args.slot !== 'string' || !expectedSlots.delete(args.slot)) return false;
+      const token = tokenFor.get(args.slot);
+      if (!token) return false;
+      expectedResults.set(call.id, token);
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
+  for (const result of followUp.returned) {
+    const expected = expectedResults.get(result.id);
+    if (!expected || !matchesToolResult(result.content, expected)) return false;
+    expectedResults.delete(result.id);
+  }
+  return expectedSlots.size === 0 && expectedResults.size === 0;
 }
 
 export function reconnectionAudit(owner: string) {

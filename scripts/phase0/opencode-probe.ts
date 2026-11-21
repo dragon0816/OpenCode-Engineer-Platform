@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { candidateAliases, fixtureGateway, forcedChoice, mockAliases, startModelProbe, syntheticMarker, tokenFor, workingAliases } from './model-probe.ts';
 import { redactFields } from './probe-redaction.ts';
 import { finishFailedTurn, listen, pause, retryReadiness, send, subscribeEventStream, until, waitForExit } from './probe-http.ts';
-import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
+import { check, reconnectionAudit, validCalls, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
 import { onlyExpectedListener, ownerCheckedFetch, ownsLinuxPeer, processListeners, type PeerTuple } from './probe-listeners.ts';
 
 const binary = '/work/.phase0/assets/linux/opencode';
@@ -299,19 +299,6 @@ async function security(server: Server) {
     report('S5-loopback', evidence);
     verifySecurity(evidence);
   } finally { proxy.close(); }
-}
-
-function validCalls(traces: Probe['traces'], slots: string[]) {
-  const index = traces.findIndex((trace) => trace.calls.length > 0);
-  const first = traces[index];
-  if (index < 0 || !first || first.status !== 200 || !first.streaming || !first.done || first.calls.length !== slots.length) return false;
-  if (traces.reduce((count, trace) => count + trace.calls.length, 0) !== slots.length) return false;
-  const returned = new Set(traces.slice(index + 1).flatMap((trace) => trace.returned));
-  try {
-    const observed = first.calls.map((call) => (JSON.parse(call.args) as { slot?: string }).slot).sort();
-    const ids = new Set(first.calls.map((call) => call.id));
-    return JSON.stringify(observed) === JSON.stringify([...slots].sort()) && ids.size === slots.length && [...ids].every((id) => id && returned.has(id));
-  } catch { return false; }
 }
 
 async function gateway(server: Server, probe: Probe, listed: Set<string>, capabilitiesOnly: boolean, fixtureOnly = false) {

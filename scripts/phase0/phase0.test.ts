@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { inspectStagedFile, maxUploadBytes, uploadPolicy } from './attachment-probe.ts';
 import { evaluate, fixture } from './knowledge-baseline.ts';
 import { finishFailedTurn, listen, ProbeDeadlineError, ProbeTransportError, send, sse, subscribeEventStream, turnFailure, until, waitForExit } from './probe-http.ts';
-import { check, reconnectionAudit, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
+import { check, reconnectionAudit, validCalls, verifyAliasRuns, verifySecurity, verifyToolAnswer } from './probe-assertions.ts';
+import { tokenFor, workingAliases } from './model-probe.ts';
 import type { Trace } from './model-probe.ts';
 import { onlyExpectedListener, ownerCheckedFetch, ownsWindowsPeer, parseListeners } from './probe-listeners.ts';
 
@@ -110,6 +111,36 @@ test('every security observable can fail the S5 probe', () => {
   assert.doesNotThrow(() => verifySecurity(expected));
   for (const [key, value] of Object.entries(expected)) {
     assert.throws(() => verifySecurity({ ...expected, [key]: typeof value === 'boolean' ? !value : 418 }), /S5/);
+  }
+});
+
+test('each alias and turn type requires exact tool-result content and shape for every call ID', () => {
+  for (const model of workingAliases) for (const slots of [['south'], ['north', 'south'], ['north']]) {
+    const base = { model, status: 200, streaming: true, done: true } as Trace;
+    const first = { ...base, finish: 'tool_calls', returned: [], calls: slots.map((slot) => ({
+      id: `call-${slot}`, name: 'fixture_lookup', args: JSON.stringify({ slot }), fragments: 2,
+    })) };
+    const followUp = { ...base, finish: 'stop', calls: [], returned: slots.map((slot) => ({
+      id: `call-${slot}`, content: [{ type: 'text', text: tokenFor.get(slot)! }] as unknown,
+    })) };
+    assert.equal(validCalls([first, followUp], slots), true);
+    assert.equal(validCalls([first, { ...followUp, returned: [...followUp.returned].reverse() }], slots), true);
+    for (const [index, slot] of slots.entries()) {
+      const token = tokenFor.get(slot)!;
+      const mutations = [
+        { content: `Wrong text containing ${token}` }, { content: [{ type: 'text', text: `${token} wrong` }] },
+        { content: { type: 'text', text: token } }, { content: [{ type: 'image', text: token }] },
+        { content: [{ type: 'text', text: token, extra: true }] }, { content: [token, token] },
+        { content: tokenFor.get(slot === 'north' ? 'south' : 'north') }, { id: 'wrong-call' },
+      ];
+      for (const mutation of mutations) {
+        const returned = followUp.returned.map((result, position) => position === index ? { ...result, ...mutation } : result);
+        assert.equal(validCalls([first, { ...followUp, returned }], slots), false);
+      }
+    }
+    assert.equal(validCalls([first, { ...followUp, returned: [...followUp.returned, followUp.returned[0]] }], slots), false);
+    assert.equal(validCalls([first, { ...followUp, returned: followUp.returned.slice(1) }], slots), false);
+    assert.equal(validCalls([first, followUp, followUp], slots), false);
   }
 });
 

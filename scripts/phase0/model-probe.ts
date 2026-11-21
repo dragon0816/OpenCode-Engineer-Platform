@@ -23,7 +23,7 @@ type Request = {
 type ToolDelta = { index: number; id?: string; function?: { name?: string; arguments?: string } };
 type Call = { id: string; name: string; args: string; fragments: number };
 export type Trace = {
-  model: string; status: number; streaming: boolean; calls: Call[]; returned: string[]; done: boolean;
+  model: string; status: number; streaming: boolean; calls: Call[]; returned: { id: string; content: unknown }[]; done: boolean;
   choice: unknown; parallel: boolean; format?: string; toolCount: number; modelMissing?: boolean; finish?: string;
   upstreamStatus?: number;
 };
@@ -35,7 +35,7 @@ function isFixtureChoice(choice: unknown): boolean {
   return option?.type === forcedChoice.type && option.function?.name === forcedChoice.function.name;
 }
 
-function matchesToolResult(content: unknown, expected: string): boolean {
+export function matchesToolResult(content: unknown, expected: string): boolean {
   if (typeof content === 'string') return content === expected;
   if (!Array.isArray(content) || content.length !== 1) return false;
   const item = content[0];
@@ -97,6 +97,7 @@ export function fixtureGateway(body: Request): Promise<Response> {
     emit({ content: `${syntheticMarker.split('+')[0]}%` });
     emit({ content: `2B${syntheticMarker.split('+')[1]}` });
   } else {
+    // The mock can echo recognizable tokens from malformed tool output. The probe must independently validate the actual result.
     const answer = results.length ? [...tokenFor.values()].filter((token) => results.some((result) => JSON.stringify(result.content)?.includes(token))).join(' ') : 'READY-P0';
     emit({ content: answer });
   }
@@ -209,7 +210,9 @@ export async function startModelProbe(gateway?: GatewayInput, synthetic?: { requ
     }
     const trace: Trace = {
       model, status: 0, streaming: body.stream === true, calls: [], done: false,
-      returned: body.messages.filter((item) => item.role === 'tool').map((item) => redact(item.tool_call_id ?? '')),
+      returned: body.messages.filter((item) => item.role === 'tool').map((item) => ({
+        id: redact(item.tool_call_id ?? ''), content: redactJson(item.content, redact),
+      })),
       choice: isFixtureChoice(choice) ? forcedChoice : choice, parallel: body.parallel_tool_calls === true, format: redact(body.response_format?.type ?? ''),
       toolCount: body.tools?.length ?? 0,
     };
