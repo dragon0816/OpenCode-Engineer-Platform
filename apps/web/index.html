@@ -48,8 +48,26 @@
     </aside>
     <main id="work-area">
     <header class="top">
-      <div class="brand"><strong>OEP</strong> <span>工程工作台</span><small id="model"></small></div>
-      <div class="top-actions"><span id="connection" role="status">正在連線</span><button id="stop" type="button" disabled>停止服務</button></div>
+      <div class="top-model">
+        <strong id="model">模型載入中</strong>
+        <span id="model-source">外部模型服務</span>
+        <p id="progress" role="status">從左側新增會話後即可開始。</p>
+      </div>
+      <div class="top-actions">
+        <div class="top-identity"><strong>OEP · 本機使用者</strong><span id="connection" role="status">正在連線</span></div>
+        <details id="top-menu">
+          <summary id="top-menu-trigger" aria-label="工作台選單">⋯</summary>
+          <div class="top-menu-actions">
+            <div class="panel-openers" aria-label="會話附加資料" role="group">
+              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產物</button>
+              <button type="button" id="open-work" aria-controls="chat-files">工作</button>
+              <button type="button" id="open-diff" aria-controls="chat-files">差異</button>
+              <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
+            </div>
+            <button id="stop" type="button" disabled>停止服務</button>
+          </div>
+        </details>
+      </div>
     </header>
     <section class="conversation knowledge" id="settings-view" aria-labelledby="settings-title" hidden>
       <header class="settings-heading">
@@ -248,17 +266,7 @@
     </section>
     <section class="conversation" aria-label="對話" id="chat-view">
       <header class="conversation-header">
-        <div class="panel-openers" aria-label="會話附加資料" role="group">
-          <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產物</button>
-          <button type="button" id="open-work" aria-controls="chat-files">工作</button>
-          <button type="button" id="open-diff" aria-controls="chat-files">差異</button>
-          <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
-        </div>
         <h1 id="session-title" tabindex="-1">對話</h1>
-        <p id="progress" role="status">從左側新增會話後即可開始。</p>
-        <label for="session-alias">會話模型</label>
-        <select id="session-alias" disabled></select>
-        <small id="session-model-status" role="status"></small>
       </header>
       <div id="error" role="alert" hidden></div>
       <div id="messages" class="messages" aria-label="訊息">
@@ -275,6 +283,7 @@
         </form>
       </dialog>
       <form id="composer">
+        <div id="drop">
         <label for="prompt">訊息</label>
         <details id="project-read" hidden>
           <summary>附加唯讀資料夾中的檔案</summary>
@@ -286,14 +295,30 @@
         <div id="command-toast" role="status"></div>
         <ul id="slash-palette" role="listbox" aria-label="指令" hidden></ul>
         <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
-        <div class="compose-actions">
-          <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+        <div class="composer-toolbar">
+          <div class="composer-tools">
+            <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
+            <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+            <span id="attachment-help" hidden>支援 PNG、JPG、PDF、XLSX、HTML 和 UTF-8 文字，單檔最多 20 MiB。也可以拖放。</span>
+            <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+            <label class="composer-model">會話模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
+            <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
+            <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+          </div>
+          <button id="send" type="submit" disabled>送出</button>
+          <button id="cancel-turn" type="button" hidden>停止處理</button>
+        </div>
+        <div class="composer-status">
+          <small id="session-model-help">變更從下一則訊息生效。</small>
+          <small id="session-model-status" role="status"></small>
+          <small id="upload-status" role="status"></small>
+        </div>
+        </div>
+        <div class="composer-footer">
+          <small>Enter 送出，Shift + Enter 換行。</small>
           <details id="shortcuts"><summary>快捷鍵</summary>
             <p>Enter 送出<br>Shift + Enter 換行<br>Esc 回到輸入框<br>Ctrl + Shift + S 停止處理</p>
           </details>
-          <button id="send" type="submit" disabled>送出</button>
-          <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
-          <button id="cancel-turn" type="button" hidden>停止處理</button>
         </div>
       </form>
     </section>
@@ -429,7 +454,7 @@
       <div id="knowledge-drawer-body"></div>
     </dialog>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
-      <header><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
+      <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
       <div class="knowledge-body" id="jobs-content"></div>
     </section>
     </main>
@@ -442,13 +467,7 @@
         <div id="file-list">
       <section aria-labelledby="attachments-title">
         <h2 id="attachments-title">附件</h2>
-        <div id="drop">
-          <button id="pick" type="button" disabled>選擇檔案</button>
-          <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
-          <span>也可拖曳到此處</span>
-        </div>
-        <small>PNG、JPG、PDF、XLSX、HTML、UTF-8 文字。單檔最多 20 MiB。</small>
-        <p id="upload-status" role="status"></p>
+        <p id="file-status" role="status"></p>
         <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
       </section>
       <section aria-labelledby="artifacts-title">

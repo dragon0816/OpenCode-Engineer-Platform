@@ -89,10 +89,11 @@ function setControls() {
   cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped;
   prompt.disabled = !current || stopped;
+  find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped;
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped;
   find('project-read-button').disabled = uploadBusy;
-  send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID) ||
+  send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
 
@@ -312,6 +313,7 @@ function render(context) {
 function renderPanel(context) {
   const { state, selected, path } = context;
   find('panel-tools').hidden = !state.session.tools?.includes('oep_knowledge_ask');
+  updateAttachmentCount();
   const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
   if (context.fileKey === fileKey) return;
   context.fileKey = fileKey;
@@ -333,6 +335,7 @@ function renderPanel(context) {
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) selected.add(attachment.id);
       else selected.delete(attachment.id);
+      updateAttachmentCount();
     });
     const label = node('label');
     label.append(checkbox, node('span', attachment.name));
@@ -365,6 +368,12 @@ function renderPanel(context) {
   renderDiffChoices(context);
 }
 
+function updateAttachmentCount() {
+  const button = find('manage-attachments');
+  button.hidden = !current?.state?.attachments.length;
+  button.textContent = `已選附件 ${current?.selected.size ?? 0}`;
+}
+
 function formatDate(at) {
   return new Date(at).toLocaleString('zh-TW');
 }
@@ -388,8 +397,8 @@ function addFileDetails(entry, file, url, context, attachment = false) {
   const hash = action(file.sha256.slice(0, 12), async () => {
     try {
       await navigator.clipboard.writeText(file.sha256);
-      find('upload-status').textContent = '已複製 SHA-256。';
-    } catch { find('upload-status').textContent = '無法複製 SHA-256。'; }
+      find('file-status').textContent = '已複製 SHA-256。';
+    } catch { find('file-status').textContent = '無法複製 SHA-256。'; }
   });
   hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
   hash.title = file.sha256;
@@ -667,6 +676,8 @@ function refresh(context) {
 
 const rightPanel = find('chat-files');
 const panelToggle = find('toggle-files');
+const topMenu = find('top-menu');
+const menuTrigger = find('top-menu-trigger');
 const panelNarrow = matchMedia('(max-width: 900px)');
 const panelTabs = new Map();
 const panelSections = { files: '檔案與產物', work: '工作', diff: '差異', notes: '筆記' };
@@ -760,17 +771,29 @@ function closePanel(restoreFocus = true) {
   updatePanelLayout();
   if (restoreFocus) {
     const opener = panelOpener?.isConnected ? panelOpener
-      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : panelToggle;
-    (opener ?? panelToggle).focus({ preventScroll: true });
+      : panelOpener?.dataset.id ? messages.querySelector(`[data-id="${CSS.escape(panelOpener.dataset.id)}"]`) : menuTrigger;
+    (opener ?? menuTrigger).focus({ preventScroll: true });
   }
   panelOpener = undefined;
   activeTab = undefined;
 }
 
 for (const [key, id] of [['files', 'toggle-files'], ['work', 'open-work'], ['diff', 'open-diff'], ['notes', 'open-notes']]) {
-  const opener = find(id);
-  opener.addEventListener('click', () => openSection(key, opener));
+  find(id).addEventListener('click', () => {
+    topMenu.open = false;
+    openSection(key, menuTrigger);
+  });
 }
+find('manage-attachments').addEventListener('click', (event) => openSection('files', event.currentTarget));
+topMenu.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !topMenu.open) return;
+  event.preventDefault();
+  topMenu.open = false;
+  menuTrigger.focus();
+});
+document.addEventListener('click', (event) => {
+  if (!topMenu.contains(event.target)) topMenu.open = false;
+});
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
 panelNarrow.addEventListener('change', updatePanelLayout);
@@ -788,6 +811,8 @@ function select(id) {
   current?.abort.abort();
   const session = knownSessions.get(id);
   current = undefined;
+  updateAttachmentCount();
+  find('file-status').textContent = '';
   renderNotes(null);
   renderReply();
   find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
@@ -1143,9 +1168,9 @@ const defaultAlias = find('default-alias');
 const sessionAlias = find('session-alias');
 const modelStatus = find('model-settings-status');
 let modelSettings;
-function aliasOptions(select, selected, aliases) {
+function aliasOptions(select, selected, aliases, configuredDefault) {
   select.replaceChildren(...aliases.map(({ alias }) => {
-    const option = node('option', alias);
+    const option = node('option', alias === configuredDefault ? `設定預設 · ${alias}` : alias);
     option.value = alias;
     return option;
   }));
@@ -1153,8 +1178,8 @@ function aliasOptions(select, selected, aliases) {
 }
 function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
-  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? []);
-  sessionAlias.disabled = !session || !modelSettings || stopped;
+  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? [], modelSettings?.defaultAlias);
+  sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
   if (modelSettings) model.textContent = `模型 ${session?.alias ?? modelSettings.defaultAlias}`;
 }
 function applyModel(value, draft = value.defaultAlias) {
@@ -1190,14 +1215,21 @@ sessionAlias.addEventListener('change', async () => {
   const context = current;
   const status = find('session-model-status');
   if (!context) return;
-  sessionAlias.disabled = true;
+  context.aliasUpdating = true;
+  setControls();
   try {
     const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
     knownSessions.set(session.id, session);
     if (current === context) status.textContent = '模型已切換';
   } catch (error) {
     if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。';
-  } finally { if (current === context) updateSessionAlias(); }
+  } finally {
+    context.aliasUpdating = false;
+    if (current === context) {
+      updateSessionAlias();
+      setControls();
+    }
+  }
 });
 function modelDirty() {
   return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
@@ -1665,6 +1697,10 @@ document.addEventListener('keydown', (event) => {
 });
 stop.addEventListener('click', async () => {
   stop.disabled = true;
+  if (topMenu.open) {
+    topMenu.open = false;
+    menuTrigger.focus();
+  }
   try {
     await request('/api/stop', { data: {} });
     stopped = true;
