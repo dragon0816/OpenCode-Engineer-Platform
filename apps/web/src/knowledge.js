@@ -194,11 +194,17 @@ export function bindKnowledge() {
       const box = label('article', '');
       box.className = 'message';
       box.append(label('h2', '答案'), label('p', result.answer));
-      answer.append(box, label('small', `發布版本 ${result.revision}`));
+      const selected = models.get(vault.value);
+      answer.append(box, label('small', [selected?.title, selected?.tag, `發布版本 ${result.revision}`].filter(Boolean).join(' · ')));
       for (const citation of result.citations) {
         const reference = label('details', '');
-        reference.append(label('summary', `${citation.source} · ${citation.locator}`),
-          label('blockquote', citation.context), label('small', `來源版本 ${citation.sourceVersion} · SHA-256 ${citation.sha256}`));
+        const trigger = label('summary', `${citation.source} · ${citation.locator}`);
+        trigger.setAttribute('aria-haspopup', 'dialog');
+        trigger.addEventListener('click', (event) => {
+          event.preventDefault();
+          browser.openPassage({ ...citation, text: citation.context }, citation.quote);
+        });
+        reference.append(trigger);
         answer.append(reference);
       }
     } catch {

@@ -84,6 +84,7 @@ export function bindKnowledgeBrowser(refreshVaults) {
     const quote = node('blockquote');
     quote.textContent = passage.text;
     drawerBody.append(node('p', `${passage.source} · ${passage.locator}`), quote);
+    if (passage.sourceVersion) drawerBody.append(node('p', `來源版本 ${passage.sourceVersion}`));
     if (query) {
       const excerpt = node('p');
       highlight(excerpt, passage.text, query);
@@ -240,6 +241,7 @@ export function bindKnowledgeBrowser(refreshVaults) {
   });
 
   return {
+    openPassage,
     select(vault) {
       if (active !== vault) {
         sort = 'title';

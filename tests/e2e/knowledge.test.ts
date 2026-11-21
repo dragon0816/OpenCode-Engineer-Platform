@@ -153,6 +153,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer details summary').textContent"), /合成量測手冊#row=1/);
+        await browser.evaluate("document.querySelector('#knowledge-answer summary').click()");
+        await ready("document.querySelector('#knowledge-drawer').open && document.querySelector('#knowledge-drawer-body').textContent.includes('±0.8 dB')");
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await ready("!document.querySelector('#knowledge-drawer').open");
         await browser.evaluate(`{
           document.querySelector('#knowledge-tab-overview').click();
           document.querySelector('#knowledge-fts input').value = 'SYN-48B';
