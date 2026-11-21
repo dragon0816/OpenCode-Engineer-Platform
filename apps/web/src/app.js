@@ -1,4 +1,5 @@
 import { connect, request, RequestError } from './api.js';
+import { bindKnowledge } from './knowledge.js';
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -40,6 +41,7 @@ let current;
 let uploadBusy = false;
 let sending = false;
 let stopped = false;
+let disableKnowledge;
 
 function showError(error) {
   notice.textContent = error ? error.message || String(error) : '';
@@ -295,6 +297,7 @@ stop.addEventListener('click', async () => {
     current?.events.close();
     current?.abort.abort();
     connection.textContent = '服務已停止';
+    disableKnowledge?.();
     agent.disabled = create.disabled = sessions.disabled = true;
     setControls();
   } catch (error) {
@@ -312,6 +315,7 @@ try {
   for (const session of bootstrap.sessions) addSession(session);
   if (bootstrap.sessions.length) select(bootstrap.sessions.at(-1).id);
   agent.disabled = create.disabled = stop.disabled = false;
+  if (bootstrap.knowledge) disableKnowledge = bindKnowledge();
 } catch (error) {
   connection.textContent = '尚未連線';
   showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);

@@ -51,7 +51,7 @@ const synthetic: typeof fetch = async (_target, init) => {
 
 console.log(JSON.stringify({ browser: real ? 'real' : 'synthetic', audit }));
 const runtime = await startRuntime(audit, real ? undefined : {
-  url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-browser', fetch: synthetic,
+  url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-browser', fetch: synthetic, isolatedJob: true,
 }, profile);
 try {
   const stopping = Promise.withResolvers<void>();

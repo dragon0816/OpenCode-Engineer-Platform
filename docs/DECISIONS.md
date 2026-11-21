@@ -125,3 +125,17 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - Web 運行中一次派送一個模型 turn，讓同機兩個以上的會話可保有獨立資料及台帳，並可精確關聯 Gateway 請求。OpenCode 內部重試保留由 relay 稽核。OEP 每個 ID 派送一次，後續依同一 ID 對帳。OEP 重啟後未驗證的工作顯示失敗或待核對。對話從 OpenCode 讀取，OEP 只保存自身會話映射、附件、run、收據及產物 manifest。
 - Web Excel 由助理將資料寫入僅當次 run 可寫的 JSON 檔。OEP 只解析資料並驗證 JSON 與工作簿，使用 Phase 1 現有工作簿編碼器建立固定值 XLSX。產物限制為 4 張、每張 20 列／12 欄。BI 待審列使用固定假資料。
 - Chromium 驗收採已安裝的 Edge／Chrome 與 Node 內建 WebSocket，無 Playwright 下載。Windows 腳本測試由 WSH 實際啟動，測試邊界攔截最後的 OS 瀏覽器交接，保護目前的使用者瀏覽器；另外以隔離 Chromium profile 驗 UI。
+
+## 2026-11-21　Owner 啟動 Phase 3a 並安排 GUI 功能對照與版面
+
+- Owner 確認 Phase 2 已推送、基本對話可用。保留現有 GUI 視覺風格，對照 AEP Web 的全部適用 Settings／Operations，版面依 Codex／Claude Code／T3 Code 的 sidebar、中央串流對話、底部輸入框及輔助面板安排，含設定、鍵盤與淺深主題。
+- 以唯讀來源記錄功能、替代方案、階段及驗收，延續 D01 獨立實作。2b 盤點先提交，通用 GUI 後續分批交付。3a 僅新增現有視覺風格的知識頁入口與 Ask，3b／4 分別接入寫入審核、Telegram 與排程。2b gate 完成後才打包。
+- 本輪工作限制集中於破壞性操作。AEP 唯讀，禁止 push、強制推送、重寫已發布歷史、直接提交 `main`、刪除或覆寫 worktree 與 OEP 資料目錄以外的檔案，以及呼叫 Gateway 管理端點。合成資料、既有 hooks、提交前 `npm run scan` 續用，憑證、真實主機及公司資料不入提交。
+- 取消 Phase 3a 額外審查與 mutation，常規實作決定採簡單且可逆作法並記錄。lint、typecheck、test、build、模型嘗試與報告的逐項門檻仍需驗證。Gateway 維持 User scope 回退、兩個核准 alias、短次數重試與先前明文 LAN 紀錄。
+- 文件自查確認 D01、D03、D04、D05、D07、D09 及 3a→3b→4 依賴完整。已在追加條款釐清 2b 並行與打包 gate，並更新舊的 3a 獨立複核任務。Phase 2 未驗項目保持歷史狀態。 [計畫修訂](IMPLEMENTATION_PLAN_V2.md#phase-2b-gui-parity)
+
+## 2026-11-21　Phase 3a 實作決策
+
+- 使用 Node 24 內建 SQLite，原始快照、正規化快照及證據依 SHA-256 存 blob，與 FTS5、發布指標合為同一交易。相同修訂內容固定，較舊版本保留。CLI 匯入時以 `--allow-model` 明確授權該修訂送模型。唯一 Python 步驟為核對 AEP BI 舊封裝的數字正規化與 digest。
+- 明確 Ask 使用與聊天同規格的獨立 LiteLLM relay，一次只讀一座 vault。每一項公開答案均由已驗證的逐字摘錄組成，可開展原段；另檢測顯式引文指令及中英混合的技術詞匹配。OpenCode 保有一般聊天 harness，MCP 呼叫同一 Ask 及 verifier。保留 Phase 3a 計畫中「透過 OpenCode 生成」與實際採 relay 生成的差異。 [驗收報告](reviews/PHASE3A_GATE_REPORT.md)
+- 以 Phase 0 的 48 題加 10 段合成干擾語料重跑真模型。第一輪 Haiku 的錯誤證據保留，後兩輪兩個 alias 達門檻。現行 OEP 服務持有 Windows 單實例鎖，原生合成測試經明確注入使用專用 mutex，正式啟動仍採原本的鎖。 [操作與評分](validation/p3a-knowledge.md)

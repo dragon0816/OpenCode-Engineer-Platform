@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
+import { parseAsk } from '../../../packages/knowledge/src/ask.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
@@ -20,6 +21,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
+  ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
 ]);
 
@@ -96,7 +98,21 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     const { csrf } = auth.authorize(request);
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
+        knowledge: Boolean(runtime.knowledge),
         sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {
+      send(response, 200, { vaults: runtime.knowledge.overview() });
+      return;
+    }
+    if (runtime.knowledge && path === '/api/knowledge/ask' && method === 'POST') {
+      const input = parseAsk(await body(request));
+      if (!input) throw new HttpError(400, '請選擇一個知識庫並輸入問題。');
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      const result = await runtime.knowledge.ask.ask(input, AbortSignal.any([client.signal, AbortSignal.timeout(76_000)]));
+      if (!response.destroyed) send(response, 200, result);
       return;
     }
     if (path === '/api/stop' && method === 'POST') {

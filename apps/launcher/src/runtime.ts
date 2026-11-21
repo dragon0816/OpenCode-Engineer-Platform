@@ -6,18 +6,20 @@ import type { GatewayTrace } from '../../adapter/src/opencode/gateway.ts';
 import { assistantMessages, createSession, promptID, submitOnce } from '../../adapter/src/opencode/sessions.ts';
 import { waitForOutcome } from '../../adapter/src/opencode/reconcile.ts';
 import { supervise } from './supervisor.ts';
+import { startKnowledgeRuntime } from './knowledge.ts';
 
 export type Runtime = Awaited<ReturnType<typeof startRuntime>>;
 
-type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web'>;
+type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web'> & { isolatedJob?: boolean };
 
 export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string) {
   const alias = synthetic?.alias ?? process.env.OEP_MODEL_ALIAS ?? gatewayAliases[0];
   if (!synthetic && !gatewayAliases.some((candidate) => candidate === alias)) throw new Error('Model alias is not approved');
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
   const requests: GatewayTrace[] = [];
+  const settings = { ...(synthetic ?? gatewaySettings()), alias };
   const relay = await startGateway({
-    ...(synthetic ?? gatewaySettings()), alias, web: Boolean(profile), trace: (value) => {
+    ...settings, web: Boolean(profile), trace: (value) => {
       requests.push(value);
       audit('gateway.jsonl', value);
     },
@@ -26,10 +28,16 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   const startupFailed = () => writeFileSync(join(root, 'startup-failed'),
     'OpenCode startup or model health failed. Inspect status-only audit records.\n');
   let supervisor: Awaited<ReturnType<typeof supervise>>;
+  let knowledge: Awaited<ReturnType<typeof startKnowledgeRuntime>> | undefined;
+  async function closeRelays() {
+    try { await knowledge?.close(); }
+    finally { await relay.close(); }
+  }
   try {
-    supervisor = await supervise(root, relay, alias, profile);
+    if (profile) knowledge = await startKnowledgeRuntime(profile, root, settings);
+    supervisor = await supervise(root, relay, alias, profile, knowledge?.config, synthetic?.isolatedJob);
   } catch (error) {
-    try { await relay.close(); }
+    try { await closeRelays(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }
     finally { startupFailed(); }
     throw error;
@@ -40,7 +48,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       const result = await supervisor.stop();
       audit('lifecycle.jsonl', { event: 'stop', ...result });
       return result;
-    } finally { await relay.close(); }
+    } finally { await closeRelays(); }
   })();
   const { client } = supervisor.endpoint;
   try {
@@ -79,7 +87,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
       if (health !== 'passed') throw new Error('Model health turn failed');
     }
-    return { ...initial, root, alias, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact,
+    return { ...initial, root, alias, endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge,
       gatewayCursor: relay.requestCursor, gatewaySince };
   } catch (error) {
     try { await stop(); }

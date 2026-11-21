@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { knowledgeMcpName, knowledgeToolName } from '../../adapter/src/opencode/knowledge-mcp.ts';
+import type { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
 import { delimiter, dirname, join } from 'node:path';
 import { openCodeEndpoint } from '../../adapter/src/opencode/client.ts';
 import { providerID } from '../../adapter/src/opencode/gateway.ts';
@@ -21,7 +23,9 @@ async function freePort() {
   return port;
 }
 
-function config(relay: { baseURL: string; key: string }, alias: string, web: boolean) {
+type KnowledgeMcp = Awaited<ReturnType<typeof startKnowledgeMcp>>['config'];
+
+function config(relay: { baseURL: string; key: string }, alias: string, web: boolean, knowledge?: KnowledgeMcp) {
   const template = JSON.parse(readFileSync(atRepo('config/opencode.example.jsonc'), 'utf8'));
   const provider = template.providers[providerID];
   provider.settings = { baseURL: relay.baseURL, apiKey: relay.key };
@@ -33,10 +37,15 @@ function config(relay: { baseURL: string; key: string }, alias: string, web: boo
     template.agents.inspector.system = 'Answer the user using the supplied content. Explain when a document cannot be read. You are a read-only analysis assistant.';
     template.agents.workbook.system = 'Answer the user using the supplied content. Prepare workbook data only when the server gives a workbook output instruction.';
   }
+  if (knowledge) {
+    template.mcp = { servers: { [knowledgeMcpName]: knowledge } };
+    template.permissions.push({ action: `${knowledgeMcpName}_${knowledgeToolName}`, resource: '*', effect: 'allow' });
+  }
   return JSON.stringify(template);
 }
 
-export async function supervise(root: string, relay: { baseURL: string; key: string }, alias: string, profile?: string) {
+export async function supervise(root: string, relay: { baseURL: string; key: string }, alias: string, profile?: string,
+  knowledge?: KnowledgeMcp, isolatedJob = false) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || process.versions.node.split('.')[0] !== '24') {
     throw new Error('OEP runtime requires Windows x64 and Node.js 24');
   }
@@ -56,6 +65,7 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
   }).trim().replace(/^opencode v?/, '');
   if (`v${version}` !== expected.tag) throw new Error('OpenCode executable version mismatch');
 
+  const testScope = isolatedJob ? randomBytes(16).toString('hex') : undefined;
   async function launch() {
     const control = mkdtempSync(join(root, 'server-'));
     const folder = (name: string) => { const path = join(control, name); mkdirSync(path); return path; };
@@ -72,10 +82,11 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
     const job = startJob(control, workspace, {
       ...baseEnv, HOME: profile ?? control, USERPROFILE: profile ?? control, APPDATA: persistent('roaming'), LOCALAPPDATA: persistent('local'), TEMP: temp, TMP: temp,
       XDG_CONFIG_HOME: persistent('config'), XDG_DATA_HOME: persistent('data'), XDG_CACHE_HOME: persistent('cache'), XDG_STATE_HOME: persistent('state'),
-      OPENCODE_TEST_HOME: profile ?? control, OPENCODE_PASSWORD: password, OPENCODE_CONFIG_CONTENT: config(relay, alias, Boolean(profile)),
+      OPENCODE_TEST_HOME: profile ?? control, OPENCODE_PASSWORD: password,
+      OPENCODE_CONFIG_CONTENT: config(relay, alias, Boolean(profile), knowledge),
       OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_CONFIG_PROJECT_DISABLE: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_FLAGS: '-automations',
-      OEP_JOB_EXE: exe, OEP_JOB_PORT: String(port),
+      OEP_JOB_EXE: exe, OEP_JOB_PORT: String(port), ...(testScope && { OEP_JOB_TEST_SCOPE: testScope }),
     });
     try {
       const { pid, members } = await job.ready();

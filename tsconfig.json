@@ -10,5 +10,5 @@
     "erasableSyntaxOnly": true,
     "noEmitOnError": true
   },
-  "include": ["scripts/phase0/*.ts", "apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
+  "include": ["scripts/phase0/*.ts", "scripts/knowledge/*.ts", "apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
 }

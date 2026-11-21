@@ -65,11 +65,18 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 提交 Phase 2 操作及驗收文件。 [操作](validation/p2-windows-web.md) · [Gate 報告](reviews/PHASE2_GATE_REPORT.md)
 - [ ] 乾淨 Windows 11 x64 VM 與實際預設瀏覽器交接、Windows 檔案 symlink、其他未驗項目及 Claude Code 輕量複核。 [待辦](reviews/PHASE2_GATE_REPORT.md#偏差風險及-owner-待辦)
 
+### Phase 2b　GUI 功能對照與版面
+
+- [x] 唯讀 AEP 功能盤點、owner 意見與版面規格。 [矩陣](AEP_GUI_PARITY.md) · [版面](GUI_LAYOUT.md)
+- [ ] 通用工作台與設定分批交付。知識、審核、Telegram、排程功能隨 3a、3b、4 交付。
+- [ ] Phase 5 打包前完成 2b gate，逐項留驗收或省略理由。
+
 ### Phase 3a　唯讀 BI/Wiki
 
-- [ ] 乾跑／shadow 遷移、provenance、備份還原、唯讀概覽。
-- [ ] FTS5 繁中與料號查詢、明確 Ask retrieval-first、共用 verifier、聊天 MCP。
-- [ ] 固定 gold set 達標，提交 Phase 3a 驗收和獨立 review。
+- [x] 合成快照乾跑／shadow 遷移、provenance、備份還原與 Web 唯讀概覽。
+- [x] FTS5 繁中與料號查詢、明確 Ask 檢索優先、共用 verifier、原生聊天 MCP。
+- [x] 固定 48 題，兩個真 Gateway alias 各三輪，保留所有嘗試與未驗項目。最終各為 24/24 可答、24/24 不可答拒答、24/24 引用可重現。 [驗收報告](reviews/PHASE3A_GATE_REPORT.md)
+- [ ] 在目標 Windows 11 x64 VM 補測。由 owner 提供核准 AEP 快照本機路徑及使用權限後，驗真實遷移差異。 [操作](validation/p3a-knowledge.md)
 
 ### Phase 3b　Ingest／review／publish
 

@@ -36,3 +36,15 @@
 - [x] **O-3a，本機原生基本驗收**　Windows 11 x64 的固定版 OpenCode、Job Object、mock relay、認證及 SSE 已驗。 [S6](validation/p0-s6-windows.md)
 - **O-3b，WAIVED by owner – not tested**　無 GPT dots、VM 或 Hyper-V 工作。Phase 4 保留啟動／恢復對帳及模擬時鐘跳躍、終止程序／重啟測試，涵蓋模擬條件。使用者文件須說明，owner 於實務驗證前，OEP 對跨真實 OS 睡眠／登出的排程正確性無保證。
 - [x] **O-4，Owner 已核定**　最小煙霧 oracle 只驗管線接線，PDF 對照、13 格型別及值、雜湊測試已通過。需要更改核定值時先取得新的 owner 核准，較完整 oracle 為 Phase 1 可選後續。 [D08 核定與 SHA-256](validation/d08-oracle.md) · [填寫範本](validation/d08-oracle.template.md)
+
+## 2026-11-21　Phase 2 owner 實測與 Phase 3a 開工
+
+Owner 確認已推送的 Phase 2 可做基本對話，從 `main` 的 `a6aa863` 建立 `phase-3/knowledge-read`。先提交唯讀盤點、版面及計畫修訂，再做 Phase 3a 的唯讀快照、檢索與明確 Ask。Phase 2b 先提供規格，在後續階段逐步交付並於 Phase 5 打包前驗收。 [計畫修訂](IMPLEMENTATION_PLAN_V2.md#phase-2b-gui-parity) · [功能矩陣](AEP_GUI_PARITY.md) · [版面](GUI_LAYOUT.md)
+
+## 2026-11-21　Phase 3a 交接
+
+實作與測試已在本機分支 `phase-3/knowledge-read` 提交。Windows 啟動後從左側知識庫進入，匯入以 `npm run knowledge:migrate` 讀本機已發布快照。CLI 先做 shadow 驗證，發送證據給模型須依快照明確授權。一般 OpenCode 聊天可選用內建知識工具。 [操作](validation/p3a-knowledge.md)
+
+合成 BI／Wiki、SQLite 備份回復、Chromium 與原生 MCP 均已驗。最終 48 題兩 alias 達 D03。第一輪 Haiku 的兩個無支持回答，以及後續封鎖與重測皆保留。整體 gate 為 **UNVERIFIED**，待 owner 提供權利核准的 AEP 快照本機路徑並在目標 VM 補測。真模型一般聊天是否自行選用工具仍待真實 smoke，明確 Ask 已跑真模型。 [Gate 報告](reviews/PHASE3A_GATE_REPORT.md)
+
+工作止於 3a。3b 的 ingest／review／publish 待後續授權與階段先決條件。2b 的通用 GUI 項目仍依矩陣排入後續階段。 [任務清單](TASKS.md)

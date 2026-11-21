@@ -1,0 +1,20 @@
+{
+  "kind": "knowledge",
+  "domain": "synthetic-wiki",
+  "vault_ref": "unused-example",
+  "metadata": {
+    "identity": {
+      "namespace": "synthetic",
+      "name": "wiki",
+      "version": "1.2.0"
+    },
+    "business_approval": {
+      "status": "approved",
+      "reviewer": "synthetic",
+      "evidence": "published-by-synthetic-20260213"
+    }
+  },
+  "raw_sha256": "d1abf425a2099d8bcf6439db1b29220badc2917ae400bfa6e0400cc4872dc47b",
+  "content_sha256": "c7a0d7d126e38e48c857b737cdbadda63ee64d0e266a8a1788add623e8b81b2c",
+  "decisions_sha256": "2358707ba04fe1d16d06cc08fcc4cd780d17f1c3d32627b5a0faf4a840aac987"
+}
