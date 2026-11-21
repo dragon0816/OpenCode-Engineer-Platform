@@ -70,10 +70,44 @@ function emptyList(element, text) {
   element.replaceChildren(node('li', text, 'empty'));
 }
 
+const relative = new Intl.RelativeTimeFormat('zh-Hant', { numeric: 'auto' });
+function relativeTime(timestamp) {
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  const sameDay = new Date(timestamp).toDateString() === new Date().toDateString();
+  if (!sameDay) {
+    const day = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    return relative.format((day(new Date(timestamp)) - day(new Date())) / 86400000, 'day');
+  }
+  if (minutes < 1) return '剛剛';
+  if (minutes < 60) return `${minutes} 分鐘前`;
+  return relative.format(-Math.floor(minutes / 60), 'hour');
+}
+
 function sessionLabel(session) {
-  if (session.title) return session.title;
-  const timestamp = new Intl.DateTimeFormat('zh-Hant', { dateStyle: 'short', timeStyle: 'short' }).format(session.createdAt);
-  return `${labels[session.agent]} · ${timestamp}`;
+  return session.title || `${labels[session.agent]} · ${relativeTime(session.createdAt)}`;
+}
+
+function bindRowMenu(menu, trigger, actions) {
+  const close = () => { menu.open = false; trigger.focus(); };
+  menu.addEventListener('toggle', () => {
+    if (!menu.open) return;
+    for (const other of sessions.querySelectorAll('details[open]')) {
+      if (other !== menu) other.open = false;
+    }
+    actions[0].focus();
+  });
+  for (const action of actions) action.addEventListener('click', close);
+  menu.addEventListener('keydown', (event) => {
+    if (!menu.open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    } else if (['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault();
+      actions[document.activeElement === actions[0] ? 1 : 0].focus();
+    }
+  });
 }
 
 function render(context) {
@@ -220,32 +254,44 @@ function sessionButton(label, action) {
   return button;
 }
 
+let collapsedProject;
 function renderSessions() {
   const query = find('session-search').value.trim().toLocaleLowerCase();
+  find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
   for (const entry of projects) {
     const section = node('section', undefined, 'project');
-    const heading = node('h2');
-    const projectButton = sessionButton(entry.title, () => changeProject(entry.id));
-    projectButton.setAttribute('aria-expanded', String(entry.id === project));
+    const heading = node('h2', '', 'project-heading');
+    const expanded = entry.id === project && collapsedProject !== entry.id;
+    const projectButton = sessionButton(entry.title, () => {
+      if (entry.id !== project) { collapsedProject = undefined; void changeProject(entry.id); return; }
+      collapsedProject = expanded ? entry.id : undefined;
+      renderSessions();
+      sessions.querySelector(`[data-project="${entry.id}"]`)?.focus();
+    });
+    projectButton.setAttribute('aria-expanded', String(expanded));
+    projectButton.dataset.project = entry.id;
     heading.append(projectButton);
     section.append(heading);
-    const create = sessionButton('新增會話', () => createSession(entry.id));
+    const create = sessionButton('+', () => { collapsedProject = undefined; return createSession(entry.id); });
     create.id = entry.id === 'default' ? 'new-session' : 'new-session-secondary';
     create.setAttribute('aria-label', `${entry.title}新增會話`);
-    section.append(create);
+    heading.append(create);
     sessions.append(section);
-    if (entry.id !== project) continue;
+    if (!expanded) continue;
     const list = node('ul', undefined, 'session-list');
     for (const session of knownSessions.values()) {
       const label = sessionLabel(session);
       if (!label.toLocaleLowerCase().includes(query)) continue;
       const row = node('li');
-      const link = sessionButton(label, () => {
+      const link = sessionButton(undefined, () => {
         select(session.id);
         if (narrowNavigation.matches) setSidebar(false);
         prompt.focus();
       });
+      link.title = label;
+      link.append(node('span', session.title || labels[session.agent], 'session-name'),
+        node('time', relativeTime(session.createdAt)));
       link.dataset.session = session.id;
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
@@ -256,6 +302,7 @@ function renderSessions() {
       rename.dataset.action = 'rename';
       remove.dataset.action = 'remove';
       menu.append(summary, rename, remove);
+      bindRowMenu(menu, summary, [rename, remove]);
       row.append(link, menu);
       list.append(row);
     }
@@ -347,6 +394,16 @@ find('session-sidebar').addEventListener('keydown', (event) => {
   sidebarToggle.focus();
 });
 find('session-search').addEventListener('input', renderSessions);
+find('clear-session-search').addEventListener('click', () => {
+  find('session-search').value = '';
+  renderSessions();
+  find('session-search').focus();
+});
+document.addEventListener('click', (event) => {
+  for (const menu of sessions.querySelectorAll('details[open]')) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
+});
 
 async function renameSession(session) {
   const title = window.prompt('請輸入會話名稱', sessionLabel(session));

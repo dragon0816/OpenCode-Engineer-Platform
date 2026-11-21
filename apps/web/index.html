@@ -17,10 +17,24 @@
       <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">會話導覽</button>
       <div id="session-sidebar">
       <nav class="views" aria-label="工作台">
-        <button id="open-chat" type="button" aria-current="page">對話</button>
-        <button id="open-knowledge" type="button" disabled>知識庫</button>
-        <button id="open-jobs" type="button">工作與排程</button>
+        <button id="open-chat" type="button" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg>對話</button>
+        <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg>知識庫</button>
+        <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>工作與排程</button>
       </nav>
+      <label for="agent">新會話的助理</label>
+      <select id="agent" disabled>
+        <option value="inspector">資料分析</option>
+        <option value="workbook">Excel 工作表</option>
+      </select>
+      <label for="session-search">搜尋會話</label>
+      <div class="session-search">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+        <input id="session-search" type="search" autocomplete="off" placeholder="搜尋會話">
+        <button id="clear-session-search" type="button" aria-label="清除搜尋" hidden>×</button>
+      </div>
+      <nav id="sessions" aria-label="專案與會話"></nav>
+      <small id="model"></small>
+      <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
       <details id="settings">
         <summary>設定</summary>
         <label for="theme">外觀主題</label>
@@ -57,16 +71,6 @@
           </ul>
         </details>
       </details>
-      <label for="agent">新會話的助理</label>
-      <select id="agent" disabled>
-        <option value="inspector">資料分析</option>
-        <option value="workbook">Excel 工作表</option>
-      </select>
-      <label for="session-search">搜尋會話</label>
-      <input id="session-search" type="search" autocomplete="off">
-      <nav id="sessions" aria-label="專案與會話"></nav>
-      <small id="model"></small>
-      <section class="job" hidden id="demo-job"><h2>BI 審核示範</h2><span>待審</span></section>
       </div>
     </aside>
     <section class="conversation" aria-label="對話" id="chat-view">
