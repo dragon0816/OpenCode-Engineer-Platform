@@ -20,6 +20,40 @@ function hasPrivateIPv4(text) {
   return false;
 }
 
+function utf32(bytes, bigEndian) {
+  const chunks = [];
+  for (let offset = 0; offset + 3 < bytes.length; offset += 4) {
+    const value = bigEndian ? bytes.readUInt32BE(offset) : bytes.readUInt32LE(offset);
+    chunks.push(value <= 0x10ffff && (value < 0xd800 || value > 0xdfff) ? String.fromCodePoint(value) : '\ufffd');
+  }
+  return chunks.join('');
+}
+
+export function decodeText(bytes) {
+  const marker = bytes.subarray(0, 4).toString('hex');
+  if (marker === 'fffe0000' || marker === '0000feff') return utf32(bytes.subarray(4), marker === '0000feff');
+  if (marker.startsWith('fffe')) return new TextDecoder('utf-16le').decode(bytes);
+  if (marker.startsWith('feff')) return new TextDecoder('utf-16be').decode(bytes);
+
+  // ASCII portions of common BOM-less UTF-16/32 files have NULs on predictable byte lanes.
+  const lanes = [0, 0, 0, 0];
+  for (let index = 0; index < bytes.length; index++) if (bytes[index] === 0) lanes[index % 4]++;
+  const characteristic = (empty, data) => empty >= 4 && empty > 2 * data;
+  if (bytes.length % 4 === 0) {
+    for (const bigEndian of [false, true]) {
+      const data = bigEndian ? 3 : 0;
+      if (lanes.every((count, index) => index === data || characteristic(count, lanes[data]))) return utf32(bytes, bigEndian);
+    }
+  }
+  const even = lanes[0] + lanes[2];
+  const odd = lanes[1] + lanes[3];
+  if (bytes.length % 2 === 0 && characteristic(odd, even)) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes.length % 2 === 0 && characteristic(even, odd)) return new TextDecoder('utf-16be').decode(bytes);
+  // Scan an ASCII-compatible byte view if UTF-8 decoding would discard legacy 8-bit bytes.
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder('windows-1252').decode(bytes); }
+}
+
 export function detect(text, known = []) {
   const hits = new Set();
   const scan = (value) => {
@@ -39,7 +73,7 @@ export function detect(text, known = []) {
   for (let layer = 0; layer < 4; layer++) {
     scan(text);
     for (const [encoded] of text.matchAll(/(?<![\w+/-])[a-z\d+/_-]{12,4096}={0,2}(?![\w+/=-])/gi)) {
-      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      const decoded = decodeText(Buffer.from(encoded, 'base64'));
       if (/^[\t\r\n\x20-\x7e]+$/.test(decoded)) {
         scan(decoded);
         scan(normalized(decoded));
@@ -67,7 +101,7 @@ if (process.argv[1] && process.argv[2] && import.meta.url === pathToFileURL(proc
     const counts = new Map();
     for (const path of paths) {
       const bytes = staged || ref ? git('show', `${ref ?? ''}:${path}`) : readFileSync(path);
-      for (const match of new Set(detect(`${path}\n${bytes.toString('utf8')}`, known))) {
+      for (const match of new Set([...detect(path, known), ...detect(decodeText(bytes), known)])) {
         counts.set(match, (counts.get(match) ?? 0) + 1);
       }
     }

@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test scripts/phase0/*.test.ts",
     "build": "tsc --outDir .phase0/build",
-    "scan": "node scripts/phase0/secret-scan.mjs --tree"
+    "scan": "node scripts/phase0/secret-scan.mjs --tree",
+    "merge-check": "node scripts/phase0/merge-check.mjs"
   },
   "dependencies": { "@opencode/client": "2.3.2" },
   "devDependencies": { "@types/node": "24.12.4", "typescript": "6.0.3" }

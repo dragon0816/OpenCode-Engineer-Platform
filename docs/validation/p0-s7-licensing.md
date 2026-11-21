@@ -1,6 +1,6 @@
 # S7　授權與 repo hygiene
 
-Phase 0 盤點鎖定的 8 個 npm 套件、3 個 Python wheels、OpenCode 資產與 API、CI 動作、驗證環境、OEP 及 AEP 排除範圍。清冊列出每項版本、來源、授權及處置。此輪提交的程式與合成 fixtures 採 MIT，未帶入第三方二進位、工作簿或公司素材。未授權的已納入分發項目為 0。Phase 5 的 SBOM、第三方通知及完整出貨權利盤點仍依 v2。 [MIT](../../LICENSE) · [清冊](p0-provenance.md)
+Phase 0 盤點鎖定的 8 個 npm 套件、4 個 Python wheels、OpenCode 資產與 API、CI 動作、驗證環境、OEP 及 AEP 排除範圍。清冊列出每項版本、來源、授權及處置。此輪提交的程式與合成 fixtures 採 MIT，未帶入第三方二進位、工作簿或公司素材。未授權的已納入分發項目為 0。Phase 5 的 SBOM、第三方通知及完整出貨權利盤點仍依 v2。 [MIT](../../LICENSE) · [清冊](p0-provenance.md)
 
 `.gitignore` 排除 `.phase0/`、`node_modules/`、Python 暫存、環境檔及本機 log/key 類型。`.gitattributes` 固定文本 LF 與三種 fixture 二進位型別。`npm run scan` 掃 tracked 工作樹，pre-commit 掃 Git index，CI 按 Windows 上的 Node 版本執行 scan、lint、typecheck、test、build。可用 `git -c core.hooksPath=.githooks commit …` 啟用單次 hook，亦可為自己的 checkout 設定 `core.hooksPath`。本輪在 commit 指令啟用。
 
@@ -17,3 +17,11 @@ node scripts/phase0/secret-scan.mjs --ref main
 node scripts/phase0/secret-scan.mjs --ref phase-0/spikes
 npm run scan
 ```
+
+## 第 3 輪　合併入口與文字編碼
+
+合併須經 `merge-check.mjs --merge`。有腳本的目標 worktree 可用 `npm run merge-check -- phase-0/spikes` 預檢，用 `npm run merge-check -- --merge phase-0/spikes` 執行。入口鎖定來源與目標 commit，掃描兩個 tree、工作樹及 index，任何掃描失敗都會在合併前中止。合併成功後用安裝腳本啟用目標 worktree 的 `.githooks`，並核對配置。
+
+若目標 `main` 尚無腳本，先從已核准的來源 worktree 取 `scripts/phase0/merge-check.mjs` 的絕對路徑。在乾淨的 `main` worktree 執行 `node <來源腳本絕對路徑> --merge phase-0/spikes`。這條入口同樣先完成掃描，第一次合併後才從目標安裝 hooks。以 `git config --worktree --get core.hooksPath` 確認回 `.githooks`。實際合併須等 Phase 0 獨立複核通過後才進行。
+
+掃描支援 UTF-8 BOM、UTF-16 LE/BE、UTF-32 LE/BE，以及可由 NUL 字節排列辨識的無 BOM 檔案。無效 UTF-8 時以 ASCII 相容的 Windows-1252 視圖檢查。拋棄式 clone 負例用 UTF-16 真實 staged canary 驗 commit 失敗，也測含 canary 的來源 tree 拒絕合併。乾淨來源合併後驗 clone 的 `main` hooks 已啟用。真正的 `main` 未切換或修改。
