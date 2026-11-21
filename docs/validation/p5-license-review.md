@@ -9,6 +9,8 @@ OEP ships under its repository [MIT license](../../LICENSE). The current standar
 | openpyxl 3.1.5 | MIT | Compatible with OEP. Retain the openpyxl copyright and license from its pinned source distribution. |
 | et-xmlfile 2.0.0 | MIT AND Python-2.0.1 | Compatible with separate distribution alongside OEP. Preserve both license files, including the standard-library terms supplied upstream. |
 | defusedxml 0.7.1 | PSF-2.0 | Compatible with distribution alongside OEP. Preserve the upstream PSF license and notice. |
+| Node.js 24.14.1 (bundled) | MIT, with third-party terms reproduced in the Node distribution LICENSE | The Node.js project license permits distribution alongside OEP. Review the embedded dependency terms and retain the complete aggregate text. |
+| Python 3.12.10 (bundled) | Python-2.0.1 | Compatible with distribution alongside OEP. Retain the embedded package's full LICENSE.txt and review the bundled binary terms. |
 
 The three OpenCode npm tarballs omit license text. The release uses the root MIT text at the [pinned OpenCode source commit](https://github.com/anomalyco/opencode/blob/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1/LICENSE). Before approving redistribution, the owner should confirm the root license covers the Windows binary and npm packages and check the binary's embedded third-party obligations.
 

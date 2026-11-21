@@ -160,3 +160,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 交付升級、前向 SQLite 遷移、成套回退和中斷復原。
 - [ ] 在一般使用者的乾淨 Windows VM 驗證升級、回退、開始功能表與排程。實際環境的 RPO、RTO 維持 **UNVERIFIED**。 [驗收狀態](reviews/PHASE5_GATE_REPORT.md)
+
+## Phase 5D follow-up
+
+- [ ] Technical Lead verifies the first Windows CI run and all release hashes.
+- [ ] Owner completes license and provenance review and the clean Windows VM run, including credential rebinding and RPO/RTO evidence.
+- [ ] Complete the [release checklist](RELEASE_CHECKLIST.md) before designating a release candidate.

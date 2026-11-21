@@ -232,3 +232,7 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 ## Phase 5C 資料相容與中斷復原
 
 使用新版 SQLite 寫入前，先保留一致備份及清單 SHA-256，並原子寫入 `prepared` journal。資料對帳完成才切換版本。中斷時回復到同一筆備份。回退用 `restoring` journal 及固定的暫存與原資料目錄名稱跨重新執行辨識目錄交換進度。完成後保存原資料和待處理工作的列雜湊供對帳。舊版拒絕超出支援範圍的 `user_version`。
+
+## Phase 5D release decisions
+
+Generate CycloneDX, third-party license text and NOTICE from the pinned production inventory. Retain PowerShell 7 for maintenance and Job supervision. The bundled variant uses relative runtime paths and Windows Script Host for hidden launch. Chromium verification remains manual pending evidence of a usable hosted-runner browser.
