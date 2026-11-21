@@ -4,6 +4,10 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
+import { ChatService } from '../../apps/adapter/src/http/chat.ts';
+import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
+import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
@@ -50,6 +54,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       return Response.json({ choices: [{ message: { content:
         JSON.stringify({ state: 'answer', citations: [{ passageID: citationId, quote }] }) }, finish_reason: 'stop' }] });
     }
+    const sample = JSON.stringify(messages.find((message) => message.role === 'user')?.content).match(/Synthetic Telegram topic ([12])/);
+    if (sample) return completion(model, [{ role: 'assistant', content: 'Synthetic answer topic ' + sample[1] }], 'stop');
     const output = messages.find((message) => message.role === 'tool');
     if (output) {
       const result = JSON.stringify(output.content);
@@ -82,6 +88,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const api = await webAPI(web.pairURL());
       const anonymous = await fetch(api.origin + '/api/knowledge/vaults');
       assert.equal(anonymous.status, 401);
+      assert.equal((await fetch(api.origin + '/api/jobs')).status, 401);
       assert.equal((await fetch(api.origin + '/api/knowledge/import', {
         method: 'POST', headers: { origin: api.origin },
       })).status, 401);
@@ -105,7 +112,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       try {
         await browser.command('Page.navigate', { url: web.pairURL() });
         await ready("!document.querySelector('#open-knowledge')?.disabled");
+        await browser.evaluate("document.querySelector('#open-jobs').click()");
+        await ready("document.querySelector('#jobs-content').textContent.includes('BI Telegram 收件')");
+        assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), false);
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
+        assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), true);
         await ready("document.querySelector('#knowledge-status').textContent.includes('沒有已發布')");
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-ask').disabled"), true);
         context.diagnostic('Knowledge page displayed the empty published store');
@@ -241,6 +252,28 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       }
       assert.equal(knowledgeCalls, 4);
       assert.equal(toolResults, 2);
+      const inbox = new TelegramInbox(join(root, 'test-telegram.sqlite'));
+      const sessions = new WebStore(join(root, 'test-telegram-chat.sqlite'));
+      const chat = new ChatService(sessions, runtime, root, join(audit, 'test-telegram.jsonl'), () => {});
+      try {
+        const router = new TelegramRouter(inbox, runtime, chat, sessions);
+        const signal = new AbortController().signal;
+        const result = await router.handle({ id: 1, bot: 'main', topic: 1,
+          payload: JSON.stringify({ text: '/ask ' + vault + ' ' + question }) }, signal);
+        assert.match(result ?? '', /±0\.8 dB/);
+        assert.ok(result?.includes(citationId));
+        for (const topic of [1, 2]) {
+          const row = { id: topic + 1, bot: 'main' as const, topic,
+            payload: JSON.stringify({ text: 'Synthetic Telegram topic ' + topic }) };
+          assert.equal(await until(() => router.handle(row, signal), 25_000), 'Synthetic answer topic ' + topic);
+        }
+        assert.equal(sessions.sessions().length, 2);
+        assert.equal(new Set(sessions.sessions().map((session) => session.upstreamID)).size, 2);
+      } finally {
+        await chat.close();
+        sessions.close();
+        inbox.db.close();
+      }
       context.diagnostic('Chromium rendered a reproducible citation and OpenCode MCP returned both verified and rejected results');
     } finally { await web.close(); }
   } finally {

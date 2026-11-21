@@ -164,3 +164,17 @@ Owner 已將 Phase 1 合併至 `main`（`e616e6a`）並推送，授權在 `phase
 - BI changes use an explicit parent and content-addressed source uploads. The existing candidate API remains available. Human review and the same atomic publication and intent transaction apply to both paths.
 - First-publication rollback records deactivation and retains the vault and history. Reactivation is an explicit review action. Ask and MCP use a SQLite read-only connection.
 - Owner decision for 3b-R5. Model proposal is available by default to anyone who can see the BI vault. Permission is handled externally. Proposal requires an explicit action, deterministically validates every quoted excerpt, and creates only a pending review. The UI and operations guide state that source text leaves the machine through the LAN HTTP Gateway. Ask retains its existing publication-level model permission.
+
+## Phase 4 implementation decisions
+
+- Key Telegram intake by bot slot and update ID. The owner and bot binding protects the ledger when credentials change. Private conversation topics use separate OpenCode sessions.
+- Keep a send with unknown delivery in the outbox for reconciliation. Retry an explicit rate limit using the server delay. Preserve BI publication intents and use their review IDs as outbox keys.
+- Use a local date and configured time as the daily occurrence identity. Run Now uses the same key, so a repeated DST minute and overlapping triggers share the BI effect.
+- Keep downloaded binary originals and blocked public URLs in the inbox. UTF-8 supplements let an owner stage a review without enabling automatic model use.
+
+## Phase 4 Technical Lead follow-up
+
+- Store inbox first-seen time and processing attempts. Stop after 120 seconds from the first attempt or 20 attempts. Commands have a separate lane. Preserve failed updates and create their replies in the same transaction.
+- Long poll for 25 seconds per bot. Saved inbox processing and outbox delivery run independently of that request.
+- Treat a configured active BI target as owner authorization for the existing model proposal flow. Preserve the target per intake. Exact-source quote validation and human approval still apply.
+- Allow the owner to resend an uncertain notification from the work view after confirming the duplicate risk.

@@ -30,7 +30,8 @@
     "build": "tsc --outDir .phase0/build",
     "scan": "node scripts/phase0/secret-scan.mjs --tree",
     "merge-check": "node scripts/phase0/merge-check.mjs",
-    "test:ingest": "node --disable-warning=ExperimentalWarning --test tests/integration/ingest-publish.test.ts"
+    "test:ingest": "node --disable-warning=ExperimentalWarning --test tests/integration/ingest-publish.test.ts",
+    "test:telegram": "node --disable-warning=ExperimentalWarning --test tests/integration/telegram.test.ts"
   },
   "dependencies": {
     "@opencode/client": "2.3.2",

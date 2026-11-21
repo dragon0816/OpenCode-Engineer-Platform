@@ -96,6 +96,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] Main／BI bot 隔離、durable inbox/cursor、outbox、`/ask`。
 - [ ] 即時、定時、Run Now 共用 claim，處理時區、漏跑與來源阻塞；實作啟動／恢復對帳，以模擬時鐘跳躍與終止程序／重啟做單元及整合驗收。真實 OS 睡眠／登出行為仍為 **UNVERIFIED**。
 - [ ] 合成 crash/replay 與兩真 bot smoke，提交 Phase 4 驗收和獨立 review。
+- [x] 假 API 重投、48 筆收件、程序終止、24 筆 BI effect、通知重試與模擬排程恢復已驗。Chromium 與原生 OpenCode 驗證工作頁、Main Topic 隔離及 Ask。真 bot、完整 GUI parity 及獨立審查仍為 **UNVERIFIED**。 [驗收報告](reviews/PHASE4_GATE_REPORT.md)
+- [x] 複核修正已通過合成驗證。收件重試與處理期限、獨立指令、25 秒長輪詢、目標 BI 提案及不確定通知的人工重送。
+- [ ] 為 `bi_sources` 的原始檔及補件內容定義保留期限或容量上限，並驗證清理及對帳。
 
 ### Phase 5　發行及回歸
 

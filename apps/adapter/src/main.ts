@@ -19,6 +19,7 @@ import { download, upload } from './http/files.ts';
 import { uuid } from './runs/attachments.ts';
 import { WebStore } from './runs/web-store.ts';
 import { checkDirectory } from './runs/workspace.ts';
+import { startTelegram } from './telegram/service.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -26,6 +27,7 @@ const assets = new Map([
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
+  ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
 ]);
 
@@ -67,7 +69,7 @@ function secureHeaders(response: ServerResponse) {
   ].join('; '));
 }
 
-export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void) {
+export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false) {
   checkDirectory(root);
   for (const name of ['sessions', 'model-work', 'artifacts']) {
     const folder = join(root, name);
@@ -79,6 +81,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
+  const telegram = startTelegram(root, runtime, telegramEnabled);
   const active = new Set<Promise<void>>();
   let auth: LocalAuth;
 
@@ -104,6 +107,23 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
         sessions: [...sessions.values()].map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+      return;
+    }
+    if (path === '/api/jobs') {
+      if (method === 'POST') {
+        const input = await body(request);
+        try { await telegram.action(input); }
+        catch { throw new HttpError(422, '無法更新工作。請檢查參數及狀態。'); }
+      }
+      send(response, 200, telegram.status());
+      return;
+    }
+    const source = path.match(/^\/api\/jobs\/source\/(\d+)$/);
+    if (source && method === 'GET') {
+      const bytes = telegram.source(Number(source[1]));
+      if (!bytes) throw new HttpError(404, '找不到原始檔。');
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream',
+        'Content-Disposition': 'attachment; filename="telegram-source.bin"' }).end(bytes);
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/review-sources' && method === 'POST') {
@@ -216,6 +236,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       });
     });
   } catch (error) {
+    await telegram.close();
     await events.close();
     store.close();
     throw error;
@@ -228,7 +249,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       await events.close();
       server.closeAllConnections();
       await closed;
-      await Promise.all([stopped, ...active]);
+      await Promise.all([stopped, telegram.close(), ...active]);
       store.close();
     },
   };

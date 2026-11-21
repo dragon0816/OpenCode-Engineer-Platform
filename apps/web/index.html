@@ -17,6 +17,7 @@
       <nav class="views" aria-label="工作台">
         <button id="open-chat" type="button" aria-current="page">對話</button>
         <button id="open-knowledge" type="button" disabled>知識庫</button>
+        <button id="open-jobs" type="button">工作與排程</button>
       </nav>
       <label for="agent">新會話的助理</label>
       <select id="agent" disabled>
@@ -76,6 +77,10 @@
         </form>
         <div id="knowledge-answer" aria-live="polite"></div>
       </div>
+    </section>
+    <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
+      <header><h1 id="jobs-title" tabindex="-1">工作與排程</h1></header>
+      <div class="knowledge-body" id="jobs-content"></div>
     </section>
     <aside class="sidebar files" id="chat-files">
       <section aria-labelledby="attachments-title">
