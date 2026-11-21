@@ -72,10 +72,11 @@ export class KnowledgeStore {
     this.db = new DatabaseSync(path, { readOnly, timeout: 5000 });
     try {
       const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
+      if (version > 1) throw new Error('知識資料庫版本比程式新。請使用新版程式或先回退資料。');
       if (version === 0 && !readOnly) {
         this.db.exec('PRAGMA journal_mode=WAL');
         this.transaction(() => this.db.exec(`${schema} PRAGMA user_version=1;`));
-      } else if (version !== 1) throw new Error('Unsupported knowledge database schema');
+      } else if (version !== 1) throw new Error('知識資料庫版本無效。');
       if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration + benchmarksMigration));
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
