@@ -8,10 +8,16 @@ try {
         throw 'Node.js 24 x64 is required.'
     }
     $python = if ($env:OEP_PYTHON) { $env:OEP_PYTHON } else { 'python.exe' }
-    & $python -I -c 'import ctypes, zipfile, xml.etree.ElementTree'
+    $release = Test-Path -LiteralPath 'config/release.manifest.json'
+    $pythonCheck = if ($release) { 'import ctypes, zipfile, xml.etree.ElementTree, openpyxl, defusedxml' } else { 'import ctypes, zipfile, xml.etree.ElementTree' }
+    & $python -I -c $pythonCheck
     if ($LASTEXITCODE) { throw 'Python is required.' }
     $pwsh = Join-Path $env:ProgramFiles 'PowerShell/7/pwsh.exe'
+    if (!(Test-Path -LiteralPath $pwsh)) {
+        $pwsh = (Get-Command pwsh.exe -CommandType Application | Select-Object -First 1).Source
+    }
     if (!(Test-Path -LiteralPath $pwsh)) { throw 'PowerShell 7 is required.' }
+    $env:OEP_PWSH = $pwsh
 
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $bootstrap = [Threading.Mutex]::new($false, "Global\OEP.Bootstrap.$sid")
@@ -22,12 +28,13 @@ try {
         if (!$locked) { throw 'OEP setup is already running.' }
         if (!(Test-Path -LiteralPath 'node_modules/@opencode/client/package.json') -or
             !(Test-Path -LiteralPath 'node_modules/fflate/package.json')) {
+            if ($release) { throw '發行套件缺少必要檔案。' }
             $npm = Join-Path (Split-Path $node -Parent) 'npm.cmd'
             & $npm ci --cache .phase0/npm-cache
             if ($LASTEXITCODE) { throw 'OEP dependencies could not be installed.' }
         }
-        if (!(Test-Path -LiteralPath '.phase0/assets/unpacked/opencode.exe') -or
-            !(Test-Path -LiteralPath '.phase0/source/openapi.json')) {
+        if (!$release -and (!(Test-Path -LiteralPath '.phase0/assets/unpacked/opencode.exe') -or
+            !(Test-Path -LiteralPath '.phase0/source/openapi.json'))) {
             & $pwsh -NoProfile -NonInteractive -File (Join-Path $root 'scripts/phase0/fetch-pins.ps1') -WindowsOnly
             if ($LASTEXITCODE) { throw 'Pinned OpenCode could not be installed.' }
         }

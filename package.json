@@ -31,7 +31,9 @@
     "scan": "node scripts/phase0/secret-scan.mjs --tree",
     "merge-check": "node scripts/phase0/merge-check.mjs",
     "test:ingest": "node --disable-warning=ExperimentalWarning --test tests/integration/ingest-publish.test.ts",
-    "test:telegram": "node --disable-warning=ExperimentalWarning --test tests/integration/telegram.test.ts"
+    "test:telegram": "node --disable-warning=ExperimentalWarning --test tests/integration/telegram.test.ts",
+    "build:release": "node scripts/release/build-release.mjs",
+    "test:release:determinism": "node --test scripts/release/determinism.test.mjs"
   },
   "dependencies": {
     "@opencode/client": "2.3.2",

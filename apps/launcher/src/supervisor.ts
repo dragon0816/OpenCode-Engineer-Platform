@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { knowledgeMcpName, knowledgeToolName } from '../../adapter/src/opencode/knowledge-mcp.ts';
@@ -50,11 +50,13 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
     throw new Error('OEP runtime requires Windows x64 and Node.js 24');
   }
   const expected = pin();
-  const exe = atRepo('.phase0/assets/unpacked/opencode.exe');
+  const release = existsSync(atRepo('config/release.manifest.json'));
+  const exe = atRepo(release ? 'vendor/opencode/opencode.exe' : '.phase0/assets/unpacked/opencode.exe');
+  const openapi = atRepo(release ? 'vendor/opencode/openapi.json' : '.phase0/source/openapi.json');
   const installed = JSON.parse(readFileSync(atRepo('node_modules/@opencode/client/package.json'), 'utf8'));
   const locked = JSON.parse(readFileSync(atRepo('package-lock.json'), 'utf8')).packages['node_modules/@opencode/client'];
   if (await sha256(exe) !== expected.windowsX64.binarySha256 ||
-      await sha256(atRepo('.phase0/source/openapi.json')) !== expected.openapi.sha256 ||
+      await sha256(openapi) !== expected.openapi.sha256 ||
       installed.version !== expected.client.version || locked.integrity !== expected.client.integrity ||
       locked.version !== expected.client.version) throw new Error('OpenCode pin verification failed');
   const system = process.env.SystemRoot!;

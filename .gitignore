@@ -10,3 +10,4 @@ __pycache__/
 *.key
 *.pfx
 *.p12
+/dist/

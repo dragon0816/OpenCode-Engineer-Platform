@@ -18,7 +18,7 @@ export function gatewaySettings() {
   let url = process.env.OEP_LITELLM_BASE_URL;
   let key = process.env.OEP_LITELLM_API_KEY;
   if ((!url || !key) && process.platform === 'win32') {
-    const powershell = join(process.env.ProgramFiles!, 'PowerShell', '7', 'pwsh.exe');
+    const powershell = process.env.OEP_PWSH || join(process.env.ProgramFiles!, 'PowerShell', '7', 'pwsh.exe');
     const result = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
       "@([Environment]::GetEnvironmentVariable('OEP_LITELLM_BASE_URL','User'),[Environment]::GetEnvironmentVariable('OEP_LITELLM_API_KEY','User')) | ConvertTo-Json -Compress"],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 10_000 });
