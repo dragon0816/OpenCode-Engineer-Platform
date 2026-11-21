@@ -161,11 +161,46 @@ function appendMarkdown(target, text) {
   }
 }
 
+function toolCard(tool, previous) {
+  const card = previous ?? node('details', '', 'tool-card');
+  if (!previous) {
+    card.dataset.tool = tool.id;
+    card.append(node('summary'), node('div', '', 'tool-details'));
+  }
+  const duration = Math.max(0, (tool.finishedAt ?? Date.now()) - tool.startedAt);
+  const status = { running: '執行中', done: '完成', failed: '失敗', cancelled: '已停止' }[tool.status];
+  card.dataset.status = tool.status;
+  card.firstElementChild.textContent = `${tool.name} · ${status} · ${(duration / 1000).toFixed(1)} 秒`;
+  const fields = card.lastElementChild;
+  const signature = JSON.stringify([tool.input, tool.output]);
+  if (fields.dataset.signature === signature) return card;
+  fields.dataset.signature = signature;
+  fields.replaceChildren();
+  for (const [label, value] of [['輸入', tool.input], ['輸出', tool.output]]) {
+    fields.append(node('strong', label));
+    const excerpt = node('pre', value ? value.slice(0, 800) : '—');
+    fields.append(excerpt);
+    if (value.length > 800) {
+      const toggle = sessionButton('顯示全部', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        toggle.textContent = expanded ? '顯示全部' : '收合內容';
+        excerpt.textContent = expanded ? value.slice(0, 800) : value;
+      });
+      toggle.setAttribute('aria-expanded', 'false');
+      fields.append(toggle);
+    }
+  }
+  return card;
+}
+
 function render(context) {
   const { state, selected, id } = context;
   if (state.messages) {
     const follow = !context.renderedMessages || atBottom();
     const offset = messages.scrollTop;
+    const previous = new Map([...messages.querySelectorAll('.tool-card')].map((card) => [card.dataset.tool, card]));
+    const focused = messages.contains(document.activeElement) ? document.activeElement : undefined;
     const fragment = document.createDocumentFragment();
     for (const item of state.messages) {
       const entry = node('article', '', `message ${item.role}`);
@@ -175,9 +210,11 @@ function render(context) {
       entry.append(role);
       if (item.role === 'assistant') appendMarkdown(entry, item.text);
       else entry.append(node('p', item.text));
+      for (const tool of item.tools ?? []) entry.append(toolCard(tool, previous.get(tool.id)));
       fragment.append(entry);
     }
     messages.replaceChildren(fragment);
+    if (focused?.isConnected) focused.focus({ preventScroll: true });
     if (!state.messages.length) messages.append(node('p', '上傳附件或直接輸入訊息。', 'empty'));
     messages.scrollTop = follow ? messages.scrollHeight : offset;
     jump.hidden = atBottom();

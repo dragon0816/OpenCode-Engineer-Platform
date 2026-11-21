@@ -17,6 +17,27 @@ export type Turn = { id: string; text: string; attachments: string[]; workbook: 
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
 const separator = (id: string) => `\n\n[OEP attachment and output instructions for ${id}]\n`;
 
+type ToolCard = {
+  id: string; name: string; status: 'running' | 'done' | 'failed'; startedAt: number; finishedAt?: number;
+  input: string; output: string;
+};
+
+function toolText(value: unknown, redact: (text: string) => string): string {
+  if (value == null) return '';
+  if (typeof value !== 'string') {
+    if (Array.isArray(value)) return value.map((entry) => toolText(entry, redact)).join('\n');
+    if (typeof value === 'object') return Object.entries(value).map(([key, entry]) =>
+      /token|key|secret|password|credential|authorization|cookie/i.test(key)
+        ? '已遮蔽' : toolText(key, redact) + ' · ' + toolText(entry, redact)).join('\n');
+    return String(value);
+  }
+  return redact(value)
+    .replace(/\b(?:https?|wss?|file):[^\s"'<>]+/gi, '〔網址已遮蔽〕')
+    .replace(/\b(?:bearer\s+|(?:api[-_ ]?key|access[-_ ]?token|token|secret|password|authorization)[\"']?\s*[:=]\s*)[^\r\n]+/gi, '〔憑證已遮蔽〕')
+    .replace(/\b(?:sk[-_]|gh[pousr]_|xox[baprs]-)[a-z0-9_-]+\b|\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/gi, '〔憑證已遮蔽〕')
+    .replace(/(?:[a-z]:[\\/]|\\\\|(?<![\w./])\/)[^\r\n"'<>]*/gi, '〔路徑已遮蔽〕');
+}
+
 export function publicRun(run: RunRecord) {
   return { id: run.id, state: run.state, createdAt: run.createdAt, error: run.errors.at(-1),
     artifact: run.state === 'verified' && run.artifact
@@ -85,7 +106,7 @@ export class ChatService {
     let runs = this.store.turns(session.id);
     const latest = runs.at(-1);
     let stateError: string | undefined;
-    let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number }[] | undefined;
+    let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number; tools?: ToolCard[] }[] | undefined;
     try {
       const pending = latest && (active.has(latest.state) || latest.state === 'indeterminate');
       const [{ data }, inbox, permissions, status] = await Promise.all([
@@ -103,7 +124,17 @@ export class ChatService {
         }
         if (message.type !== 'assistant') return [];
         const text = message.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('');
-        return text.trim() ? [{ id: message.id, role: 'assistant', text: this.runtime.redact(text), createdAt: message.time?.created }] : [];
+        const tools = message.content.flatMap((part): ToolCard[] => {
+          if (part.type !== 'tool') return [];
+          const state = part.state;
+          const status = state.status === 'completed' ? 'done' : state.status === 'error' ? 'failed' : 'running';
+          return [{ id: part.id, name: toolText(part.name, this.runtime.redact), status,
+            startedAt: part.time.created, finishedAt: part.time.completed,
+            input: toolText(state.input, this.runtime.redact),
+            output: toolText('content' in state && state.content ? state.content.flatMap((entry) => entry.type === 'text' ? [entry.text] : []) :
+              'error' in state ? state.error : undefined, this.runtime.redact) }];
+        });
+        return text.trim() || tools.length ? [{ id: message.id, role: 'assistant', text: this.runtime.redact(text), createdAt: message.time?.created, tools }] : [];
       });
       if (latest?.state === 'indeterminate' && !status?.[sessionID] && !inbox.length && !permissions.length &&
           !this.recovering.has(latest.id)) {

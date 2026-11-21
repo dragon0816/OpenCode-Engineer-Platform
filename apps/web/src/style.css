@@ -251,3 +251,8 @@ summary:focus-visible { outline: 2px solid #11729b; outline-offset: 2px; }
 .message :is(th, td) { padding: 5px 9px; border: 1px solid var(--line); }
 #jump-latest { align-self: center; margin-block: 4px; }
 #shortcuts { margin-inline-end: auto; font-size: .875rem; }
+
+.tool-card { margin-block: 8px 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.tool-card summary { padding: 8px 10px; font-size: .875rem; overflow-wrap: anywhere; }
+.tool-details { border-top: 1px solid var(--line); padding: 10px; min-width: 0; }
+.tool-details pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--assistant); }
