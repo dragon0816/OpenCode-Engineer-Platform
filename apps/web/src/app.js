@@ -1219,11 +1219,31 @@ const settingsView = find('settings-view');
 const settingsEntry = find('open-settings');
 const settingsSections = [...find('settings-nav').querySelectorAll('button')];
 
+async function loadMcpSettings() {
+  const status = find('mcp-knowledge-status');
+  status.textContent = '正在讀取連線狀態…';
+  find('mcp-knowledge-tools').hidden = true;
+  try {
+    const [server] = await request('/api/settings/mcp');
+    status.textContent = {
+      connected: '已連線', disabled: '已停用', failed: '無法連線至內建知識庫。',
+      needs_auth: '需要憑證', pending: '等待連線', unconfigured: '尚未設定知識庫',
+    }[server.status];
+    find('mcp-knowledge-tools').hidden = !server.tools.length;
+  } catch { status.textContent = '無法讀取連線狀態。'; }
+}
+
+find('mcp-open-knowledge-settings').addEventListener('click', () => {
+  settingsSections.find((section) => section.dataset.section === 'integrations').click();
+  if (!find('settings-integrations').hidden) find('knowledge-toolbox').focus();
+});
+
 function showSettings() {
   for (const id of ['chat-view', 'chat-files', 'knowledge-view', 'jobs-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
   void loadKnowledgeSettings();
+  if (!find('settings-mcp').hidden) void loadMcpSettings();
   settingsEntry.setAttribute('aria-current', 'page');
   if (narrowNavigation.matches) setSidebar(false);
   find('settings-title').focus();
@@ -1257,6 +1277,7 @@ for (const button of settingsSections) {
       else section.removeAttribute('aria-current');
       find(`settings-${section.dataset.section}`).hidden = section !== button;
     }
+    if (button.dataset.section === 'mcp') void loadMcpSettings();
   });
 }
 document.addEventListener('keydown', (event) => {
