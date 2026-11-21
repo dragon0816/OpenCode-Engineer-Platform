@@ -141,6 +141,8 @@ export function bindKnowledge(openPreview, closePreviews) {
 
   async function refreshVaults(previous = vault.value || localStorage.getItem(vaultPreference)) {
     loading?.abort();
+    pending?.abort();
+    pending = undefined;
     const active = loading = new AbortController();
     models.clear();
     browser.select(undefined);
@@ -219,6 +221,7 @@ export function bindKnowledge(openPreview, closePreviews) {
     event.preventDefault();
     if (ask.disabled || !question.value.trim()) return;
     const active = pending = new AbortController();
+    const selected = models.get(vault.value);
     controls();
     answer.replaceChildren();
     status.textContent = '正在檢索與核對引用。';
@@ -235,7 +238,6 @@ export function bindKnowledge(openPreview, closePreviews) {
       const box = label('article', '');
       box.className = 'message';
       box.append(label('h2', '答案'), label('p', result.answer));
-      const selected = models.get(vault.value);
       const release = label('details', '');
       release.append(label('summary', '進階'), label('p', `發布版本 ${result.revision}`));
       answer.append(box, label('small', [vaultTitle(selected), selected?.tag].filter(Boolean).join(' · ')));

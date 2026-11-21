@@ -83,6 +83,8 @@ function upcoming(schedules, occurrences, now) {
 export function bindJobs(openPreview) {
   const statusMessage = find('jobs-status');
   const previews = new Map();
+  const feedback = new Set([statusMessage]);
+  const say = (message) => { for (const region of feedback) region.textContent = message; };
   let status;
   let updating = false;
   let filterValue = '';
@@ -90,12 +92,21 @@ export function bindJobs(openPreview) {
   function preview(key, title, opener, draw) {
     const tab = openPreview('jobs-' + key, title, opener);
     if (previews.has(key)) return;
+    const notice = node('p', statusMessage.textContent);
+    notice.setAttribute('role', 'status');
+    tab.body.before(notice);
+    feedback.add(notice);
     const render = () => {
+      const disclosures = [...tab.body.querySelectorAll('details')].map(({ open }) => open);
       tab.body.replaceChildren();
       draw(tab.body);
+      [...tab.body.querySelectorAll('details')].forEach((details, index) => { details.open = disclosures[index] ?? false; });
     };
     previews.set(key, render);
-    tab.signal.addEventListener('abort', () => previews.delete(key), { once: true });
+    tab.signal.addEventListener('abort', () => {
+      previews.delete(key);
+      feedback.delete(notice);
+    }, { once: true });
     render();
   }
 
@@ -109,15 +120,18 @@ export function bindJobs(openPreview) {
   async function update(data) {
     if (updating) return;
     updating = true;
-    statusMessage.textContent = '正在讀取…';
+    say('正在讀取…');
     try {
       status = await request('/api/jobs', data ? { data } : undefined);
       const focus = document.activeElement?.dataset.featureFocus;
       render();
       for (const draw of previews.values()) draw();
-      if (focus) document.querySelector(`[data-feature-focus="${CSS.escape(focus)}"]`)?.focus({ preventScroll: true });
-      statusMessage.textContent = data ? '已更新。' : '';
-    } catch (error) { statusMessage.textContent = error.message; }
+      if (focus) {
+        const matches = document.querySelectorAll(`[data-feature-focus="${CSS.escape(focus)}"]`);
+        [...matches].find((item) => item.getClientRects().length && !item.closest('[inert]'))?.focus({ preventScroll: true });
+      }
+      say(data ? '已更新。' : '');
+    } catch (error) { say(error.message); }
     finally { updating = false; }
   }
 
@@ -262,7 +276,7 @@ export function bindJobs(openPreview) {
       control(actions, '編輯', (opener) => preview('edit-' + row.id, '編輯排程 · ' + row.id, opener, (body) => {
         const latest = (status.schedules ?? []).find(({ id }) => id === row.id);
         if (latest?.state !== 'removed') scheduleEditor(body, latest);
-      }));
+      }), 'schedule-more-' + row.id);
       const changes = row.state === 'draft' ? [['active', '核准'], ['rejected', '拒絕']] :
         row.state === 'active' ? [['paused', '暫停']] : row.state === 'paused' ? [['active', '恢復']] : [];
       for (const [state, label] of [...changes, ['removed', '移除']]) {

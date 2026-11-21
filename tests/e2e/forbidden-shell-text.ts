@@ -63,5 +63,8 @@ export async function assertNoForbiddenShellText(
   assert.ok(typeof rendered === 'string', `Rendered UI is missing (${selector ?? 'body'})`);
   const technical = mode === 'feature' ? featureTechnicalTerms : settingsTechnicalTerms;
   const patterns = selector ? [...forbidden, ...technical] : forbidden;
-  for (const pattern of patterns) assert.ok(!pattern.test(rendered), `Rendered UI contains ${pattern} (${selector ?? 'body'})`);
+  for (const pattern of patterns) {
+    const match = pattern.exec(rendered);
+    assert.ok(!match, `Rendered UI contains ${match?.[0]} (${selector ?? 'body'})`);
+  }
 }

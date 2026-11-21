@@ -811,7 +811,7 @@ function closeTab(key) {
   }
   const { opener, preview } = panelTabs.get(key);
   removeTab(key);
-  const parent = opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
+  const parent = preview && opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
   showTab(activeTab === key ? parent?.[0] ?? keys[index + 1] ?? keys[index - 1] : activeTab);
   if (preview && parent?.[0] === activeTab) visibleOpener(opener)?.focus({ preventScroll: true });
 }
