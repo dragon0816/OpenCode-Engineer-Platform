@@ -66,7 +66,7 @@ export const contentAttributes = [
 const names = /\b(?:OEP|AEP|Atlas|OpenCode|Windows|Telegram|Excel|Python|Markdown|JSON|CSV|PNG|JPEG|JPG|PDF|HTML|HTM|TXT|MD|XLSX|ZIP|KiB|MiB|MB|URL|MCP|HTTPS?|TLS|SSH|stdio|SQLite|Schema|WAL|UTF|SHA|BI|IANA|D03|UTC|GMT|Ctrl|Shift|Enter|Esc|End|Home|Tab|ms|soul\.md|light|dark)\b/gi;
 const fileNames = /\b[^\s<>]+\.(?:txt|md|markdown|xlsx|csv|html?|jpe?g|png|pdf|json|sqlite|exe)\b/gi;
 // Commands and paths are syntax or content. Aliases are the runtime model names.
-const syntax = /\bAsia\/Taipei\b|\bfixture-notice\b|\bSYN-[A-Z0-9]+\b|(?:^|\s)\/(?:new|stop|model|theme|attach|ask|clear-search|help)\b|\b[A-Z]:[/\\][^\r\n ·]+|\b[0-9a-f]{8,}(?:-[\da-f]+)*\b/gi;
+const syntax = /\bAsia\/Taipei\b|\bfixture-notice\b|\bSYN-[A-Z0-9]+\b|\bsynthetic-(?:browser|knowledge|mcp-browser|model-[a-d])\b|(?:^|\s)\/(?:new|stop|model|theme|attach|ask|clear-search|help)\b|\b[A-Z]:[/\\][^\r\n ·]+|\b[0-9a-f]{8,}(?:-[\da-f]+)*\b/gi;
 
 export function assertLanguage(text: string, locale: Locale, scope: string) {
   if (locale === 'en') {

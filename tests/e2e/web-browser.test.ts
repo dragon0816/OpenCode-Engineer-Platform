@@ -11,6 +11,7 @@ import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
+import { verifyGatewayModelsInBrowser } from './gateway-models-browser.ts';
 import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
 import { assertWorkbenchFits, selectLocale } from './gui-locales.ts';
@@ -92,7 +93,10 @@ const settingsRows: Record<string, Record<string, string[]>> = {
 };
 const syntheticKey = randomUUID();
 const syntheticURL = 'http://example.invalid/v1';
-const synthetic: typeof fetch = async (_target, init) => {
+const synthetic: typeof fetch = async (target, init) => {
+  if (String(target) === `${syntheticURL}/models` && init?.method === 'GET') {
+    return Response.json({ object: 'list', data: aliases.map((id) => ({ object: 'model', id })) });
+  }
   const { model, messages } = JSON.parse(String(init?.body)) as WireRequest;
   const user = JSON.stringify(messages.findLast((message) => message.role === 'user')?.content);
   if (user.includes('Reply with exactly OEP-READY.')) {
@@ -1472,3 +1476,4 @@ try {
   console.log(JSON.stringify(stopped));
   assert.equal(stopped.orphans, 0);
 }
+if (!real) await verifyGatewayModelsInBrowser(join(root, 'gateway-models'), process.env.OEP_CAPTURE_GATEWAY_MODELS === '1');

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { jsonInput, listen, send, until, waitForExit } from '../../scripts/phase0/probe-http.ts';
 import { completion } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -13,6 +14,10 @@ import { webAPI } from './web-api.ts';
 const root = dataDirectory();
 const tools = new Map<string, string[]>();
 const gateway = await listen(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/v1/models') {
+    send(response, 200, { object: 'list', data: gatewayAliases.map((id) => ({ object: 'model', id })) });
+    return;
+  }
   const { model, messages, tools: catalog, stream } = await jsonInput<WireRequest & { stream?: boolean }>(request, 256 * 1024);
   if (!stream) {
     send(response, 200, { choices: [{ message: { role: 'assistant', content: 'OEP-READY' } }] });
