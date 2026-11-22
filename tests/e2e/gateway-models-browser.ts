@@ -243,6 +243,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     assert.ok(!visible.includes(key) && !visible.includes(gateway.url));
     await click(choice(d));
     await draftStatus(true);
+    assert.equal(await evaluate("document.querySelector('#model-settings-status').textContent"), '');
     for (const [width, height, layout] of [[1440, 900, 'wide'], [390, 844, 'narrow']] as const) {
       await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
       await ready(`innerWidth === ${width}`);

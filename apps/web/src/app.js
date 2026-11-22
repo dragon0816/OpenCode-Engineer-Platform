@@ -1314,7 +1314,7 @@ function updateSessionAlias() {
   const fallback = session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
   aliasOptions(sessionAlias, fallback ?? session?.alias, aliases, modelSettings?.defaultAlias);
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
-  find('session-model-hint').hidden = aliases.length !== 1 || modelSettings.selected.length !== 1 || modelSettings.choices.length <= 1;
+  find('session-model-hint').hidden = aliases.length !== 1 || modelSettings.selected.length !== 1;
   if (modelSettings) setText(model, session?.alias ?? modelSettings.defaultAlias);
   let notice = '';
   if (fallback) notice = message('model.fallback-next', { model: fallback });
@@ -1329,6 +1329,10 @@ function modelControls() {
   for (const id of ['default-alias', 'recheck-model', 'refresh-models']) find(id).disabled = disabled;
   find('save-model').disabled = disabled || !dirty || !selectedModels.size || selectedModels.size > modelSettings.maxSelected;
   modelRestart.disabled = disabled || !modelSettings.canRestart || dirty;
+}
+function modelDraftChanged() {
+  if (!modelRetry) setText(modelStatus, '');
+  modelControls();
 }
 function applyModel(value, draft) {
   modelSettings = value;
@@ -1358,7 +1362,7 @@ function applyModel(value, draft) {
       else selectedModels.delete(alias);
       const previous = defaultAlias.value;
       aliasOptions(defaultAlias, selectedModels.has(previous) ? previous : [...selectedModels][0], [...selectedModels]);
-      modelControls();
+      modelDraftChanged();
     });
     const test = node('button', message('model.test'));
     test.type = 'button';
@@ -1420,7 +1424,7 @@ find('model-settings').addEventListener('submit', (event) => {
 });
 find('recheck-model').addEventListener('click', () => void updateModel('recheck'));
 find('refresh-models').addEventListener('click', () => void updateModel('refresh'));
-defaultAlias.addEventListener('change', modelControls);
+defaultAlias.addEventListener('change', modelDraftChanged);
 
 function modelSectionOpen() {
   return !settingsView.hidden && activeSettingsSection === 'model';
@@ -1479,8 +1483,10 @@ function writeModelApplyCookie(value, seconds) {
   document.cookie = `${modelApplyCookie}=${value}; Path=/; Max-Age=${seconds}; SameSite=Strict`;
 }
 async function confirmModelApply(value) {
-  const [port, selection] = readModelApplyCookie()?.split('.') ?? [];
-  if (!port || port === location.port || value.restartRequired || selection !== await modelSelectionDigest(value)) return;
+  const marker = readModelApplyCookie();
+  const [port, selection] = marker?.split('.') ?? [];
+  if (!port || port === location.port || value.restartRequired || selection !== await modelSelectionDigest(value) ||
+      readModelApplyCookie() !== marker) return;
   writeModelApplyCookie('', 0);
   setText(modelStatus, message('model.applied'));
   setText(find('session-model-status'), message('model.applied'));
