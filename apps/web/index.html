@@ -344,13 +344,17 @@
         <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
         <div class="composer-toolbar">
           <div class="composer-tools">
-            <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
-            <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
-            <span id="attachment-help" hidden>可選取或拖放圖片、PDF、Excel、網頁與文字檔。單檔最多 20 MB。</span>
-            <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+            <div class="composer-attachments">
+              <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
+              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+              <span id="attachment-help" hidden>可選取或拖放圖片、PDF、Excel、網頁與文字檔。單檔最多 20 MB。</span>
+              <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+            </div>
             <label class="composer-model">模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
-            <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
-            <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+            <div class="composer-input-options">
+              <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
+              <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+            </div>
           </div>
           <button id="send" type="submit" disabled>送出</button>
           <button id="cancel-turn" class="button-danger" type="button" hidden>停止處理</button>

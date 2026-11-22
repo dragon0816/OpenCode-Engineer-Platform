@@ -137,12 +137,15 @@ h2 { font-size: var(--text-base); margin-bottom: var(--space-2); }
   min-height: 80px; max-height: max(80px, 24dvh);
 }
 .composer-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
-.composer-tools, .composer-status, .composer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.composer-tools, .composer-attachments, .composer-input-options, .composer-status, .composer-footer {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0;
+}
+.composer-input-options:not(:has(> :not([hidden]))) { display: none; }
 .composer-tools { flex: 1; }
 .composer-tools > * { max-width: 100%; }
 .composer-tools :is(button, select), #send, #cancel-turn { padding: var(--space-1) var(--space-2); }
 #send, #cancel-turn { flex: none; white-space: nowrap; }
-.composer-model { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.composer-model { display: flex; align-items: center; gap: var(--space-1); min-width: 0; white-space: nowrap; }
 .composer-model select { width: auto; min-width: 0; }
 .composer-status { margin-top: var(--space-1); }
 .composer-status :empty, #file-status:empty { display: none; }
@@ -604,9 +607,12 @@ summary { cursor: pointer; }
   }
   :is(.file-actions, #about-details) a { display: inline-flex; align-items: center; min-block-size: var(--touch-target); }
   #slash-palette [role="option"] { display: grid; align-items: center; min-block-size: var(--touch-target); }
-  .composer-toolbar { flex-wrap: wrap; }
-  .composer-tools { flex-basis: min(100%, 15rem); }
-  .composer-model select { max-width: min(20rem, 72vw); }
+  .composer-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+  .composer-tools { display: contents; }
+  .composer-attachments { grid-area: 1 / 1; }
+  .composer-toolbar > :is(#send, #cancel-turn) { grid-area: 1 / 2; }
+  :is(.composer-model, .composer-input-options) { grid-column: 1 / -1; }
+  .composer-model select { flex: 1; }
 }
 
 @media (max-width: 800px) and (max-height: 500px) {
