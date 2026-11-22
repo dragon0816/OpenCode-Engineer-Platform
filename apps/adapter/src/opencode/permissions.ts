@@ -1,39 +1,35 @@
-import { customMcpName } from '../runs/custom-mcp.ts';
-import type { CustomMcp } from '../runs/custom-mcp.ts';
-import { knowledgeMcpName, knowledgeToolName } from './knowledge-mcp.ts';
-
 export type SessionOrigin = 'web' | 'channel' | 'delegation' | 'schedule';
 export type Permission = { action: string; resource: string; effect: 'allow' | 'deny' };
+export const brokerMcpName = 'oep';
 export const statusTool = 'oep_status';
-export const knowledgeTool = `${knowledgeMcpName}_${knowledgeToolName}`;
-export const workbookInput = (runID: string) => `generated/${runID}.json`;
+export const readFileTool = 'oep_file_read';
+export const writeFileTool = 'oep_file_write';
+export const knowledgeTool = 'oep_knowledge_ask';
 
-type Access = { knowledge?: boolean; status?: boolean; custom?: readonly Pick<CustomMcp, 'id' | 'deniedTools'>[] };
-type PermissionScope =
-  | { origin: 'synthetic'; workbook?: boolean }
-  | ({ origin: SessionOrigin; agentID: string; workbookRun?: string } & Access);
+type PermissionScope = { origin: SessionOrigin; agentID: string; status?: boolean;
+  files?: boolean; knowledge?: boolean; custom?: readonly string[]; deniedCustom?: readonly string[] };
+
+// The separate Phase 1 acceptance runner still exercises the pinned native Workbook template.
+export function nativeContractPermissions(workbook: boolean): Permission[] {
+  return [...sessionPermissions(),
+    { action: 'read', resource: 'sop.md', effect: 'allow' },
+    { action: 'read', resource: 'marker.txt', effect: 'allow' },
+    ...(workbook ? [{ action: 'edit', resource: 'program.js', effect: 'allow' } as const] : [])];
+}
 
 export function sessionPermissions(scope?: PermissionScope): Permission[] {
   const rules: Permission[] = [{ action: '*', resource: '*', effect: 'deny' }];
   if (!scope) return rules;
   const allow = (action: string, resource = '*') => rules.push({ action, resource, effect: 'allow' });
-  if (scope.origin === 'synthetic') {
-    allow('read', 'sop.md');
-    allow('read', 'marker.txt');
-    if (scope.workbook) allow('edit', 'program.js');
-    return rules;
-  }
   if (scope.origin !== 'web' && scope.origin !== 'channel') return rules;
   if (scope.status) allow(statusTool);
-  if (scope.agentID !== 'main') return rules;
-  if (scope.knowledge) allow(knowledgeTool);
-  for (const server of scope.custom ?? []) {
-    const name = customMcpName(server.id);
-    allow(`${name}_*`);
-    for (const tool of server.deniedTools) rules.push({ action: `${name}_${tool}`, resource: '*', effect: 'deny' });
+  if (scope.files) {
+    allow(readFileTool);
+    allow(writeFileTool);
   }
-  // Transitional until slice 2b replaces Workbook's native write with a brokered file tool.
-  if (scope.origin === 'web' && scope.workbookRun) allow('edit', workbookInput(scope.workbookRun));
+  if (scope.knowledge) allow(knowledgeTool);
+  for (const name of scope.custom ?? []) allow(name);
+  for (const name of scope.deniedCustom ?? []) rules.push({ action: name, resource: '*', effect: 'deny' });
   return rules;
 }
 

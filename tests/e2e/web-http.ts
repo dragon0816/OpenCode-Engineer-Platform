@@ -43,10 +43,9 @@ const synthetic: typeof fetch = async (_target, init) => {
     return completion(model, [{ role: 'assistant', content: 'PRINT-2746' }], 'stop');
   }
   assert.ok(input.includes('SYN-48B') && input.includes('合成資料') && input.includes('Row 2'));
-  const path = input.match(/generated\/[a-f\d-]+\.json/)?.[0];
-  assert.ok(path);
+  assert.match(input, /oep_file_write.*workbook\.json/);
   if (!messages.some((message) => message.role === 'tool')) {
-    return completion(model, toolCall(0, 'call_oep_xlsx', 'write', { path, content: JSON.stringify(sheetData) }), 'tool_calls');
+    return completion(model, toolCall(0, 'call_oep_xlsx', 'oep_file_write', { name: 'workbook.json', content: JSON.stringify(sheetData) }), 'tool_calls');
   }
   return completion(model, [{ role: 'assistant', content: 'SYN-48B' }], 'stop');
 };

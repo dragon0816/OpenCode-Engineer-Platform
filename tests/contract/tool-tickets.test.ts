@@ -21,7 +21,10 @@ test('status tickets bind the launch, session, run, tool, call and arguments, an
     assert.throws(() => attempt.issue(statusTool, 'malformed-call', { [field]: 'synthetic' }));
     if (field !== transportField) assert.throws(() => tickets.consume(statusTool, { ...args, [field]: { nested: true } }));
   }
-  assert.deepEqual(tickets.consume(statusTool, args), { agent: initial.name, workspace: initial.workspaceName });
+  const grant = tickets.consume(statusTool, args);
+  assert.deepEqual(grant.args, {});
+  assert.equal(grant.scope.name, initial.name);
+  assert.equal(grant.scope.workspaceName, initial.workspaceName);
   assert.throws(() => tickets.consume(statusTool, args));
   const late = { [transportField]: attempt.issue(statusTool, 'late-call', {}) };
   attempt.close();

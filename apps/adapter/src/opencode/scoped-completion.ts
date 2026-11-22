@@ -1,8 +1,9 @@
-import { allowedModelTool, statusTool } from './permissions.ts';
+import { allowedModelTool } from './permissions.ts';
 import type { Permission } from './permissions.ts';
 import { containsTransport, nonceMarker, objectRecord, transportField } from './tool-transport.ts';
 
 export type RelayScope = { nonce: string; model: string; permissions: readonly Permission[]; live: () => boolean;
+  brokered?: (name: string) => boolean;
   issue?: (tool: string, callID: string, args: unknown) => string };
 
 export function matchesNonce(content: unknown, nonce: string): boolean {
@@ -18,7 +19,7 @@ export function allowedToolDefinitions(input: unknown, scope: RelayScope) {
     const definition = objectRecord(objectRecord(item)?.function);
     const name = definition?.name;
     if (typeof name !== 'string' || !allowedModelTool(scope.permissions, name)) return false;
-    if (name === statusTool) {
+    if (scope.brokered?.(name)) {
       const schema = objectRecord(definition?.parameters);
       if (!scope.issue || !schema || !Object.hasOwn(objectRecord(schema.properties) ?? {}, transportField) ||
           !Array.isArray(schema.required) || !schema.required.includes(transportField)) throw new Error('Invalid broker tool schema');
@@ -68,13 +69,13 @@ export function authorizeToolCalls(frames: Record<string, unknown>[], allowed: S
     ids.add(call.id);
     const args = objectRecord(JSON.parse(call.pieces.map((part) => part.arguments ?? '').join('')));
     if (!args || containsTransport(args)) throw new Error('Invalid tool arguments');
-    if (call.name === statusTool) {
-      if (!scope.issue || Object.keys(args).length) throw new Error('Invalid broker tool arguments');
+    if (scope.brokered?.(call.name)) {
+      if (!scope.issue) throw new Error('Invalid broker tool arguments');
       brokerCalls.push({ call, args, id: call.id });
     }
   }
   for (const { call, args, id } of brokerCalls) {
-    call.pieces[0].arguments = JSON.stringify({ ...args, [transportField]: scope.issue!(statusTool, id, args) });
+    call.pieces[0].arguments = JSON.stringify({ ...args, [transportField]: scope.issue!(call.name!, id, args) });
     for (const piece of call.pieces.slice(1)) piece.arguments = '';
   }
 }

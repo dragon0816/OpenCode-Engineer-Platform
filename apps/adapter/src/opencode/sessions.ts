@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { call } from './client.ts';
 import { providerID } from './gateway.ts';
 import { submissionCount } from './reconcile.ts';
-import { sessionPermissions } from './permissions.ts';
+import { nativeContractPermissions } from './permissions.ts';
 import type { Permission } from './permissions.ts';
 
 export type Agent = 'workbook' | 'inspector';
@@ -12,7 +12,7 @@ export const promptID = () => `msg_${randomBytes(16).toString('hex')}`;
 export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, permissions?: Permission[]) {
   const session = await client.session.create({
     title: `OEP ${permissions ? 'Web' : 'synthetic'} ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
-    permissions: permissions ?? sessionPermissions({ origin: 'synthetic', workbook: agent === 'workbook' }),
+    permissions: permissions ?? nativeContractPermissions(agent === 'workbook'),
   }, call());
   validateSessionProfile(session, directory, agent, alias);
   return session.id;

@@ -1,21 +1,18 @@
-import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord } from '../../../../packages/contracts/src/run.ts';
 import { HttpError } from '../http/errors.ts';
-import { workbookInput } from '../opencode/permissions.ts';
 import { convertWorkbook } from './attachments.ts';
+import { workbookInput } from './controlled-files.ts';
+import type { ControlledFiles } from './controlled-files.ts';
 import { workbook } from './workbook.ts';
-import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
+import { createWorkspaceOutput, writeWorkspaceFile } from './workspace-write.ts';
 
 export const workbookName = 'output.xlsx';
 export const workbookLimit = 256 * 1024;
-export { workbookInput };
 
-export async function publishWorkbook(root: string, workspace: string, run: RunRecord, signal?: AbortSignal) {
+export async function publishWorkbook(root: string, files: ControlledFiles, run: RunRecord, signal?: AbortSignal) {
   const startedAt = Date.now();
-  const source = workbookInput(run.id);
-  const input = openWorkspaceFile(workspace, source, 64 * 1024);
+  const input = files.read(workbookInput);
   if (Number(BigInt(input.identity.created) / 1_000_000n) < run.createdAt) throw new Error('Workbook data is stale');
   let sheets: unknown;
   try { sheets = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(input.data)); }
@@ -24,16 +21,11 @@ export async function publishWorkbook(root: string, workspace: string, run: RunR
   await convertWorkbook(Buffer.from(bytes));
   signal?.throwIfAborted();
 
-  checkDirectory(root);
-  const folder = scopedPath(root, run.id);
-  mkdirSync(folder);
-  checkDirectory(folder);
-  const path = join(folder, workbookName);
-  writeFileSync(path, bytes, { flag: 'wx' });
-  const output = openWorkspaceFile(folder, workbookName, workbookLimit);
-  if (output.identity.sha256 !== createHash('sha256').update(bytes).digest('hex')) throw new Error('Workbook changed before publication');
+  const folder = createWorkspaceOutput(root, run.id);
+  const path = join(folder.root, workbookName);
+  const identity = writeWorkspaceFile(folder, workbookName, Buffer.from(bytes), workbookLimit);
   return {
-    artifact: { path, ...output.identity, identity: output.identity },
+    artifact: { path, ...identity, identity },
     receipt: { runID: run.id, programSha256: input.identity.sha256, startedAt, finishedAt: Date.now(),
       exitCode: 0, signal: null, stdout: '', stderr: '' },
   };

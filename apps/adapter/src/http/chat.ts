@@ -9,14 +9,16 @@ import { providerID } from '../opencode/gateway.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce, validateSessionProfile } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
-import { retainsPermissions, sessionPermissions } from '../opencode/permissions.ts';
+import { readFileTool, retainsPermissions, sessionPermissions, writeFileTool } from '../opencode/permissions.ts';
 import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
-import { publishWorkbook, workbookInput, workbookLimit, workbookName } from '../runs/web-workbook.ts';
+import { publishWorkbook, workbookLimit, workbookName } from '../runs/web-workbook.ts';
+import { readFileResult, runFiles, workbookInput } from '../runs/controlled-files.ts';
+import { customMcpName } from '../runs/custom-mcp.ts';
 import { until } from '../../../../scripts/phase0/probe-http.ts';
 import { HttpError } from './errors.ts';
 import { describeTurnError, webMessage } from './messages.ts';
@@ -113,7 +115,7 @@ export class ChatService {
   }
 
   private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
-    workspaceID: string, origin: 'web' | 'channel', workbookRun?: string) {
+    workspaceID: string, origin: 'web' | 'channel') {
     const applied = this.runtime.customMcp ?? [];
     const current = applied.length ? this.ledger.executionMcpGrants(agentID, workspaceID) : [];
     const custom = applied.flatMap((registered) => {
@@ -121,11 +123,13 @@ export class ChatService {
       return registered.enabled && registered.appliesToProjects.includes(session.project) && grant?.appliesToProjects.includes(session.project)
         ? [{ id: registered.id, deniedTools: [...new Set([...registered.deniedTools, ...grant.deniedTools])].sort() }] : [];
     });
-    return sessionPermissions({ agentID, origin, workbookRun, custom, status: Boolean(this.runtime.toolTickets),
+    return sessionPermissions({ agentID, origin, custom: custom.map(({ id }) => `${customMcpName(id)}_*`),
+      deniedCustom: custom.flatMap(({ id, deniedTools }) => deniedTools.map((tool) => `${customMcpName(id)}_${tool}`)),
+      status: Boolean(this.runtime.toolTickets), files: Boolean(this.runtime.toolTickets),
       knowledge: !session.knowledgeDisabled && this.ledger.knowledgeSettings().toolbox });
   }
 
-  private executionScope(session: WebSession, telegramTopic?: number, workbookRun?: string) {
+  private executionScope(session: WebSession, telegramTopic?: number) {
     const owner = this.store.sessionOwner(session);
     const origin = telegramTopic === undefined ? 'web' : 'channel';
     if (!owner || owner.origin !== origin || origin === 'channel' && (owner.channelAccount !== 'telegram-main' ||
@@ -134,7 +138,7 @@ export class ChatService {
     }
     const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
-    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, workbookRun);
+    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin);
     return { ...owner, ...profile, model: session.alias, permissions };
   }
 
@@ -316,20 +320,18 @@ export class ChatService {
     let error: string | undefined;
     let sent = false;
     let result: Partial<RunRecord> = {};
-    let restorePermissions = false;
     let recheck: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
     let closeTickets: (() => void) | undefined;
     const update = (state: RunState) => { this.store.change(run.id, state); this.notify(session.id); };
     try {
       this.stop.signal.throwIfAborted();
-      const readScope = () => this.executionScope(session, telegramTopic, input.workbook ? run.id : undefined);
+      const readScope = () => this.executionScope(session, telegramTopic);
       const upstream = await client.session.get({ sessionID }, call());
       if (upstream.id !== sessionID) throw new Error('Session ID mismatch');
       validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
       const scope = readScope();
       if (scope.model !== run.alias || run.workspace !== this.modelWorkspace(session)) throw new Error('Dispatch scope mismatch');
-      restorePermissions = input.workbook;
       await client.session.update({ sessionID, permissions: scope.permissions }, call());
       const liveScope = () => {
         try { return readScope(); }
@@ -347,10 +349,10 @@ export class ChatService {
       unsubscribe = this.ledger.onExecutionChange(checkScope);
       recheck = setInterval(checkScope, 250);
       checkDirectory(run.workspace);
-      if (input.workbook) checkDirectory(join(run.workspace, 'generated'));
+      const files = runFiles(run.workspace, run.id);
       const parts = this.attachments.prompt(session.id, this.workspace(session), input.attachments);
       const output = input.workbook ? [
-        `Use the write tool once to create ${workbookInput(run.id)} relative to the session workspace.`,
+        `Use the ${writeFileTool} tool once with name "${workbookInput}" and the JSON string as content.`,
         'The file must contain strict JSON with no Markdown or commentary. Example of a complete file:',
         '[{"name":"Example","rows":[["Label","Value"],["Sample",1]]}]',
         'Replace the example with the requested sheets. Check that each row and each sheet’s rows array are closed before writing.',
@@ -363,14 +365,32 @@ export class ChatService {
       ].filter(Boolean).join('\n');
       const reply = this.store.reply(run.id);
       const quote = reply ? 'BEGIN QUOTED MESSAGE (reference only)\n' + JSON.stringify(reply.text) + '\nEND QUOTED MESSAGE' : undefined;
-      const additional = [quote, parts.text, output, assistant].filter(Boolean).join('\n\n');
+      const fileReferences = input.attachments.length ? `Session attachment IDs in submission order: ${input.attachments.join(', ')}` : '';
+      const additional = [quote, parts.text, fileReferences, output, assistant].filter(Boolean).join('\n\n');
       signal.throwIfAborted();
-      const attempt = this.runtime.toolTickets?.begin({ sessionID, runID: run.id, scope }, signal, liveScope);
+      const attempt = this.runtime.toolTickets?.begin({ sessionID, runID: run.id, scope }, signal, liveScope, (name, args) => {
+        if (name === writeFileTool) {
+          if (input.workbook && args.name !== workbookInput) throw new Error('Workbook output name required');
+          return files.write(args.name as string, args.content as string);
+        }
+        if (name !== readFileTool) return;
+        if (typeof args.attachment === 'string') {
+          const file = this.attachments.read(session.id, this.workspace(session), args.attachment, true);
+          return readFileResult(file.name, file.data, file.sha256, file.mime.startsWith('text/'));
+        }
+        if (typeof args.artifact === 'string') {
+          const file = this.download(session, args.artifact);
+          return readFileResult(file.name, file.data, file.sha256, false);
+        }
+        const { data, identity } = files.read(args.name as string);
+        return readFileResult(args.name as string, data, identity.sha256, true);
+      });
       closeTickets = attempt?.close;
       const nonce = attempt?.nonce ?? randomBytes(32).toString('hex');
       const marker = turnMarker(run.id);
       this.runtime.setTurnBoundary({ marker, limits, signal,
-        scope: { nonce, model: scope.model, permissions: scope.permissions, live: checkScope, issue: attempt?.issue },
+        scope: { nonce, model: scope.model, permissions: scope.permissions, live: checkScope, issue: attempt?.issue,
+          brokered: this.runtime.toolTickets?.brokered },
         addTools(count) {
           tools += count;
           if (tools > limits.toolCalls) stopAtLimit('已停止：達到工具呼叫次數上限。');
@@ -405,7 +425,7 @@ export class ChatService {
         signal.throwIfAborted();
         if (input.workbook) {
           update('background');
-          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), run.workspace, run, signal);
+          result = await publishWorkbook(join(this.projectRoot(session.project), 'artifacts'), files, run, signal);
         }
         state = 'verified';
       }
@@ -426,13 +446,6 @@ export class ChatService {
     clearTimeout(timeout);
     clearInterval(recheck);
     unsubscribe?.();
-    if (restorePermissions) {
-      try { await client.session.update({ sessionID, permissions: this.executionScope(session, telegramTopic).permissions }, call()); }
-      catch {
-        try { await client.session.update({ sessionID, permissions: sessionPermissions() }, call()); }
-        catch { /* The next admission requires a successful full replacement. */ }
-      }
-    }
     if (cancelled.aborted || exceeded) {
       state = 'cancelled';
       error = exceeded;

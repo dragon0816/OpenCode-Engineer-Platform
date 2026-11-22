@@ -135,12 +135,11 @@ const synthetic: typeof fetch = async (target, init) => {
   assert.ok(item);
   if (item.agent === 'workbook') {
     assert.match(user, /Row 2,SYN-48B,12.5,TRUE/);
-    const path = user.match(/generated\/[a-f\d-]+\.json/)?.[0];
-    assert.ok(path);
+    assert.match(user, /oep_file_write.*workbook\.json/);
     if (!messages.slice(messages.findLastIndex((message) => message.role === 'user') + 1).some((message) => message.role === 'tool')) {
       const output = structuredClone(sheets);
       if (user.includes('SYNTHETIC_REVISION')) output[0].rows[1][1] = 13.5;
-      return completion(model, toolCall(0, 'call_browser_xlsx', 'write', { path, content: JSON.stringify(output), note: 'token: sample-hidden-value', outside: 'Z:/synthetic/private.txt' }), 'tool_calls');
+      return completion(model, toolCall(0, 'call_browser_xlsx', 'oep_file_write', { name: 'workbook.json', content: JSON.stringify(output) }), 'tool_calls');
     }
   } else assert.ok(user.includes(readFileSync(asset(item.name)).toString('base64')));
   return completion(model, [{ role: 'assistant', content: item.agent === 'workbook'
@@ -568,6 +567,7 @@ try {
         await page.evaluate("document.querySelector('.tool-card summary').click()");
         assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), true);
         assert.equal(await page.evaluate("/sample-hidden-value|Z:\\/synthetic/.test(document.querySelector('.tool-details').textContent)"), false);
+        assert.equal(await page.evaluate("/oep-ticket-|_oep_transport_token/.test(document.querySelector('.tool-details').textContent)"), false);
         assert.equal(await page.evaluate("!!document.querySelector('#messages table') && !!document.querySelector('#messages pre code')"), true);
         await assertContrastInThemes(page, [
           { selector: '.message > div pre code' }, { selector: '.message td' },

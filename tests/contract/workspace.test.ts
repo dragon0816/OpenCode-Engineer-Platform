@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import fs, { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import fs, { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -11,7 +12,9 @@ import { failRun, finishWorkbook, verifyWorkbookReceipt } from '../../apps/adapt
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
-import { publishWorkbook, workbookInput } from '../../apps/adapter/src/runs/web-workbook.ts';
+import { publishWorkbook } from '../../apps/adapter/src/runs/web-workbook.ts';
+import { runFiles, workbookInput } from '../../apps/adapter/src/runs/controlled-files.ts';
+import { checkDirectory } from '../../apps/adapter/src/runs/workspace.ts';
 
 function rejectsWith(status: number, code: WebMessageCode) {
   return (error: unknown) => {
@@ -154,9 +157,42 @@ test('invalid model workbook JSON produces no downloadable file', async () => {
   mkdirSync(data);
   mkdirSync(output);
   const run = { id: 'invalid', workspace: root, mode: 'synthetic', state: 'background' as const, createdAt: 1, retries: 0, errors: [] };
-  writeFileSync(scopedPath(root, workbookInput(run.id)), '[{"name":"Notes","rows":[["A"]}]');
-  await assert.rejects(publishWorkbook(output, root, run), rejectsWith(422, 'workbook-data-invalid'));
+  const files = runFiles(root, run.id);
+  files.write(workbookInput, '[{"name":"Notes","rows":[["A"]}]');
+  await assert.rejects(publishWorkbook(output, files, run), rejectsWith(422, 'workbook-data-invalid'));
   assert.deepEqual(readdirSync(output), []);
+});
+
+test('run files require a verified manifest, exact safe names, and their own run directory', () => {
+  const root = directory();
+  mkdirSync(join(root, 'generated'));
+  const files = runFiles(root, 'first');
+  const foreign = runFiles(root, 'second');
+  for (const name of ['../escape', 'C:/escape', '//host/share', 'a.txt:extra', 'LONGNA~1.TXT', 'nul.txt', 'Mixed.txt',
+    'note.txt.', 'manifest-note.txt.json', 'second/note.txt']) {
+    assert.throws(() => files.write(name, 'blocked'));
+    assert.throws(() => files.read(name));
+  }
+  const receipt = files.write('note.txt', 'verified bytes');
+  assert.equal(receipt.sha256, files.read('note.txt').identity.sha256);
+  assert.throws(() => foreign.read('note.txt'));
+  assert.throws(() => files.write('note.txt', 'replacement'));
+  const stored = join(root, 'generated', 'first', 'note.txt');
+  linkSync(stored, join(root, 'synthetic-other-link'));
+  assert.throws(() => files.read('note.txt'));
+});
+
+test('Windows write pins the output root during rename and rejects a replaced root or colliding destination', () => {
+  const root = directory();
+  const safe = join(root, 'safe');
+  mkdirSync(safe);
+  mkdirSync(join(root, 'foreign'));
+  const probe = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-B', 'tests/fixtures/windows-write-race.py',
+    safe, String(checkDirectory(safe).ino)], { windowsHide: true, encoding: 'utf8', timeout: 8000 });
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.equal(readFileSync(join(root, 'safe-moved', 'notes.txt'), 'utf8'), 'pinned');
+  assert.deepEqual(readdirSync(join(root, 'foreign')), []);
+  assert.deepEqual(readdirSync(join(root, 'safe')), ['COLLISION.TXT']);
 });
 
 test('Phase 1 workbook consumers preserve a cancelled terminal run', async () => {

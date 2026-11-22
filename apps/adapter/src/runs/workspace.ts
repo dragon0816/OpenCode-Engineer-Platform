@@ -59,7 +59,7 @@ function inspectPath(path: string, directory: boolean, attributes: boolean) {
   return file;
 }
 
-export const checkDirectory = (path: string) => { inspectPath(path, true, true); };
+export const checkDirectory = (path: string) => inspectPath(path, true, true);
 const metadata = (file: BigIntStats) => ({
   device: String(file.dev), inode: String(file.ino), created: String(file.birthtimeNs),
   modified: String(file.mtimeNs), changed: String(file.ctimeNs), bytes: Number(file.size),

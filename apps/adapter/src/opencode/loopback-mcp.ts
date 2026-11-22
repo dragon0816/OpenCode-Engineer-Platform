@@ -6,7 +6,7 @@ import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
 const supportedVersions = ['2025-11-25', '2025-06-18', '2025-03-26'];
 
 export async function startLoopbackMcp(options: {
-  name: string; tools: unknown[]; timeout: number; invalidArguments: string; failed: string;
+  name: string; tools: unknown[]; timeout: number; invalidArguments: string; failed: string; maxInput?: number;
   invoke: (name: unknown, args: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
 }) {
   const key = randomBytes(32).toString('hex');
@@ -31,7 +31,8 @@ export async function startLoopbackMcp(options: {
     let id: string | number | null = null;
     const rpcError = (code: number, message: string) => send(response, 200, { jsonrpc: '2.0', id, error: { code, message } });
     try {
-      const input = await jsonInput<{ id?: unknown; jsonrpc?: unknown; method?: unknown; params?: unknown }>(request, 16 * 1024);
+      const input = await jsonInput<{ id?: unknown; jsonrpc?: unknown; method?: unknown; params?: unknown }>(
+        request, options.maxInput ?? 16 * 1024);
       if (typeof input?.id === 'string' || typeof input?.id === 'number') id = input.id;
       if (input?.jsonrpc !== '2.0' || typeof input.method !== 'string') return rpcError(-32600, 'Invalid request');
       if (id === null) { response.writeHead(202).end(); return; }

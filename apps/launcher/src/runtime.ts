@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { discoverGatewayModels, gatewayAliases, gatewayPing, gatewaySettings, startGateway } from '../../adapter/src/opencode/gateway.ts';
@@ -9,9 +9,8 @@ import { supervise } from './supervisor.ts';
 import { startKnowledgeRuntime } from './knowledge.ts';
 import { WebStore } from '../../adapter/src/runs/web-store.ts';
 import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
-import { startStatusMcp } from '../../adapter/src/opencode/status-mcp.ts';
+import { startBrokerMcp } from '../../adapter/src/opencode/status-mcp.ts';
 import { ToolTickets } from '../../adapter/src/opencode/tool-tickets.ts';
-import { atRepo } from './paths.ts';
 
 import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
 
@@ -56,18 +55,17 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
     'OpenCode startup or model health failed. Inspect status-only audit records.\n');
   let supervisor: Awaited<ReturnType<typeof supervise>>;
   let knowledge: Awaited<ReturnType<typeof startKnowledgeRuntime>> | undefined;
-  const toolTickets = profile && synthetic?.isolatedJob && synthetic.fetch && !existsSync(atRepo('config/release.manifest.json')) &&
-    process.env.OEP_SYNTHETIC_STATUS_TOOL !== '0' ? new ToolTickets() : undefined;
-  let statusMcp: Awaited<ReturnType<typeof startStatusMcp>> | undefined;
+  const toolTickets = profile ? new ToolTickets() : undefined;
+  let broker: Awaited<ReturnType<typeof startBrokerMcp>> | undefined;
   async function closeRelays() {
     toolTickets?.close();
-    const results = await Promise.allSettled([statusMcp?.close(), knowledge?.close(), relay.close()]);
+    const results = await Promise.allSettled([broker?.close(), knowledge?.close(), relay.close()]);
     if (results.some((result) => result.status === 'rejected')) throw new Error('Runtime relays could not close');
   }
   try {
     if (profile) knowledge = await startKnowledgeRuntime(profile, root, { ...settings, alias, aliases }, () => alias, modelSeat);
-    if (toolTickets) statusMcp = await startStatusMcp(toolTickets);
-    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob, customMcp, statusMcp?.config);
+    if (toolTickets) broker = await startBrokerMcp(toolTickets);
+    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob, customMcp, broker?.config);
   } catch (error) {
     try { await closeRelays(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }

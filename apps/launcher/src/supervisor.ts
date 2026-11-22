@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { knowledgeMcpName } from '../../adapter/src/opencode/knowledge-mcp.ts';
 import type { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
-import { statusMcpName } from '../../adapter/src/opencode/status-mcp.ts';
+import { brokerMcpName } from '../../adapter/src/opencode/permissions.ts';
 import { delimiter, dirname, join } from 'node:path';
 import { openCodeEndpoint } from '../../adapter/src/opencode/client.ts';
 import { providerID } from '../../adapter/src/opencode/gateway.ts';
@@ -47,7 +47,7 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
   }
   if (status) {
     template.mcp ??= { servers: {} };
-    template.mcp.servers[statusMcpName] = status;
+    template.mcp.servers[brokerMcpName] = status;
   }
   for (const server of custom) {
     if (!server.enabled) continue;
