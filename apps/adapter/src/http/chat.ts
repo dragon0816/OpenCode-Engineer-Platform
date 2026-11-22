@@ -70,6 +70,7 @@ export function publicSession({ id, agent, alias, createdAt, title, project, kno
 
 type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'> &
   Partial<Pick<Runtime, 'remoteMcp' | 'knowledge' | 'modelSeat' | 'toolTickets'>>;
+const standaloneDispatchers = new WeakMap<WebStore, { dispatcher: Dispatcher; users: number }>();
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -85,7 +86,7 @@ export class ChatService {
   private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private readonly modelSeat: ModelSeat;
   private readonly dispatcher: Dispatcher;
-  private readonly ownsDispatcher: boolean;
+  private readonly standalone?: { dispatcher: Dispatcher; users: number };
   private readonly workKind: string;
 
   constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void,
@@ -98,10 +99,16 @@ export class ChatService {
     this.audit = audit;
     this.notify = notify;
     this.attachments = new AttachmentService(store);
-    this.dispatcher = dispatcher ?? new Dispatcher(ledger.workItems);
-    this.ownsDispatcher = !dispatcher;
+    if (!dispatcher) {
+      const shared = standaloneDispatchers.get(ledger) ?? { dispatcher: new Dispatcher(ledger.workItems), users: 0 };
+      standaloneDispatchers.set(ledger, shared);
+      shared.users++;
+      this.standalone = shared;
+    }
+    this.dispatcher = dispatcher ?? this.standalone!.dispatcher;
     this.workKind = this.store.runStore + '-turn';
     this.dispatcher.register(this.workKind, {
+      available: () => !this.stop.signal.aborted,
       execute: async (item, start, signal) => {
         const session = this.workSession(item);
         return { state: await this.runTurn(session, this.store.get(item.runId!), item.payload.input as Turn, item.id, start, signal,
@@ -355,7 +362,7 @@ export class ChatService {
     };
     if (work && this.store.runStore === 'channel') this.dispatcher.items.enqueue(work, run.createdAt);
     this.store.saveTurn(session.id, run, hash, reply, this.store.runStore === 'web' ? work : undefined);
-    if (this.ownsDispatcher) void this.dispatcher.start();
+    if (this.standalone) void this.dispatcher.start();
     this.dispatcher.kick();
     this.notify(session.id);
     return run;
@@ -679,8 +686,12 @@ export class ChatService {
   }
 
   async close() {
+    if (this.stop.signal.aborted) return;
     this.stop.abort();
-    if (this.ownsDispatcher) await this.dispatcher.close();
+    if (this.standalone && --this.standalone.users === 0) {
+      await this.dispatcher.close();
+      standaloneDispatchers.delete(this.ledger);
+    }
     await Promise.allSettled([...this.executing.values()].map(({ done }) => done));
   }
 }

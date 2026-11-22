@@ -11,7 +11,9 @@
 
 ## Test changes
 
-Existing assertions remain in place. The central version expectations in the agent-ledger contract, upgrade allowlist contract, and installer upgrade fixture now require v5 because the queue schema changes only `web.sqlite`. New migration assertions verify that the queue begins empty and that reconciliation rejects a removed write-lease index.
+The central version expectations in the agent-ledger contract, upgrade allowlist contract, and installer upgrade fixture now require v5 because the queue schema changes only `web.sqlite`. New migration assertions verify that the queue begins empty and that reconciliation rejects a removed write-lease index.
+
+The native isolation gate still asserts the exact model-call sequence. BI now enters the model seat before a Telegram Main turn that is queued behind the active Web turn for the same agent. The test also checks that the Telegram turn is durably queued while Web owns the agent lease.
 
 The synthetic dispatcher contracts cover direct/delegation/schedule ordering, non-preemption, stale leases, the partial unique index, parallel claim admission and model serialization, restart recovery and owner authorization, queue expiry, DST-fold scheduler idempotency, and same-conversation Telegram ordering.
 

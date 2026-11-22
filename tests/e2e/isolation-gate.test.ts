@@ -323,13 +323,15 @@ test('the built-in broker completes a native status call and shares the model se
     const row = { id: 42, topic: 3, bot: 'main' as const, payload: JSON.stringify({ text: 'Synthetic Telegram Main' }) };
     const main = router.handle(row, signal);
     await until(() => Promise.resolve(telegram.sessions().some((item) => telegram.turns(item.id).length > 0) || undefined), 10_000);
+    const localTurn = telegram.sessions().flatMap((item) => telegram.turns(item.id))[0];
+    assert.equal(store.workItems.byRun('channel', localTurn.id)?.state, 'queued');
     const bi = runtime.knowledge!.propose('Synthetic BI proposal', { fixture: 'Synthetic input' }, signal);
     assert.deepEqual(calls, ['Web']);
     releaseWeb.resolve();
     await main;
     assert.deepEqual(await bi, { content: 'Synthetic BI proposal' });
     assert.equal(await until(() => router.handle(row, signal), 15_000), 'Synthetic verified reply');
-    assert.deepEqual(calls, ['Web', 'Web tool result', 'Telegram Main', 'BI']);
+    assert.deepEqual(calls, ['Web', 'Web tool result', 'BI', 'Telegram Main']);
     assert.equal(store.get(id).state, 'verified');
     assert.deepEqual(modelStatusSchema, { type: 'object', properties: {}, required: [], additionalProperties: false });
     assert.match(receipt ?? '', /Synthetic agent display/);
