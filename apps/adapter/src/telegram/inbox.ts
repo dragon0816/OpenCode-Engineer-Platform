@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { pathToFileURL } from 'node:url';
 import { ChannelSpool } from '../channels/spool.ts';
 import type { Binding, ChannelLocale, Destination, InboundEnvelope, Lane } from '../channels/transport.ts';
 import { channelText } from '../channels/catalog.ts';
@@ -19,6 +21,17 @@ export type Message = {
 };
 export type Update = { update_id: number; message?: Message };
 export type Intake = { bot: Bot; id: number; topic: number; payload: string; destination?: Destination };
+
+function preflightSchema(path: string) {
+  if (path === ':memory:' || !existsSync(path)) return;
+  // The launcher and maintenance serialize access to the data root. Inspect any committed WAL
+  // frames with a private index so rejecting a schema cannot checkpoint the WAL or update its SHM.
+  const uri = pathToFileURL(path);
+  uri.searchParams.set('vfs', process.platform === 'win32' ? 'win32-longpath-none' : 'unix-none');
+  using db = new DatabaseSync(uri.href, { readOnly: true });
+  db.exec('PRAGMA locking_mode=EXCLUSIVE');
+  checkTelegramSchema(db);
+}
 
 export function telegramBatch(bot: Bot, owner: string, updates: Update[], checkpoint: string, now: number, legacy = true) {
   let next = Number(checkpoint || 0);
@@ -49,6 +62,7 @@ export class TelegramInbox extends ChannelSpool {
   readonly db: DatabaseSync;
 
   constructor(path: string, recoverSending = true) {
+    preflightSchema(path);
     const db = new DatabaseSync(path, { timeout: 5000 });
     super(db);
     this.db = db;

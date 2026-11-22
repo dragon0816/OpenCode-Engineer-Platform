@@ -254,3 +254,23 @@ test('owned SQLite stores refuse future schemas without mutating files', () => {
     }
   } finally { fixture.cleanup(); }
 });
+
+test('Telegram refuses a future schema committed only in a crash-left WAL without mutating files', () => {
+  const fixture = maintenanceFixture();
+  try {
+    const path = join(fixture.data, 'telegram.sqlite');
+    const child = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `
+      import { DatabaseSync } from 'node:sqlite';
+      const db = new DatabaseSync(process.argv[1]);
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; PRAGMA user_version=99');
+      process.exit(79);
+    `, path], { encoding: 'utf8', timeout: 30_000 });
+    assert.ifError(child.error);
+    assert.equal(child.status, 79, child.stderr);
+    const files = [path, path + '-wal', path + '-shm'];
+    const prior = files.map((file) => readFileSync(file));
+    assert.equal(prior[0].readInt32BE(60), 0);
+    assert.throws(() => new TelegramInbox(path), { message: 'Telegram資料庫版本比程式新。' });
+    assert.deepEqual(files.map((file) => readFileSync(file)), prior);
+  } finally { fixture.cleanup(); }
+});
