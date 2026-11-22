@@ -206,4 +206,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 強制隔離測試資料目錄，修正 MCP 測試結果與 Job 成員確認的交接。 [驗收紀錄](reviews/HARDENING_UPGRADE_TESTS_REPORT.md)
 - [ ] 由審核者在 OEP 關閉後驗收 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 
-- [Phase 3B／3B2 多助理與交辦設計](design/PHASE3B_MULTI_AGENT_DESIGN.md)
+## Phase 3B 切片 1 助理台帳與跨版遷移
+
+- [x] 建立內建助理、工作資料夾、會話歸屬、初始授權、資料分級及交辦額度設定。舊 Web、Telegram 與 BI 流程沿用原入口。
+- [x] 以升級前多庫 fixture 驗證逐庫交易、重跑、資料列比對與檔案雜湊。 [多助理設計](design/PHASE3B_MULTI_AGENT_DESIGN.md) · [切片 1 驗收](reviews/PHASE3B_SLICE1_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+- [ ] 後續切片完成執行隔離、通道與 BI 歸屬、助理設定介面，以及交辦、結果與通知流程。
