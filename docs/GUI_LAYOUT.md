@@ -18,6 +18,8 @@
 | 顯示預覽或工作詳情的右側區域 | 附加資料 | Details |
 | 檢查兩版檔案的畫面 | 變更對照 | Change Comparison |
 
+新增或修改工作台介面文字時，請在同一項變更新增或更新兩份語言檔的對應字串。
+
 ## 功能欄
 
 - 頂端顯示助理的頭像、名稱及一行自我介紹，取自既有助理及外觀設定。
@@ -144,3 +146,14 @@
 | 排程／執行紀錄 | [PNG](validation/gui/jobs-details-light-wide.png) | [PNG](validation/gui/jobs-details-dark-wide.png) | [PNG](validation/gui/jobs-details-light-narrow.png) | [PNG](validation/gui/jobs-details-dark-narrow.png) |
 | 審核／待處理 | [PNG](validation/gui/review-list-light-wide.png) | [PNG](validation/gui/review-list-dark-wide.png) | [PNG](validation/gui/review-list-light-narrow.png) | [PNG](validation/gui/review-list-dark-narrow.png) |
 | 審核／項目 | [PNG](validation/gui/review-item-light-wide.png) | [PNG](validation/gui/review-item-dark-wide.png) | [PNG](validation/gui/review-item-light-narrow.png) | [PNG](validation/gui/review-item-dark-narrow.png) |
+
+### 英文樣張
+
+| 畫面 | 淺色寬版 | 深色寬版 | 淺色窄版 | 深色窄版 |
+|---|---|---|---|---|
+| 對話 | [PNG](validation/gui/conversation-light-wide-en.png) | [PNG](validation/gui/conversation-dark-wide-en.png) | [PNG](validation/gui/conversation-light-narrow-en.png) | [PNG](validation/gui/conversation-dark-narrow-en.png) |
+| 對話與 Excel 檔案 | [PNG](validation/gui/conversation-artifact-light-wide-en.png) | [PNG](validation/gui/conversation-artifact-dark-wide-en.png) | [PNG](validation/gui/conversation-artifact-light-narrow-en.png) | [PNG](validation/gui/conversation-artifact-dark-narrow-en.png) |
+| 設定／外觀 | [PNG](validation/gui/settings-appearance-light-wide-en.png) | [PNG](validation/gui/settings-appearance-dark-wide-en.png) | [PNG](validation/gui/settings-appearance-light-narrow-en.png) | [PNG](validation/gui/settings-appearance-dark-narrow-en.png) |
+| 知識庫 | [PNG](validation/gui/slice3a-overview-light-wide-en.png) | [PNG](validation/gui/slice3a-overview-dark-wide-en.png) | [PNG](validation/gui/slice3a-overview-light-narrow-en.png) | [PNG](validation/gui/slice3a-overview-dark-narrow-en.png) |
+| 排程與工作 | [PNG](validation/gui/jobs-list-light-wide-en.png) | [PNG](validation/gui/jobs-list-dark-wide-en.png) | [PNG](validation/gui/jobs-list-light-narrow-en.png) | [PNG](validation/gui/jobs-list-dark-narrow-en.png) |
+| 審核 | [PNG](validation/gui/review-list-light-wide-en.png) | [PNG](validation/gui/review-list-dark-wide-en.png) | [PNG](validation/gui/review-list-light-narrow-en.png) | [PNG](validation/gui/review-list-dark-narrow-en.png) |

@@ -189,3 +189,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 自訂 MCP 設定 API、啟動套用、專案與可驗證工具名稱的權限、隔離連線測試及繁體中文設定頁。 [驗收紀錄](reviews/PHASE2B_SLICE4C_REPORT.md)
 - [ ] 補齊遠端成功情境與各遠端失敗原因的 Chromium 驗收。 [驗收紀錄](reviews/PHASE2B_SLICE4C_REPORT.md)
+
+## Phase 3 工作台介面語言切換
+
+- [x] 完成繁中與英文語言檔、即時切換與本機保存、工作台後端訊息代碼，以及雙語介面與英文樣張。 [驗收記錄](reviews/PHASE3_I18N_REPORT.md)
+- [ ] 擁有者驗收 Web HTTP、Excel、安裝、升級和備份還原。
