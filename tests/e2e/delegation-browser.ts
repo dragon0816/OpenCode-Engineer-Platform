@@ -159,8 +159,14 @@ export async function verifyDelegationWorkbench({ page, api, targets, fileId, cl
   fileId(attachment.id);
   const runId = 'd17cf068-522c-4762-89d0-6aeec93402ed';
   await json(await api.post(path + '/turns', { id: runId, text: '做成 BI 卡片', attachments: [attachment.id], workbook: false }), 202);
-  const bi = await until(async () => (await json(await api.get(path + '/state'))).delegations
-    .find((item: { parentRunId: string; reviewRef?: object }) => item.parentRunId === runId && item.reviewRef), 20_000);
+  const bi = await until(async () => {
+    const current = await json(await api.get(path + '/state'));
+    const turn = current.runs.find((run: { id: string }) => run.id === runId);
+    const card = current.delegations.find((item: { parentRunId: string }) => item.parentRunId === runId);
+    if (turn?.state === 'verified') assert.ok(card, 'Main completed the BI turn without a durable delegation receipt');
+    if (card?.status === 'failed') assert.fail('The BI delegation failed: ' + card.reasonCode);
+    return card?.reviewRef ? card : undefined;
+  }, 20_000);
   const third = selector(bi.delegationId);
   await page.ready(`document.querySelector('${third}')?.textContent.includes('已送審')`);
   await mapping.check('delegation-bi', third, { labels: ['查看審核'] });

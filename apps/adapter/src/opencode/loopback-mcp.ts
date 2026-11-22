@@ -15,6 +15,8 @@ export async function startLoopbackMcp(options: {
   let host: string;
   const server = createServer({ requestTimeout: 8000, headersTimeout: 5000 }, async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
+    // Tool requests are independent. Avoid reusing a socket near the idle timeout of a prior turn.
+    response.setHeader('Connection', 'close');
     const credential = Buffer.from(request.headers.authorization ?? '');
     if (request.headers.host !== host || request.headers.origin !== undefined ||
         credential.length !== expected.length || !timingSafeEqual(credential, expected)) {
