@@ -152,29 +152,30 @@
           </section>
           <section id="settings-model" aria-labelledby="settings-model-title" hidden>
             <h2 id="settings-model-title" data-i18n="ui.model"></h2>
+            <p id="model-unsaved" role="status"></p>
             <p class="settings-help" data-i18n="ui.choose-the-default-model-for-new-sessions"></p>
             <p id="model-credentials"></p>
             <form id="model-settings">
               <div class="settings-actions">
                 <button id="refresh-models" type="button" disabled data-i18n="model.refresh"></button>
+                <button id="recheck-model" type="button" disabled data-i18n="ui.recheck-now"></button>
                 <small id="model-discovery"></small>
               </div>
+              <label for="default-alias" data-i18n="ui.default-model-for-new-sessions"></label>
+              <select id="default-alias" disabled></select>
               <fieldset class="model-choices">
                 <legend data-i18n="model.menu-models"></legend>
                 <small id="model-limit"></small>
                 <ul id="model-health"></ul>
               </fieldset>
-              <label for="default-alias" data-i18n="ui.default-model-for-new-sessions"></label>
-              <select id="default-alias" disabled></select>
-              <div class="settings-actions">
-                <button id="save-model" type="submit" disabled data-i18n="ui.save-default-model"></button>
-                <button id="recheck-model" type="button" disabled data-i18n="ui.recheck-now"></button>
+              <div class="settings-actions model-save-actions">
+                <button id="save-model" type="submit" disabled data-i18n="model.save-and-apply"></button>
                 <p id="model-settings-status" role="status"></p>
               </div>
             </form>
             <div id="model-restart-bar" class="mcp-restart" hidden>
               <p data-i18n="model.restart-required"></p>
-              <button id="model-restart" type="button" data-i18n="model.restart"></button>
+              <button id="model-restart" type="button" data-i18n="model.apply-now"></button>
             </div>
             <details class="settings-advanced">
               <summary data-i18n="ui.advanced"></summary>
@@ -387,6 +388,7 @@
         </div>
         <div class="composer-status">
           <small id="session-model-help" data-i18n="ui.changes-apply-to-the-next-message"></small>
+          <small id="session-model-hint" hidden><a id="choose-more-models" href="#settings-model" data-i18n="model.choose-more"></a></small>
           <small id="session-model-status" role="status"></small>
           <small id="session-model-fallback" role="status"></small>
           <small id="upload-status" role="status"></small>
