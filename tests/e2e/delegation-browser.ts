@@ -89,7 +89,7 @@ export async function verifyDelegationWorkbench({ page, api, targets, fileId, cl
   await mapping.check('delegation-cancel', second, { labels: ['取消交辦'] });
   await assertUiTextInThemes(page, cards);
   await assertContrastInThemes(page, [{ selector: first + ' .delegation-status' }, { selector: first + ' .delegation-unread' }]);
-  await page.evaluate(`document.querySelector('${first}').scrollIntoView({ block: 'center' })`);
+  await page.evaluate(`document.querySelector('${second}').scrollIntoView({ block: 'end' })`);
   await snapshot('cards', 'wide');
 
   const openFirst = first + ' [data-feature-focus$="-run"]';
@@ -111,8 +111,12 @@ export async function verifyDelegationWorkbench({ page, api, targets, fileId, cl
 
   await narrow();
   await assertWorkbenchFits(page, 'delegation cards narrow');
-  await page.evaluate(`document.querySelector('${first}').scrollIntoView({ block: 'center' })`);
+  await page.evaluate(`document.querySelector('${first}').scrollIntoView({ block: 'start' })`);
   await snapshot('cards', 'narrow');
+  if (captures) {
+    await page.evaluate(`document.querySelector('${second}').scrollIntoView({ block: 'start' })`);
+    await snapshot('running', 'narrow');
+  }
   await page.evaluate(`document.querySelector('${openFirst}').focus()`);
   await key('Enter', 'Enter', 13);
   await page.ready(`document.querySelector('#chat-files').getAttribute('aria-modal') === 'true' &&
@@ -128,18 +132,20 @@ export async function verifyDelegationWorkbench({ page, api, targets, fileId, cl
 
   await send('SYNTHETIC_DELEGATION_FOLLOWUP');
   await until(async () => (await json(await api.get(path + '/state'))).runs.length === 2 || undefined, 10_000);
-  await page.evaluate("window.nativeDelegationConfirm = window.confirm; void (window.confirm = () => false)");
   const cancel = second + ' [data-feature-focus$="-cancel"]';
-  await click(cancel);
+  const confirmCancel = (confirmed: boolean) => page.evaluate(`(() => {
+    const original = window.confirm;
+    let prompt;
+    window.confirm = (text) => { prompt = text; return ${confirmed}; };
+    try {
+      document.querySelector(${JSON.stringify(cancel)}).click();
+      return prompt;
+    } finally { window.confirm = original; }
+  })()`);
+  const cancelPrompt = '確定取消交辦給「資料整理」的工作？';
+  assert.equal(await confirmCancel(false), cancelPrompt);
   assert.equal((await json(await api.get('/api/delegations/' + running.delegationId))).receipt.status, 'running');
-  // The browser dialog is exercised after confirming that dismissal leaves the lease alone.
-  await page.evaluate('window.confirm = window.nativeDelegationConfirm; delete window.nativeDelegationConfirm');
-  const clickCancel = click(cancel);
-  await until(async () => {
-    try { await page.command('Page.handleJavaScriptDialog', { accept: true }); return true; }
-    catch { return undefined; }
-  }, 5_000);
-  await clickCancel;
+  assert.equal(await confirmCancel(true), cancelPrompt);
   await page.ready(`document.querySelector('${second}[data-status="cancelled"]') &&
     document.querySelector('#messages').textContent.includes('已核對交辦結果')`, 20_000);
   const events = await page.evaluate<number>('window.delegationHints');

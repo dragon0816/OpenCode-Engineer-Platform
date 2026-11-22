@@ -187,3 +187,5 @@
 | 知識庫 | [PNG](validation/gui/slice3a-overview-light-wide-en.png) | [PNG](validation/gui/slice3a-overview-dark-wide-en.png) | [PNG](validation/gui/slice3a-overview-light-narrow-en.png) | [PNG](validation/gui/slice3a-overview-dark-narrow-en.png) |
 | 排程與工作 | [PNG](validation/gui/jobs-list-light-wide-en.png) | [PNG](validation/gui/jobs-list-dark-wide-en.png) | [PNG](validation/gui/jobs-list-light-narrow-en.png) | [PNG](validation/gui/jobs-list-dark-narrow-en.png) |
 | 審核 | [PNG](validation/gui/review-list-light-wide-en.png) | [PNG](validation/gui/review-list-dark-wide-en.png) | [PNG](validation/gui/review-list-light-narrow-en.png) | [PNG](validation/gui/review-list-dark-narrow-en.png) |
+
+窄版執行中的交辦卡片：[繁中淺色](validation/gui/slice6-running-zh-TW-narrow-light.png)、[繁中深色](validation/gui/slice6-running-zh-TW-narrow-dark.png)、[英文淺色](validation/gui/slice6-running-en-narrow-light.png)、[英文深色](validation/gui/slice6-running-en-narrow-dark.png)。
