@@ -32,7 +32,7 @@
 
 - 頂列左側顯示目前模型、模型來源與對話的處理狀態。右側顯示本機使用身分及連線狀態。頂列右側的「⋯」是「更多」，包含語言選單、「停止服務」及對話的附加資料入口。
 - 訊息區可捲動。離開最新訊息時，可用「跳到最新訊息」返回。對話下方的會話檔案按鈕可直接預覽附件和助理建立的檔案。
-- 輸入框支援選取或拖放附件。可從「已選附件」勾選下一則要傳送的檔案，或選用既有的唯讀資料夾與語音輸入。模型選單標示設定預設值，切換從下一則訊息生效。「停止處理」結束當前回合。下方固定顯示 Enter 送出與 Shift + Enter 換行的提示，中文輸入法組字時可用 Enter 確認選字。
+- 輸入框支援選取或拖放附件。可從「已選附件」勾選下一則要傳送的檔案，或選用既有的唯讀資料夾與語音輸入。模型選單標示設定預設值，切換從下一則訊息生效。若目前只有預設模型，可從「到設定選擇更多模型」直接開啟設定。「停止處理」結束當前回合。下方固定顯示 Enter 送出與 Shift + Enter 換行的提示，中文輸入法組字時可用 Enter 確認選字。
 - 設定、知識庫、排程與工作、審核各自使用中央區域。知識庫頁首保留已發布知識庫選單和搜尋狀態。概覽、問答、品質與建置每次顯示一頁，方向鍵可切換。重新載入後再次開啟知識庫，會恢復上一次使用的頁籤與仍可用的知識庫。
 
 ## 設定
@@ -49,7 +49,7 @@
 | 設定／助理 | 設定／助理／進階 | 停用的多助理委派開關及原因 | <!-- ui:settings-assistant-advanced -->
 | 設定／外觀 | 設定／外觀 | 主題（跟隨系統、淺色、深色）、顯示密度（寬鬆、緊湊）、語言（繁體中文、英文） | <!-- ui:settings-appearance-theme -->
 | 設定／外觀 | 設定／外觀 | 上傳頭像、還原預設頭像、儲存外觀及狀態 | <!-- ui:settings-appearance-avatar -->
-| 設定／模型 | 設定／模型 | 新會話預設模型選單、儲存預設模型、立即重新檢查及狀態 | <!-- ui:settings-model-controls -->
+| 設定／模型 | 設定／模型 | 模型勾選、新會話預設模型選單、未儲存提示、儲存並套用、立即套用、立即重新檢查及狀態 | <!-- ui:settings-model-controls -->
 | 設定／模型 | 設定／模型 | 憑證設定狀態、各模型檢查結果 | <!-- ui:settings-model-status -->
 | 設定／模型 | 設定／模型／進階 | 閘道維運說明 | <!-- ui:settings-model-advanced -->
 | 設定／回合限制 | 設定／回合限制 | 最近訊息則數、歷史容量上限、工具呼叫次數上限、回合時限、欄位範圍、儲存回合限制及狀態 | <!-- ui:settings-limits -->
@@ -154,6 +154,7 @@
 | 對話 | [PNG](validation/gui/conversation-light-wide-en.png) | [PNG](validation/gui/conversation-dark-wide-en.png) | [PNG](validation/gui/conversation-light-narrow-en.png) | [PNG](validation/gui/conversation-dark-narrow-en.png) |
 | 對話與 Excel 檔案 | [PNG](validation/gui/conversation-artifact-light-wide-en.png) | [PNG](validation/gui/conversation-artifact-dark-wide-en.png) | [PNG](validation/gui/conversation-artifact-light-narrow-en.png) | [PNG](validation/gui/conversation-artifact-dark-narrow-en.png) |
 | 設定／外觀 | [PNG](validation/gui/settings-appearance-light-wide-en.png) | [PNG](validation/gui/settings-appearance-dark-wide-en.png) | [PNG](validation/gui/settings-appearance-light-narrow-en.png) | [PNG](validation/gui/settings-appearance-dark-narrow-en.png) |
+| 設定／模型 | [PNG](validation/gui/settings-model-light-wide-en.png) | [PNG](validation/gui/settings-model-dark-wide-en.png) | [PNG](validation/gui/settings-model-light-narrow-en.png) | [PNG](validation/gui/settings-model-dark-narrow-en.png) |
 | 知識庫 | [PNG](validation/gui/slice3a-overview-light-wide-en.png) | [PNG](validation/gui/slice3a-overview-dark-wide-en.png) | [PNG](validation/gui/slice3a-overview-light-narrow-en.png) | [PNG](validation/gui/slice3a-overview-dark-narrow-en.png) |
 | 排程與工作 | [PNG](validation/gui/jobs-list-light-wide-en.png) | [PNG](validation/gui/jobs-list-dark-wide-en.png) | [PNG](validation/gui/jobs-list-light-narrow-en.png) | [PNG](validation/gui/jobs-list-dark-narrow-en.png) |
 | 審核 | [PNG](validation/gui/review-list-light-wide-en.png) | [PNG](validation/gui/review-list-dark-wide-en.png) | [PNG](validation/gui/review-list-light-narrow-en.png) | [PNG](validation/gui/review-list-dark-narrow-en.png) |
