@@ -6,6 +6,7 @@ import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { validateCustomStdioMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
+import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { completion } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -20,6 +21,9 @@ const definitions = [true, false].map((enabled, index) => validateCustomStdioMcp
   environment: [], timeouts: { startup: 5000, catalog: 5000, execution: 5000 },
   dataScope: 'Synthetic', deniedTools: ['synthetic_restricted'], appliesToProjects: ['default'],
 }, ['default', 'secondary']));
+const store = new WebStore(join(root, 'web.sqlite'));
+try { for (const definition of definitions) store.saveCustomMcp(definition); }
+finally { store.close(); }
 const requests: { text: string; tools: string[] }[] = [];
 const runtime = await startRuntime(audit, {
   url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-mcp', isolatedJob: true,

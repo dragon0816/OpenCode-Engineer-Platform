@@ -1,26 +1,29 @@
-import { knowledgeMcpName, knowledgeToolName } from './knowledge-mcp.ts';
 import type { OpenCodeClient, SessionPromptInput } from '@opencode/client';
 import { randomBytes } from 'node:crypto';
 import { call } from './client.ts';
 import { providerID } from './gateway.ts';
 import { submissionCount } from './reconcile.ts';
+import { sessionPermissions } from './permissions.ts';
+import type { Permission } from './permissions.ts';
 
 export type Agent = 'workbook' | 'inspector';
 export const promptID = () => `msg_${randomBytes(16).toString('hex')}`;
 
-export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, web = false, knowledgeDisabled = false, mcpPermissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = []) {
-  const readable = (web ? [] : ['sop.md', 'marker.txt']).map((resource) => ({ action: 'read', resource, effect: 'allow' as const }));
-  const writer = { action: 'edit', resource: 'program.js', effect: 'allow' as const };
+export async function createSession(client: OpenCodeClient, directory: string, agent: Agent, alias: string, permissions?: Permission[]) {
   const session = await client.session.create({
-    title: `OEP ${web ? 'Web' : 'synthetic'} ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
-    permissions: [...(knowledgeDisabled ? [{ action: `${knowledgeMcpName}_${knowledgeToolName}`, resource: '*', effect: 'deny' as const }] :
-      !web && agent === 'workbook' ? [...readable, writer] : readable), ...mcpPermissions],
+    title: `OEP ${permissions ? 'Web' : 'synthetic'} ${agent}`, location: { directory }, model: { id: alias, providerID }, agent,
+    permissions: permissions ?? sessionPermissions({ origin: 'synthetic', workbook: agent === 'workbook' }),
   }, call());
-  if (session.agent !== agent || session.location.directory !== directory ||
+  validateSessionProfile(session, directory, agent, alias);
+  return session.id;
+}
+
+export function validateSessionProfile(session: Awaited<ReturnType<OpenCodeClient['session']['get']>>,
+  directory: string, agent: Agent, alias: string) {
+  if (session.agent !== agent || session.location?.directory !== directory ||
       session.model?.id !== alias || session.model.providerID !== providerID) {
     throw new Error('Session profile mismatch');
   }
-  return session.id;
 }
 
 export async function submitOnce(client: OpenCodeClient, input: SessionPromptInput & { id: string }) {

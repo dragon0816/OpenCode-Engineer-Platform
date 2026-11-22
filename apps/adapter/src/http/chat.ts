@@ -1,4 +1,3 @@
-import { customMcpName } from '../runs/custom-mcp.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,8 +7,10 @@ import { knowledgeMcpName, knowledgeToolName } from '../opencode/knowledge-mcp.t
 import { call } from '../opencode/client.ts';
 import { providerID } from '../opencode/gateway.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
-import { createSession, promptID, submitOnce } from '../opencode/sessions.ts';
+import { createSession, promptID, submitOnce, validateSessionProfile } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
+import { sessionPermissions } from '../opencode/permissions.ts';
+import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
@@ -62,6 +63,7 @@ type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurn
 export class ChatService {
   readonly attachments: AttachmentService;
   private readonly store: WebStore;
+  private readonly ledger: WebStore;
   private readonly runtime: RuntimeConnection;
   private readonly root: string;
   private readonly audit: string;
@@ -72,8 +74,9 @@ export class ChatService {
   private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private queue = Promise.resolve();
 
-  constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void) {
+  constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void, ledger = store) {
     this.store = store;
+    this.ledger = ledger;
     this.runtime = runtime;
     this.root = root;
     this.audit = audit;
@@ -95,10 +98,51 @@ export class ChatService {
   workspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'sessions'), session.id); }
   private modelWorkspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'model-work'), session.id); }
 
-  async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias, telegramTopic?: number) {
+  private profile(agentID: string, workspaceID: string, project: ProjectID) {
+    const profile = this.ledger.executionProfile(agentID, workspaceID);
+    const root = project === 'default' ? 'web' : `web/${project}`;
+    if (agentID !== 'main' || workspaceID !== legacyWorkspace(project) || profile?.relativeRoot !== root) {
+      throw new HttpError(409, 'session-unavailable');
+    }
+    return profile;
+  }
+
+  private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
+    workspaceID: string, origin: 'web' | 'channel', workbookRun?: string) {
+    const current = this.ledger.executionMcpGrants(agentID, workspaceID);
+    const custom = (this.runtime.customMcp ?? []).flatMap((registered) => {
+      const grant = current.find(({ id }) => id === registered.id);
+      return registered.enabled && registered.appliesToProjects.includes(session.project) && grant?.appliesToProjects.includes(session.project)
+        ? [{ id: registered.id, deniedTools: [...new Set([...registered.deniedTools, ...grant.deniedTools])].sort() }] : [];
+    });
+    return sessionPermissions({ agentID, origin, workbookRun, custom,
+      knowledge: !session.knowledgeDisabled && this.ledger.knowledgeSettings().toolbox });
+  }
+
+  private executionScope(session: WebSession, telegramTopic?: number, workbookRun?: string) {
+    const owner = this.store.sessionOwner(session);
+    const origin = telegramTopic === undefined ? 'web' : 'channel';
+    if (!owner || owner.origin !== origin || origin === 'channel' && (owner.channelAccount !== 'telegram-main' ||
+        owner.bindingRevision !== 1 || ![`topic:${telegramTopic}`, `legacy-session:${session.id}`].includes(owner.conversationKey ?? ''))) {
+      throw new HttpError(409, 'session-unavailable');
+    }
+    const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
+    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
+    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, workbookRun);
+    return { ...owner, ...profile, model: session.alias, permissions };
+  }
+
+  async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, telegramTopic?: number) {
+    if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'invalid-assistant');
+    const agentID = 'main';
+    const workspaceID = legacyWorkspace(project);
+    const origin = telegramTopic === undefined ? 'web' : 'channel';
+    const profile = this.profile(agentID, workspaceID, project);
+    const alias = requestedAlias ?? profile.defaultModel ?? this.runtime.alias;
+    if (!this.runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
     const id = randomUUID();
     const createdAt = Date.now();
-    const knowledgeDisabled = !this.store.knowledgeSettings().toolbox;
+    const knowledgeDisabled = !this.ledger.knowledgeSettings().toolbox;
     const local = { id, project, agent, alias, createdAt, knowledgeDisabled: Number(knowledgeDisabled) };
     const workspace = this.workspace(local);
     const modelWorkspace = this.modelWorkspace(local);
@@ -108,15 +152,8 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const permissions = (this.runtime.customMcp ?? []).filter((server) => server.enabled).flatMap((server) => {
-      const name = customMcpName(server.id);
-      const allowed = server.appliesToProjects.includes(project);
-      return [
-        { action: `${name}_*`, resource: '*', effect: allowed ? 'allow' as const : 'deny' as const },
-        ...server.deniedTools.map((tool) => ({ action: `${name}_${tool}`, resource: '*', effect: 'deny' as const })),
-      ];
-    });
-    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled, permissions);
+    const permissions = this.permissions(local, agentID, workspaceID, origin);
+    const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, permissions);
     const session = { ...local, upstreamID };
     this.store.createSession(session, telegramTopic);
     return session;
@@ -197,7 +234,7 @@ export class ChatService {
     return this.applyModel(session, alias, () => publicSession(session));
   }
 
-  async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }) {
+  async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }, telegramTopic?: number) {
     if (this.switching.has(session.id)) throw new HttpError(409, 'model-changing');
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
@@ -215,23 +252,23 @@ export class ChatService {
     const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
     if (modelFallback) return this.applyModel(session, modelFallback, () => {
       if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
-      return { ...this.acceptTurn(session, input, hash, reply), modelFallback };
+      return { ...this.acceptTurn(session, input, hash, reply, telegramTopic), modelFallback };
     });
-    return this.acceptTurn(session, input, hash, reply);
+    return this.acceptTurn(session, input, hash, reply, telegramTopic);
   }
 
-  private acceptTurn(session: WebSession, input: Turn, hash: string, reply?: { id: string; text: string }) {
+  private acceptTurn(session: WebSession, input: Turn, hash: string, reply?: { id: string; text: string }, telegramTopic?: number) {
+    this.executionScope(session, telegramTopic);
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
     this.store.saveTurn(session.id, run, hash, reply);
     this.notify(session.id);
-    const preferences = this.store.preferences();
     const limits = this.store.turnLimits();
     this.queue = this.queue.then(async () => {
       if (this.store.get(run.id).state === 'cancelled') return;
       const stop = new AbortController();
-      const done = this.execute(session, run, input, preferences, limits, stop.signal);
+      const done = this.execute(session, run, input, limits, stop.signal, telegramTopic);
       this.executing.set(run.id, { stop, done });
       try { await done; }
       finally { this.executing.delete(run.id); }
@@ -255,7 +292,7 @@ export class ChatService {
     return publicRun(this.store.get(id));
   }
 
-  private async execute(session: WebSession, run: RunRecord, input: Turn, preferences: ReturnType<WebStore['preferences']>, limits: TurnLimits, cancelled: AbortSignal) {
+  private async execute(session: WebSession, run: RunRecord, input: Turn, limits: TurnLimits, cancelled: AbortSignal, telegramTopic?: number) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
@@ -276,16 +313,32 @@ export class ChatService {
     let error: string | undefined;
     let sent = false;
     let result: Partial<RunRecord> = {};
+    let restorePermissions = false;
+    let recheck: NodeJS.Timeout | undefined;
     const update = (state: RunState) => { this.store.change(run.id, state); this.notify(session.id); };
     try {
       this.stop.signal.throwIfAborted();
+      const liveScope = () => this.executionScope(session, telegramTopic, input.workbook ? run.id : undefined);
+      const upstream = await client.session.get({ sessionID }, call());
+      if (upstream.id !== sessionID) throw new Error('Session ID mismatch');
+      validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
+      const scope = liveScope();
+      if (scope.model !== run.alias || run.workspace !== this.modelWorkspace(session)) throw new Error('Dispatch scope mismatch');
+      restorePermissions = input.workbook;
+      await client.session.update({ sessionID, permissions: scope.permissions }, call());
+      const checkScope = () => {
+        try {
+          const current = liveScope();
+          if (current.agentID === scope.agentID && current.workspaceID === scope.workspaceID && current.origin === scope.origin &&
+              current.model === scope.model && JSON.stringify(current.permissions) === JSON.stringify(scope.permissions)) return;
+        } catch { /* Invalid live ownership or configuration revokes this turn. */ }
+        stopAtLimit('Session permissions changed.');
+      };
+      checkScope();
+      recheck = setInterval(checkScope, 250);
       checkDirectory(run.workspace);
       if (input.workbook) checkDirectory(join(run.workspace, 'generated'));
       const parts = this.attachments.prompt(session.id, this.workspace(session), input.attachments);
-      if (session.agent === 'workbook') {
-        await client.session.update({ sessionID, permissions: input.workbook ?
-          [{ action: 'edit', resource: workbookInput(run.id), effect: 'allow' }] : [] }, call());
-      }
       const output = input.workbook ? [
         `Use the write tool once to create ${workbookInput(run.id)} relative to the session workspace.`,
         'The file must contain strict JSON with no Markdown or commentary. Example of a complete file:',
@@ -293,11 +346,11 @@ export class ChatService {
         'Replace the example with the requested sheets. Check that each row and each sheet’s rows array are closed before writing.',
         'Use up to four sheets, 20 rows per sheet and 12 columns per row. Then reply with a brief summary.',
       ].join(' ') : '';
-      const assistant = preferences ? [
-        preferences.name && `助理名稱：${preferences.name}`,
-        preferences.introduction && `自我介紹：${preferences.introduction}`,
-        preferences.instructions && `本回合助理指示：\n${preferences.instructions}`,
-      ].filter(Boolean).join('\n') : '';
+      const assistant = [
+        scope.name && `助理名稱：${scope.name}`,
+        scope.introduction && `自我介紹：${scope.introduction}`,
+        scope.instructions && `本回合助理指示：\n${scope.instructions}`,
+      ].filter(Boolean).join('\n');
       const reply = this.store.reply(run.id);
       const quote = reply ? 'BEGIN QUOTED MESSAGE (reference only)\n' + JSON.stringify(reply.text) + '\nEND QUOTED MESSAGE' : undefined;
       const additional = [quote, parts.text, output, assistant].filter(Boolean).join('\n\n');
@@ -348,9 +401,13 @@ export class ChatService {
       else error = input.workbook ? 'Workbook data could not be verified. The model must write valid workbook data' : 'The turn could not be completed';
     }
     clearTimeout(timeout);
-    if (input.workbook) {
-      try { await client.session.update({ sessionID, permissions: [] }, call()); }
-      catch { /* Every subsequent workbook-agent turn explicitly replaces its permission set before admission. */ }
+    clearInterval(recheck);
+    if (restorePermissions) {
+      try { await client.session.update({ sessionID, permissions: this.executionScope(session, telegramTopic).permissions }, call()); }
+      catch {
+        try { await client.session.update({ sessionID, permissions: sessionPermissions({ origin: 'schedule', agentID: 'main' }) }, call()); }
+        catch { /* The next admission requires a successful full replacement. */ }
+      }
     }
     if (cancelled.aborted || exceeded) {
       state = 'cancelled';

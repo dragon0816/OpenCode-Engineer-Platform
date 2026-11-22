@@ -26,7 +26,7 @@ function settings() {
   return names.map((name) => (process.env[name] || user[name])?.trim());
 }
 
-export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean) {
+export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore) {
   const [main, bi, owner] = enabledForLaunch ? settings() : [];
   const validToken = (value: string | undefined): value is string => Boolean(value && /^\d+:[\w-]+$/.test(value));
   const enabled = Boolean(owner && /^[1-9]\d+$/.test(owner) && !(main && bi && main.split(':')[0] === bi.split(':')[0]));
@@ -44,7 +44,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   const mainApi = bind('main', main);
   const biApi = bind('bi', bi);
   const sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
-  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {});
+  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger);
   const router = new TelegramRouter(inbox, runtime, chat, sessions, biApi);
   const knowledge = runtime.knowledge?.reviewStore;
   const scheduler = knowledge && new BiScheduler(inbox.db, knowledge);

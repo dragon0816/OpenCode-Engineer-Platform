@@ -112,7 +112,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
-  const telegram = startTelegram(root, runtime, telegramEnabled);
+  const telegram = startTelegram(root, runtime, telegramEnabled, store);
   const active = new Set<Promise<void>>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');

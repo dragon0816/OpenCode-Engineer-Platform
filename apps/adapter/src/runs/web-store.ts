@@ -4,6 +4,7 @@ import type { Agent } from '../opencode/sessions.ts';
 import { maxSelectedModels } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
+import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger } from './ledger.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
@@ -161,6 +162,37 @@ export class WebStore extends Ledger {
   knowledgeSettings() {
     const row = this.db.prepare('SELECT atlas_url AS atlasUrl, toolbox FROM web_knowledge_settings WHERE id=1').get();
     return { atlasUrl: String(row?.atlasUrl ?? ''), toolbox: row?.toolbox !== 0 };
+  }
+
+  sessionOwner(session: WebSession) {
+    return this.db.prepare(`SELECT o.agent_id AS agentID, o.workspace_id AS workspaceID, o.origin,
+      o.channel_account_id AS channelAccount, o.conversation_key AS conversationKey, o.binding_revision AS bindingRevision
+      FROM session_ownership o JOIN web_sessions s ON s.id=o.session_id
+      LEFT JOIN web_session_project p ON p.id=s.id
+      WHERE s.id=? AND s.upstream_id=? AND s.agent=? AND s.alias=? AND COALESCE(p.project,'default')=?`)
+      .get(session.id, session.upstreamID, session.agent, session.alias, session.project) as {
+        agentID: string; workspaceID: string; origin: SessionOrigin;
+        channelAccount: string | null; conversationKey: string | null; bindingRevision: number | null;
+      } | undefined;
+  }
+
+  executionProfile(agentID: string, workspaceID: string) {
+    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions,
+      a.default_model_id AS defaultModel, w.relative_root AS relativeRoot,
+      COALESCE(w.display_name,w.id) AS workspaceName
+      FROM agents a JOIN agent_workspaces w ON w.agent_id=a.id
+      WHERE a.id=? AND w.id=? AND a.state='active'`).get(agentID, workspaceID) as {
+        revision: number; name: string; introduction: string; instructions: string;
+        defaultModel: string | null; relativeRoot: string; workspaceName: string;
+      } | undefined;
+  }
+
+  executionMcpGrants(agentID: string, workspaceID: string) {
+    const grants = this.db.prepare(`SELECT g.server_id AS id FROM workspace_mcp_grants g
+      JOIN agent_capabilities a ON a.capability_id=g.server_id
+      WHERE g.workspace_id=? AND a.agent_id=? AND a.kind='mcp' AND a.enabled=1`).all(workspaceID, agentID);
+    const ids = new Set(grants.map(({ id }) => id));
+    return this.customMcpServers().filter(({ enabled, id }) => enabled && ids.has(id));
   }
 
   saveKnowledgeSettings(atlasUrl: string, toolbox: boolean) {
