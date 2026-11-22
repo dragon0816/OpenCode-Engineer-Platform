@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
 
 test('paired agent management validates revisions and grants and keeps session owners separate', async () => {
@@ -23,7 +24,25 @@ test('paired agent management validates revisions and grants and keeps session o
       message: { list: async () => ({ data: [] }) },
     },
   } as unknown as Runtime;
-  const server = await startAdapter(root, runtime, () => {});
+  const reference = 'OEP_TELEGRAM_SAMPLE_BOT_TOKEN';
+  const verifying = Promise.withResolvers<void>();
+  const verified = Promise.withResolvers<void>();
+  class SyntheticTelegram extends TelegramApi {
+    override async call<T>(method: string): Promise<T> {
+      if (method === 'getMe') {
+        verifying.resolve();
+        await verified.promise;
+        return { id: 83, is_bot: true, username: 'SampleDataBot' } as T;
+      }
+      if (method === 'getUpdates') return [] as T;
+      throw new Error('Unexpected synthetic Telegram request');
+    }
+  }
+  const server = await startAdapter(root, runtime, () => {}, true, undefined, {
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, name === reference ? '83:' + randomUUID() :
+      name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? '17' : undefined])),
+    createApi: (value) => new SyntheticTelegram(value),
+  });
   const store = new WebStore(join(root, 'web.sqlite'));
   try {
     for (const id of [remote, paused]) store.saveCustomMcp({ id, enabled: true, name: 'Synthetic external tool', transport: 'remote',
@@ -70,13 +89,22 @@ test('paired agent management validates revisions and grants and keeps session o
     await expect(await write('/api/agents', { ...draft, defaultModel: 'unselected' }), 400, 'unapproved-model');
     await expect(await write('/api/agents', { ...draft, channel: { accountId: 'telegram-main', bindingRevision: 1 } }),
       409, 'channel-binding-stale');
+    const staleWizard = write('/api/agents', { ...draft, channel: { credentialRef: reference } });
+    await verifying.promise;
+    assert.equal((await write(main, { action: 'edit', revision: mainRevision + 1, replyLocale: 'en' })).status, 200);
+    verified.resolve();
+    await expect(await staleWizard, 409, 'agent-revision-conflict');
+    assert.equal((await (await read('/api/settings/channels')).json()).accounts.length, 2);
     assert.deepEqual(readdirSync(join(root, 'agents')), ['bi']);
-    const response = await write('/api/agents', { ...draft, defaultModel: 'synthetic-specialist', replyLocale: 'en', mcpGrants: [remote] });
+    draft.revision = (await (await read('/api/agents')).json()).revision;
+    const response = await write('/api/agents', { ...draft, defaultModel: 'synthetic-specialist', replyLocale: 'en',
+      mcpGrants: [remote], channel: { credentialRef: reference } });
     assert.equal(response.status, 201);
     const { agent } = await response.json();
     const scope = `/api/agents/${agent.id}/workspaces/${agent.workspaces[0].id}/sessions`;
     assert.ok(existsSync(join(root, 'agents', agent.id, 'sessions')));
     assert.deepEqual(agent.mcpGrants, [remote]);
+    assert.equal(agent.channels[0].botName, '@SampleDataBot');
     assert.equal(agent.replyLocale, 'en');
     await expect(await read(`/api/agents/${agent.id}/workspaces/legacy-default/sessions`), 404, 'agent-workspace-not-found');
     const specialist = await (await write(scope, {})).json();
@@ -88,11 +116,11 @@ test('paired agent management validates revisions and grants and keeps session o
     await expect(await read(`/api/sessions/${specialist.id}/state`), 404, 'session-route-not-found');
     assert.equal((await read(`${scope}/${specialist.id}/state`)).status, 200);
     using fixture = new DatabaseSync(join(root, 'web.sqlite'));
-    fixture.prepare(`UPDATE channel_accounts SET agent_id=?, account_fingerprint=?,state='enabled' WHERE id='telegram-main'`)
-      .run(agent.id, '0'.repeat(64));
     const archive = { action: 'archive', revision: agent.revision };
     await expect(await write('/api/agents/' + agent.id, archive), 409, 'agent-channel-bound');
-    fixture.exec("UPDATE channel_accounts SET state='disabled' WHERE id='telegram-main'");
+    const bound = (await (await read('/api/settings/channels')).json()).accounts.find(({ agentId }: { agentId: string }) => agentId === agent.id);
+    assert.equal((await write('/api/settings/channels', { action: 'unbind', confirmed: true, accountId: bound.accountId,
+      bindingRevision: bound.bindingRevision })).status, 200);
     const run = randomUUID();
     const record = { id: run, state: 'accepted', createdAt: Date.now(), workspace: '', mode: 'synthetic', retries: 0, errors: [] };
     fixture.prepare('INSERT INTO runs VALUES (?,?,?)').run(run, record.state, JSON.stringify(record));
@@ -108,6 +136,7 @@ test('paired agent management validates revisions and grants and keeps session o
     await expect(await write('/api/agents/' + agent.id, { action: 'edit', revision: agent.revision + 1, name: 'Archived' }),
       409, 'agent-inactive');
   } finally {
+    verified.resolve();
     store.close();
     await server.close();
   }

@@ -176,6 +176,14 @@ export function bindReview(anchor, onPublish, openPreview) {
     const previews = new Map();
     let reviewRows = new Map();
 
+    function agentSource(row) {
+      if (!row.agentSource) return;
+      const name = row.agentSource === 'BI 資料處理' ? message('agents.bi') : row.agentSource;
+      const label = element('small', message('reviews.agentSource', { name }));
+      label.className = 'review-agent-source';
+      return label;
+    }
+
     function openReview(id, opener, title) {
       const row = reviewRows.get(id);
       if (!row) return;
@@ -208,6 +216,8 @@ export function bindReview(anchor, onPublish, openPreview) {
       controls.className = 'review-actions';
       const comparison = element('div');
       body.prepend(heading, feedback, controls);
+      const source = agentSource(row);
+      if (source) heading.after(source);
       body.append(comparison);
 
       const action = (name, label, extra = () => ({}), parent = controls) => button(parent, label, async () => {
@@ -293,6 +303,8 @@ export function bindReview(anchor, onPublish, openPreview) {
         entry.dataset.featureFocus = 'review-' + row.id;
         const subject = (draft.cards ?? draft.addCards)?.[0]?.title || draft.updateCards?.[0]?.title || draft.sources?.[0]?.ref;
         item.append(element('small', joinText([displayedState(row), subject])));
+        const source = agentSource(row);
+        if (source) item.append(source);
         (row.status === 'pending' || row.status === 'approved' && !row.publication ? pending : history).append(item);
       }
       if (!pending.childElementCount) pending.append(element('li', message('review.no-drafts-awaiting-review')));

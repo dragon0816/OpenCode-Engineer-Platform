@@ -7,6 +7,8 @@ import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
+import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
+import { verifyAgentWorkbench } from './agent-browser.ts';
 import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
@@ -51,8 +53,9 @@ let syntheticReadOnlyFile: string | undefined;
 const pinged: string[] = [];
 const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
 const settingsPages = [
-  ['assistant', '助理', ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status', '#assistant-delegation']],
-  ['appearance', '外觀', ['#theme', '#density', '#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status']],
+  ['assistant', '助理', ['#open-main-agent']],
+  ['channels', '助理與通道', ['#channel-accounts', '#channel-refresh', '#channel-reference', '#channel-agent', '#channel-verify', '#channel-bind']],
+  ['appearance', '外觀', ['#theme', '#density', '#save-appearance', '#appearance-status']],
   ['model', '模型', ['#default-alias', '#save-model', '#recheck-model', '#model-settings-status', '#model-credentials', '#model-health li']],
   ['limits', '回合限制', ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status']],
   ['projects', '專案與資料夾', ['#folder-project option', '#project-working-root', '#project-folder-list', '#project-folder', '#project-folder-form button[type=submit]', '#project-folder-status']],
@@ -63,13 +66,11 @@ const settingsPages = [
   ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
 ] as const;
 const settingsRows: Record<string, Record<string, string[]>> = {
-  assistant: {
-    assistant: ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status'],
-    'assistant-advanced': ['details #assistant-delegation:disabled', 'details small'],
-  },
+  assistant: { 'assistant-link': ['#open-main-agent'] },
+  channels: { channels: ['#channel-accounts', '#channel-refresh', '#channel-reference', '#channel-agent', '#channel-verify', '#channel-bind'] },
   appearance: {
     'appearance-theme': ['#settings-locale','#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
-    'appearance-avatar': ['#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status'],
+    'appearance-save': ['#save-appearance', '#appearance-status'],
   },
   model: {
     'model-controls': ['#default-alias option', '#save-model', '#recheck-model', '#model-settings-status'],
@@ -153,7 +154,18 @@ const runtime = await startRuntime(audit, real ? undefined : {
 }, profile);
 try {
   const stopping = Promise.withResolvers<void>();
-  const web = await startAdapter(root, runtime, stopping.resolve);
+  class SyntheticTelegram extends TelegramApi {
+    override async call<T>(method: string): Promise<T> {
+      if (method === 'getMe') return { id: 83, is_bot: true, username: 'SampleDataBot' } as T;
+      if (method === 'getUpdates') return [] as T;
+      throw new Error('Unexpected synthetic Telegram request');
+    }
+  }
+  const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? '17' :
+      ['OEP_TELEGRAM_SAMPLE_BOT_TOKEN', 'OEP_TELEGRAM_DUPLICATE_BOT_TOKEN'].includes(name) ? '83:' + randomUUID() : undefined])),
+    createApi: (value) => new SyntheticTelegram(value),
+  });
   try {
     const page = await chromium(join(root, 'chromium'));
     try {
@@ -194,6 +206,10 @@ try {
         }
         window.scrollTo(0, 0);
       })()`);
+      const openMainAgent = async () => {
+        await page.evaluate("document.querySelector('#agent-list [data-agent=main] .agent-row-open').click()");
+        await page.ready("!document.querySelector('#agent-view').hidden && document.querySelector('#agent-panel-basic input')");
+      };
       const openPanel = (id: string) => page.evaluate(`(() => {
         const menu = document.querySelector('#top-menu');
         if (!menu.open) document.querySelector('#top-menu-trigger').click();
@@ -271,7 +287,7 @@ try {
         await tab();
         await page.ready("document.activeElement.id === 'open-chat'");
         const reached = new Set<string>();
-        for (let index = 0; index < 20 && !reached.has('agent'); index++) {
+        for (let index = 0; index < 32 && !reached.has('agent'); index++) {
           await tab();
           const focus = await page.evaluate<string>("document.activeElement.id || document.activeElement.parentElement.id");
           reached.add(focus);
@@ -629,6 +645,7 @@ try {
           document.querySelector('#appearance-settings').requestSubmit();
         `);
         await page.ready("document.querySelector('#appearance-status').textContent === '已儲存'");
+        await openMainAgent();
         await page.ready("!document.querySelector('#save-assistant').disabled");
         await page.evaluate(`
           document.querySelector('#assistant-name').value = '合成助理';
@@ -639,10 +656,13 @@ try {
         await page.ready("document.querySelector('#settings-status').textContent === '已儲存'");
         await page.evaluate("document.documentElement.dataset.beforeSettingsReload = 'true'");
         await reload();
+        await page.ready("Boolean(document.querySelector('#agent-list [data-agent=main]'))");
+        await openMainAgent();
         await page.ready(`!document.documentElement.dataset.beforeSettingsReload &&
           document.querySelector('#assistant-name')?.value === '合成助理'`);
         assert.equal(await page.evaluate("document.querySelector('#assistant-introduction').value"), '測試簡介');
         assert.equal(await page.evaluate("document.querySelector('#assistant-instructions').value"), '使用繁體中文');
+        await page.evaluate("document.querySelector('#close-agent').click()");
         await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session === ${JSON.stringify(selected)} &&
           document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.density === 'compact' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
@@ -724,8 +744,10 @@ try {
         for (const marker of [syntheticKey, syntheticURL, 'example.invalid']) assert.equal(apiChecks.visible.includes(marker), false);
         await reload();
         await page.ready("document.querySelector('.sidebar-assistant img')?.naturalWidth > 0 && document.querySelector('#messages .assistant-avatar img')?.naturalWidth > 0");
-        await page.evaluate("document.querySelector('#avatar-reset').click(); document.querySelector('#appearance-settings').requestSubmit()");
-        await page.ready("document.querySelector('#appearance-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
+        await openMainAgent();
+        await page.evaluate("document.querySelector('#avatar-reset').click(); document.querySelector('#assistant-settings').requestSubmit()");
+        await page.ready("document.querySelector('#settings-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
+        await page.evaluate("document.querySelector('#close-agent').click()");
         await page.evaluate("document.querySelector('#recheck-model').click()");
         await page.ready("document.querySelector('#model-settings-status').textContent === '已重新檢查'");
         await assertUiTextInThemes(page);
@@ -776,27 +798,32 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.ready("document.activeElement.dataset.section === 'assistant'");
+        await page.evaluate("document.querySelector('[data-section=assistant]').click(); document.querySelector('#open-main-agent').click()");
+        await page.ready("!document.querySelector('#agent-view').hidden && document.querySelector('#assistant-name')?.value === '合成助理'");
         await page.evaluate("document.querySelector('#assistant-name').value = '未儲存的名稱'");
-        await assertNativeDialogTextInThemes(page, '[data-section=appearance]', 'confirm');
+        await assertNativeDialogTextInThemes(page, '#close-agent', 'confirm');
         await page.evaluate(`
           window.confirm = () => false;
           document.querySelector('#assistant-name').value = '未儲存的名稱';
-          document.querySelector('[data-section=appearance]').click();
+          document.querySelector('#close-agent').click();
         `);
         assert.equal(await page.evaluate("document.querySelector('#settings-appearance').hidden"), true);
         await escape();
-        assert.equal(await page.evaluate(`!document.querySelector('#settings-view').hidden &&
-          !document.querySelector('#settings-assistant').hidden &&
+        assert.equal(await page.evaluate(`!document.querySelector('#agent-view').hidden &&
+          !document.querySelector('#agent-panel-basic').hidden &&
           document.querySelector('#assistant-name').value === '未儲存的名稱'`), true);
-        await page.evaluate("window.confirm = () => true");
-        await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-        await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await page.evaluate("window.confirm = () => true; document.querySelector('#close-agent').click(); document.querySelector('[data-section=assistant]').focus()");
+        await tab();
+        await page.ready("document.activeElement.dataset.section === 'channels'");
+        await tab();
         await page.ready("document.activeElement.dataset.section === 'appearance'");
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', text: ' ', windowsVirtualKeyCode: 32 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
         await page.ready("!document.querySelector('#settings-appearance').hidden");
+        await openMainAgent();
         assert.equal(await page.evaluate("document.querySelector('#assistant-name').value"), '合成助理');
+        await page.evaluate("document.querySelector('#open-settings').click()");
 
         assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#settings-nav button')]
           .map(button => [button.dataset.section, button.textContent])`), settingsPages.map(([section, title]) => [section, title]));
@@ -808,6 +835,11 @@ try {
         };
         await assertUiTextInThemes(page, '#settings-view');
         const mapping = mappingChecks(page, 'settings');
+        await openMainAgent();
+        await mapping.check('settings-assistant', '#agent-view', { selectors: ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status'] });
+        await mapping.check('settings-assistant-advanced', '#agent-view', { selectors: ['details #assistant-delegation:disabled', 'details small'] });
+        await mapping.check('settings-appearance-avatar', '#agent-view', { selectors: ['#avatar-file', '#avatar-reset', '#save-assistant', '#settings-status'] });
+        await page.evaluate("document.querySelector('#open-settings').click()");
         for (const [section, title, controls] of settingsPages) {
           await click(`#settings-nav [data-section="${section}"]`);
           await expectSetting(section, title);
@@ -1463,6 +1495,8 @@ try {
         await until(async () => slowStarted || undefined, 8_000);
         await slash('/stop');
         await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
+
+        await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures: process.env.OEP_CAPTURE_SLICE4 === '1' });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

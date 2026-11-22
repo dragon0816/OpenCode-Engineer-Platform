@@ -8,7 +8,7 @@ type Controls = { selectors?: string[]; labels?: string[] };
 const layout = readFileSync(new URL('../../docs/GUI_LAYOUT.md', import.meta.url), 'utf8');
 const ids = [...layout.matchAll(/<!-- ui:([\w-]+) -->$/gm)].map((match) => match[1]);
 
-export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature') {
+export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature' | 'agent') {
   const servers = /^settings-mcp-(?!knowledge$)/;
   const expected = ids.filter((id) => group === 'servers' ? servers.test(id) :
     id.startsWith(group + '-') && !servers.test(id));
@@ -40,7 +40,7 @@ export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'featu
     },
 
     finish() {
-      const headings = ['### 設定控制項對照', '### 功能控制項對照'];
+      const headings = ['### 設定控制項對照', '### 功能控制項對照', '### 助理控制項對照'];
       const rows = headings.flatMap((heading) => {
         const start = layout.indexOf(heading);
         const end = layout.indexOf('\n## ', start);

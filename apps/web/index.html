@@ -27,17 +27,19 @@
       </nav>
       </details>
       <details class="rail-section" id="rail-sessions" open>
-      <summary><span data-i18n="ui.session"></span> <span class="rail-count" id="session-count" data-i18n-title="ui.session-count-for-the-current-project">0</span></summary>
+      <summary><span data-i18n="ui.session"></span> <span class="rail-count" id="session-count" data-i18n-title="agents.session-count">0</span></summary>
       <div class="session-search">
         <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
         <input id="session-search" type="search" autocomplete="off" data-i18n-placeholder="ui.search-sessions" data-i18n-aria-label="ui.search-sessions">
         <button id="clear-session-search" type="button" data-i18n-aria-label="ui.clear-search" hidden>×</button>
       </div>
-      <nav id="sessions" data-i18n-aria-label="ui.projects-and-sessions"></nav>
+      <nav id="sessions" data-i18n-aria-label="agents.sessions"></nav>
       </details>
       <details class="rail-section" id="rail-assistants" open>
         <summary><span data-i18n="ui.assistant"></span> <span class="rail-count" id="assistant-count"></span></summary>
-        <label for="agent" data-i18n="ui.assistant-for-new-sessions"></label>
+        <button id="new-agent" type="button" disabled data-i18n-aria-label="agents.create" data-i18n-title="agents.create">+</button>
+        <div id="agent-list"></div>
+        <label for="agent" data-i18n="agents.main-mode"></label>
         <select id="agent" disabled>
           <option value="inspector" data-i18n="ui.data-analysis"></option>
           <option value="workbook" data-i18n="ui.excel-worksheets"></option>
@@ -53,7 +55,7 @@
         <p id="progress" role="status"></p>
       </div>
       <div class="top-actions">
-        <div class="top-identity"><strong data-i18n="ui.oep-local-user"></strong><span id="connection" role="status" data-i18n="ui.connecting"></span></div>
+        <div class="top-identity"><strong id="top-agent" data-i18n="agents.main"></strong><span data-i18n="ui.oep-local-user"></span><span id="connection" role="status" data-i18n="ui.connecting"></span></div>
         <details id="top-menu">
           <summary id="top-menu-trigger" class="menu-trigger" data-i18n-aria-label="ui.more-workbench-options" data-i18n-title="ui.more">⋯</summary>
           <div class="menu-actions">
@@ -75,6 +77,20 @@
         </details>
       </div>
     </header>
+    <section id="agent-view" aria-labelledby="agent-title" hidden>
+      <header class="page-header">
+        <h1 id="agent-title" tabindex="-1" data-i18n="agents.details"></h1>
+        <button id="close-agent" type="button" data-i18n="agents.back"></button>
+      </header>
+      <div class="agent-content">
+        <nav id="agent-tabs" data-i18n-aria-label="agents.details"></nav>
+        <form id="assistant-settings">
+          <div id="agent-fields"></div>
+          <div id="agent-actions" class="settings-actions"></div>
+          <p id="settings-status" role="status"></p>
+        </form>
+      </div>
+    </section>
     <section id="settings-view" aria-labelledby="settings-title" hidden>
       <header class="settings-heading page-header">
         <h1 id="settings-title" tabindex="-1" data-i18n="ui.settings"></h1>
@@ -87,6 +103,7 @@
         </label>
         <nav id="settings-nav" data-i18n-aria-label="ui.settings-categories">
           <button type="button" data-section="assistant" aria-controls="settings-assistant" aria-current="page" data-i18n="ui.assistant"></button>
+          <button type="button" data-section="channels" aria-controls="settings-channels" data-i18n="channels.title"></button>
           <button type="button" data-section="appearance" aria-controls="settings-appearance" data-i18n="ui.appearance"></button>
           <button type="button" data-section="model" aria-controls="settings-model" data-i18n="ui.model"></button>
           <button type="button" data-section="limits" aria-controls="settings-limits" data-i18n="ui.turn-limits"></button>
@@ -100,26 +117,38 @@
         <div class="settings-content">
           <section id="settings-assistant" aria-labelledby="settings-assistant-title">
             <h2 id="settings-assistant-title" data-i18n="ui.assistant"></h2>
-            <p class="settings-help" data-i18n="ui.set-the-assistants-name-introduction-and-reply"></p>
-            <form id="assistant-settings">
-              <label for="assistant-name" data-i18n="ui.assistant-name"></label>
-              <input id="assistant-name" type="text" maxlength="80">
-              <label for="assistant-introduction" data-i18n="ui.introduction"></label>
-              <textarea id="assistant-introduction" maxlength="500"></textarea>
-              <label for="assistant-instructions" data-i18n="ui.assistant-instructions"></label>
-              <textarea id="assistant-instructions" maxlength="4000"></textarea>
-              <small data-i18n="ui.new-sessions-use-the-latest-instructions-existing"></small>
+            <p class="settings-help" data-i18n="agents.settings-link-help"></p>
+            <button id="open-main-agent" type="button" data-i18n="agents.open-main"></button>
+          </section>
+          <section id="settings-channels" aria-labelledby="settings-channels-title" hidden>
+            <h2 id="settings-channels-title" data-i18n="channels.title"></h2>
+            <p class="settings-help" data-i18n="channels.assignment-help"></p>
+            <button id="channel-refresh" type="button" data-i18n="channels.refresh"></button>
+            <div class="channel-table-scroll" role="region" tabindex="0" data-i18n-aria-label="channels.table">
+              <table class="channel-table">
+                <thead><tr>
+                  <th scope="col" data-i18n="channels.bot"></th>
+                  <th scope="col" data-i18n="channels.agent"></th>
+                  <th scope="col" data-i18n="agents.replyLocale"></th>
+                  <th scope="col" data-i18n="channels.poll-status"></th>
+                  <th scope="col" data-i18n="channels.actions"></th>
+                </tr></thead>
+                <tbody id="channel-accounts"></tbody>
+              </table>
+            </div>
+            <form id="channel-new" class="settings-group">
+              <h3 data-i18n="channels.add"></h3>
+              <p data-i18n="channels.secure-help"></p>
+              <label for="channel-reference" data-i18n="channels.reference"></label>
+              <input id="channel-reference" required autocomplete="off" spellcheck="false">
+              <label for="channel-agent" data-i18n="channels.agent"></label>
+              <select id="channel-agent" required></select>
               <div class="settings-actions">
-                <button id="save-assistant" type="submit" disabled data-i18n="ui.save-assistant-settings"></button>
-                <p id="settings-status" role="status"></p>
+                <button id="channel-verify" type="button" data-i18n="channels.verify"></button>
+                <button id="channel-bind" type="submit" disabled data-i18n="channels.bind"></button>
+                <p id="channel-status" role="status"></p>
               </div>
             </form>
-            <details class="settings-advanced">
-              <summary data-i18n="ui.advanced"></summary>
-              <p data-i18n="ui.assistant-instructions-define-the-assistants-role-and"></p>
-              <label><input id="assistant-delegation" type="checkbox" disabled> <span data-i18n="ui.multi-assistant-delegation"></span></label>
-              <small data-i18n="ui.currently-only-the-main-assistant-can-run"></small>
-            </details>
           </section>
           <section id="settings-appearance" aria-labelledby="settings-appearance-title" hidden>
             <h2 id="settings-appearance-title" data-i18n="ui.appearance"></h2>
@@ -140,11 +169,7 @@
               </select>
               <label for="density" data-i18n="ui.display-density"></label>
               <select id="density"><option value="comfortable" data-i18n="ui.comfortable"></option><option value="compact" data-i18n="ui.compact"></option></select>
-              <label for="avatar-file" data-i18n="ui.assistant-avatar"></label>
-              <input id="avatar-file" type="file" accept="image/png,image/jpeg" aria-describedby="avatar-help">
-              <small id="avatar-help" data-i18n="ui.png-or-jpeg-up-to-90-kib"></small>
               <div class="settings-actions">
-                <button id="avatar-reset" type="button" data-i18n="ui.restore-default-avatar"></button>
                 <button id="save-appearance" type="submit" disabled data-i18n="ui.save-appearance"></button>
                 <p id="appearance-status" role="status"></p>
               </div>

@@ -54,16 +54,17 @@ export const contentText = [
   '#quality-sets', '#quality-questions .question-content', '#quality-results td:first-child',
   '.mcp-result li strong', '.mcp-result li p',
   '.feature-preview blockquote', '.feature-preview pre', '.feature-preview textarea', '.feature-preview input',
-  '#review-view li > button', '#review-view li > small', '#review-import-jobs details p',
+  '#review-view li > button', '#review-view li > small:not(.review-agent-source)', '#review-import-jobs details p',
 ].join(', ');
 
 export const contentAttributes = [
   '[data-session][title]', '.session-list [aria-label]', '#chat-resources button', '#attachments [aria-label]',
   '#artifacts [aria-label]', '#file-preview img', '#file-preview iframe', '#panel-tabs .close-tab',
   '.mcp-result li button',
+  '#agent-list summary[aria-label], #sessions [data-agent-start][aria-label]',
 ].join(', ');
 
-const names = /\b(?:OEP|AEP|Atlas|OpenCode|Windows|Telegram|Excel|Python|Markdown|JSON|CSV|PNG|JPEG|JPG|PDF|HTML|HTM|TXT|MD|XLSX|ZIP|KiB|MiB|MB|URL|MCP|HTTPS?|TLS|SSH|stdio|SQLite|Schema|WAL|UTF|SHA|BI|IANA|D03|UTC|GMT|Ctrl|Shift|Enter|Esc|End|Home|Tab|ms|soul\.md|light|dark)\b/gi;
+const names = /\b(?:OEP|AEP|Atlas|OpenCode|Windows|Telegram|Excel|Python|Markdown|JSON|CSV|PNG|JPEG|JPG|PDF|HTML|HTM|TXT|MD|XLSX|ZIP|KiB|MiB|MB|URL|MCP|HTTPS?|TLS|SSH|stdio|SQLite|Schema|WAL|UTF|SHA|BI|IANA|D03|UTC|GMT|Ctrl|Shift|Enter|Esc|End|Home|Tab|ms|soul\.md|light|dark)\b|\bSkill(?= 即將開放)/gi;
 const fileNames = /\b[^\s<>]+\.(?:txt|md|markdown|xlsx|csv|html?|jpe?g|png|pdf|json|sqlite|exe)\b/gi;
 // Commands and paths are syntax or content. Aliases are the runtime model names.
 const syntax = /\bAsia\/Taipei\b|\bfixture-notice\b|\bSYN-[A-Z0-9]+\b|\bsynthetic-(?:browser|knowledge|mcp-browser|model-[a-d])\b|(?:^|\s)\/(?:new|stop|model|theme|attach|ask|clear-search|help)\b|\b[A-Z]:[/\\][^\r\n ·]+|\b[0-9a-f]{8,}(?:-[\da-f]+)*\b/gi;
@@ -90,7 +91,7 @@ export async function assertWorkbenchFits(page: Page, context: string) {
           (!element.closest('button[data-session]') || element.matches('.session-name-default')))
         .map(element => element.id || element.textContent.trim());
       const context = document.createElement('canvas').getContext('2d');
-      for (const select of document.querySelectorAll('.locale-picker select, #settings-section, #theme, #density, #agent, #notes-filter, #session-alias')) {
+      for (const select of document.querySelectorAll('.locale-picker select, #settings-section, #theme, #density, #agent, #notes-filter, #session-alias, #agent-model, #agent-channel, #agent-reply-locale, #channel-agent')) {
         if (!select.checkVisibility() || !select.selectedOptions.length) continue;
         const style = getComputedStyle(select);
         context.font = style.font;

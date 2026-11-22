@@ -422,8 +422,7 @@ summary { cursor: pointer; }
 .settings-advanced p { margin-block: var(--space-1); }
 .settings-group { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .settings-group h3 { margin: 0 0 var(--space-1); font-size: var(--text-base); }
-#assistant-settings, #appearance-settings { display: grid; gap: var(--space-2); }
-#assistant-settings input { width: 100%; }
+#appearance-settings { display: grid; gap: var(--space-2); }
 #model-settings { margin-top: var(--space-3); }
 #limit-fields { display: grid; gap: var(--space-2); }
 #project-folder-list { margin-bottom: var(--space-3); }
@@ -448,6 +447,53 @@ summary { cursor: pointer; }
   color: var(--link); background: var(--assistant); vertical-align: middle; font-weight: 700;
 }
 .assistant-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+#new-agent { margin-block: var(--space-2); }
+#agent-list { display: grid; gap: var(--space-2); margin-block-end: var(--space-3); }
+.agent-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1) var(--space-2);
+  border-block-end: 1px solid var(--line); padding-block-end: var(--space-2);
+}
+.agent-row-open { grid-column: 1; grid-row: 1; display: flex; gap: var(--space-2); align-items: center; text-align: start; }
+.agent-row-open span { min-inline-size: 0; overflow-wrap: anywhere; }
+.agent-row-open strong { display: block; }
+.agent-row-start { grid-column: 1; grid-row: 2; justify-self: start; }
+.agent-row > details { grid-column: 2; grid-row: 1; position: relative; align-self: start; }
+.agent-row .menu-actions { inset-inline-start: auto; inset-inline-end: 0; min-inline-size: 8rem; }
+.agent-session-group { margin-block: var(--space-3); }
+.agent-session-heading { font-size: var(--text-base); overflow-wrap: anywhere; margin: 0; }
+.agent-session-group .project { margin-block: var(--space-1); }
+.agent-session-group .project-heading > button:first-child { flex: 1; min-inline-size: 0; }
+.agent-session-group .project-heading button:not([data-project]) { flex: 0 0 32px; text-align: center; padding-inline: 0; }
+.top-identity #top-agent { overflow-wrap: anywhere; }
+#agent-view { flex: 1; background: var(--surface); }
+#agent-view .page-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+#agent-title { overflow-wrap: anywhere; }
+.agent-content { max-inline-size: 52rem; margin-inline: auto; padding: var(--space-4) var(--page-gutter); }
+#agent-tabs[role="tablist"], .agent-steps { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+#agent-tabs { margin-block-end: var(--space-4); }
+#agent-tabs [aria-selected="true"] { border-color: var(--link); color: var(--link); background: var(--selected); }
+.agent-steps { list-style: none; margin: 0; padding: 0; color: var(--muted); }
+.agent-steps li { padding: var(--space-1) var(--space-2); }
+.agent-steps [aria-current="step"] { border-block-end: 2px solid var(--link); color: var(--text); font-weight: 700; }
+.agent-content label { display: block; font-weight: 600; margin-block-start: var(--space-2); }
+.agent-content :is(input, select) { max-inline-size: 100%; }
+.agent-content :is(input:not([type="checkbox"]), textarea) { inline-size: 100%; }
+.agent-content textarea { display: block; min-block-size: 4rem; resize: vertical; }
+.agent-content select { min-inline-size: min(15rem, 100%); }
+.agent-content :is(p, small, li, dd) { overflow-wrap: anywhere; }
+.agent-choices { min-inline-size: 0; border: 1px solid var(--line); }
+.agent-choices label { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); }
+.agent-choices input[type="checkbox"] { flex: none; }
+.agent-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-2); }
+.agent-summary dt { font-weight: 600; }
+.agent-summary dd { margin: 0; }
+.channel-table-scroll { max-inline-size: 100%; overflow-x: auto; margin-block-start: var(--space-3); }
+.channel-table { inline-size: 100%; min-inline-size: 30rem; border-collapse: collapse; text-align: start; }
+.channel-table :is(th, td) { border-block-end: 1px solid var(--line); padding: var(--space-2); vertical-align: top; text-align: start; }
+.channel-table :is(select, button) { max-inline-size: 100%; margin-block-end: var(--space-1); }
+.channel-table p { margin: 0 0 var(--space-1); }
+#channel-reference { inline-size: 100%; }
 :root[data-density="compact"] .message { padding-block: var(--space-1); margin-block: var(--space-1); }
 :root[data-density="compact"] .session-list li { padding-block: var(--space-0-5); }
 

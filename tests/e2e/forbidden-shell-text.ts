@@ -49,7 +49,7 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body', 
       if (!value?.trim()) return;
       const text = value.trim();
       const modelSurface = contentSource.matches('#model, #default-alias option, #session-alias option, #quality-aliases option, ' +
-        '#model-health label span, #model-health button, #session-model-fallback');
+        '#model-health label span, #model-health button, #session-model-fallback, #agent-model option, [data-agent-model]');
       const checked = modelSurface ? text.replace(/\\bsynthetic-(?:browser|knowledge|mcp-browser)\\b/g, '') : text;
       parts[insideAdvanced(element) ? 'advanced' : 'normal'].push(checked);
       if (!contentSource.closest(${JSON.stringify(contentText)}) &&

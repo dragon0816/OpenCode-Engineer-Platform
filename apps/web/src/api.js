@@ -9,9 +9,10 @@ export function projectLabel(project) {
 }
 
 export class RequestError extends LocalizedError {
-  constructor(status, text) {
+  constructor(status, text, detail) {
     super(text);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -42,7 +43,7 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     headers['X-OEP-Filename'] = encodeURIComponent(file.name);
     body = file;
   }
-  if (body !== undefined && csrf) headers['X-OEP-CSRF'] = csrf;
+  if (csrf && (body !== undefined || /^\/api\/agents(?:\/|$)/.test(path) || path === '/api/settings/channels')) headers['X-OEP-CSRF'] = csrf;
   let response;
   let result;
   try {
@@ -55,7 +56,7 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
   if (!response.ok) {
     const text = result?.errorDetail
       ? serverText(result.errorDetail) : errorText(result?.error);
-    throw new RequestError(response.status, result?.errorPath ? joinText([result.errorPath, text]) : text);
+    throw new RequestError(response.status, result?.errorPath ? joinText([result.errorPath, text]) : text, result?.errorDetail);
   }
   return result;
 }
