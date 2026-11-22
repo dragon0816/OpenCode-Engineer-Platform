@@ -1,7 +1,7 @@
 let csrf;
 
 export function modelLabel(alias) {
-  return alias.startsWith('synthetic-') ? '測試模型' : alias;
+  return alias.startsWith('synthetic-') ? '已設定的模型' : alias;
 }
 
 export class RequestError extends Error {

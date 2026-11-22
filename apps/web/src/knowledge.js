@@ -5,7 +5,8 @@ import { RequestError, request } from './api.js';
 
 const tabPreference = 'oep.knowledge.tab';
 const vaultPreference = 'oep.knowledge.vault';
-const vaultTitle = (item) => item.id === 'oep-synthetic-demo' ? '範例知識庫' : item.title;
+const sampleVault = 'oep-synthetic-demo';
+const vaultTitle = (item) => item.id === sampleVault ? '範例知識庫' : item.title;
 const find = (id) => document.getElementById(id);
 const label = (tag, value) => {
   const element = document.createElement(tag);
@@ -109,12 +110,14 @@ export function bindKnowledge(openPreview, closePreviews) {
       return;
     }
     for (const [term, value] of [
-      ...(selected.tag ? [['發布標籤', selected.tag]] : []),
+      ...(selected.tag && selected.id !== sampleVault ? [['發布標籤', selected.tag]] : []),
       ['發布時間', new Date(selected.publishedAt).toLocaleString('zh-Hant')],
       ['內容', `${selected.cards} 張卡片、${selected.sources} 個來源、${selected.passages} 段證據、${selected.relationships} 條關係`],
     ]) details.append(label('dt', term), label('dd', value));
     for (const [term, value] of [
-      ['識別碼', selected.id], ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ...(selected.id === sampleVault ? [] : [
+        ['識別碼', selected.id], ['發布版本', selected.revision], ['結構版本', `${selected.schema} · ${selected.schemaVersion}`],
+      ]),
       ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
     ]) technical.append(label('dt', term), label('dd', value));
     vaultStatus.textContent = selected.ready ? '可搜尋' : '搜尋需要維護';
@@ -159,11 +162,12 @@ export function bindKnowledge(openPreview, closePreviews) {
       const { vaults } = await request('/api/knowledge/vaults', { signal: active.signal });
       if (active.signal.aborted) return;
       models = new Map(vaults.map((item) => [item.id, item]));
-      const hasDemo = models.has('oep-synthetic-demo');
+      const hasDemo = models.has(sampleVault);
       demoLoad.hidden = find('demo-model-label').hidden = hasDemo;
       demoRemove.hidden = !hasDemo;
       vault.replaceChildren(...vaults.map((item) =>
-        new Option([vaultTitle(item), item.tag, new Date(item.publishedAt).toLocaleString('zh-Hant')].filter(Boolean).join(' · '), item.id)));
+        new Option(item.id === sampleVault ? vaultTitle(item) :
+          [vaultTitle(item), item.tag, new Date(item.publishedAt).toLocaleString('zh-Hant')].filter(Boolean).join(' · '), item.id)));
       if (models.has(previous)) vault.value = previous;
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
