@@ -213,3 +213,10 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 以升級前多庫 fixture 驗證逐庫交易、重跑、資料列比對與檔案雜湊。 [多助理設計](design/PHASE3B_MULTI_AGENT_DESIGN.md) · [切片 1 驗收](reviews/PHASE3B_SLICE1_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 - [ ] 後續切片完成執行隔離、通道與 BI 歸屬、助理設定介面，以及交辦、結果與通知流程。
+
+## Phase 3B 切片 2 隔離執行與內建工具
+
+- [x] 在隔離的 Windows Job 驗證固定版 OpenCode v2.3.2。SSE 可將 relay 注入的欄位傳至 MCP，測試也核對權限覆蓋、工具允許清單及工作台遮蔽。 [原始切片 2 探針](reviews/PHASE3B_SLICE2_REPORT.md)
+- [x] 2a 依設計第 12 節驗證 SSE 契約，拒絕受管會話的非串流工具請求。建立會話權限、內建工具一次性票券，以及 Web 與 Telegram 共用的模型派送順位。 [2a 驗收](reviews/PHASE3B_SLICE2A_REPORT.md)
+- [x] 2b 在正式 launcher 啟用內建 broker，遷移工作簿至受控檔案寫入，統一 Web、Telegram 與 MCP 的知識查詢授權。自訂 MCP 僅代理符合授權的遠端 HTTPS 工具，暫停本機與私人網路工具提供給助理，保留設定連線測試。完成隔離效能煙霧測試。 [2b 驗收](reviews/PHASE3B_SLICE2B_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

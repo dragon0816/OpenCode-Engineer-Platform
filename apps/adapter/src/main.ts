@@ -16,6 +16,7 @@ import { repositoryErrorReport } from '../../../packages/knowledge/src/repositor
 import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowledge/src/repository-files.ts';
 import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
+import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -29,7 +30,7 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { customMcpName, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
@@ -112,7 +113,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
-  const telegram = startTelegram(root, runtime, telegramEnabled);
+  const telegram = startTelegram(root, runtime, telegramEnabled, store);
   const active = new Set<Promise<void>>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
@@ -286,8 +287,8 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         runtime.knowledge ? 'disabled' : 'unconfigured';
       if (enabled) {
         try {
-          const { data } = await runtime.client.mcp.list(undefined, call());
-          status = data.find(({ name }) => name === knowledgeMcpName)?.status.status ?? 'pending';
+          const { data } = await runtime.client.mcp.list({ location: { directory: root } }, call());
+          status = data.find(({ name }) => name === brokerMcpName)?.status.status ?? 'pending';
         } catch {
           status = 'failed';
         }
@@ -398,7 +399,6 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const servers = store.customMcpServers();
       const configured = configuredCustomMcpCredentials(servers.flatMap(({ environment }) => environment.map(({ reference }) => reference)));
       const applied = runtime.customMcp ?? [];
-      const statuses = await runtime.client.mcp.list(undefined, call()).then(({ data }) => data, () => []);
       const matches = (server: typeof servers[number]) => applied.some((entry) => {
         const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;
         return Object.entries(definition).every(([key, value]) =>
@@ -410,8 +410,8 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
           applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
         servers: servers.map((server) => ({
           ...server, restartRequired: !matches(server) || changedCredentials.has(server.id),
-          status: !server.enabled ? 'disabled' : server.environment.some(({ reference }) => !configured.has(reference))
-            ? 'needs_auth' : statuses.find(({ name }) => name === customMcpName(server.id))?.status.status ?? 'pending',
+          status: assistantMcpPaused(server) ? 'paused' : !server.enabled ? 'disabled' :
+            matches(server) ? runtime.remoteMcp?.status.get(server.id) ?? 'pending' : 'pending',
           environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
         })),
       });
@@ -676,6 +676,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }
     }
     if (item !== undefined || extra !== undefined) throw new HttpError(404, 'route-not-found');
+    if (method === 'POST' && resource === 'knowledge-ask' && runtime.knowledge) {
+      const input = parseAsk(await body(request));
+      if (!input) throw new HttpError(400, 'invalid-knowledge-question');
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      const result = await chat.askKnowledge(input, AbortSignal.any([client.signal, AbortSignal.timeout(76_000)]), session);
+      if (!response.destroyed) send(response, 200, result);
+      return;
+    }
     if (method === 'POST' && (resource === 'rename' || resource === 'remove')) {
       const input = await body(request);
       if (!sessions.has(id)) throw new HttpError(404, 'session-not-found');

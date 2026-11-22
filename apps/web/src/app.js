@@ -1963,7 +1963,8 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
     const [, vault, question] = /^(\S+)\s+([\s\S]+)$/.exec(argument) ?? [];
     if (!vault) throw new LocalizedError(message('chat.enter-a-knowledge-base-id-and-a'));
     if (!knowledge) throw new LocalizedError(message('chat.no-knowledge-base-configured-check-the-integration'));
-    await knowledge.ask(vault, question);
+    if (!current) throw new LocalizedError(message('chat.could-not-select-attachments-open-a-session'));
+    await knowledge.ask(vault, question, `${current.path}/knowledge-ask`);
   },
   '/clear-search'() {
     const search = find('session-search');

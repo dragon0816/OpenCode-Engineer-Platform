@@ -1,3 +1,5 @@
+import type { RelayScope } from './scoped-completion.ts';
+
 export const turnLimitFields = {
   recentMessages: { min: 0, max: 100, initial: 40 },
   historyBytes: { min: 0, max: 1_048_576, initial: 262_144 },
@@ -64,4 +66,5 @@ export type TurnBoundary = {
   limits: TurnLimits;
   signal: AbortSignal;
   addTools: (count: number) => void;
+  scope?: RelayScope;
 };

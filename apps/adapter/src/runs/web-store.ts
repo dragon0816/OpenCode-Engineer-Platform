@@ -4,6 +4,7 @@ import type { Agent } from '../opencode/sessions.ts';
 import { maxSelectedModels } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
+import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger } from './ledger.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
@@ -103,6 +104,7 @@ const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
 
 export class WebStore extends Ledger {
   private readonly telegram: boolean;
+  private readonly executionChanges = new Set<() => void>();
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -132,7 +134,7 @@ export class WebStore extends Ledger {
 
   saveCustomMcp<T extends CustomMcp>(definition: T) {
     const { id } = definition;
-    return this.transaction(() => {
+    const saved = this.transaction(() => {
       const existing = this.db.prepare('SELECT created_at, updated_at FROM mcp_servers WHERE id = ?').get(id);
       const now = Math.max(Date.now(), Number(existing?.updated_at ?? 0) + 1);
       const createdAt = Number(existing?.created_at ?? now);
@@ -146,16 +148,25 @@ export class WebStore extends Ledger {
       if (!this.telegram) replaceLegacyMcpGrants(this.db, definition);
       return { ...definition, createdAt, updatedAt: now };
     });
+    this.executionChanges.forEach((check) => check());
+    return saved;
   }
 
   removeCustomMcp(id: string) {
-    return this.transaction(() => {
+    const removed = this.transaction(() => {
       if (!this.telegram) {
         this.db.prepare('DELETE FROM workspace_mcp_grants WHERE server_id = ?').run(id);
         this.db.prepare("DELETE FROM agent_capabilities WHERE kind='mcp' AND capability_id = ?").run(id);
       }
       return Boolean(this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes);
     });
+    if (removed) this.executionChanges.forEach((check) => check());
+    return removed;
+  }
+
+  onExecutionChange(check: () => void) {
+    this.executionChanges.add(check);
+    return () => { this.executionChanges.delete(check); };
   }
 
   knowledgeSettings() {
@@ -163,8 +174,49 @@ export class WebStore extends Ledger {
     return { atlasUrl: String(row?.atlasUrl ?? ''), toolbox: row?.toolbox !== 0 };
   }
 
+  sessionOwner(session: WebSession) {
+    return this.db.prepare(`SELECT o.agent_id AS agentID, o.workspace_id AS workspaceID, o.origin,
+      o.channel_account_id AS channelAccount, o.conversation_key AS conversationKey, o.binding_revision AS bindingRevision
+      FROM session_ownership o JOIN web_sessions s ON s.id=o.session_id
+      LEFT JOIN web_session_project p ON p.id=s.id
+      LEFT JOIN web_session_display d ON d.id=s.id
+      WHERE s.id=? AND s.upstream_id=? AND s.agent=? AND s.alias=? AND COALESCE(p.project,'default')=?
+        AND COALESCE(d.removed,0)=0`)
+      .get(session.id, session.upstreamID, session.agent, session.alias, session.project) as {
+        agentID: string; workspaceID: string; origin: SessionOrigin;
+        channelAccount: string | null; conversationKey: string | null; bindingRevision: number | null;
+      } | undefined;
+  }
+
+  executionProfile(agentID: string, workspaceID: string) {
+    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions,
+      a.default_model_id AS defaultModel, w.relative_root AS relativeRoot,
+      COALESCE(w.display_name,w.id) AS workspaceName
+      FROM agents a JOIN agent_workspaces w ON w.agent_id=a.id
+      WHERE a.id=? AND w.id=? AND a.state='active'`).get(agentID, workspaceID) as {
+        revision: number; name: string; introduction: string; instructions: string;
+        defaultModel: string | null; relativeRoot: string; workspaceName: string;
+      } | undefined;
+  }
+
+  executionMcpGrants(agentID: string, workspaceID: string) {
+    const grants = this.db.prepare(`SELECT g.server_id AS id FROM workspace_mcp_grants g
+      JOIN agent_capabilities a ON a.capability_id=g.server_id
+      WHERE g.workspace_id=? AND a.agent_id=? AND a.kind='mcp' AND a.enabled=1`).all(workspaceID, agentID);
+    const ids = new Set(grants.map(({ id }) => id));
+    return this.customMcpServers().filter(({ enabled, id }) => enabled && ids.has(id));
+  }
+
+  executionKnowledgeReads(agentID: string, workspaceID: string) {
+    return this.db.prepare(`SELECT r.vault_id AS vault FROM agent_knowledge_reads r
+      JOIN agents a ON a.id=r.agent_id JOIN agent_workspaces w ON w.agent_id=a.id
+      WHERE a.id=? AND w.id=? AND a.state='active' ORDER BY r.vault_id`).all(agentID, workspaceID)
+      .map(({ vault }) => String(vault));
+  }
+
   saveKnowledgeSettings(atlasUrl: string, toolbox: boolean) {
     this.db.prepare('INSERT OR REPLACE INTO web_knowledge_settings VALUES (1, ?, ?)').run(atlasUrl, Number(toolbox));
+    this.executionChanges.forEach((check) => check());
   }
 
   projectFolders() {

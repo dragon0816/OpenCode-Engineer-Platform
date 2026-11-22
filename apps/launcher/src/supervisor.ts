@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { knowledgeMcpName, knowledgeToolName } from '../../adapter/src/opencode/knowledge-mcp.ts';
-import type { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
+import type { startLoopbackMcp } from '../../adapter/src/opencode/loopback-mcp.ts';
 import { delimiter, dirname, join } from 'node:path';
 import { openCodeEndpoint } from '../../adapter/src/opencode/client.ts';
 import { providerID } from '../../adapter/src/opencode/gateway.ts';
@@ -12,8 +11,6 @@ import { atRepo, sha256 } from './paths.ts';
 import { startJob } from './job-object.ts';
 import { pause, retryReadiness, until } from '../../../scripts/phase0/probe-http.ts';
 
-import { customMcpName } from '../../adapter/src/runs/custom-mcp.ts';
-import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
 
 const pin = () => JSON.parse(readFileSync(atRepo('config/opencode.pin.json'), 'utf8'));
 export type Supervisor = Awaited<ReturnType<typeof supervise>>;
@@ -26,9 +23,9 @@ async function freePort() {
   return port;
 }
 
-type KnowledgeMcp = Awaited<ReturnType<typeof startKnowledgeMcp>>['config'];
+type McpRegistration = { name: string; config: Awaited<ReturnType<typeof startLoopbackMcp>>['config'] };
 
-function config(relay: { baseURL: string; key: string }, aliases: readonly string[], web: boolean, knowledge: KnowledgeMcp | undefined, custom: readonly CustomMcp[], definitions: string) {
+function config(relay: { baseURL: string; key: string }, aliases: readonly string[], web: boolean, mcp?: McpRegistration) {
   const template = JSON.parse(readFileSync(atRepo('config/opencode.example.jsonc'), 'utf8'));
   const provider = template.providers[providerID];
   provider.settings = { baseURL: relay.baseURL, apiKey: relay.key };
@@ -40,27 +37,12 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
     template.agents.inspector.system = 'Answer the user using the supplied content. Explain when a document cannot be read. You are a read-only analysis assistant.';
     template.agents.workbook.system = 'Answer the user using the supplied content. Prepare workbook data only when the server gives a workbook output instruction.';
   }
-  if (knowledge) {
-    template.mcp = { servers: { [knowledgeMcpName]: knowledge } };
-    template.permissions.push({ action: `${knowledgeMcpName}_${knowledgeToolName}`, resource: '*', effect: 'allow' });
-  }
-  for (const server of custom) {
-    if (!server.enabled) continue;
-    template.mcp ??= { servers: {} };
-    const { dataScope: _dataScope, appliesToProjects: _projects, name: _name, ...definition } = server;
-    const file = join(definitions, server.id + '.json');
-    writeFileSync(file, JSON.stringify(definition), { flag: 'wx' });
-    template.mcp.servers[customMcpName(server.id)] = {
-      type: 'local', command: [process.execPath, atRepo('scripts/windows/custom-mcp-stdio.mjs'), file],
-      ...(server.transport === 'stdio' && { cwd: server.cwd }), timeout: server.timeouts,
-    };
-    // Sessions explicitly allow servers for their projects. Older and non-Web sessions inherit the default deny.
-  }
+  if (mcp) template.mcp = { servers: { [mcp.name]: mcp.config } };
   return JSON.stringify(template);
 }
 
 export async function supervise(root: string, relay: { baseURL: string; key: string }, aliases: readonly string[], profile?: string,
-  knowledge?: KnowledgeMcp, isolatedJob = false, custom: readonly CustomMcp[] = []) {
+  isolatedJob = false, mcp?: McpRegistration) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || process.versions.node.split('.')[0] !== '24') {
     throw new Error('OEP runtime requires Windows x64 and Node.js 24');
   }
@@ -94,16 +76,13 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
     };
     const temp = folder('temp');
     const workspace = folder('workspace');
-    const definitions = folder('custom-mcp');
-    writeFileSync(join(control, 'mcp-credential-names.json'), JSON.stringify(custom.filter((server) => server.enabled)
-      .flatMap(({ environment }) => environment.map(({ reference }) => reference))), { flag: 'wx' });
     const password = randomBytes(32).toString('hex');
     const port = await freePort();
     const job = startJob(control, workspace, {
       ...baseEnv, HOME: profile ?? control, USERPROFILE: profile ?? control, APPDATA: persistent('roaming'), LOCALAPPDATA: persistent('local'), TEMP: temp, TMP: temp,
       XDG_CONFIG_HOME: persistent('config'), XDG_DATA_HOME: persistent('data'), XDG_CACHE_HOME: persistent('cache'), XDG_STATE_HOME: persistent('state'),
       OPENCODE_TEST_HOME: profile ?? control, OPENCODE_PASSWORD: password,
-      OPENCODE_CONFIG_CONTENT: config(relay, aliases, Boolean(profile), knowledge, custom, definitions),
+      OPENCODE_CONFIG_CONTENT: config(relay, aliases, Boolean(profile), mcp),
       OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_CONFIG_PROJECT_DISABLE: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_FLAGS: '-automations',
       OEP_JOB_EXE: exe, OEP_JOB_PORT: String(port), ...(testScope && { OEP_JOB_TEST_SCOPE: testScope }),

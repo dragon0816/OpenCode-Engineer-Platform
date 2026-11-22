@@ -81,18 +81,20 @@ export class TelegramRouter {
 
   private async main(row: Intake, text: string, signal: AbortSignal) {
     if (!text.trim()) return '請輸入文字訊息。';
+    const db = this.inbox.db;
+    const binding = db.prepare('SELECT session FROM telegram_sessions WHERE topic=?').get(row.topic);
+    let session = this.sessions.sessions().find(({ id }) => id === binding?.session);
     if (/^\/ask(?:\s|$)/.test(text)) {
       const match = text.match(/^\/ask\s+(\S+)\s+([\s\S]+)$/);
       const input = match && parseAsk({ vault: match[1], question: match[2] });
       if (!input) return '請輸入 /ask 知識庫ID 問題';
-      const result = await this.runtime.knowledge?.ask.ask(input, AbortSignal.any([signal, AbortSignal.timeout(76_000)]));
+      const result = !binding || session
+        ? await this.chat.askKnowledge(input, AbortSignal.any([signal, AbortSignal.timeout(76_000)]), session, row.topic)
+        : undefined;
       if (result?.state !== 'verified') return '沒有可核對的知識答案。請確認知識庫及模型授權。';
       return result.citations.map(({ quote, sourceId, sourceVersion, passageID }) =>
         `「${quote}」\n來源 ${sourceId} · ${sourceVersion} · ${passageID}`).join('\n\n').slice(0, 4000);
     }
-    const db = this.inbox.db;
-    const binding = db.prepare('SELECT session FROM telegram_sessions WHERE topic=?').get(row.topic);
-    let session = this.sessions.sessions().find(({ id }) => id === binding?.session);
     if (session) {
       const previous = this.sessions.turns(session.id).at(-1);
       if (previous && previous.state !== 'verified' && previous.state !== 'failed' && previous.state !== 'cancelled') {
@@ -107,7 +109,7 @@ export class TelegramRouter {
       db.prepare('INSERT OR REPLACE INTO telegram_sessions VALUES (?,?)').run(row.topic, session.id);
     }
     const id = turnId(row.id);
-    await this.chat.submit(session, { id, text, attachments: [], workbook: false });
+    await this.chat.submit(session, { id, text, attachments: [], workbook: false }, undefined, row.topic);
     const state = await this.chat.state(session);
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);

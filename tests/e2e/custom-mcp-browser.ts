@@ -13,7 +13,7 @@ import { syntheticMcpCertificate } from '../fixtures/mcp/tls.ts';
 import { chromium } from './chromium.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
-import { completion, toolCall } from './synthetic-completion.ts';
+import { completion } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
 const root = dataDirectory();
@@ -62,18 +62,7 @@ async function openRuntime() {
       for (const prompt of ['Synthetic restart guard', 'Synthetic tool listing', 'Synthetic disabled listing']) {
         if (text.includes(prompt)) modelRequests.set(prompt, tools?.flatMap((tool) => tool.function?.name ?? []) ?? []);
       }
-      if (JSON.stringify(messages).includes('Synthetic tool listing')) {
-        const returned = messages.find((message) => message.role === 'tool');
-        if (returned) {
-          const payload = JSON.stringify(returned);
-          noMarker(payload);
-          assert.match(payload, /Synthetic catalog read/);
-        } else {
-          const name = tools?.find((tool) => tool.function?.name?.endsWith('_synthetic_catalog'))?.function?.name;
-          assert.ok(name);
-          return completion(model, toolCall(0, 'call_custom_catalog', name, {}), 'tool_calls');
-        }
-      }
+      noMarker(JSON.stringify(messages));
       return completion(model, [{ role: 'assistant', content: 'Synthetic reply' }], 'stop');
     },
   }, profile, definitions);
@@ -242,6 +231,9 @@ try {
     const pid = Number(probePid);
     assert.ok(Number.isInteger(pid) && pid > 0);
     assert.equal(powershell(`(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Id`).trim(), '');
+    const catalog = await evaluate<string>("document.querySelector('.mcp-result').textContent");
+    assert.match(catalog, /Read the synthetic catalog/);
+    assert.match(catalog, /已隱藏/);
     noMarker(await evaluate<string>('document.documentElement.outerHTML'));
   }
   await screenshots('result');
@@ -263,28 +255,19 @@ try {
   const texts = await evaluate<string>("document.querySelector('#mcp-servers').textContent");
 
   assert.match(texts, /已啟用/);
+  assert.match(texts, /已暫停提供給助理/);
+  assert.match(texts, /仍可測試連線/);
   assert.equal(await evaluate("document.querySelector('#mcp-restart-bar').hidden"), true);
   if (marker) {
     const statePath = await submit('Synthetic tool listing');
     await page.ready(`import('/api.js').then(async ({ request }) =>
       (await request(${JSON.stringify(statePath)})).runs.at(-1)?.state === 'verified')`, 15000);
     const tools = modelRequests.get('Synthetic tool listing') ?? [];
-    assert.ok(tools.some((name) => name.endsWith('_synthetic_catalog')));
+    assert.ok(!tools.some((name) => name.endsWith('_synthetic_catalog')));
     const detail = await api(statePath);
-    assert.match(detail, /Synthetic catalog read/);
-    assert.match(detail, /已隱藏/);
+    assert.doesNotMatch(detail, /Synthetic catalog read/);
     noMarker(detail);
-    const pidBefore = probePid;
-    const deadline = Date.now() + 10_000;
-    while (readFileSync(pidFile, 'utf8') === pidBefore && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    const pid = Number(readFileSync(pidFile, 'utf8'));
-    assert.notEqual(String(pid), pidBefore);
-    assert.ok(Number.isInteger(pid) && pid > 0);
-    const command = powershell(`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`);
-    assert.match(command, /stdio\.mjs/i);
-    noMarker(command);
+    assert.equal(readFileSync(pidFile, 'utf8'), probePid, 'Assistant restart must not start the paused process');
     const snapshot = await evaluate<string>("import('/api.js').then(async ({ request }) => JSON.stringify(await request('/api/settings/mcp/custom')))");
     assert.match(snapshot, /"configured":true/);
     noMarker(snapshot);
@@ -341,6 +324,7 @@ try {
       await evaluate("document.querySelector('#mcp-form [name=localService]').checked = true");
       await click('#mcp-form button[type=submit]');
       await page.ready("!document.querySelector('#mcp-editor').open");
+      assert.match(await evaluate<string>("document.querySelector('.mcp-badges').textContent"), /已暫停提供給助理/);
       await click('#mcp-servers .settings-actions button:nth-child(3)');
       await page.ready("document.querySelector('.mcp-result').textContent.length > 0 && " +
         "!document.querySelector('.mcp-result').textContent.includes('正在測試')", 22000);

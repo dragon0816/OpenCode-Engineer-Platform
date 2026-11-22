@@ -17,7 +17,8 @@ for await (const line of createInterface({ input: process.stdin })) {
   const result = method === 'initialize'
     ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'synthetic', version: '1' } }
     : method === 'tools/list'
-      ? { tools: [{ name: 'synthetic_catalog', description: 'Read the synthetic catalog', inputSchema: { type: 'object' } },
+      ? { tools: [{ name: 'synthetic_catalog', description: 'Read the synthetic catalog' +
+        (digest && !extra ? ': ' + process.env.SYNTHETIC_MCP : ''), inputSchema: { type: 'object' } },
         ...(extra ? [{ name: 'synthetic_restricted', description: 'Restricted synthetic tool', inputSchema: { type: 'object' } }] : [])] }
       : method === 'tools/call' && digest && !extra
         ? { content: [{ type: 'text', text: 'Synthetic catalog read: ' + process.env.SYNTHETIC_MCP }] }

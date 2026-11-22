@@ -7,7 +7,7 @@ export function completion(model: string, deltas: object[], finish: string) {
     choices: [{ index: 0, delta, finish_reason }],
   });
   return new Response(deltas.map((delta) => `data: ${data(delta, null)}\n\n`).join('') +
-    `data: ${data({}, finish)}\n\ndata: [DONE]\n\n`);
+    `data: ${data({}, finish)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
 }
 
 export function toolCall(index: number, id: string, name: string, params: object) {

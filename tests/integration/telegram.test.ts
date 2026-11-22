@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -7,11 +8,14 @@ import { test } from 'node:test';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { maxWorkAttempts, TelegramApi, TelegramPoller, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
 import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
+import { ChatService } from '../../apps/adapter/src/http/chat.ts';
+import { ModelSeat } from '../../apps/adapter/src/opencode/model-seat.ts';
+import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { startKnowledgeRuntime } from '../../apps/launcher/src/knowledge.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { BiScheduler } from '../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
-import { KnowledgeAsk } from '../../packages/knowledge/src/ask.ts';
 
 function folder() {
   mkdirSync('.phase0', { recursive: true });
@@ -133,15 +137,30 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     store.publishReview('telegram-bi-2');
     assert.equal(store.reconciliation().intents.length, 1);
     let modelCalls = 0;
-    const ask = new KnowledgeAsk(store, async () => {
-      modelCalls++;
-      return { failure: 'unavailable', retryable: false };
-    });
-    const readRuntime = { knowledge: { reviewStore: store, ask } } as unknown as Runtime;
-    const mainRouter = new TelegramRouter(inbox, readRuntime, undefined!, undefined!);
-    const question = JSON.stringify({ text: '/ask intake-telegram-2 Synthetic manual supplement' });
-    assert.match(await mainRouter.handle({ id: 100, topic: 1, bot: 'main', payload: question }, signal) ?? '', /沒有可核對/);
-    assert.equal(modelCalls, 0);
+    const alias = 'synthetic-telegram';
+    const seat = new ModelSeat();
+    const profile = join(root, 'profile');
+    mkdirSync(profile);
+    const reader = await startKnowledgeRuntime(profile, root, {
+      url: 'http://example.invalid/v1', key: randomUUID(), alias, aliases: [alias],
+      fetch: async () => { modelCalls++; return new Response(null, { status: 400 }); },
+    }, () => alias, seat);
+    const policy = new WebStore(join(root, 'web.sqlite'));
+    const sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
+    const readRuntime = { knowledge: reader, alias, aliases: [alias], modelSeat: seat } as unknown as Runtime;
+    const chat = new ChatService(sessions, readRuntime, root, join(root, 'turns.jsonl'), () => {}, policy);
+    try {
+      assert.ok(policy.executionKnowledgeReads('main', 'legacy-default').includes('intake-telegram-2'));
+      const mainRouter = new TelegramRouter(inbox, readRuntime, chat, sessions);
+      const question = JSON.stringify({ text: '/ask intake-telegram-2 Synthetic manual supplement' });
+      assert.match(await mainRouter.handle({ id: 100, topic: 1, bot: 'main', payload: question }, signal) ?? '', /沒有可核對/);
+      assert.equal(modelCalls, 0);
+    } finally {
+      await chat.close();
+      sessions.close();
+      policy.close();
+      await reader.close();
+    }
     inbox.notifyReviews(store.reconciliation().intents);
     inbox.notifyReviews(store.reconciliation().intents);
     await step(bi, start + 6000);

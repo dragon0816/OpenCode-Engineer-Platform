@@ -127,13 +127,17 @@ test('a session with a removed model switches once before admitting its next tur
   const calls: string[] = [];
   let alias = previous;
   let failSwitch = true;
+  let profile: object;
   let message: { id: string; type: 'user'; text: string } | undefined;
   const runtime = {
     alias: previous, aliases: [previous], setTurnBoundary: () => undefined,
     gatewayCursor: () => 0, gatewaySince: () => [{ status: 200, output: 'text' }], redact: (text: string) => text,
     client: {
       session: {
-        create: async (input: object) => ({ ...input, id: 'synthetic-session' }),
+        create: async (input: object) => {
+          profile = { ...input, id: 'synthetic-session' };
+          return profile;
+        },
         switchModel: async (input: { sessionID: string; model: { providerID: string; id: string } }) => {
           assert.equal(input.sessionID, 'synthetic-session');
           assert.deepEqual(input.model, { providerID: 'oep-relay', id: fallback });
@@ -147,7 +151,8 @@ test('a session with a removed model switches once before admitting its next tur
           message = { id: input.id, text: input.text, type: 'user' };
           return { id: input.id, sessionID: input.sessionID };
         },
-        get: async () => ({ outcome: 'succeeded' }), active: async () => ({}), inbox: { list: async () => [] },
+        get: async () => ({ ...profile, model: { id: alias, providerID: 'oep-relay' }, outcome: 'succeeded' }),
+        update: async () => {}, active: async () => ({}), inbox: { list: async () => [] },
       },
       permission: { list: async () => [] },
       message: { list: async ({ type }: { type?: string }) => ({ data: !message ? [] : type === 'user' ? [message] :

@@ -223,8 +223,11 @@ export function bindKnowledge(openPreview, closePreviews) {
     }
   });
   vault.addEventListener('change', () => { closePreviews(); describe(); });
+  let slashAskPath;
   find('knowledge-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    const path = slashAskPath ?? '/api/knowledge/ask';
+    slashAskPath = undefined;
     if (ask.disabled || !question.value.trim()) return;
     const active = pending = new AbortController();
     const selected = models.get(vault.value);
@@ -232,7 +235,7 @@ export function bindKnowledge(openPreview, closePreviews) {
     answer.replaceChildren();
     setText(status, message('knowledge.finding-evidence-and-verifying-citations'));
     try {
-      const result = await request('/api/knowledge/ask', {
+      const result = await request(path, {
         data: { vault: vault.value, question: question.value }, signal: active.signal,
       });
       if (active.signal.aborted) return;
@@ -269,7 +272,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       showKnowledge(false);
       open.disabled = true;
     },
-    async ask(id, text) {
+    async ask(id, text, path) {
       if (pending) throw new LocalizedError(message('knowledge.a-knowledge-base-query-is-in-progress'));
       showKnowledge(true);
       await refreshVaults();
@@ -281,7 +284,11 @@ export function bindKnowledge(openPreview, closePreviews) {
       describe();
       selectTab(find('knowledge-tab-ask'));
       question.value = text;
-      if (!ask.disabled) find('knowledge-form').requestSubmit(ask);
+      if (!ask.disabled) {
+        slashAskPath = path;
+        try { find('knowledge-form').requestSubmit(ask); }
+        finally { slashAskPath = undefined; }
+      }
     },
   };
 }

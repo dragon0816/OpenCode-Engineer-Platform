@@ -38,5 +38,5 @@ export function excelProviderFixture() {
     if (!JSON.stringify(written.content).includes('program.js')) return new Response(null, { status: 400 });
     return completion(model, [{ role: 'assistant', content: 'Written.' }], 'stop');
   };
-  return { url: 'http://example.invalid/v1', key: randomBytes(24).toString('hex'), alias: 'synthetic-excel', fetch: fakeFetch };
+  return { url: 'http://example.invalid/v1', key: randomBytes(24).toString('hex'), alias: 'synthetic-excel', fetch: fakeFetch, isolatedJob: true };
 }

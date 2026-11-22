@@ -5,10 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { ModelCall } from '../../../../packages/contracts/src/run.ts';
 import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
-import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson } from '../../../../scripts/phase0/probe-redaction.ts';
+import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson, UpstreamFormatError } from '../../../../scripts/phase0/probe-redaction.ts';
 
 import { countModelTools, limitHistory } from './turn-limits.ts';
 import type { TurnBoundary } from './turn-limits.ts';
+import { allowedToolDefinitions, authorizeToolCalls, matchesNonce } from './scoped-completion.ts';
+import { stripTransport, stripTransportText } from './tool-transport.ts';
 
 export const providerID = 'oep-relay';
 export const gatewayAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'] as const;
@@ -33,7 +35,7 @@ export function gatewaySettings() {
   return { url, key };
 }
 
-type RequestBody = { model?: string; stream?: boolean; messages?: Parameters<typeof limitHistory>[0] };
+type RequestBody = { model?: string; stream?: boolean; tools?: unknown; messages?: Parameters<typeof limitHistory>[0] };
 
 function observeCompletion(frames: unknown[]) {
   type Payload = { content?: unknown; tool_calls?: unknown[] };
@@ -113,11 +115,12 @@ export function gatewayPing(options: GatewayConnection) {
 }
 
 export async function startGateway(options: GatewayConnection & {
-  alias: string; trace: (value: GatewayTrace) => void; web?: boolean; aliases?: readonly string[];
+  alias: string; trace: (value: GatewayTrace) => void; web?: boolean; aliases?: readonly string[]; managed?: boolean; scoped?: boolean;
 }) {
   const { target, markers } = gatewayEndpoint(options, 'chat/completions');
   const key = randomBytes(32).toString('hex');
-  const redact = redactFields([...markers, key]);
+  const redactSecrets = redactFields([...markers, key]);
+  const redact = (value: string) => stripTransportText(redactSecrets(value));
   const credential = Buffer.from(`Bearer ${key}`);
   const allowed = options.aliases ?? [options.alias];
   const testModel = gatewayPing(options);
@@ -144,26 +147,52 @@ export async function startGateway(options: GatewayConnection & {
         let body: RequestBody | undefined;
         try { body = await jsonInput<RequestBody>(request, options.web ? 64 * 1024 * 1024 : undefined); }
         catch { status = 400; }
-        if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
+        if (options.managed && body?.stream !== true && body?.tools !== undefined &&
+            (!Array.isArray(body.tools) || body.tools.length > 0)) status = 400;
+        else if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
           const boundary = turn;
           const filtered = boundary && limitHistory(body.messages, boundary.marker, boundary.limits);
           const policy = filtered ? boundary : undefined;
+          const scope = policy?.scope;
+          const lastUser = body.messages.findLast((message) => message.role === 'user');
+          if (options.scoped && (!scope || body.stream !== true || scope.model !== body.model ||
+              !matchesNonce(lastUser?.content, scope.nonce) || !scope.live())) {
+            status = 409;
+            return send(response, status, { error: { message: 'OEP relay status 409' } });
+          }
           const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(35_000), ...(policy ? [policy.signal] : [])]);
           signal.throwIfAborted();
           if (filtered) body.messages = filtered;
+          const definitions = scope && allowedToolDefinitions(body.tools, scope);
+          if (definitions) body.tools = definitions.tools;
           const upstream = await (options.fetch ?? fetch)(target, {
             method: 'POST', redirect: 'manual', signal,
             headers: { 'content-type': 'application/json', authorization: `Bearer ${options.key}` },
-            body: JSON.stringify(body),
+            body: JSON.stringify(options.managed ? stripTransport(body) : body),
           });
           upstreamStatus = upstream.status;
           if (!upstream.ok) {
             status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
             await upstream.body?.cancel().catch(() => undefined);
-          } else if (body.stream) {
-            const frames = await bufferedCompletion(upstream, redact);
+          } else if (body.stream === true) {
+            if (upstream.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream') {
+              await upstream.body?.cancel().catch(() => undefined);
+              throw new UpstreamFormatError('Unexpected upstream content type');
+            }
+            // Validate the model's original argument fields before adding or masking relay metadata.
+            const frames = await bufferedCompletion(upstream, redactSecrets);
             policy?.addTools(countModelTools(frames));
             signal.throwIfAborted();
+            if (scope && definitions) {
+              if (turn !== policy || !scope.live()) throw new Error('Turn scope changed');
+              try { authorizeToolCalls(frames, definitions.names, scope); }
+              catch {
+                // A policy rejection is final. OpenCode may retry a transient gateway failure.
+                status = 422;
+                error = 'invalid-completion';
+                return send(response, status, { error: { message: 'OEP relay rejected the model tool call' } });
+              }
+            }
             completion = observeCompletion(frames);
             status = 200;
             response.writeHead(status, { 'content-type': 'text/event-stream' });

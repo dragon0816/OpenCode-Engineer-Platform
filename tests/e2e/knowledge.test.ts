@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
@@ -37,6 +38,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
   const vault = snapshot.vault.id;
   const question = 'SYN-48B 零點校正容差是多少？';
   const toolName = 'oep_knowledge_ask';
+  const grant = (allowed: boolean) => {
+    using db = new DatabaseSync(join(root, 'web.sqlite'));
+    db.prepare(allowed ? "INSERT INTO agent_knowledge_reads VALUES ('main',?)" :
+      "DELETE FROM agent_knowledge_reads WHERE agent_id='main' AND vault_id=?").run(vault);
+  };
   let knowledgeCalls = 0;
   let rejectedCalls = 0;
   let toolResults = 0;
@@ -389,6 +395,14 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(rejectedCalls, 1);
         await browser.evaluate("document.querySelector('#open-chat').click(); document.querySelector('#new-session').click()");
         await ready("!document.querySelector('#prompt').disabled");
+        const unbound = await api.post('/api/sessions', { agent: 'inspector' });
+        assert.equal(unbound.status, 201);
+        const { id: unboundSession } = await unbound.json();
+        const before = knowledgeCalls;
+        const denied = await api.post(`/api/sessions/${unboundSession}/knowledge-ask`, { vault, question });
+        assert.deepEqual(await denied.json(), { state: 'abstain', reason: 'vault-unavailable' });
+        assert.equal(knowledgeCalls, before);
+        grant(true);
         await browser.evaluate(`{
           document.querySelector('#prompt').value = ${JSON.stringify('/ask ' + vault + ' ' + question)};
           document.querySelector('#composer').requestSubmit();
@@ -890,8 +904,9 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       assert.equal(knowledgeCalls, 5);
       assert.equal(toolResults, 2);
       const inbox = new TelegramInbox(join(root, 'test-telegram.sqlite'));
-      const sessions = new WebStore(join(root, 'test-telegram-chat.sqlite'));
-      const chat = new ChatService(sessions, runtime, root, join(audit, 'test-telegram.jsonl'), () => {});
+      const sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
+      const ledger = new WebStore(join(root, 'web.sqlite'));
+      const chat = new ChatService(sessions, runtime, root, join(audit, 'test-telegram.jsonl'), () => {}, ledger);
       try {
         const router = new TelegramRouter(inbox, runtime, chat, sessions);
         const signal = new AbortController().signal;
@@ -899,6 +914,12 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           payload: JSON.stringify({ text: '/ask ' + vault + ' ' + question }) }, signal);
         assert.match(result ?? '', /±0\.8 dB/);
         assert.ok(result?.includes(citationId));
+        grant(false);
+        const callsBeforeDenied = knowledgeCalls;
+        const denied = await router.handle({ id: 4, bot: 'main', topic: 1,
+          payload: JSON.stringify({ text: '/ask ' + vault + ' ' + question }) }, signal);
+        assert.match(denied ?? '', /沒有可核對的知識答案/);
+        assert.equal(knowledgeCalls, callsBeforeDenied);
         for (const topic of [1, 2]) {
           const row = { id: topic + 1, bot: 'main' as const, topic,
             payload: JSON.stringify({ text: 'Synthetic Telegram topic ' + topic }) };
@@ -908,6 +929,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(new Set(sessions.sessions().map((session) => session.upstreamID)).size, 2);
       } finally {
         await chat.close();
+        ledger.close();
         sessions.close();
         inbox.db.close();
       }
