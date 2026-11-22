@@ -257,3 +257,23 @@
 ### 10.2 Skill 整合時機（擁有者 2026-11-22）
 
 Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型清單已完成；外部 coding 幫手 Claude Code、Codex 為 3I），(2) 多助理管理（3B、3B2），(3) 外部通道 Telegram 串接（3B 切片 3）。因此 3E（能力與 Skill）提前到 3C、3D 之前；3I 排在 3B2 之後、3E 之前。
+
+### 10.3 預設 20 個 Skill（技術負責人建議，2026-11-22，待擁有者確認）
+
+依擁有者四大需求挑選。來源 A = AEP repo（`packages/hermes-skill-pack` 的 MIT 授權 Skill 與 AEP 自有 Skill），來源 C = 公司 Skill 目錄（經 Share Platform，不進 repo）。
+
+| 需求 | Skill（來源） |
+| --- | --- |
+| Coding（5） | AEP coding 修改與執行（A）、test-driven-development（A, MIT）、systematic-debugging（A, MIT）、workflow creator（A）、verification-planning（C） |
+| 網頁分析（2） | agent-browser（C）、searxng-search（C） |
+| 文書操作（4） | docx、xlsx、pdf、powerpoint（A, MIT；取代授權受限的同名公司版） |
+| 作業系統操作（1） | computer-use（A, MIT；高風險，預設停用，逐助理授權） |
+| Email（1） | 公司 Outlook Skill（C） |
+| Jira（1） | AEP team-tickets（A） |
+| GitHub（1） | github（A, MIT） |
+| 問答（3） | AEP knowledge-query（A）、公司知識庫搜尋（C）、grounded-citations（A, MIT） |
+| 名片與組織圖（2） | AEP business-cards（A；含名片讀取、email 簽名擷取、組織圖）、公司 OCR API（C） |
+
+缺口（目前沒有現成 Skill）：儀器控制、晶片控制、專門的資料分析、SAP 網頁專用流程、GitLab、Confluence。建議 Confluence、GitLab 以 MCP 外部工具接入；儀器控制、晶片控制、資料分析由擁有者提供作業程序後撰寫公司 Skill。
+
+注意：部分 AEP Skill 只是操作說明，背後依賴 AEP 的能力（例如名片庫與組織圖、Jira 預覽、coding 變更流程），OEP 需重新實作對應能力；名片庫依 D5 寫入前需審核，屬 3D 範圍。
