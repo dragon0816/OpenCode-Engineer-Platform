@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { copyFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDirectory, atRepo } from '../../apps/launcher/src/paths.ts';
+import { atRepo } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { excelRun, failRun, finishWorkbook, newRun, rawRecord, verifyWorkbookReceipt } from '../../apps/adapter/src/runs/excel.ts';

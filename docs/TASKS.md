@@ -199,3 +199,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 探索並保存閘道模型清單，提供繁中及英文的模型勾選、測試、預設與閒置重啟。會話可保留紀錄並在原模型移除後改用預設模型，知識庫品質檢查沿用已套用的模型選擇。 [驗收紀錄](reviews/PHASE3A_GATEWAY_MODELS_REPORT.md)
 - [ ] 由審核者補跑執行中 OEP 阻擋的 Web HTTP、真模型 Excel、安裝、升級及備份還原驗收。
+
+## 2026-11-22 升級與測試強化
+
+- [x] 加入跨 schema 升級 fixture、失敗版本目錄回收與相對路徑診斷。
+- [x] 強制隔離測試資料目錄，修正 MCP 測試結果與 Job 成員確認的交接。 [驗收紀錄](reviews/HARDENING_UPGRADE_TESTS_REPORT.md)
+- [ ] 由審核者在 OEP 關閉後驗收 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

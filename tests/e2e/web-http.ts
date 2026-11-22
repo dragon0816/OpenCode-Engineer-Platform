@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } f
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { validateCustomStdioMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';

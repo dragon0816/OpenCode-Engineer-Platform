@@ -72,12 +72,9 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
         INSERT INTO ingest_jobs(id,payload) VALUES ('job','{}');`);
     }
     const webDatabase = join(web, 'web.sqlite');
-    new WebStore(webDatabase).close();
     {
       using db = new DatabaseSync(webDatabase);
-      db.exec(`INSERT INTO runs VALUES ('run','accepted','{}');
-        INSERT INTO run_events(run_id,at,state,record) VALUES ('run',1,'accepted','{}');
-        INSERT INTO web_sessions VALUES ('session','upstream','inspector','synthetic',1);`);
+      db.exec(readFileSync(new URL('../fixtures/upgrade/web-before-model-selection.sql', import.meta.url), 'utf8'));
     }
     const telegram = join(web, 'telegram.sqlite');
     const inbox = new TelegramInbox(telegram);
@@ -114,11 +111,16 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     writeFileSync(v2, zip);
     for (let cycle = 0; cycle < 2; cycle++) {
       let start = performance.now();
-      upgrade();
+      assert.match(upgrade(), /資料比對通過/);
       t.diagnostic('本機升級時間 ' + Math.round(performance.now() - start) + ' ms');
       assert.equal(read(pointer).version, version);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].before.userVersion, 1);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+      const webMigration = read(journalPath).migration['web/web.sqlite'];
+      for (const table of ['web_model_catalog', 'web_model_selection']) {
+        assert.equal(Object.hasOwn(webMigration.before.counts, table), false);
+        assert.equal(webMigration.after.counts[table], 0);
+      }
       const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',
         'const { KnowledgeStore } = await import(process.argv[1]); new KnowledgeStore(process.argv[2]).close();',
@@ -171,8 +173,23 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     interrupt('Rollback-OEP', 'rollback', []);
     fixture.run('Rollback-OEP', []);
     restored();
+    const currentLicense = join(fixture.install, oldVersion, 'LICENSE');
+    const currentBytes = readFileSync(currentLicense);
+    const pointerBytes = readFileSync(pointer);
+    const previousTarget = join(fixture.install, version, 'LICENSE');
+    const previousBytes = readFileSync(previousTarget);
+    appendFileSync(previousTarget, 'stale build');
+    const staleBytes = readFileSync(previousTarget);
+    fixture.run('Upgrade-OEP', ['-Source', v2], new RegExp(
+      '【' + version.replaceAll('.', '\\.') + '/LICENSE】檔案大小或 SHA-256 不符。.*非目前版本.*移出安裝根目錄'));
+    assert.deepEqual(readFileSync(previousTarget), staleBytes);
+    assert.deepEqual(readFileSync(currentLicense), currentBytes);
+    assert.deepEqual(readFileSync(pointer), pointerBytes);
+    writeFileSync(previousTarget, previousBytes);
+
     const migrationFile = 'scripts/windows/migrate-data.ts';
-    const failure = fixtureZip([major, minor, patch + 2].join('.'), migrationFile, {
+    const failedVersion = [major, minor, patch + 2].join('.');
+    const failure = fixtureZip(failedVersion, migrationFile, {
       ...files,
       [migrationFile]: strToU8(`import { join } from 'node:path'; import { DatabaseSync } from 'node:sqlite';
         const db = new DatabaseSync(join(process.argv[2], 'web', 'telegram.sqlite'));
@@ -180,7 +197,11 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     });
     assert.match(fixture.run('Upgrade-OEP', ['-Source', failure.path], /新版資料庫遷移失敗/), /已回退至/);
     restored();
-    const damaged = join(fixture.install, oldVersion, 'LICENSE');
+    assert.equal(read(journalPath).createdVersion, true);
+    assert.ok(!existsSync(join(fixture.install, failedVersion)));
+    assert.deepEqual(readFileSync(currentLicense), currentBytes);
+    assert.deepEqual(readFileSync(previousTarget), previousBytes);
+    const damaged = currentLicense;
     appendFileSync(damaged, 'damaged');
     fixture.run('Upgrade-OEP', ['-Source', v1, '-AllowSameVersion']);
     assert.equal(sha256(readFileSync(damaged)), sha256(files.LICENSE));

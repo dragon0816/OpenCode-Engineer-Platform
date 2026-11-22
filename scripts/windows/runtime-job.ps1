@@ -10,7 +10,7 @@ $mutexName = if ($scope) { "Global\OEP.Runtime.Test.$sid.$scope" } else { "Globa
 $mutex = [Threading.Mutex]::new($false, $mutexName)
 $job = $null
 $locked = $false
-$handles = @()
+$worker = $null
 
 function Write-Record($Name, $Values) {
     $temporary = Join-Path $control "$Name.tmp"
@@ -37,30 +37,19 @@ try {
     $childId = (Get-Content -Raw -LiteralPath $childRecord | ConvertFrom-Json).pid
     $members = @($job.Members())
     if ($childId -notin $members -or $workerId -notin $members) { throw 'OpenCode Job membership failed.' }
-    $handles = @($members | ForEach-Object { Get-Process -Id $_ })
-    foreach ($member in $handles) { $null = $member.Handle }
     Write-Record 'job' @{ pid=$childId; members=$members.Count; memberPIDs=$members; supervisorPID=$PID }
     while (!$worker.WaitForExit(100)) {
         if ($owner.HasExited) { throw 'OEP launcher exited.' }
     }
     $code = $worker.ExitCode
-    $tracked = @($handles | ForEach-Object { $_.Id })
-    foreach ($memberId in $job.Members()) {
-        if ($memberId -in $tracked) { continue }
-        $member = Get-Process -Id $memberId -ErrorAction SilentlyContinue
-        if ($member) {
-            try { $null = $member.Handle; $handles += $member }
-            catch { $member.Dispose() }
-        }
-    }
+    $stopped = $job.TerminateAndWait(3000)
     $job.Dispose()
     $job = $null
-    $orphans = @($handles | Where-Object { !$_.WaitForExit(500) }).Count
-    Write-Record 'stopped' @{ members=$handles.Count; orphans=$orphans }
-    if ($null -eq $code -or $code -ne 0 -or $orphans) { exit 1 }
+    Write-Record 'stopped' @{ members=$stopped.Item1; orphans=$stopped.Item2 }
+    if ($null -eq $code -or $code -ne 0 -or $stopped.Item2) { exit 1 }
 } finally {
     if ($job) { $job.Dispose() }
-    foreach ($member in $handles) { $member.Dispose() }
+    if ($worker) { $worker.Dispose() }
     if ($locked) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
     $owner.Dispose()

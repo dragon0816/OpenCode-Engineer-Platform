@@ -17,18 +17,20 @@ try {
     Guard-OEP $InstallRoot
     Guard-OEP $DataRoot
     Separate-OEP $InstallRoot $DataRoot
+    $script:failureLogRoot = $InstallRoot
     $journalPath = Root-OEP (Join-Path $InstallRoot 'upgrade.journal.json')
     $journal = Read-UpgradeJournal $journalPath $DataRoot
     if ($journal.state -eq 'rolledBack' -and !$Backup) {
         $stale = Root-OEP (Join-Path $InstallRoot 'upgrade.active')
         if ([IO.File]::Exists($stale) -and $PSCmdlet.ShouldProcess($stale, '清除中斷的維護標記')) {
+            Check-OEP '移除升級執行標記失敗。' $stale
             [IO.File]::Delete($stale)
         }
         Write-Output '已完成回退，無需再回退。'
         return
     }
     if (!$journal -or ($journal.state -eq 'rolledBack' -and $Backup)) {
-        if (!$Backup) { Fail-OEP '找不到升級紀錄。請指定明確的備份路徑 -Backup。' }
+        if (!$Backup) { Fail-OEP '找不到升級紀錄。請以 -Backup 指定原備份的位置。' $journalPath }
         $Backup = Root-OEP $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Backup)
         Separate-OEP $Backup $DataRoot
         $manifest = Read-Backup $Backup
@@ -44,6 +46,7 @@ try {
     [void](Read-RollbackBackup $journal)
     if ($PSCmdlet.ShouldProcess($DataRoot, '回退 OEP 程式和資料')) {
         $marker = Root-OEP (Join-Path $InstallRoot 'upgrade.active')
+        Check-OEP '寫入升級執行標記失敗。' $marker
         [IO.File]::WriteAllText($marker, '')
         $currentPath = Root-OEP (Join-Path $InstallRoot 'current.json')
         if ([IO.File]::Exists($currentPath)) { Stop-UpgradeLauncher $InstallRoot (Read-OEP $currentPath) }
@@ -51,10 +54,11 @@ try {
         Restore-Upgrade $InstallRoot $DataRoot $journalPath $journal
     }
 } catch {
-    [Console]::Error.WriteLine($script:failure)
-    if ($journalPath) { [Console]::Error.WriteLine("升級紀錄：$journalPath") }
+    Report-OEPFailure '回退失敗'
+    if ($journal) { Record-UpgradeFailure $journalPath $DataRoot '回退失敗' }
     exit 1
 } finally {
-    if ($marker) { [IO.File]::Delete($marker) }
+    Clear-OEPArtifact $marker
     Unlock-OEP $mutex
+    if ($script:cleanupFailed) { exit 1 }
 }

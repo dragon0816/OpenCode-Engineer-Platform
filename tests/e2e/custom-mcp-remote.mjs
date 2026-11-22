@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
 import { setDefaultCACertificates, getCACertificates } from 'node:tls';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { testCustomMcp } from '../../apps/launcher/src/custom-mcp-probe.ts';
 import { validateCustomRemoteMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
 import { sendRemoteMcp } from '../../scripts/windows/custom-mcp-remote.mjs';

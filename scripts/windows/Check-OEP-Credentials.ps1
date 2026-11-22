@@ -5,8 +5,10 @@ param([string]$DataRoot = $(if ($env:OEP_DATA_DIR) { $env:OEP_DATA_DIR } else { 
 try {
     $DataRoot = Root-OEP $DataRoot
     Guard-OEP $DataRoot
+    $script:failureLogRoot = $DataRoot
     CredentialStatus-OEP @(CredentialNames-OEP $DataRoot)
 } catch {
-    [Console]::Error.WriteLine('讀取使用者環境變數狀態失敗。')
+    Report-OEPFailure '憑證狀態檢查失敗'
     exit 1
 }
+if ($script:cleanupFailed) { exit 1 }

@@ -4,9 +4,10 @@ import { appendFileSync } from 'node:fs';
 import { watch } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
+import { requireTestDataDir } from '../test-data-guard.ts';
 import { webAPI } from './web-api.ts';
 
-const root = process.env.OEP_DATA_DIR!;
+const root = requireTestDataDir();
 let watching = false;
 
 async function capture(url: string) {

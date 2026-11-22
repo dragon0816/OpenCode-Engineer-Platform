@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { syntheticMcpCertificate } from '../fixtures/mcp/tls.ts';
 import { chromium } from './chromium.ts';

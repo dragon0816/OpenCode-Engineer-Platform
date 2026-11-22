@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { jsonInput, listen, send, until, waitForExit } from '../../scripts/phase0/probe-http.ts';
 import { completion } from './synthetic-completion.ts';

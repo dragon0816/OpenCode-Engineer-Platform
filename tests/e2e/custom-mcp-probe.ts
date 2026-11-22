@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { testCustomMcp } from '../../apps/launcher/src/custom-mcp-probe.ts';
 import { validateCustomStdioMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
 

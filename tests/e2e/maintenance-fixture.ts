@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { requireTestDataDir } from '../test-data-guard.ts';
 
 export function maintenanceFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'oep-maintenance-'));
+  const base = requireTestDataDir();
+  mkdirSync(base, { recursive: true });
+  const root = mkdtempSync(join(base, 'oep-maintenance-'));
   const install = join(root, 'program');
   const data = join(root, 'data');
   mkdirSync(data);
