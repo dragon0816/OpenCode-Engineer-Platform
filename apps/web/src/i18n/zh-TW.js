@@ -1,4 +1,5 @@
 export default {
+  'delegations.cancelling': "正在取消…",
   'delegations.published': "BI 審核已發布。",
   'delegations.status.queued': "排隊中",
   'delegations.status.running': "執行中",
@@ -39,7 +40,6 @@ export default {
   'delegations.submitted': "已送審",
   'delegations.open-review': "查看審核",
   'delegations.view-run': "查看執行紀錄",
-  'delegations.run-for': "{name}的執行紀錄",
   'delegations.loading': "正在載入執行紀錄…",
   'delegations.cancel': "取消交辦",
   'delegations.confirm-cancel': "確定取消交辦給「{name}」的工作？",

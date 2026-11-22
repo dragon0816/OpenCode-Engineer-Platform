@@ -701,6 +701,10 @@ summary { cursor: pointer; }
   #prompt { min-height: 48px; max-height: max(48px, 20dvh); }
   #drop > label, .composer-footer { display: none; }
 }
+@media (max-width: 480px) {
+  .composer-model { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .composer-model select { width: 100%; }
+}
 .delegation-card {
   display: grid;
   gap: .55rem;

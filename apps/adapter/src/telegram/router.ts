@@ -130,7 +130,7 @@ export class TelegramRouter {
     const result = [];
     for (const message of state.messages.slice(index + 1)) {
       if (message.role !== 'assistant') break;
-      result.push(message.text);
+      if (message.text.trim()) result.push(message.text);
     }
     return result.join('\n').slice(0, 4000) || messages.completed;
   }

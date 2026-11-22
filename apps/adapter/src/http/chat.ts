@@ -250,6 +250,23 @@ export class ChatService {
     return session;
   }
 
+  private async childMessages(sessionID: string) {
+    const options = call();
+    const list = (cursor?: string) => this.runtime.client.message.list({ sessionID, order: 'desc', limit: 100, cursor }, options);
+    const first = await list();
+    const data = first.data;
+    const seen = new Set<string>();
+    let cursor = first.cursor.next;
+    while (cursor) {
+      if (seen.has(cursor)) throw new Error('Repeated child transcript cursor');
+      seen.add(cursor);
+      const page = await list(cursor);
+      data.push(...page.data);
+      cursor = page.cursor.next;
+    }
+    return { data };
+  }
+
   async state(session: WebSession, readOnly = false) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
@@ -261,7 +278,7 @@ export class ChatService {
     try {
       const pending = !readOnly && latest && (active.has(latest.state) || latest.state === 'indeterminate');
       const [{ data }, inbox, permissions, status] = await Promise.all([
-        client.message.list({ sessionID, order: 'desc', limit: 100 }, call()),
+        readOnly ? this.childMessages(sessionID) : client.message.list({ sessionID, order: 'desc', limit: 100 }, call()),
         pending ? client.session.inbox.list({ sessionID }, call()) : [],
         pending ? client.permission.list({ sessionID }, call()) : [],
         pending ? client.session.active(call()) : undefined,

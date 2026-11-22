@@ -230,7 +230,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         if (!file) throw new HttpError(404, 'delegation-not-found');
         if (preview) response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8',
           'X-OEP-SHA256': file.sha256 }).end(file.data);
-        else sendDownload(response, file);
+        else sendDownload(response, file, file.mime);
       } else if (method === 'POST' && action === 'cancel') {
         const detail = await delegations.cancel(id);
         if (!detail) throw new HttpError(404, 'delegation-not-found');
@@ -897,13 +897,16 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const cards = agentID === 'main' ? store.delegations.cards(id) : [];
       const delegations = cards.map((card) => {
         const review = 'reviewRef' in card && card.reviewRef?.reviewId;
-        return { ...card, published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
+        return { ...card, specialistName: runtime.redact(card.specialistName),
+          published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
       });
       send(response, 200, { ...state, activity: events.cards(id), delegations });
     }
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
-    else if (method === 'POST' && resource === 'delegation-seen' && uuid.test(item ?? '') && !extra) {
-      if (store.delegations.markSeen(id, item)) events.notify(id, 'delegation');
+    else if (method === 'POST' && resource === 'delegation-seen') {
+      const { id: delegationId } = await body(request);
+      if (typeof delegationId !== 'string' || !uuid.test(delegationId)) throw new HttpError(404, 'delegation-not-found');
+      if (store.delegations.markSeen(id, delegationId)) events.notify(id, 'delegation');
       send(response, 200, {});
     }
     else if (method === 'POST' && resource === 'attachments') {

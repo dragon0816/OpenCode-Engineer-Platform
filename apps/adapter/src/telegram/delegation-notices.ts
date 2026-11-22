@@ -33,9 +33,11 @@ export function delegationNotices(inbox: TelegramInbox, ledger: WebStore, sessio
             !sessions.turn(row.parentSessionId, row.parentRunId)) continue;
         const locale = ledger.channelLocale(owner.agentId);
         const messages = channelText(locale);
+        const name = row.targetAgentId === 'bi' && row.specialistName === 'BI 資料處理' && locale === 'en'
+          ? 'BI Data Processing' : row.specialistName;
         let text;
         if (row.kind === 'acceptance') {
-          text = messages.delegationAccepted(row.specialistName, row.id);
+          text = messages.delegationAccepted(name, row.id);
         } else {
           // Row order in the channel outbox keeps the parent reply ahead of the result.
           if (!inbox.hasDelivery(owner, 'update-' + intake.id)) continue;
@@ -43,7 +45,7 @@ export function delegationNotices(inbox: TelegramInbox, ledger: WebStore, sessio
           if (!result) continue;
           const status = result.reviewRef ? 'submitted' : result.status;
           const summary = result.reviewRef ? '' : result.summary?.slice(0, 500).toWellFormed() ?? '';
-          text = messages.delegationResult(row.specialistName, row.id, messages.delegationStatuses[status], summary);
+          text = messages.delegationResult(name, row.id, messages.delegationStatuses[status], summary);
         }
         if (enqueue(owner, row.effectKey, text)) ledger.delegations.markOutboxed(row.effectKey);
       }

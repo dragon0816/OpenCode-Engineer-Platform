@@ -1,4 +1,5 @@
 export default {
+  'delegations.cancelling': "Cancelling…",
   'delegations.published': "The BI review was published.",
   'delegations.status.queued': "Queued",
   'delegations.status.running': "Running",
@@ -39,7 +40,6 @@ export default {
   'delegations.submitted': "Submitted for review",
   'delegations.open-review': "Open review",
   'delegations.view-run': "View run record",
-  'delegations.run-for': "Run record for {name}",
   'delegations.loading': "Loading run record…",
   'delegations.cancel': "Cancel delegation",
   'delegations.confirm-cancel': "Cancel the work delegated to {name}?",

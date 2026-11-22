@@ -158,7 +158,7 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
   }
 
   function seen(context, id) {
-    return request(`${context.path}/delegation-seen/${id}`, { data: {}, signal: context.abort.signal })
+    return request(`${context.path}/delegation-seen`, { data: { id }, signal: context.abort.signal })
       .then(() => refresh(context)).catch((error) => {
         if (!context.abort.signal.aborted) showError(error);
       });
@@ -198,7 +198,7 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
     const actions = node('div', undefined, 'delegation-actions');
     const open = control(message('delegations.view-run'), id, 'run', () => {
       context.delegationRuns ??= new Map();
-      const tab = openRunTab('delegation-' + id, message('delegations.run-for', { name }), open);
+      const tab = openRunTab('delegation-' + id, name, open);
       if (!context.delegationRuns.has(id)) {
         context.delegationRuns.set(id, { tab });
         tab.signal.addEventListener('abort', () => context.delegationRuns.delete(id), { once: true });
@@ -214,12 +214,16 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
       if (!window.confirm(t('delegations.confirm-cancel', { name: resolveText(name) }))) return;
       const button = event.currentTarget;
       button.disabled = true;
+      setText(button, message('delegations.cancelling'));
       try {
         await request(route(id) + '/cancel', { data: {}, signal: context.abort.signal });
         refresh(context);
       } catch (error) {
         if (!context.abort.signal.aborted) showError(error);
-      } finally { button.disabled = false; }
+      } finally {
+        button.disabled = false;
+        setText(button, message('delegations.cancel'));
+      }
     }));
     section.append(actions);
     return section;

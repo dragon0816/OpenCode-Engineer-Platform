@@ -32,9 +32,9 @@ export function download(response: ServerResponse, chat: ChatService, session: W
   sendDownload(response, output);
 }
 
-export function sendDownload(response: ServerResponse, output: { name: string; data: Buffer; sha256: string }) {
+export function sendDownload(response: ServerResponse, output: { name: string; data: Buffer; sha256: string }, mime = 'application/octet-stream') {
   response.writeHead(200, {
-    'Content-Type': 'application/octet-stream',
+    'Content-Type': mime,
     'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(output.name).replace(/[!'()*]/g, (character) => '%' + character.charCodeAt(0).toString(16))}`,
     'Content-Length': output.data.length,
     'X-OEP-SHA256': output.sha256,
