@@ -171,8 +171,23 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     interrupt('Rollback-OEP', 'rollback', []);
     fixture.run('Rollback-OEP', []);
     restored();
+    const currentLicense = join(fixture.install, oldVersion, 'LICENSE');
+    const currentBytes = readFileSync(currentLicense);
+    const pointerBytes = readFileSync(pointer);
+    const previousTarget = join(fixture.install, version, 'LICENSE');
+    const previousBytes = readFileSync(previousTarget);
+    appendFileSync(previousTarget, 'stale build');
+    const staleBytes = readFileSync(previousTarget);
+    fixture.run('Upgrade-OEP', ['-Source', v2], new RegExp(
+      '【' + version.replaceAll('.', '\\.') + '/LICENSE】檔案大小或 SHA-256 不符。.*非目前版本.*移出安裝根目錄'));
+    assert.deepEqual(readFileSync(previousTarget), staleBytes);
+    assert.deepEqual(readFileSync(currentLicense), currentBytes);
+    assert.deepEqual(readFileSync(pointer), pointerBytes);
+    writeFileSync(previousTarget, previousBytes);
+
     const migrationFile = 'scripts/windows/migrate-data.ts';
-    const failure = fixtureZip([major, minor, patch + 2].join('.'), migrationFile, {
+    const failedVersion = [major, minor, patch + 2].join('.');
+    const failure = fixtureZip(failedVersion, migrationFile, {
       ...files,
       [migrationFile]: strToU8(`import { join } from 'node:path'; import { DatabaseSync } from 'node:sqlite';
         const db = new DatabaseSync(join(process.argv[2], 'web', 'telegram.sqlite'));
@@ -180,7 +195,11 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     });
     assert.match(fixture.run('Upgrade-OEP', ['-Source', failure.path], /新版資料庫遷移失敗/), /已回退至/);
     restored();
-    const damaged = join(fixture.install, oldVersion, 'LICENSE');
+    assert.equal(read(journalPath).createdVersion, true);
+    assert.ok(!existsSync(join(fixture.install, failedVersion)));
+    assert.deepEqual(readFileSync(currentLicense), currentBytes);
+    assert.deepEqual(readFileSync(previousTarget), previousBytes);
+    const damaged = currentLicense;
     appendFileSync(damaged, 'damaged');
     fixture.run('Upgrade-OEP', ['-Source', v1, '-AllowSameVersion']);
     assert.equal(sha256(readFileSync(damaged)), sha256(files.LICENSE));

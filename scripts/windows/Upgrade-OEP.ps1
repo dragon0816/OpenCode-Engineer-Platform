@@ -55,7 +55,11 @@ try {
         Fail-OEP '升級需要較新版本。同版本修復須指定 -AllowSameVersion 且發行清單相同。' $currentPath
     }
     $repair = $release.version -eq $version
-    if (!$repair) { [void](Read-InstalledRelease $InstallRoot $current) }
+    $targetExists = $true
+    if (!$repair) {
+        [void](Read-InstalledRelease $InstallRoot $current)
+        $targetExists = Test-UpgradeTarget $InstallRoot $release
+    }
     $target = Root-OEP (Join-Path $InstallRoot $release.manifest.version)
     $migration = 'scripts/windows/migrate-data.ts'
     if (![IO.File]::Exists((Entry-OEP $release.root $migration))) { Fail-OEP '新版缺少離線資料庫遷移程式。' $migration }
@@ -73,7 +77,8 @@ try {
     }
     $backup = New-Backup $DataRoot $backupRoot $current.version
     $journal = @{
-        format = 1; id = $id; state = 'prepared'; repair = $repair; previous = $current; dataRoot = $DataRoot
+        format = 1; id = $id; state = 'prepared'; repair = $repair; createdVersion = !$targetExists
+        previous = $current; dataRoot = $DataRoot
         backup = $backup; backupHash = Hash-OEP (Join-Path $backup 'backup.manifest.json')
         next = @{ version = $release.manifest.version; manifestSha256 = $release.hash; installedAt = [DateTime]::UtcNow.ToString('o') }
     }
