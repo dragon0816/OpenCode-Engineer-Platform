@@ -11,6 +11,8 @@ import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { syntheticMcpCertificate } from '../fixtures/mcp/tls.ts';
 import { chromium } from './chromium.ts';
+import { mappingChecks } from './gui-mapping.ts';
+import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -121,7 +123,7 @@ async function settings() {
   await page.ready("document.querySelector('#mcp-servers').children.length > 0");
 }
 async function screenshots(state: string) {
-  for (const [name, width, height] of [['wide', 1280, 960], ['narrow', 390, 1000]] as const) {
+  for (const [name, width, height] of [['wide', 1440, 900], ['narrow', 390, 844]] as const) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     for (const theme of ['light', 'dark']) {
       await evaluate(`document.documentElement.dataset.theme = '${theme}'`);
@@ -141,6 +143,7 @@ async function screenshots(state: string) {
 }
 try {
   await openRuntime();
+  const mapping = mappingChecks(page, 'servers');
   await settings();
   await evaluate("window.addEventListener('error', (event) => window.mcpTestError = event.message); document.querySelector('#mcp-add').focus()");
   assert.equal(await evaluate('document.activeElement.id'), 'mcp-add');
@@ -157,6 +160,10 @@ try {
       && ['startup', 'catalog', 'execution'].every(name => form.querySelector('details [name=' + name + '][type=number]'))
       && Boolean(form.querySelector('#mcp-form-status[role=status]'));
   })()`), true);
+  await mapping.check('settings-mcp-access', '#mcp-editor', {
+    selectors: ['[name=project][value=default]', '[name=project][value=secondary]', '[name=dataScope]', '[name=enabled]', '[type=submit]', '#mcp-cancel', '#mcp-form-status'],
+  });
+  await mapping.check('settings-mcp-timeouts', '#mcp-editor', { selectors: ['details [name=startup]', 'details [name=catalog]', 'details [name=execution]'] });
   await page.command('Input.insertText', { text: '合成工具目錄' });
   await press('Tab', 9);
   assert.equal(await evaluate('document.activeElement.name'), 'transport');
@@ -189,6 +196,8 @@ try {
     })()`), true);
     await evaluate("document.querySelector('[data-mcp-name]').value = 'SYNTHETIC_MCP'; document.querySelector('[name=dataScope]').focus()");
   }
+  if (marker) mapping.seen('settings-mcp-credentials');
+  await assertUiTextInThemes(page, '#mcp-editor');
   await evaluate("window.syntheticExecutable = document.querySelector('[name=executable]').value; document.querySelector('[name=executable]').value = 'relative.exe'");
   await click('#mcp-form button[type=submit]');
   await page.ready("document.querySelector('#mcp-form-status').textContent.includes('完整路徑')");
@@ -204,6 +213,11 @@ try {
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('#mcp-servers .settings-actions button')].map(button => button.textContent)`),
     ['編輯', '停用', '測試連線', '移除']);
   assert.equal(await evaluate("document.querySelector('#settings-mcp #mcp-restart-bar #mcp-restart').checkVisibility()"), true);
+  await mapping.check('settings-mcp-restart', '#mcp-restart-bar', { selectors: ['p', '#mcp-restart'] });
+  await mapping.check('settings-mcp-list', '#settings-mcp', {
+    selectors: ['#mcp-add', '.mcp-card h4', '.mcp-badges span', '.mcp-card > p:nth-of-type(2)', '.mcp-result', '#mcp-status'],
+    labels: ['編輯', '停用', '測試連線', '移除'],
+  });
   if (marker) {
     const id = await evaluate<string>("document.querySelector('#mcp-servers h4').id.replace('mcp-server-', '')");
     assert.match(id, /^[a-f0-9]{32}$/);
@@ -218,6 +232,7 @@ try {
   await screenshots('restart');
   await click('#mcp-servers .settings-actions button:nth-child(3)');
   await page.ready("document.querySelector('.mcp-result').textContent.includes('synthetic_catalog')", 22_000);
+  await assertUiTextInThemes(page, '#settings-mcp');
   if (marker) {
     assert.ok(existsSync(pidFile), 'Credential reached the child environment');
     probePid = readFileSync(pidFile, 'utf8');
@@ -232,6 +247,7 @@ try {
     await page.ready("document.querySelector('.mcp-result button')?.textContent === '啟用工具'");
     await click('.mcp-result button');
     await page.ready("document.querySelector('.mcp-result button')?.textContent === '停用工具'");
+    await mapping.check('settings-mcp-tools', '.mcp-result', { selectors: ['li', 'li button'], labels: ['停用工具'] });
     const statePath = await submit('Synthetic restart guard');
     await awaited(activeTurn.promise, 'Synthetic restart guard failed to start');
     try {
@@ -287,6 +303,7 @@ try {
     assert.ok(tools && !tools.some((name) => name.endsWith('_synthetic_catalog')));
   }
   await page.command('Page.enable');
+  await assertNativeDialogTextInThemes(page, '#mcp-servers', 'confirm', '移除');
   const remove = click('#mcp-servers .settings-actions button:last-child');
   await new Promise((resolve) => setTimeout(resolve, 200));
   await page.command('Page.handleJavaScriptDialog', { accept: true });
@@ -308,8 +325,13 @@ try {
       assert.equal(await evaluate(`document.querySelector('#mcp-remote-fields [name=url]').checkVisibility() &&
         document.querySelector('#mcp-remote-fields [name=localService]').checkVisibility() &&
         !document.querySelector('#mcp-stdio-fields [name=executable]').checkVisibility()`), true);
+      await mapping.check('settings-mcp-connection', '#mcp-editor', {
+        selectors: ['[name=name]', '[name=transport]', '[name=executable]', '[name=args]', '[name=cwd]', '[name=url]', '[name=localService]'],
+      });
+      await assertUiTextInThemes(page, '#mcp-editor');
       await click('#mcp-form button[type=submit]');
-      await page.ready("document.querySelector('#mcp-form-status').textContent.includes('HTTPS')");
+      await page.ready("document.querySelector('#mcp-form-diagnostic').textContent.includes('HTTPS')");
+      await assertUiTextInThemes(page, '#mcp-editor');
       await evaluate(`document.querySelector('#mcp-form [name=url]').value = 'https://127.0.0.1:${port}/mcp'`);
       await click('#mcp-form button[type=submit]');
       await page.ready("document.querySelector('#mcp-form-status').textContent.includes('私人位址')");
@@ -322,6 +344,7 @@ try {
       assert.match(await evaluate<string>("document.querySelector('.mcp-result').textContent"), /TLS/);
     } finally { await new Promise<void>((resolve) => stub.close(() => resolve())); }
   }
+  if (marker) mapping.finish();
   console.log('Chromium MCP add, catalog test, apply, persistence, edit, disable, and remove verified.');
 } finally {
   completeTurn.resolve();

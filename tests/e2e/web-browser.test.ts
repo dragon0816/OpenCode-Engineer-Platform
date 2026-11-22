@@ -11,11 +11,17 @@ import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
-import { assertNoForbiddenShellText } from './forbidden-shell-text.ts';
+import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertContrastInThemes } from './gui-contrast.ts';
+import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
 const real = process.argv.includes('--real');
+const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
+assert.ok(!(real && captureGallery), 'The GUI gallery requires synthetic data');
+const screenshotViewports = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
+const capturePanels = captureGallery || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
 const root = join(dataDirectory(), 'OEP 瀏覽器驗收');
 mkdirSync(root);
 const audit = mkdtempSync(join(root, 'launch-'));
@@ -49,10 +55,39 @@ const settingsPages = [
   ['projects', '專案與資料夾', ['#folder-project option', '#project-working-root', '#project-folder-list', '#project-folder', '#project-folder-form button[type=submit]', '#project-folder-status']],
   ['integrations', '整合', ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status', '#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', '#telegram-configured', '.settings-advanced li']],
   ['input', '輸入', ['#enable-microphone', '#microphone-settings-status']],
-  ['mcp', 'MCP', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#mcp-add', '#mcp-servers', '#mcp-restart-bar #mcp-restart', '#mcp-status']],
+  ['mcp', '外部工具', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#mcp-add', '#mcp-servers', '#mcp-restart-bar #mcp-restart', '#mcp-status']],
   ['runtime', '執行環境', ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent', '#runtime-fingerprints dd:nth-of-type(4)']],
   ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
 ] as const;
+const settingsRows: Record<string, Record<string, string[]>> = {
+  assistant: {
+    assistant: ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status'],
+    'assistant-advanced': ['details #assistant-delegation:disabled', 'details small'],
+  },
+  appearance: {
+    'appearance-theme': ['#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
+    'appearance-avatar': ['#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status'],
+  },
+  model: {
+    'model-controls': ['#default-alias option', '#save-model', '#recheck-model', '#model-settings-status'],
+    'model-status': ['#model-credentials', '#model-health li'],
+    'model-advanced': ['details summary', 'details p'],
+  },
+  limits: { limits: ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status'] },
+  projects: { projects: ['#folder-project option', '#project-working-root', '#project-folder-list'] },
+  integrations: {
+    integration: ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status'],
+    'integration-advanced': ['details summary', 'details li:nth-of-type(4)'],
+    'integration-status': ['#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', 'details #telegram-configured'],
+  },
+  input: { input: ['#enable-microphone', '#microphone-settings-status'] },
+  mcp: { 'mcp-knowledge': ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings'] },
+  runtime: {
+    runtime: ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent'],
+    'runtime-advanced': ['details #runtime-fingerprints dd:nth-of-type(4)'],
+  },
+  about: { about: ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a'] },
+};
 const syntheticKey = randomUUID();
 const syntheticURL = 'http://example.invalid/v1';
 const synthetic: typeof fetch = async (_target, init) => {
@@ -128,7 +163,7 @@ try {
       const reload = async () => {
         await page.evaluate('window.__beforeReload = true');
         await page.command('Page.reload');
-        await page.ready('window.__beforeReload !== true');
+        await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
       };
       const click = async (selector: string) => {
         const point = await page.evaluate<{ x: number; y: number }>(`(() => {
@@ -160,15 +195,32 @@ try {
         document.querySelector(${JSON.stringify('#' + id)}).click();
       })()`);
       const capture = async (name: string) => {
-        await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-        writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
+        if (captureGallery) await page.evaluate(`document.querySelectorAll('#messages .message :is(p, .message-quote)').forEach(paragraph => {
+          if (!paragraph.hidden && paragraph.textContent.includes('window.injected=1')) {
+            paragraph.dataset.galleryText = paragraph.textContent;
+            paragraph.textContent = paragraph.textContent.split('\\n').filter(line => !line.includes('window.injected=1')).join('\\n');
+            paragraph.hidden = !paragraph.textContent.trim();
+          }
+        })`);
+        try {
+          await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+          const png = Buffer.from(image.data, 'base64');
+          writeFileSync(join(audit, name + '.png'), png);
+          if (captureGallery) writeFileSync(join('docs', 'validation', 'gui', name + '.png'), png);
+        } finally {
+          if (captureGallery) await page.evaluate(`document.querySelectorAll('[data-gallery-text]').forEach(paragraph => {
+            paragraph.textContent = paragraph.dataset.galleryText;
+            paragraph.hidden = false;
+            delete paragraph.dataset.galleryText;
+          })`);
+        }
       };
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
       assert.equal(await page.evaluate("document.cookie.includes('oep_session')"), false);
       await page.ready("document.querySelector('#connection').textContent === '已連線'");
-      await assertNoForbiddenShellText(page);
+      await assertUiTextInThemes(page);
       if (!real) {
         const sections = ['rail-functions', 'rail-sessions', 'rail-assistants'];
         const collapsed = `[${sections.map((id) => JSON.stringify(id)).join(',')}].every(id => !document.getElementById(id).open)`;
@@ -198,6 +250,89 @@ try {
         if (await page.evaluate("!document.querySelector('#open-review').hidden")) {
           assert.ok(reached.has('open-knowledge') && reached.has('open-review'));
         }
+        const audit = async (selector: string, scope = 'body') => {
+          await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+          await assertUiTextInThemes(page, scope);
+        };
+        await assertContrastInThemes(page, [
+          { selector: '#connection' }, { selector: '#session-title' }, { selector: '#messages .empty' },
+          { selector: '#prompt' }, { selector: '#prompt', property: 'borderTopColor', against: '#drop' },
+          { selector: '#top-menu-trigger', property: 'borderTopColor', against: '.top' },
+        ]);
+        await audit('#top-menu-trigger', '#top-menu');
+        await assertContrastInThemes(page, [{ selector: '#stop' }, { selector: '#toggle-files' }]);
+        await page.evaluate("document.querySelector('#toggle-files').focus()");
+        await escape();
+        await page.ready("!document.querySelector('#top-menu').open && document.activeElement.id === 'top-menu-trigger'");
+        await assertContrastInThemes(page, [{ selector: '#top-menu-trigger', property: 'outlineColor', against: '.top' }]);
+        await audit('#open-settings', '#settings-view');
+        await selectSetting('mcp');
+        await audit('#mcp-add', '#mcp-editor');
+        await assertContrastInThemes(page, [
+          { selector: '#mcp-editor-title' }, { selector: '#mcp-editor [name=name]' },
+          { selector: '#mcp-editor [name=name]', property: 'borderTopColor', against: '#mcp-editor' },
+        ]);
+        await audit('#mcp-add-credential', '#mcp-editor');
+        await audit('#mcp-editor details > summary', '#mcp-editor');
+        await audit('#mcp-cancel', '#settings-view');
+        await audit('#mcp-add', '#mcp-editor');
+        await escape();
+        await page.ready("!document.querySelector('#mcp-editor').open && document.activeElement.id === 'mcp-add'");
+        // Restore the first settings section for the later navigation and reload checks.
+        await selectSetting('assistant');
+        await audit('#close-settings', '#chat-view');
+        await audit('#shortcuts summary', '#shortcuts');
+        await page.evaluate("document.querySelector('#shortcuts').open = false");
+        const noOverflow = async (label: string) => {
+          const size = await page.evaluate<{ scroll: number; client: number }>(`({
+            scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth,
+          })`);
+          assert.ok(size.scroll <= size.client, `${label}: ${size.scroll} > ${size.client}`);
+        };
+        for (const [width, height] of [[390, 844], [768, 1024], [1440, 900]]) {
+          const narrow = width < 800;
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+          await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${narrow}`);
+          for (const view of ['chat', 'settings', 'knowledge', 'jobs', 'review']) {
+            await page.evaluate(`(() => {
+              if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click();
+              document.querySelector('#open-${view}').click();
+            })()`);
+            await page.ready(`!document.querySelector('#${view}-view').hidden`);
+            assert.equal(await page.evaluate("document.querySelector('#session-sidebar').hidden"), narrow);
+            await noOverflow(`${width} ${view}`);
+            await assertUiTextInThemes(page, `#${view}-view`);
+            if (view === 'settings') {
+              assert.equal(await page.evaluate("document.querySelector('#settings-section').checkVisibility()"), narrow);
+              for (const [section] of settingsPages) {
+                await selectSetting(section);
+                await noOverflow(`${width} ${section}`);
+              }
+              await selectSetting('assistant');
+            }
+            if (view === 'knowledge') {
+              for (const name of ['overview', 'ask', 'quality', 'build']) {
+                await page.evaluate(`document.querySelector('#knowledge-tab-${name}').click()`);
+                await noOverflow(`${width} knowledge ${name}`);
+              }
+              await page.evaluate("document.querySelector('#knowledge-tab-overview').click()");
+            }
+          }
+          await page.evaluate("document.querySelector('#open-chat').click()");
+          if (narrow) {
+            const targets = ['#toggle-sidebar', '#top-menu-trigger', '#pick', '#session-alias', '#send', '#shortcuts summary'];
+            assert.deepEqual(await page.evaluate(`${JSON.stringify(targets)}.filter(selector => {
+              const box = document.querySelector(selector).getBoundingClientRect();
+              return box.width < 40 || box.height < 40 || box.left < 0 || box.right > innerWidth;
+            })`), [], `${width} touch targets`);
+            await openPanel('toggle-files');
+            await page.ready(`document.querySelector('#chat-files').offsetWidth === ${width} &&
+              document.querySelector('#chat-files').getAttribute('aria-modal') === 'true'`);
+            await noOverflow(`${width} preview overlay`);
+            await page.evaluate("document.querySelector('#close-files').click()");
+          }
+        }
+        await page.command('Emulation.clearDeviceMetricsOverride');
       }
       await page.command('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
       let passed = 0;
@@ -270,6 +405,16 @@ try {
       }
       if (!real) {
         await page.ready("document.querySelector('.tool-card[data-status=done]')");
+        await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 420, deviceScaleFactor: 1, mobile: false });
+        await page.ready('innerWidth === 390 && innerHeight === 420');
+        await page.evaluate("document.querySelector('#prompt').focus()");
+        assert.equal(await page.evaluate(`['#prompt', '#send'].every(selector => {
+          const control = document.querySelector(selector);
+          const { top, bottom, left, right } = control.getBoundingClientRect();
+          return !control.disabled && top >= 0 && bottom <= innerHeight && left >= 0 && right <= innerWidth;
+        })`), true, 'The composer fits the remaining viewport');
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await page.ready('innerWidth > 900');
         const artifactButton = "#chat-resources button[data-file*='/artifacts/']";
         const artifactTab = "#panel-tabs [role=tab][aria-selected=true]";
         const visiblePreview = "#file-preview [role=tabpanel]:not([hidden])";
@@ -278,6 +423,10 @@ try {
         const wideContent = await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width");
         await clickArtifact();
         await page.ready(`document.activeElement.matches('${artifactTab}') && document.querySelector('#file-preview table')`);
+        await assertContrastInThemes(page, [
+          { selector: artifactTab }, { selector: `${visiblePreview} td` },
+          { selector: `${visiblePreview} td`, property: 'borderTopColor', against: visiblePreview },
+        ]);
         assert.ok(await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width") < wideContent);
         assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('${visiblePreview} .file-actions a')].map(link => [link.textContent, link.target, Boolean(link.download)])`),
           [['在瀏覽器開啟', '_blank', false], ['下載', '', true]]);
@@ -304,10 +453,10 @@ try {
         assert.equal(await page.evaluate("document.querySelector('#close-files').textContent"), '返回對話');
         await escape();
         assert.equal(await page.evaluate(`document.activeElement.matches(${JSON.stringify(artifactButton)}) && !document.querySelector('#work-area').inert`), true);
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') {
+        if (capturePanels) {
           const originalTheme = await page.evaluate<string>('document.documentElement.dataset.theme');
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             await page.ready(`innerWidth === ${width}`);
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
@@ -326,13 +475,17 @@ try {
           await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(originalTheme)}`);
         }
         await page.command('Emulation.clearDeviceMetricsOverride');
-        await page.ready("!matchMedia('(max-width: 540px)').matches");
-        await assertNoForbiddenShellText(page);
+        await page.ready("!matchMedia('(max-width: 800px)').matches");
+        await assertUiTextInThemes(page);
         assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
         await page.evaluate("document.querySelector('.tool-card summary').click()");
         assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), true);
         assert.equal(await page.evaluate("/sample-hidden-value|Z:\\/synthetic/.test(document.querySelector('.tool-details').textContent)"), false);
         assert.equal(await page.evaluate("!!document.querySelector('#messages table') && !!document.querySelector('#messages pre code')"), true);
+        await assertContrastInThemes(page, [
+          { selector: '.message > div pre code' }, { selector: '.message td' },
+          { selector: '.message td', property: 'borderTopColor' },
+        ]);
         assert.equal(await page.evaluate("!window.injected && !document.querySelector('#messages script, #messages img, #messages a[href^=javascript]')"), true);
         await page.evaluate(`
           document.querySelector('.tool-card summary').click();
@@ -351,10 +504,12 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.ready("document.activeElement.dataset.action === 'rename'");
+        await assertUiTextInThemes(page, '.session-list details[open]');
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.ready("document.activeElement.dataset.action === 'remove'");
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
         await page.ready("document.activeElement.tagName === 'SUMMARY' && !document.activeElement.parentElement.open");
+        await assertNativeDialogTextInThemes(page, '.session-list [aria-current=true] + details [data-action=rename]', 'prompt');
         assert.equal(await page.evaluate("document.querySelector('[aria-current=true] time').textContent === '剛剛'"), true);
         const selected = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
         const longTitle = '合成量測報告與工作表輸出驗證'.repeat(4);
@@ -404,6 +559,13 @@ try {
         await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session === ${JSON.stringify(selected)} &&
           document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.density === 'compact' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
+        await page.evaluate(`
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
+        `);
+        await assertUiTextInThemes(page, '#remove-session-card');
+        await assertContrastInThemes(page, [{ selector: '#remove-session-question' }, { selector: '#remove-session-card [value=accept]' }]);
+        await escape();
+        await page.ready("!document.querySelector('#remove-session-card').open && document.activeElement.matches('.session-list summary')");
         await page.evaluate(`
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
           document.querySelector('#remove-session-card [value=reject]').click();
@@ -479,7 +641,7 @@ try {
         await page.ready("document.querySelector('#appearance-status').textContent === '已儲存' && !document.querySelector('.sidebar-assistant img')");
         await page.evaluate("document.querySelector('#recheck-model').click()");
         await page.ready("document.querySelector('#model-settings-status').textContent === '已重新檢查'");
-        await assertNoForbiddenShellText(page);
+        await assertUiTextInThemes(page);
         assert.deepEqual(pinged.slice(2).sort(), [...aliases].sort());
         const traces = ['health.jsonl', 'gateway.jsonl', 'web-turns.jsonl'].map((name) =>
           readFileSync(join(audit, name), 'utf8')).join(' ');
@@ -510,6 +672,7 @@ try {
             document.querySelector('#composer').requestSubmit();
           `);
           await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(status)})`);
+          assert.match(await page.evaluate<string>("document.querySelector('#error').textContent"), /在設定調整.*後重送/);
         }
         slowStarted = false;
         await page.evaluate(`
@@ -526,6 +689,8 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.ready("document.activeElement.dataset.section === 'assistant'");
+        await page.evaluate("document.querySelector('#assistant-name').value = '未儲存的名稱'");
+        await assertNativeDialogTextInThemes(page, '[data-section=appearance]', 'confirm');
         await page.evaluate(`
           window.confirm = () => false;
           document.querySelector('#assistant-name').value = '未儲存的名稱';
@@ -554,7 +719,8 @@ try {
           assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#settings-nav [aria-current="page"], #settings-section option[aria-current="page"]')]
             .map(entry => entry.dataset.section ?? entry.value)`), [section, section]);
         };
-        await assertNoForbiddenShellText(page, '#settings-view');
+        await assertUiTextInThemes(page, '#settings-view');
+        const mapping = mappingChecks(page, 'settings');
         for (const [section, title, controls] of settingsPages) {
           await click(`#settings-nav [data-section="${section}"]`);
           await expectSetting(section, title);
@@ -563,7 +729,18 @@ try {
               .every(status => /^(已設定|未設定)$/.test(status.textContent))`);
           }
           if (section === 'mcp') await page.ready("document.querySelector('#mcp-servers').children.length > 0");
-          await assertNoForbiddenShellText(page, `#settings-${section}`);
+          await assertUiTextInThemes(page, `#settings-${section}`);
+          await assertContrastInThemes(page, [
+            { selector: `#settings-${section} h2` }, { selector: `#settings-${section} .settings-help` },
+            { selector: '#close-settings', property: 'borderTopColor', against: '#settings-view' },
+          ]);
+          const disclosures = `#settings-${section} > details.settings-advanced`;
+          await page.evaluate(`document.querySelectorAll('${disclosures}').forEach(details => { details.open = true; })`);
+          await assertUiTextInThemes(page, `#settings-${section}`);
+          for (const [row, selectors] of Object.entries(settingsRows[section])) {
+            await mapping.check('settings-' + row, `#settings-${section}`, { selectors });
+          }
+          await page.evaluate(`document.querySelectorAll('${disclosures}').forEach(details => { details.open = false; })`);
           for (const control of controls) {
             assert.equal(await page.evaluate(`Boolean(document.querySelector(${JSON.stringify(`#settings-${section} ${control}`)}))`), true, control);
           }
@@ -585,6 +762,9 @@ try {
         await click('#project-folder-form button[type=submit]');
         await page.ready("document.querySelector('#project-folder-status').textContent === '已加入唯讀資料夾。'");
         await page.ready("document.querySelector('#project-folder-list li button')?.textContent === '移除'");
+        await mapping.check('settings-project-folders', '#settings-projects', {
+          selectors: ['#project-folder', '#project-folder-status'], labels: ['加入唯讀資料夾', '移除'],
+        });
         await reload();
         await page.ready("document.querySelector('#connection').textContent === '已連線'");
         await click('#open-settings');
@@ -594,6 +774,7 @@ try {
         await click('#project-folder-list li button');
         await page.ready("document.querySelector('#project-folder-status').textContent === '已移除唯讀資料夾。'");
         await page.ready("!document.querySelector('#project-read-folder option')");
+        mapping.finish();
 
         await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 960, deviceScaleFactor: 1, mobile: false });
         assert.deepEqual(await page.evaluate(`[...document.querySelector('#settings-section').options]
@@ -606,14 +787,14 @@ try {
         await page.ready("document.activeElement.id === 'settings-section'");
         await key('ArrowDown', 'ArrowDown', 40);
         await expectSetting('integrations', '整合');
-        await assertNoForbiddenShellText(page, '#settings-view');
+        await assertUiTextInThemes(page, '#settings-view');
         await page.command('Emulation.clearDeviceMetricsOverride');
         await click('#settings-nav [data-section="appearance"]');
 
-        const saveSettingsShots = process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
+        const saveSettingsShots = captureGallery || process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
         const settingsPaths = ['#project-working-root', '#about-details dd:nth-of-type(2)'];
         const originalPaths = saveSettingsShots ? await page.evaluate<string[]>(`(() => {
-          const syntheticPaths = ['工作根目錄 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
+          const syntheticPaths = ['工作資料夾 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
           return ${JSON.stringify(settingsPaths)}.map((selector, index) => {
             const element = document.querySelector(selector);
             const original = element.textContent;
@@ -623,8 +804,8 @@ try {
         })()`) : [];
         const capturedSections = saveSettingsShots ? settingsPages.map(([section]) => section)
           : ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations'];
-        for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-          await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+        for (const [width, height, layout] of screenshotViewports) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
           for (const theme of ['light', 'dark']) {
             await page.evaluate(`
               document.querySelector('#appearance-status').textContent = '';
@@ -637,7 +818,7 @@ try {
               assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
               const name = `settings-${section}-${theme}-${layout}`;
               await capture(name);
-              if (saveSettingsShots) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
+              if (saveSettingsShots && !captureGallery) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
             }
           }
         }
@@ -647,10 +828,10 @@ try {
         await page.evaluate("document.querySelector('#open-chat').click()");
         await page.command('Emulation.clearDeviceMetricsOverride');
         const captureLayouts = async (running: boolean) => {
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
-            if (layout === 'narrow') await page.ready("matchMedia('(max-width: 540px)').matches && document.querySelector('#session-sidebar').hidden");
+            if (layout === 'narrow') await page.ready("matchMedia('(max-width: 800px)').matches && document.querySelector('#session-sidebar').hidden");
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
                 const theme = document.querySelector('#theme');
@@ -676,7 +857,7 @@ try {
                   pane.scrollTop += card.getBoundingClientRect().top - pane.getBoundingClientRect().top - 110;
                   window.scrollTo(0, 0);
                 })()`);
-                if (process.env.OEP_CAPTURE_RIGHT_PANEL !== '1') await capture(`conversation-${theme}-${layout}`);
+                if (!capturePanels) await capture(`conversation-${theme}-${layout}`);
                 await page.evaluate(`(() => {
                   const pane = document.querySelector('#messages');
                   const card = document.querySelector('.tool-card');
@@ -741,16 +922,17 @@ try {
         await openPanel('open-work');
         await page.evaluate("document.querySelector('#tab-files').click()");
         await page.ready("document.querySelector('#toggle-files').getAttribute('aria-expanded') === 'true'");
-        await assertNoForbiddenShellText(page);
+        await assertUiTextInThemes(page);
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
         await page.ready("document.activeElement.id === 'tab-work' && document.querySelector('#panel-runs').textContent.includes('已完成')");
+        await assertUiTextInThemes(page, '#chat-files');
         await reload();
         await page.ready("document.querySelector('#connection').textContent === '已連線' && document.querySelector('#chat-files').hidden && !document.querySelector('#panel-tabs').children.length");
         await openPanel('open-work');
         await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
-        await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
-        await assertNoForbiddenShellText(page);
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('知識庫工作')");
+        await assertUiTextInThemes(page);
         await page.evaluate(`(() => {
           const fetchAPI = window.fetch;
           window.fetch = (path, options) => {
@@ -825,8 +1007,8 @@ try {
           await page.ready(ready);
         }
         const panelLayouts = async (diff: boolean) => {
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             await page.ready(`innerWidth === ${width}`);
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
@@ -856,7 +1038,7 @@ try {
               await page.evaluate("document.querySelector('#panel-tabs [id^=tab-preview-]')?.parentElement.querySelector('.close-tab').click(); document.querySelector('#tab-files').click()");
               await screenshot('files');
               await openPanel('open-work');
-              await page.ready("document.querySelector('#panel-jobs').textContent.includes('BI 工作')");
+              await page.ready("document.querySelector('#panel-jobs').textContent.includes('知識庫工作')");
               await screenshot('work');
               await page.evaluate("document.querySelector('#tab-files').click()");
               for (const [name, view, ready] of previews) {
@@ -867,12 +1049,12 @@ try {
             }
           }
         };
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(false);
+        if (capturePanels) await panelLayouts(false);
         const downloaded = await page.evaluate<{ href: string; hash: string }>(`(() => {
           const row = [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'));
           const link = row.querySelector('a');
           link.click();
-          return { href: link.getAttribute('href'), hash: row.querySelector('button').title };
+          return { href: link.getAttribute('href'), hash: row.querySelector('details button').title };
         })()`);
         const attachmentDownload = join(downloads, 'sample.txt');
         await until(async () => existsSync(attachmentDownload) || undefined, 10_000);
@@ -893,10 +1075,11 @@ try {
           return results.map(response => response.status);
         })()`);
         assert.deepEqual(forbidden, [404, 404]);
+        await assertNativeDialogTextInThemes(page, '#attachments', 'confirm', '移除');
         await page.evaluate(`(() => {
           window.confirm = () => true;
           [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'))
-            .querySelectorAll('button')[2].click();
+            .querySelectorAll('.file-actions button')[1].click();
         })()`);
         await page.ready("!document.querySelector('#attachments').textContent.includes('sample.txt')");
         assert.equal(await page.evaluate(`fetch(${JSON.stringify(downloaded.href)}).then(response => response.status)`), 404);
@@ -914,8 +1097,12 @@ try {
         await openPanel('open-diff');
         await page.evaluate("document.querySelector('#panel-diff button').click()");
         await page.ready("document.querySelector('#panel-diff').textContent.includes('1 個儲存格') && document.querySelectorAll('.changed-cell').length === 1");
-        await assertNoForbiddenShellText(page);
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
+        await assertContrastInThemes(page, [
+          { selector: '#tab-diff' }, { selector: '.changed-cell del' }, { selector: '.changed-cell ins' },
+          { selector: '#tab-diff', property: 'borderTopColor', against: '.panel-header' },
+        ]);
+        await assertUiTextInThemes(page);
+        if (capturePanels) await panelLayouts(true);
         await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
         assert.equal(await page.evaluate("document.activeElement.id === 'top-menu-trigger' && document.querySelector('#chat-files').hidden"), true);
         await page.evaluate(`
@@ -925,15 +1112,23 @@ try {
           prompt.dispatchEvent(new Event('input'));
         `);
         await page.ready("!document.querySelector('#slash-palette').hidden && document.querySelectorAll('#slash-palette [role=option]').length === 8");
+        await assertUiTextInThemes(page, '#slash-palette');
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 });
         await page.ready("document.querySelector('#slash-palette [aria-selected=true]').textContent.includes('/help')");
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.ready("document.querySelector('#command-toast').textContent.includes('/clear-search')");
+        await assertUiTextInThemes(page, '#command-toast');
         await page.evaluate(`
           document.querySelector('#prompt').value = '/unknown';
           document.querySelector('#composer').requestSubmit();
         `);
         await page.ready("document.querySelector('#error').textContent.includes('無法辨識')");
+        await assertUiTextInThemes(page, '#error');
+        await page.evaluate("document.querySelector('.message.assistant .message-actions > summary').click()");
+        await assertUiTextInThemes(page, '.message.assistant .message-actions[open]');
+        for (const label of ['讚', '倒讚', '新增或編輯筆記']) {
+          await assertNativeDialogTextInThemes(page, '.message.assistant .message-actions', 'prompt', label);
+        }
         await page.evaluate(`
           const menu = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions');
           window.prompt = () => '合成筆記';
@@ -941,6 +1136,7 @@ try {
         `);
         await openPanel('open-notes');
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        await assertUiTextInThemes(page, '#panel-notes');
         await page.evaluate(`(() => {
           window.prompt = () => '未選取的合成筆記';
           [...document.querySelector('.message.user .message-actions').querySelectorAll('button')]
@@ -1010,6 +1206,9 @@ try {
         assert.equal(readFileSync(join(folder, 'sample.txt'), 'utf8'), 'SYNTHETIC_READ_ONLY');
         await reload();
         await page.ready("document.querySelector('#project-read-folder option') && document.querySelector('.message-quote')");
+        await page.evaluate("document.querySelector('#project-read').open = true");
+        await assertUiTextInThemes(page, '#project-read');
+        await page.evaluate("document.querySelector('#project-read').open = false");
 
 
         await page.evaluate(`
@@ -1034,7 +1233,7 @@ try {
           document.querySelector('#microphone').click();
         `);
         await page.ready("document.querySelector('#prompt').value === '合成語音'");
-        for (const [error, label] of [['not-allowed', '權限已拒絕'], ['network', '轉錄失敗']]) {
+        for (const [error, label] of [['not-allowed', '請在瀏覽器允許麥克風權限'], ['network', '無法完成聽寫']]) {
           await page.evaluate(`window.syntheticSpeechError = ${JSON.stringify(error)}; document.querySelector('#microphone').click()`);
           await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(label)})`);
         }
@@ -1059,15 +1258,15 @@ try {
         })()`);
         assert.deepEqual(annotationIsolation, [404, 1, 1, 1]);
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
-        if (process.env.OEP_CAPTURE_SLICE2D === '1') {
+        if (captureGallery || process.env.OEP_CAPTURE_SLICE2D === '1') {
           const shots = resolve('docs/validation/gui');
           const shot = async (view: string, theme: string, layout: string) => {
             const name = `slice2d-${view}-${theme}-${layout}`;
             await capture(name);
-            writeFileSync(join(shots, name + '.png'), readFileSync(join(audit, name + '.png')));
+            if (!captureGallery) writeFileSync(join(shots, name + '.png'), readFileSync(join(audit, name + '.png')));
           };
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
                 document.documentElement.dataset.theme = ${JSON.stringify(theme)};
@@ -1105,7 +1304,7 @@ try {
               await page.evaluate(`
                 document.querySelector('#remove-session-card [value=reject]').click();
                 document.querySelector('#open-settings').click();
-                document.querySelector('#project-working-root').textContent = '工作根目錄 · C:/OEP/合成工作區';
+                document.querySelector('#project-working-root').textContent = '工作資料夾 · C:/OEP/合成工作區';
                 var folderRow = document.querySelector('#project-folder-list li');
                 if (folderRow?.firstChild) folderRow.firstChild.textContent = 'C:/OEP/合成唯讀資料';
                 var aboutPath = document.querySelector('#about-details dd:nth-of-type(2)');

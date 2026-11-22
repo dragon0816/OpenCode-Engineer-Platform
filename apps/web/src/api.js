@@ -1,7 +1,9 @@
 let csrf;
 
+export const sampleKnowledgeID = 'oep-synthetic-demo';
+
 export function modelLabel(alias) {
-  return alias.startsWith('synthetic-') ? '測試模型' : alias;
+  return alias.startsWith('synthetic-') ? '已設定的模型' : alias;
 }
 
 export class RequestError extends Error {
@@ -9,6 +11,11 @@ export class RequestError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+export function errorText(error, fallback = '無法完成操作。請稍後再試。') {
+  const message = typeof error === 'string' ? error : error?.message;
+  return typeof message === 'string' && /\p{Script=Han}/u.test(message) ? message : fallback;
 }
 
 export async function request(path, { data, file, bytes, sha256, signal } = {}) {
@@ -27,9 +34,16 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     body = file;
   }
   if (body !== undefined && csrf) headers['X-OEP-CSRF'] = csrf;
-  const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers, body, signal });
-  const result = await response.json();
-  if (!response.ok) throw new RequestError(response.status, result.error || 'OEP 無法完成要求。');
+  let response;
+  let result;
+  try {
+    response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers, body, signal });
+    result = await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error('無法讀取 OEP 的回覆。請確認服務仍在執行，再試一次。', { cause: error });
+  }
+  if (!response.ok) throw new RequestError(response.status, errorText(result?.error));
   return result;
 }
 

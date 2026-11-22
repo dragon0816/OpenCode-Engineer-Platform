@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <title>OEP 工程工作台</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
@@ -50,26 +50,26 @@
       <div class="top-model">
         <strong id="model">模型載入中</strong>
         <span id="model-source">外部模型服務</span>
-        <p id="progress" role="status">從左側新增會話後即可開始。</p>
+        <p id="progress" role="status"></p>
       </div>
       <div class="top-actions">
         <div class="top-identity"><strong>OEP · 本機使用者</strong><span id="connection" role="status">正在連線</span></div>
         <details id="top-menu">
-          <summary id="top-menu-trigger" aria-label="工作台選單">⋯</summary>
-          <div class="top-menu-actions">
+          <summary id="top-menu-trigger" class="menu-trigger" aria-label="更多工作台選項" title="更多">⋯</summary>
+          <div class="menu-actions">
             <div class="panel-openers" aria-label="附加資料分頁" role="group">
-              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案與產出</button>
+              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案</button>
               <button type="button" id="open-work" aria-controls="chat-files">工作</button>
               <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
               <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
             </div>
-            <button id="stop" type="button" disabled>停止服務</button>
+            <button id="stop" class="button-danger" type="button" disabled>停止服務</button>
           </div>
         </details>
       </div>
     </header>
     <section id="settings-view" aria-labelledby="settings-title" hidden>
-      <header class="settings-heading">
+      <header class="settings-heading page-header">
         <h1 id="settings-title" tabindex="-1">設定</h1>
         <button id="close-settings" type="button">返回對話</button>
       </header>
@@ -86,7 +86,7 @@
           <button type="button" data-section="projects" aria-controls="settings-projects">專案與資料夾</button>
           <button type="button" data-section="integrations" aria-controls="settings-integrations">整合</button>
           <button type="button" data-section="input" aria-controls="settings-input">輸入</button>
-          <button type="button" data-section="mcp" aria-controls="settings-mcp">MCP</button>
+          <button type="button" data-section="mcp" aria-controls="settings-mcp">外部工具</button>
           <button type="button" data-section="runtime" aria-controls="settings-runtime">執行環境</button>
           <button type="button" data-section="about" aria-controls="settings-about">關於</button>
         </nav>
@@ -101,7 +101,7 @@
               <textarea id="assistant-introduction" maxlength="500"></textarea>
               <label for="assistant-instructions">助理指示</label>
               <textarea id="assistant-instructions" maxlength="4000"></textarea>
-              <small>新對話會完整套用儲存的指示，舊對話可能仍包含先前的指示。</small>
+              <small>新會話使用最新的指示，舊會話可能保留先前的指示。</small>
               <div class="settings-actions">
                 <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
                 <p id="settings-status" role="status"></p>
@@ -138,7 +138,7 @@
           </section>
           <section id="settings-model" aria-labelledby="settings-model-title" hidden>
             <h2 id="settings-model-title">模型</h2>
-            <p class="settings-help">選擇新對話使用的模型並查看連線狀態。</p>
+            <p class="settings-help">選擇新會話的預設模型。</p>
             <p id="model-credentials"></p>
             <ul id="model-health"></ul>
             <form id="model-settings">
@@ -178,7 +178,7 @@
             <h3>唯讀資料夾</h3>
             <ul id="project-folder-list"></ul>
             <form id="project-folder-form">
-              <label for="project-folder">本機資料夾的絕對路徑</label>
+              <label for="project-folder">本機資料夾的完整路徑</label>
               <input id="project-folder" type="text" required>
               <div class="settings-actions">
                 <button type="submit">加入唯讀資料夾</button>
@@ -190,7 +190,7 @@
             <h2 id="settings-integrations-title">整合</h2>
             <p class="settings-help">管理知識庫連結，並查看 Telegram 機器人的設定狀態。</p>
             <form id="knowledge-settings">
-              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用 BI 查詢工具</label>
+              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用知識庫查詢工具</label>
               <label for="atlas-url">Atlas 網址（選填）</label>
               <input id="atlas-url" type="url" maxlength="2048">
               <div class="settings-actions">
@@ -202,7 +202,7 @@
             <dl>
               <dt>知識庫</dt><dd id="knowledge-configured">正在讀取…</dd>
               <dt>Telegram 助理機器人</dt><dd id="telegram-main-status">正在讀取…</dd>
-              <dt>Telegram BI 機器人</dt><dd id="telegram-bi-status">正在讀取…</dd>
+              <dt>Telegram 知識庫機器人</dt><dd id="telegram-bi-status">正在讀取…</dd>
             </dl>
             <details class="settings-advanced">
               <summary>進階</summary>
@@ -223,7 +223,7 @@
             <p id="microphone-settings-status" role="status"></p>
           </section>
           <section id="settings-mcp" aria-labelledby="settings-mcp-title" hidden>
-            <h2 id="settings-mcp-title">MCP</h2>
+            <h2 id="settings-mcp-title">外部工具</h2>
             <p class="settings-help">加入外部工具，並選擇哪些專案可以使用它們。</p>
             <div class="mcp-toolbar">
               <h3>自訂伺服器</h3>
@@ -238,10 +238,10 @@
             <div class="settings-group">
               <h3>內建知識庫 <span class="runtime-badge">由 OEP 管理</span></h3>
               <p id="mcp-knowledge-status" role="status"></p>
-              <p id="mcp-knowledge-tools" hidden>內建工具：BI 查詢</p>
-              <p>BI 開關適用於新會話。</p>
+              <p id="mcp-knowledge-tools" hidden>內建工具：知識庫查詢</p>
+              <p>設定適用於新會話。</p>
               <div class="settings-actions">
-                <button id="mcp-open-knowledge-settings" type="button">管理 BI 查詢工具</button>
+                <button id="mcp-open-knowledge-settings" type="button">管理知識庫查詢工具</button>
               </div>
             </div>
             <dialog id="mcp-editor" aria-labelledby="mcp-editor-title">
@@ -273,13 +273,14 @@
                 <label>資料範圍說明 <textarea name="dataScope" rows="2" maxlength="2000"></textarea></label>
                 <details class="settings-advanced mcp-timeout-details">
                   <summary>進階</summary>
-                  <p>本機程式透過 stdio 連線，憑證以環境變數傳入。遠端服務使用 HTTPS 與 HTTP 標頭。</p>
+                  <p>外部工具使用 MCP。本機程式透過 stdio 連線，憑證以環境變數傳入。遠端服務使用 HTTPS 與 HTTP 標頭。</p>
                   <p>等待時間上限（毫秒）</p>
                   <div class="mcp-timeouts">
                     <label>啟動 <input name="startup" type="number" min="100" max="120000" required></label>
                     <label>工具清單 <input name="catalog" type="number" min="100" max="120000" required></label>
                     <label>執行 <input name="execution" type="number" min="100" max="120000" required></label>
                   </div>
+                  <p id="mcp-form-diagnostic" hidden></p>
                 </details>
                 <label><input name="enabled" type="checkbox"> 啟用伺服器</label>
                 <p id="mcp-form-status" role="status"></p>
@@ -311,12 +312,12 @@
       </div>
     </section>
     <section class="conversation" aria-label="對話" id="chat-view">
-      <header class="conversation-header">
+      <header class="page-header">
         <h1 id="session-title" tabindex="-1">對話</h1>
       </header>
       <div id="error" role="alert" hidden></div>
       <div id="messages" class="messages" aria-label="訊息">
-        <p class="empty">上傳截圖、文件或工作簿，並輸入想要分析的問題。</p>
+        <p class="empty">選擇或新增會話即可開始。</p>
       </div>
       <button id="jump-latest" type="button" hidden>跳到最新訊息</button>
       <section id="chat-resources" aria-label="會話檔案" hidden></section>
@@ -325,7 +326,7 @@
           <h2 id="remove-session-question"></h2>
           <p>刪除後，會話將從清單移除。</p>
           <button value="reject" autofocus>取消</button>
-          <button value="accept">確認刪除</button>
+          <button value="accept" class="button-danger">確認刪除</button>
         </form>
       </dialog>
       <form id="composer">
@@ -334,7 +335,7 @@
         <details id="project-read" hidden>
           <summary>附加唯讀資料夾中的檔案</summary>
           <label>資料夾 <select id="project-read-folder"></select></label>
-          <label>相對檔名 <input id="project-read-file" type="text"></label>
+          <label>資料夾內的檔名 <input id="project-read-file" type="text"></label>
           <button id="project-read-button" type="button">附加檔案副本</button>
         </details>
         <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply">移除引用</button></div>
@@ -343,16 +344,20 @@
         <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
         <div class="composer-toolbar">
           <div class="composer-tools">
-            <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
-            <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
-            <span id="attachment-help" hidden>支援 PNG、JPG、PDF、XLSX、HTML 和 UTF-8 文字，單檔最多 20 MiB。也可以拖放。</span>
-            <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+            <div class="composer-attachments">
+              <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
+              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+              <span id="attachment-help" hidden>可選取或拖放圖片、PDF、Excel、網頁與文字檔。單檔最多 20 MB。</span>
+              <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+            </div>
             <label class="composer-model">模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
-            <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
-            <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+            <div class="composer-input-options">
+              <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
+              <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+            </div>
           </div>
           <button id="send" type="submit" disabled>送出</button>
-          <button id="cancel-turn" type="button" hidden>停止處理</button>
+          <button id="cancel-turn" class="button-danger" type="button" hidden>停止處理</button>
         </div>
         <div class="composer-status">
           <small id="session-model-help">變更從下一則訊息生效。</small>
@@ -369,7 +374,7 @@
       </form>
     </section>
     <section class="conversation knowledge" aria-labelledby="knowledge-title" id="knowledge-view" hidden>
-      <header class="conversation-header knowledge-header">
+      <header class="page-header knowledge-header">
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
         <div class="knowledge-selection">
           <label for="vault">已發布的知識庫</label>
@@ -511,7 +516,7 @@
       </div>
     </section>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
-      <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
+      <header class="page-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
       <div class="knowledge-body">
         <p class="page-help">查看下次執行、已送出的工作與通知。</p>
         <p id="jobs-status" role="status"></p>
@@ -519,7 +524,7 @@
       </div>
     </section>
     <section class="conversation knowledge" id="review-view" aria-labelledby="review-title" hidden>
-      <header class="conversation-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
+      <header class="page-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
       <div class="knowledge-body">
         <p class="page-help">查看草稿的變更與來源。先核准內容，再發布到知識庫。</p>
         <button id="review-refresh" type="button">重新整理清單</button>
@@ -558,7 +563,7 @@
         <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
       </section>
       <section aria-labelledby="artifacts-title">
-        <h2 id="artifacts-title">產出</h2>
+        <h2 id="artifacts-title">助理建立的檔案</h2>
         <ul id="artifacts"><li>尚無可下載的檔案</li></ul>
       </section>
         </div>
@@ -567,11 +572,11 @@
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
         <details id="panel-tools" hidden>
           <summary>會話工具</summary>
-          <ul><li>BI 知識庫查詢</li></ul>
+          <ul><li>知識庫查詢</li></ul>
         </details>
         <ul id="panel-runs"></ul>
         <p id="panel-jobs"></p>
-        <button id="panel-jobs-link" type="button">開啟工作與排程</button>
+        <button id="panel-jobs-link" type="button">開啟排程與工作</button>
       <details open>
         <summary id="activity-title">進行狀況</summary>
         <ul id="activity" aria-live="polite"></ul>

@@ -1,4 +1,4 @@
-import { modelLabel, request } from './api.js';
+import { modelLabel, request, sampleKnowledgeID } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const kinds = { answerable: '可回答', 'no-evidence': '缺乏證據', conflict: '證據衝突', injection: '含注入指令' };
@@ -45,8 +45,8 @@ export function bindKnowledgeQuality(openPassage, messages) {
     editor.hidden = !set || set.builtIn;
     find('quality-remove-set').disabled = !set || set.builtIn;
     find('quality-import').disabled = !set || set.builtIn;
-    find('quality-builtin-note').hidden = !set?.builtIn || selected?.id === 'oep-synthetic-demo';
-    run.disabled = !set?.questions.length || !selected?.modelEnabled || (set.builtIn && selected.id !== 'oep-synthetic-demo');
+    find('quality-builtin-note').hidden = !set?.builtIn || selected?.id === sampleKnowledgeID;
+    run.disabled = !set?.questions.length || !selected?.modelEnabled || (set.builtIn && selected.id !== sampleKnowledgeID);
     rows.replaceChildren();
     if (!set) return;
     for (const question of set.questions) {
@@ -97,7 +97,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
       render();
     } catch {
-      if (!active.signal.aborted) status.textContent = '無法讀取題集。';
+      if (!active.signal.aborted) status.textContent = '無法讀取題集。請重新選擇知識庫。';
     }
   }
 
@@ -125,7 +125,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const form = event.currentTarget;
     const name = form.elements.name.value.trim();
     if (!name) return;
-    if (catalog.some((set) => set.name === name)) status.textContent = '已有同名題集。';
+    if (catalog.some((set) => set.name === name)) status.textContent = '已有同名題集。請使用其他名稱。';
     else {
       form.reset();
       void save([], name);
@@ -147,18 +147,18 @@ export function bindKnowledgeQuality(openPassage, messages) {
     input.value = '';
     if (!file) return;
     if (file.size > 120 * 1024) {
-      status.textContent = '題集 JSON 檔案太大。';
+      status.textContent = '題集檔案太大。請選擇較小的檔案。';
       return;
     }
     const set = current();
     try {
       const text = await file.text();
       if (current() === set) json.value = text;
-    } catch { status.textContent = '無法讀取題集 JSON。'; }
+    } catch { status.textContent = '無法讀取題集檔案。請重新選擇。'; }
   };
   find('quality-import').onclick = () => {
     try { void save(JSON.parse(json.value)); }
-    catch { status.textContent = '請輸入有效的 JSON 題集。'; }
+    catch { status.textContent = '無法匯入題集。請在進階區檢查檔案格式。'; }
   };
 
   find('quality-find').onclick = async () => {
@@ -180,7 +180,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
         }), ' ', button(passage.source + ' · ' + passage.locator, (event) => openPassage(passage, '', event.currentTarget)), node('p', passage.text.slice(0, 200)));
         matches.append(row);
       }
-    } catch { status.textContent = '無法搜尋段落。'; }
+    } catch { status.textContent = '無法搜尋段落。請再試一次。'; }
   };
 
   find('quality-new-question').onclick = () => { openEditor(); editor.elements.query.focus(); };

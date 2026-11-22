@@ -1,4 +1,4 @@
-import { connect, modelLabel, request, RequestError } from './api.js';
+import { connect, errorText, modelLabel, request, RequestError } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -72,8 +72,14 @@ let stopped = false;
 let knowledge;
 const voice = bindVoice(find('enable-microphone'), find('microphone'), find('microphone-settings-status'), prompt, () => current, showError);
 
+const limitErrors = new Map([
+  ['已停止：達到回合時限。', '已停止，因為達到回合時限。請縮短要求，或在設定調整回合時限後重送。'],
+  ['已停止：達到工具呼叫次數上限。', '已停止，因為達到工具呼叫次數上限。請把要求拆成幾步，或在設定調整上限後重送。'],
+]);
+
 function showError(error) {
-  notice.textContent = error ? error.message || String(error) : '';
+  const message = error ? errorText(error) : '';
+  notice.textContent = limitErrors.get(message) ?? message;
   notice.hidden = !error;
 }
 
@@ -138,7 +144,7 @@ function bindRowMenu(menu, trigger, actions) {
     for (const other of sessions.querySelectorAll('details[open]')) {
       if (other !== menu) other.open = false;
     }
-    actions[0].focus();
+    if (document.activeElement === trigger) actions[0].focus();
   });
   for (const action of actions) action.addEventListener('click', close);
   menu.addEventListener('keydown', (event) => {
@@ -147,10 +153,13 @@ function bindRowMenu(menu, trigger, actions) {
       event.preventDefault();
       event.stopPropagation();
       close();
-    } else if (['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+    } else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
       event.preventDefault();
       actions[document.activeElement === actions[0] ? 1 : 0].focus();
     }
+  });
+  menu.addEventListener('focusout', (event) => {
+    if (!menu.contains(event.relatedTarget)) menu.open = false;
   });
 }
 
@@ -215,12 +224,12 @@ function toolCard(tool, previous) {
   const duration = Math.max(0, (tool.finishedAt ?? Date.now()) - tool.startedAt);
   const status = { running: '執行中', done: '完成', failed: '失敗', cancelled: '已停止' }[tool.status];
   card.dataset.status = tool.status;
-  card.firstElementChild.textContent = `${tool.name} · ${status} · ${(duration / 1000).toFixed(1)} 秒`;
+  card.firstElementChild.textContent = `進階 · 工具${status} · ${(duration / 1000).toFixed(1)} 秒`;
   const fields = card.lastElementChild;
-  const signature = JSON.stringify([tool.input, tool.output]);
+  const signature = JSON.stringify([tool.name, tool.input, tool.output]);
   if (fields.dataset.signature === signature) return card;
   fields.dataset.signature = signature;
-  fields.replaceChildren();
+  fields.replaceChildren(node('p', `工具名稱：${tool.name}`));
   for (const [label, value] of [['輸入', tool.input], ['輸出', tool.output]]) {
     fields.append(node('strong', label));
     const excerpt = node('pre', value ? value.slice(0, 800) : '—');
@@ -282,7 +291,7 @@ function render(context) {
         prompt.focus();
       }, showError, (text) => { find('command-toast').textContent = text; },
       () => { if (current === context) renderNotes(context); },
-      () => openSection('notes', entry)));
+      (trigger) => openSection('notes', trigger)));
       fragment.append(entry);
     }
     appendEvents(Infinity);
@@ -397,8 +406,8 @@ function addFileDetails(entry, file, url, context, attachment = false) {
   const hash = action(file.sha256.slice(0, 12), async () => {
     try {
       await navigator.clipboard.writeText(file.sha256);
-      find('file-status').textContent = '已複製 SHA-256。';
-    } catch { find('file-status').textContent = '無法複製 SHA-256。'; }
+      find('file-status').textContent = '已複製檔案校驗碼。';
+    } catch { find('file-status').textContent = '無法複製檔案校驗碼。請再試一次。'; }
   });
   hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
   hash.title = file.sha256;
@@ -406,7 +415,7 @@ function addFileDetails(entry, file, url, context, attachment = false) {
   entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
   const open = action('預覽', () => void openPreview(file, url, context, open));
   open.setAttribute('aria-label', `預覽 ${file.name}`);
-  actions.append(hash, open);
+  actions.append(open);
   if (attachment) actions.append(download, action('移除', async () => {
     if (!confirm(`要移除「${file.name}」嗎？`)) return;
     try {
@@ -416,10 +425,12 @@ function addFileDetails(entry, file, url, context, attachment = false) {
       if (panelTabs.has(url)) closeTab(url);
       refresh(context);
     } catch (error) {
-      if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。'));
+      if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。請再試一次。'));
     }
   }));
-  entry.append(actions);
+  const advanced = node('details');
+  advanced.append(node('summary', '進階'), hash);
+  entry.append(actions, advanced);
 }
 
 async function previewResponse(url, signal) {
@@ -481,8 +492,8 @@ async function openPreview(file, url, context, opener) {
       frame.title = file.name;
       frame.setAttribute('sandbox', '');
       frame.inert = true;
-      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'">${data}`;
-      body.append(node('p', '隔離預覽，指令碼與外部資源已停用。'), frame);
+      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark">${data}`;
+      body.append(node('p', '預覽只顯示檔案內容。'), frame);
     } else if (extension === 'csv' || extension === 'xlsx') {
       renderSheets(body, readSheets(data, extension === 'xlsx'));
     } else if (extension === 'md') appendMarkdown(body, data);
@@ -636,7 +647,7 @@ function renderDiffChoices(context) {
       else renderSheets(body, new Map([['文字', after.split(/\r?\n/).map((line) => [line])]]),
         new Map([['文字', before.split(/\r?\n/).map((line) => [line])]]), true);
     } catch {
-      if (!abort.signal.aborted) body.textContent = '無法比較這兩個版本。';
+      if (!abort.signal.aborted) body.textContent = '無法比較這兩個版本。請重新選擇版本。';
     }
   }
   target.append(choice, action('比較版本', () => void compare()), body);
@@ -680,7 +691,7 @@ const topMenu = find('top-menu');
 const menuTrigger = find('top-menu-trigger');
 const panelNarrow = matchMedia('(max-width: 900px)');
 const panelTabs = new Map();
-const panelSections = { files: '檔案與產出', work: '工作', diff: '變更對照', notes: '筆記' };
+const panelSections = { files: '檔案', work: '工作', diff: '變更對照', notes: '筆記' };
 const closeFiles = find('close-files');
 let activeTab;
 let panelOpener;
@@ -824,7 +835,8 @@ function closePanel(restoreFocus = true) {
   panelToggle.setAttribute('aria-expanded', 'false');
   updatePanelLayout();
   if (restoreFocus) {
-    const replacement = opener?.dataset.id && messages.querySelector(`[data-id="${CSS.escape(opener.dataset.id)}"]`);
+    const messageID = opener?.closest('[data-id]')?.dataset.id;
+    const replacement = messageID && messages.querySelector(`[data-id="${CSS.escape(messageID)}"] .message-actions summary`);
     const page = tab?.preview && find('work-area').querySelector('.knowledge:not([hidden]) h1');
     const target = visibleOpener(opener) || replacement || page || menuTrigger;
     target.focus({ preventScroll: true });
@@ -840,28 +852,33 @@ for (const [key, id] of [['files', 'toggle-files'], ['work', 'open-work'], ['dif
   });
 }
 find('manage-attachments').addEventListener('click', (event) => openSection('files', event.currentTarget));
-topMenu.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || !topMenu.open) return;
-  event.preventDefault();
-  topMenu.open = false;
-  menuTrigger.focus();
-});
 document.addEventListener('click', (event) => {
   if (!topMenu.contains(event.target)) topMenu.open = false;
 });
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
 panelNarrow.addEventListener('change', updatePanelLayout);
+rightPanel.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab' || !panelNarrow.matches) return;
+  const candidates = rightPanel.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]');
+  const stops = [...candidates].filter((element) => element.tabIndex >= 0 && !element.disabled && visibleOpener(element));
+  const first = stops[0];
+  const last = stops.at(-1);
+  if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+});
 document.addEventListener('keydown', (event) => {
-  const disclosure = event.target.closest?.('.feature-more[open]');
+  const disclosure = event.target.closest?.('details:is(#top-menu, .feature-more, #shortcuts)[open]');
   if (event.key === 'Escape' && !event.defaultPrevented && disclosure) {
     event.preventDefault();
     disclosure.open = false;
     disclosure.querySelector('summary').focus();
   }
-}, { capture: true });
+});
 document.addEventListener('keydown', (event) => {
-  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
+  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden || event.target.closest?.('dialog[open]')) return;
   event.preventDefault();
   closePanel();
 });
@@ -888,11 +905,11 @@ function select(id) {
   if (!session) {
     updateSessionAlias();
     sessionTitle.textContent = '對話';
-    progress.textContent = '從左側新增會話後即可開始。';
+    progress.textContent = '';
     messages.replaceChildren();
     attachmentList.replaceChildren();
     emptyList(artifactList, '尚無可下載的檔案');
-    emptyList(activityList, '等待即時事件');
+    emptyList(activityList, '目前沒有進行中的工作。');
     uploadStatus.textContent = '';
     prompt.value = '';
     showError();
@@ -909,7 +926,7 @@ function select(id) {
   messages.replaceChildren(node('p', '載入會話中', 'empty'));
   attachmentList.replaceChildren();
   emptyList(artifactList, '尚無可下載的檔案');
-  emptyList(activityList, '等待即時事件');
+  emptyList(activityList, '目前沒有進行中的工作。');
   uploadStatus.textContent = '';
   showError();
   if (!selections.has(id)) selections.set(id, new Set());
@@ -1000,13 +1017,17 @@ function renderSessions() {
       if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
-      const summary = node('summary', '⋯');
-      summary.setAttribute('aria-label', `${label}的會話操作`);
+      const summary = node('summary', '⋯', 'menu-trigger');
+      summary.setAttribute('aria-label', `「${label}」的更多選項`);
+      summary.title = '更多';
       const rename = sessionButton('重新命名', () => renameSession(session));
-      const remove = sessionButton('刪除', () => removeSession(session));
+      const remove = sessionButton('刪除', () => removeSession(session, summary));
+      remove.classList.add('button-danger');
       rename.dataset.action = 'rename';
       remove.dataset.action = 'remove';
-      menu.append(summary, rename, remove);
+      const actions = node('div', undefined, 'menu-actions');
+      actions.append(rename, remove);
+      menu.append(summary, actions);
       bindRowMenu(menu, summary, [rename, remove]);
       row.append(link, menu);
       list.append(row);
@@ -1040,7 +1061,7 @@ async function upload(files) {
   const failures = [];
   for (const file of files) {
     if (current !== context || stopped) break;
-    if (file.size > 20 * 1024 * 1024) { failures.push(`${file.name} · 單檔最多 20 MiB。`); continue; }
+    if (file.size > 20 * 1024 * 1024) { failures.push(`${file.name} · 檔案超過 20 MB，請選擇較小的檔案。`); continue; }
     uploadStatus.textContent = `上傳中 · ${file.name}`;
     try {
       const result = await request(`${context.path}/attachments`, { file });
@@ -1070,7 +1091,7 @@ function updateProjectRead() {
 function displayProjectFolders() {
   const active = projectFolders.find((entry) => entry.id === folderProject.value);
   if (!active) return;
-  find('project-working-root').textContent = '工作根目錄 · ' + active.workingRoot;
+  find('project-working-root').textContent = '工作資料夾 · ' + active.workingRoot;
   find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
     const row = node('li', folder);
     row.append(' ', sessionButton('移除', () => void changeProjectFolder('remove', folder)));
@@ -1266,7 +1287,7 @@ async function updateModel(recheck) {
     applyModel(value, recheck ? defaultAlias.value : undefined);
     modelStatus.textContent = recheck ? '已重新檢查' : '已儲存';
   } catch (error) {
-    modelStatus.textContent = error.status === 429 ? '請等候 30 秒再重新檢查。' : '無法更新模型設定。';
+    modelStatus.textContent = error.status === 429 ? '請等候 30 秒再重新檢查。' : '無法更新模型設定。請再試一次。';
     for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
   } finally { if (!recheck) settingsSaving = false; }
 }
@@ -1286,7 +1307,7 @@ sessionAlias.addEventListener('change', async () => {
     knownSessions.set(session.id, session);
     if (current === context) status.textContent = '模型已切換';
   } catch (error) {
-    if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。';
+    if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。請再試一次。';
   } finally {
     context.aliasUpdating = false;
     if (current === context) {
@@ -1299,7 +1320,7 @@ function modelDirty() {
   return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
 }
 const limitLabels = {
-  recentMessages: '最近訊息則數', historyBytes: '歷史位元組上限',
+  recentMessages: '最近訊息則數', historyBytes: '歷史訊息容量上限',
   toolCalls: '工具呼叫次數上限', timeoutSeconds: '回合時限（秒）',
 };
 const limitsStatus = find('limits-status');
@@ -1385,7 +1406,7 @@ function applyKnowledgeSettings({ atlasUrl, toolbox }) {
 }
 async function loadKnowledgeSettings() {
   try { applyKnowledgeSettings(await request('/api/settings/knowledge')); }
-  catch { knowledgeSettingsStatus.textContent = '無法讀取知識庫設定。'; }
+  catch { knowledgeSettingsStatus.textContent = '無法讀取知識庫設定。請重新整理。'; }
 }
 const configuredLabel = (configured) => configured ? '已設定' : '未設定';
 async function loadTelegramStatus() {
@@ -1396,7 +1417,7 @@ async function loadTelegramStatus() {
     const { main, bi } = await request('/api/jobs');
     mainStatus.textContent = configuredLabel(main);
     biStatus.textContent = configuredLabel(bi);
-  } catch { mainStatus.textContent = biStatus.textContent = '暫時無法讀取'; }
+  } catch { mainStatus.textContent = biStatus.textContent = '無法讀取，請重新整理'; }
 }
 knowledgeSettings.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1409,7 +1430,7 @@ knowledgeSettings.addEventListener('submit', async (event) => {
   } catch (error) { knowledgeSettingsStatus.textContent = error.message; }
 });
 atlasButton.addEventListener('click', () => {
-  if (savedAtlas && window.confirm('即將離開此頁並在新分頁開啟 Atlas。要繼續嗎？')) {
+  if (savedAtlas && window.confirm('要在新分頁開啟 Atlas 嗎？')) {
     window.open(savedAtlas, '_blank', 'noopener,noreferrer');
   }
 });
@@ -1449,11 +1470,11 @@ async function loadMcpSettings() {
   try {
     const [server] = await request('/api/settings/mcp');
     status.textContent = {
-      connected: '已連線', disabled: '已停用', failed: '無法連線至內建知識庫。',
+      connected: '已連線', disabled: '已停用', failed: '無法連線至內建知識庫。請檢查整合設定。',
       needs_auth: '需要憑證', pending: '等待連線', unconfigured: '尚未設定知識庫',
     }[server.status];
     find('mcp-knowledge-tools').hidden = !server.tools.length;
-  } catch { status.textContent = '無法讀取連線狀態。'; }
+  } catch { status.textContent = '無法讀取連線狀態。請重新整理。'; }
 }
 
 function loadActiveSettingsSection() {
@@ -1519,7 +1540,7 @@ document.addEventListener('keydown', (event) => {
   showSettings();
 });
 
-const narrowNavigation = matchMedia('(max-width: 540px)');
+const narrowNavigation = matchMedia('(max-width: 800px)');
 const sidebarToggle = find('toggle-sidebar');
 function setSidebar(open) {
   find('session-sidebar').hidden = !open;
@@ -1528,8 +1549,8 @@ function setSidebar(open) {
 setSidebar(!narrowNavigation.matches);
 narrowNavigation.addEventListener('change', () => setSidebar(!narrowNavigation.matches));
 sidebarToggle.addEventListener('click', () => setSidebar(find('session-sidebar').hidden));
-find('session-sidebar').addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches) return;
+sidebarToggle.closest('.navigation').addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches || find('session-sidebar').hidden) return;
   event.preventDefault();
   setSidebar(false);
   sidebarToggle.focus();
@@ -1587,7 +1608,7 @@ async function renameSession(session) {
   } catch (error) { showError(error); }
 }
 
-async function removeSession(session) {
+async function removeSession(session, opener) {
   const card = find('remove-session-card');
   const path = sessionPath(session.id);
   find('remove-session-question').textContent = `確定刪除「${sessionLabel(session)}」？`;
@@ -1596,6 +1617,7 @@ async function removeSession(session) {
     card.addEventListener('close', () => resolve(card.returnValue), { once: true });
     card.showModal();
   });
+  opener.focus({ preventScroll: true });
   try {
     await request(path + '/remove', { data: { decision } });
     if (decision !== 'accept') return;
@@ -1700,13 +1722,13 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
     return { text: '已切換主題。', undo: previous !== value ? () => change(previous) : undefined };
   },
   '/attach'() {
-    if (pick.disabled) throw new Error('目前無法選擇附件。');
+    if (pick.disabled) throw new Error('目前無法選擇附件。請確認會話已開啟。');
     pick.click();
   },
   async '/ask'(argument) {
     const [, vault, question] = /^(\S+)\s+([\s\S]+)$/.exec(argument) ?? [];
     if (!vault) throw new Error('請輸入知識庫識別碼和問題。');
-    if (!knowledge) throw new Error('知識庫目前未設定。');
+    if (!knowledge) throw new Error('知識庫尚未設定。請查看整合設定。');
     await knowledge.ask(vault, question);
   },
   '/clear-search'() {
@@ -1727,7 +1749,8 @@ prompt.addEventListener('keydown', (event) => {
   if (!send.disabled) find('composer').requestSubmit(send);
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !event.defaultPrevented && !find('chat-view').hidden && !prompt.disabled) {
+  if (event.key === 'Escape' && !event.defaultPrevented && !event.target.closest?.('dialog[open]') &&
+      !find('chat-view').hidden && !prompt.disabled) {
     find('shortcuts').open = false;
     prompt.focus();
   }
@@ -1827,15 +1850,15 @@ try {
   const bootstrap = await connect();
   connection.textContent = '已連線';
   model.textContent = modelLabel(bootstrap.alias);
-  request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。'; });
-  request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。'; });
+  request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。請重新整理。'; });
+  request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。請重新整理。'; });
   request('/api/settings/projects').then((entries) => {
     projectFolders = entries;
     folderProject.replaceChildren(...entries.map(({ title, id }) => new Option(title, id)));
     folderProject.value = project;
     displayProjectFolders();
     updateProjectRead();
-  }).catch(() => { folderStatus.textContent = '無法載入專案資料夾。'; });
+  }).catch(() => { folderStatus.textContent = '無法載入專案資料夾。請重新整理。'; });
   request('/api/settings/about').then(({ version, license, pin, root }) => {
     const details = find('about-details');
     for (const [term, value] of [['OEP 版本', version], ['資料目錄', root], ['OpenCode 固定版本', pin], ['授權', license]]) {
@@ -1852,7 +1875,7 @@ try {
       description.append(link);
       details.append(description);
     }
-  }).catch(() => { find('about-status').textContent = '無法載入版本資訊。'; });
+  }).catch(() => { find('about-status').textContent = '無法載入版本資訊。請重新整理。'; });
   request('/api/settings/runtime').then((runtime) => {
     find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
     const details = find('runtime-details');
@@ -1869,17 +1892,17 @@ try {
     find('knowledge-configured').textContent = configuredLabel(runtime.knowledgeConfigured);
     find('telegram-configured').textContent = 'Telegram 整合：' + configuredLabel(runtime.telegramConfigured);
   }).catch(() => {
-    find('runtime-status').textContent = '無法載入執行環境。';
-    find('knowledge-configured').textContent = '暫時無法讀取';
+    find('runtime-status').textContent = '無法載入執行環境資訊。請重新整理。';
+    find('knowledge-configured').textContent = '無法讀取，請重新整理';
   });
   request('/api/settings/appearance').then((appearance) => {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;
-  }).catch(() => { appearanceStatus.textContent = '無法載入外觀設定。'; });
+  }).catch(() => { appearanceStatus.textContent = '無法載入外觀設定。請重新整理。'; });
   request('/api/settings').then((preferences) => {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;
-  }).catch(() => { find('settings-status').textContent = '無法載入助理設定。'; });
+  }).catch(() => { find('settings-status').textContent = '無法載入助理設定。請重新整理。'; });
   projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;
