@@ -34,8 +34,12 @@ function windowsAttributes(path: string) {
     ' if parent == p: break',
     ' parents.append(parent)',
     ' p = parent',
+    // Namespace each complete path after walking the normal drive or UNC ancestry.
+    'slash = chr(92)',
+    'prefix = slash * 2 + "?" + slash',
     'for p in reversed(parents):',
-    ' result = attributes(p)',
+    ' native = prefix + ("UNC" + slash + p[2:] if p.startswith(slash * 2) else p)',
+    ' result = attributes(native)',
     ' if result == 0xffffffff or result & 0x400: sys.exit(1)',
   ].join('\n'), path], { windowsHide: true, timeout: 2_000, stdio: 'ignore',
     env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH } });

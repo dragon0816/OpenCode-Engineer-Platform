@@ -8,6 +8,8 @@ import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import type { Turn } from '../../apps/adapter/src/http/chat.ts';
 import { delegateTool, listSpecialistsTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { DelegationService } from '../../apps/adapter/src/runs/delegation.ts';
+import { AttachmentService } from '../../apps/adapter/src/runs/attachments.ts';
+import { DelegationHandoff } from '../../apps/adapter/src/runs/delegation-handoff.ts';
 import { parseDelegationBudgets } from '../../apps/adapter/src/runs/delegation-ledger.ts';
 import { Dispatcher } from '../../apps/adapter/src/runs/dispatcher.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
@@ -22,6 +24,35 @@ const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 type Tool = { name: string; parameters: { properties: object; required: string[]; additionalProperties: boolean } };
 type Request = Omit<WireRequest, 'tools'> & { tools?: { function: Tool }[] };
 type ModelCall = { name: string; args: Record<string, unknown> };
+
+test('attachment upload and handoff copy support a long specialist data root', () => {
+  return (async () => {
+    const root = mkdtempSync(join(dataDirectory(), 'long-path-'));
+    const web = join(root, 'a'.repeat(112), 'web');
+    const agentId = randomUUID();
+    const id = randomUUID();
+    const workspace = join(web, 'agents', agentId, 'sessions', id);
+    mkdirSync(join(workspace, 'attachments'), { recursive: true });
+    const store = new WebStore(join(root, 'web.sqlite'));
+    try {
+      store.createAgent(store.agentCreation(agentId, { name: 'Synthetic specialist' }, () => {}));
+      store.createSession({ id, upstreamID: 'synthetic-long-path', createdAt: Date.now(), agent: 'inspector', alias },
+        undefined, { agentId, workspaceID: agentId });
+      const data = Buffer.from('Synthetic long-path attachment');
+      const attachments = new AttachmentService(store);
+      const uploaded = await attachments.upload(id, workspace, 'notes.txt', 'text/plain', data.length, async () => data);
+      assert.ok(join(workspace, 'attachments', uploaded.id + '.source').length > 260);
+      const [verified] = attachments.verifiedSelection(id, workspace, [uploaded.id]);
+      const handoff = new DelegationHandoff(join(web, 'agents', agentId));
+      const handoffId = randomUUID();
+      const [file] = handoff.stage(handoffId, [{ ...verified, classification: 'unclassified' }]);
+      assert.ok(join(web, 'agents', agentId, 'delegation-handoff', handoffId, file.fileId + '.source').length > 260);
+      assert.equal(file.sha256, uploaded.sha256);
+      assert.notEqual(file.identity.inode, verified.record.original.inode);
+      assert.deepEqual(handoff.read(handoffId, file).data, data);
+    } finally { store.close(); }
+  })();
+});
 
 test('pinned OpenCode authorizes and admits specialist work through the SSE broker', { timeout: 120_000 }, async (context) => {
   const root = mkdtempSync(join(dataDirectory(), 'delegation-'));
