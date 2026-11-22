@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { BiScheduler } from '../../../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../../../packages/knowledge/src/ingest.ts';
@@ -9,6 +10,7 @@ import { WebStore } from '../runs/web-store.ts';
 import { TelegramInbox } from './inbox.ts';
 import { TelegramApi, TelegramPoller } from './poller.ts';
 import { TelegramRouter } from './router.ts';
+import { verifyChannelConversations } from './channel-migration.ts';
 
 const names = ['OEP_TELEGRAM_MAIN_BOT_TOKEN', 'OEP_TELEGRAM_BI_BOT_TOKEN', 'OEP_TELEGRAM_ALLOWED_USER_ID'] as const;
 
@@ -32,7 +34,6 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   const enabled = Boolean(owner && /^[1-9]\d+$/.test(owner) && !(main && bi && main.split(':')[0] === bi.split(':')[0]));
   const redact = (value: string) => [main, bi, owner].reduce((text, secret) => secret ? text.replaceAll(secret, '[已遮蔽]') : text, value);
   const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
-  inbox.db.exec('CREATE TABLE IF NOT EXISTS telegram_binding(bot TEXT PRIMARY KEY, fingerprint TEXT NOT NULL)');
   function bind(bot: string, token: string | undefined) {
     if (!enabled || !validToken(token)) return;
     const fingerprint = createHash('sha256').update(bot + ':' + token.split(':')[0] + ':' + owner).digest('hex');
@@ -44,6 +45,14 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   const mainApi = bind('main', main);
   const biApi = bind('bi', bi);
   const sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
+  try {
+    using sessionDb = new DatabaseSync(join(root, 'telegram-chat.sqlite'), { readOnly: true });
+    verifyChannelConversations(inbox.db, sessionDb);
+  } catch (error) {
+    sessions.close();
+    inbox.db.close();
+    throw error;
+  }
   const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger);
   const router = new TelegramRouter(inbox, runtime, chat, sessions, biApi);
   const knowledge = runtime.knowledge?.reviewStore;
@@ -97,11 +106,12 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
         main: Boolean(mainApi), bi: Boolean(biApi),
         domain: router.config('domain'), origins: JSON.parse(router.config('origins') || '[]'), target: router.config('target'),
         sources: inbox.db.prepare('SELECT id,ref,state,reason,domain,target,bytes IS NOT NULL AS hasFile FROM bi_sources ORDER BY id DESC LIMIT 200').all(),
-        delivery: inbox.db.prepare('SELECT bot,state,COUNT(*) AS count FROM outbox GROUP BY bot,state').all(),
-        unresolvedDelivery: inbox.db.prepare(`SELECT bot,id,state,attempts FROM outbox
-          WHERE state IN ('indeterminate','failed') ORDER BY rowid DESC LIMIT 200`).all(),
-        failedIntakes: inbox.db.prepare(`SELECT bot,id,attempts,firstSeen FROM inbox
-          WHERE failed=1 ORDER BY firstSeen DESC LIMIT 200`).all(),
+        delivery: inbox.db.prepare(`SELECT substr(account_id,10) AS bot,state,COUNT(*) AS count
+          FROM channel_outbound GROUP BY account_id,state`).all(),
+        unresolvedDelivery: inbox.db.prepare(`SELECT substr(account_id,10) AS bot,effect_key AS id,state,attempts
+          FROM channel_outbound WHERE state IN ('indeterminate','failed') ORDER BY rowid DESC LIMIT 200`).all(),
+        failedIntakes: inbox.db.prepare(`SELECT substr(account_id,10) AS bot,CAST(event_key AS INTEGER) AS id,attempts,
+          received_at AS firstSeen FROM channel_inbound WHERE status='failed' ORDER BY received_at DESC LIMIT 200`).all(),
         jobs: knowledge?.biStatus() ?? [],
         ...scheduler?.list(),
       };

@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lsta
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
+  from '../../apps/adapter/src/telegram/channel-migration.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 
@@ -145,10 +147,11 @@ function digestRow(values) {
       value instanceof Uint8Array ? ['blob', Buffer.from(value).toString('base64')] : value))).digest('hex');
 }
 
-function rowDigests(db, table, columns) {
-  const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table));
+function rowDigests(db, table, columns, ordered = false) {
+  const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table) + (ordered ? ' ORDER BY rowid' : ''));
   statement.setReadBigInts(true);
-  return [...statement.iterate()].map((row) => digestRow(Object.values(row))).sort();
+  const hashes = [...statement.iterate()].map((row) => digestRow(Object.values(row)));
+  return ordered ? hashes : hashes.sort();
 }
 
 const columnsOf = (db, table) => db.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid')
@@ -211,6 +214,26 @@ function verifyEmptyAdditions(name, counts, tables) {
   }
 }
 
+function verifyChannelSeeds(name, oldDb, newDb, counts) {
+  for (const table of migratedChannelTables) {
+    const ordered = table === 'channel_inbound' || table === 'channel_outbound';
+    const expected = Array.from(legacyChannelRows(oldDb, table), (row) =>
+      digestRow(row.map((value) => typeof value === 'number' ? BigInt(value) : value)));
+    if (!ordered) expected.sort();
+    if (counts[table] !== expected.length || !same(rowDigests(newDb, table, columnsOf(newDb, table), ordered), expected)) {
+      throw new SnapshotError(name, `升級比對失敗。${table} 初始資料、歸屬或來源不符。`);
+    }
+  }
+}
+
+function verifyChannelOwners(name, db) {
+  const sessionsPath = join(root, dirname(name), 'telegram-chat.sqlite');
+  using sessions = lstatSync(sessionsPath, { throwIfNoEntry: false })
+    ? new DatabaseSync(sessionsPath, { readOnly: true }) : undefined;
+  try { verifyChannelConversations(db, sessions); }
+  catch { throw new SnapshotError(name, '升級比對失敗。channel_conversations 歸屬不符。'); }
+}
+
 async function verifyNewCentralStore(name, next, before) {
   const chat = name.replace(/web\.sqlite$/, 'telegram-chat.sqlite');
   if (name === chat || !name.endsWith('web.sqlite') || !Object.hasOwn(before, chat) ||
@@ -253,20 +276,25 @@ async function reconcileUpgrade() {
     const channel = file === 'telegram-chat.sqlite';
     const web = channel || file === 'web.sqlite';
     const knowledge = file === 'knowledge.sqlite';
+    const telegram = file === 'telegram.sqlite';
     const migration = dataMigrations[file];
     if (migration && next.userVersion !== migration.version) {
       throw new SnapshotError(name, '升級比對失敗。SQLite user_version 與新版不符。');
     }
     const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
     const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
-    const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty : emptyTables;
+    const seedTelegram = telegram && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
+    const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty :
+      seedTelegram ? new Set(legacyTelegramTables.filter((table) => !Object.hasOwn(prior.counts, table))) : emptyTables;
     const allowed = web ? webAdditions : knowledge ? knowledgeAdditions : emptyTables;
     await check(name, '升級比對失敗。無法讀取 SQLite 欄位或工作狀態。', () => useDatabase(join(destination, name), (oldDb) =>
       useDatabase(join(root, name), (newDb) => {
         const seeded = seedWeb ? verifyAgentSeeds(name, oldDb, newDb, next.counts, channel) : {};
+        if (seedTelegram) verifyChannelSeeds(name, oldDb, newDb, next.counts);
         verifyEmptyAdditions(name, next.counts, expectedEmpty);
         for (const [table, count] of Object.entries(next.counts)) {
-          if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table)) continue;
+          if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
+              seedTelegram && migratedChannelTables.includes(table)) continue;
           if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table)) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
           }
@@ -280,10 +308,11 @@ async function reconcileUpgrade() {
             throw new SnapshotError(name, '升級比對失敗。既有欄位、資料列或工作狀態不符。');
           }
         }
-        if ((web || knowledge) && newDb.prepare('PRAGMA foreign_key_check').get()) {
+        if ((web || knowledge || telegram) && newDb.prepare('PRAGMA foreign_key_check').get()) {
           throw new SnapshotError(name, '升級比對失敗。SQLite foreign_key_check 外鍵檢查失敗。');
         }
         if (web) verifyAgentLedger(newDb, join(root, name), channel);
+        if (telegram && next.userVersion === telegramInboxVersion) verifyChannelOwners(name, newDb);
       })));
   }
 }
@@ -294,13 +323,22 @@ async function intentDiff(report) {
   const changes = [];
   for (const [database, metadata] of Object.entries(live.databases)) {
     await check(database, '回退時讀取待處理工作或計算雜湊失敗。', () => useDatabase(join(root, database), async (db) => {
-      for (const table of ['notification_intents', 'outbox', 'inbox', 'bi_jobs', 'ingest_jobs']) {
+      for (const table of ['notification_intents', 'outbox', 'inbox', 'channel_outbound', 'channel_inbound', 'bi_jobs', 'ingest_jobs']) {
         if (!(table in metadata.counts)) continue;
-        const previous = before.databases[database]?.counts[table] !== undefined
+        const metadataBefore = before.databases[database];
+        const columns = columnsOf(db, table);
+        const previous = metadataBefore?.counts[table] !== undefined
           ? await useDatabase(join(destination, database), (old) => {
             const columns = columnsOf(old, table);
             return { columns, digests: new Set(rowDigests(old, table, columns)) };
-          }) : { columns: columnsOf(db, table), digests: new Set() };
+          }) : { columns, digests: new Set() };
+        if (metadataBefore && metadataBefore.userVersion < 2 && migratedChannelTables.includes(table)) {
+          await useDatabase(join(destination, database), (old) => {
+            for (const row of legacyChannelRows(old, table)) {
+              previous.digests.add(digestRow(row.map((value) => typeof value === 'number' ? BigInt(value) : value)));
+            }
+          });
+        }
         const addedOrChanged = rowDigests(db, table, previous.columns).filter((hash) => !previous.digests.has(hash));
         if (addedOrChanged.length) changes.push({ database, table, columns: previous.columns, addedOrChanged });
       }

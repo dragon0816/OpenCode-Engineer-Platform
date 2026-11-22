@@ -41,7 +41,7 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
   inbox = new TelegramInbox(ledger);
   assert.equal(inbox.offset('bi'), 2);
   assert.equal(inbox.next('bi', 'work', Date.now())?.id, 1);
-  assert.equal(inbox.db.prepare("SELECT state FROM outbox WHERE id='crash-send'").get()?.state, 'indeterminate');
+  assert.equal(inbox.db.prepare("SELECT state FROM channel_outbound WHERE effect_key='crash-send'").get()?.state, 'indeterminate');
   const store = new KnowledgeStore(knowledge);
   assert.equal(store.reconciliation().effects.length, 1);
   const runtime = { knowledge: { reviewStore: store } } as unknown as Runtime;
@@ -110,8 +110,8 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     };
     const start = Date.now();
     await Promise.all([step(main, start), step(bi, start)]);
-    assert.equal(inbox.db.prepare("SELECT state FROM outbox WHERE bot='bi' AND id='update-1'").get()?.state, 'indeterminate');
-    assert.equal(inbox.db.prepare("SELECT due FROM outbox WHERE bot='main' AND id='update-1'").get()?.due, start + 5000);
+    assert.equal(inbox.db.prepare("SELECT state FROM channel_outbound WHERE account_id='telegram-bi' AND effect_key='update-1'").get()?.state, 'indeterminate');
+    assert.equal(inbox.db.prepare("SELECT due_at AS due FROM channel_outbound WHERE account_id='telegram-main' AND effect_key='update-1'").get()?.due, start + 5000);
     await step(main, start + 4999);
     assert(!sends.some((send) => send.bot === 'botfake-main'));
     for (let index = 0; index < 27; index++) {
@@ -121,7 +121,9 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     assert.equal(inbox.offset('bi'), 27);
     assert.deepEqual(offsets.get('botfake-main')?.slice(0, 2), [0, 27]);
     assert.deepEqual(offsets.get('botfake-bi')?.slice(0, 2), [2, 27]);
-    assert.equal(inbox.db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE done=1').get()?.n, 48);
+    assert.equal(inbox.db.prepare("SELECT COUNT(*) AS n FROM channel_inbound WHERE status='handled'").get()?.n, 48);
+    assert.equal(inbox.db.prepare(`SELECT count(*) AS total FROM channel_inbound WHERE status='rejected'
+      AND payload IS NULL AND conversation_key='' AND reason_code='unauthorized-update'`).get()?.total, 4);
     assert.equal(inbox.db.prepare("SELECT state FROM bi_sources WHERE id=2").get()?.state, 'blocked');
     assert.equal(inbox.db.prepare("SELECT ref FROM bi_sources WHERE id=2").get()?.ref, 'https://example.invalid/unreadable');
     assert.equal(store.reconciliation().effects.length, 23);
@@ -270,21 +272,22 @@ test('poison and stalled work finish durably while commands and other topics pro
     try {
       const stalled = poller.process('work', signal, () => afterPoison + workDeadline - 20);
       await poller.process('command', signal, () => afterPoison + workDeadline - 20);
-      assert.equal(inbox.db.prepare('SELECT done FROM inbox WHERE id=6').get()?.done, 1);
+      assert.equal(inbox.db.prepare("SELECT status='handled' AS done FROM channel_inbound WHERE event_key='6'").get()?.done, 1);
       await stalled;
     } finally { clearTimeout(keepAlive); }
     await poller.process('work', signal, () => afterPoison + workDeadline);
     inbox.admit('main', '42', updates, now + workDeadline * 3);
     await poller.process('work', signal, () => afterPoison + workDeadline + 1);
-    const rows = inbox.db.prepare('SELECT id,firstSeen,failed,done,payload FROM inbox ORDER BY id').all();
+    const rows = inbox.db.prepare(`SELECT CAST(event_key AS INTEGER) AS id,received_at AS firstSeen,
+      status='failed' AS failed,status IN ('handled','failed') AS done,payload FROM channel_inbound ORDER BY id`).all();
     assert.deepEqual(rows.map((row) => [row.id, row.failed, row.done]), [
       [1, 1, 1], [2, 1, 1], [3, 0, 1], [4, 0, 1], [5, 0, 1], [6, 0, 1],
     ]);
     assert.equal(rows[0].firstSeen, now);
     assert.match(String(rows[0].payload), /poison/);
-    assert.deepEqual(inbox.db.prepare('SELECT id FROM outbox ORDER BY rowid').all().map((row) => row.id),
+    assert.deepEqual(inbox.db.prepare('SELECT effect_key AS id FROM channel_outbound ORDER BY rowid').all().map((row) => row.id),
       ['update-4', 'update-5', 'update-1', 'update-6', 'update-2', 'update-3']);
-    assert.match(String(inbox.db.prepare("SELECT text FROM outbox WHERE id='update-2'").get()?.text), /已保留原始收件/);
+    assert.match(String(inbox.db.prepare("SELECT json_extract(payload, '$.text') AS text FROM channel_outbound WHERE effect_key='update-2'").get()?.text), /已保留原始收件/);
   } finally {
     inbox.db.close();
     rmSync(root, { recursive: true });

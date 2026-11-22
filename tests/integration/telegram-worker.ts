@@ -9,7 +9,7 @@ const inbox = new TelegramInbox(ledger);
 const row = { update_id: 1, message: { chat: { type: 'private', id: 42 }, from: { id: 42 }, text: 'Synthetic crash intake' } };
 if (mode === 'before') {
   inbox.db.function('crash_before_commit', () => process.exit(79));
-  inbox.db.exec('CREATE TEMP TRIGGER crash BEFORE INSERT ON cursor BEGIN SELECT crash_before_commit(); END;');
+  inbox.db.exec('CREATE TEMP TRIGGER crash BEFORE INSERT ON channel_cursors BEGIN SELECT crash_before_commit(); END;');
   inbox.admit('bi', '42', [row]);
 } else if (mode === 'persist') {
   inbox.admit('bi', '42', [row]);
@@ -20,7 +20,7 @@ if (mode === 'before') {
   await router.handle(inbox.next('bi', 'work', Date.now())!, new AbortController().signal);
 } else if (mode === 'send') {
   inbox.notify('bi', 'crash-send', 0, 'Synthetic unknown delivery');
-  inbox.db.exec("UPDATE outbox SET state='sending' WHERE bot='bi'");
+  inbox.db.exec("UPDATE channel_outbound SET state='sending' WHERE account_id='telegram-bi'");
 } else if (mode === 'schedule') {
   const store = new KnowledgeStore(knowledge);
   new BiScheduler(inbox.db, store).reconcile(Number(process.argv[5]));

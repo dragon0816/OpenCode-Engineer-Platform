@@ -75,8 +75,9 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     }
     const telegram = join(web, 'telegram.sqlite');
     const pending = (id: string) => {
-      using db = new DatabaseSync(telegram);
-      db.prepare("INSERT INTO outbox(bot,id,topic,text,state) VALUES('main', ?, 0, 'synthetic', 'pending')").run(id);
+      const inbox = new TelegramInbox(telegram, false);
+      try { inbox.notify('main', id, 0, 'synthetic'); }
+      finally { inbox.db.close(); }
     };
     const pointer = join(fixture.install, 'current.json');
     const journalPath = join(fixture.install, 'upgrade.journal.json');
@@ -150,8 +151,11 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       const safetyCopy = read(journalPath).safetyCopy;
       assert.equal(readFileSync(join(safetyCopy, 'web/profile/synthetic.txt'), 'utf8'), 'upgraded profile');
       using originalDb = new DatabaseSync(join(safetyCopy, 'web/telegram.sqlite'), { readOnly: true });
-      assert.ok(originalDb.prepare("SELECT 1 FROM outbox WHERE id='after-upgrade' AND state='pending'").get());
-      assert.equal(read(join(fixture.install, 'rollback-' + journal.id + '.json')).changes[0].addedOrChanged.length, 1);
+      assert.ok(originalDb.prepare("SELECT 1 FROM channel_outbound WHERE effect_key='after-upgrade' AND state='pending'").get());
+      const { changes } = read(join(fixture.install, 'rollback-' + journal.id + '.json'));
+      assert.equal(changes.length, 1);
+      assert.equal(changes[0].table, 'channel_outbound');
+      assert.equal(changes[0].addedOrChanged.length, 1);
       assert.match(fixture.run('Rollback-OEP', []), /無需再回退/);
     }
 

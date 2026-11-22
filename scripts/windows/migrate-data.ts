@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { prepareBiWorkspace } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { verifyChannelConversations } from '../../apps/adapter/src/telegram/channel-migration.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath } from './snapshot-paths.mjs';
 
@@ -33,6 +34,15 @@ try {
       failureCheck = '遷移後讀取 SQLite 結構及筆數失敗。';
       return [[key, { before, after: describe(path) }]];
     })));
+  for (const directory of ['', 'web/']) {
+    failurePath = directory + 'telegram.sqlite';
+    if (!result[failurePath]) continue;
+    failureCheck = '通道會話歸屬檢查失敗。';
+    using db = new DatabaseSync(join(root, failurePath), { readOnly: true });
+    const path = join(root, directory, 'telegram-chat.sqlite');
+    using sessions = existsSync(path) ? new DatabaseSync(path, { readOnly: true }) : undefined;
+    verifyChannelConversations(db, sessions);
+  }
   if (result['web/web.sqlite'] || result['web.sqlite']) {
     failurePath = 'web/agents/bi';
     failureCheck = '建立 BI 受管工作資料夾失敗。';

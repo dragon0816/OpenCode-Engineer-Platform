@@ -10,6 +10,7 @@ import type { ChatService } from '../http/chat.ts';
 import type { WebStore } from '../runs/web-store.ts';
 import type { Intake, Message, TelegramInbox } from './inbox.ts';
 import type { TelegramApi } from './poller.ts';
+import { legacyBinding, topicKey } from './channel-migration.ts';
 
 const extensions = new Set(['.txt', '.md', '.csv', '.png', '.jpg', '.jpeg', '.pdf', '.xlsx']);
 const textExtensions = new Set(['.txt', '.md', '.csv']);
@@ -32,17 +33,6 @@ export class TelegramRouter {
     this.chat = chat;
     this.sessions = sessions;
     this.biApi = biApi;
-    inbox.db.exec(`CREATE TABLE IF NOT EXISTS telegram_sessions(topic INTEGER PRIMARY KEY, session TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS bi_sources(id INTEGER PRIMARY KEY, ref TEXT NOT NULL, state TEXT NOT NULL,
-      reason TEXT NOT NULL, bytes BLOB, domain TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS bi_config(name TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-    const columns = inbox.db.prepare('PRAGMA table_info(bi_sources)').all();
-    if (!columns.some((column) => column.name === 'supplement')) {
-      inbox.db.exec('ALTER TABLE bi_sources ADD COLUMN supplement BLOB');
-    }
-    if (!columns.some((column) => column.name === 'target')) {
-      inbox.db.exec("ALTER TABLE bi_sources ADD COLUMN target TEXT NOT NULL DEFAULT ''");
-    }
   }
 
   config(name: string) {
@@ -82,7 +72,8 @@ export class TelegramRouter {
   private async main(row: Intake, text: string, signal: AbortSignal) {
     if (!text.trim()) return '請輸入文字訊息。';
     const db = this.inbox.db;
-    const binding = db.prepare('SELECT session FROM telegram_sessions WHERE topic=?').get(row.topic);
+    const owner = legacyBinding('main');
+    const binding = this.inbox.conversation(owner, row.topic);
     let session = this.sessions.sessions().find(({ id }) => id === binding?.session);
     if (/^\/ask(?:\s|$)/.test(text)) {
       const match = text.match(/^\/ask\s+(\S+)\s+([\s\S]+)$/);
@@ -98,15 +89,15 @@ export class TelegramRouter {
     if (session) {
       const previous = this.sessions.turns(session.id).at(-1);
       if (previous && previous.state !== 'verified' && previous.state !== 'failed' && previous.state !== 'cancelled') {
-        const failed = db.prepare("SELECT id FROM inbox WHERE bot='main' AND topic=? AND lane='work' AND failed=1")
-          .all(row.topic);
-        if (failed.some(({ id }) => previous.id === turnId(Number(id)))) session = undefined;
+        const failed = db.prepare(`SELECT event_key FROM channel_inbound WHERE account_id=? AND conversation_key=?
+          AND binding_revision=? AND lane='work' AND status='failed'`).all(owner.accountId, topicKey(row.topic), owner.bindingRevision);
+        if (failed.some(({ event_key }) => previous.id === turnId(Number(event_key)))) session = undefined;
       }
     }
     if (!session) {
       session = await this.chat.create('inspector', undefined, undefined, row.topic);
       signal.throwIfAborted();
-      db.prepare('INSERT OR REPLACE INTO telegram_sessions VALUES (?,?)').run(row.topic, session.id);
+      this.inbox.rememberConversation(owner, row.topic, session.id);
     }
     const id = turnId(row.id);
     await this.chat.submit(session, { id, text, attachments: [], workbook: false }, undefined, row.topic);

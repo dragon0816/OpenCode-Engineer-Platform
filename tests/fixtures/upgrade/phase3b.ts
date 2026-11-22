@@ -79,10 +79,18 @@ export function seedPhase3bFixture(root: string) {
     INSERT INTO telegram_sessions VALUES (17, 'telegram-session');
     INSERT INTO cursor VALUES ('main', 8), ('bi', 11);
     INSERT INTO inbox(bot, id, topic, payload) VALUES ('main', 7, 17, '{}');
+    INSERT INTO inbox(bot,id,topic,payload,done,firstSeen,started,attempts,due,failed,lane) VALUES
+      ('bi',9,2,'{"text":"Synthetic failed intake"}',1,100,200,20,120200,1,'work'),
+      ('bi',10,3,'{"text":"Synthetic intake"}',1,100,200,2,6000,0,'work'),
+      ('bi',11,3,'{"text":"Synthetic supplement pending"}',0,300,400,3,6400,0,'work');
     INSERT INTO outbox(bot, id, topic, text, state) VALUES
       ('main', 'original', 17, 'Synthetic pending', 'pending'),
-      ('bi', 'previous-bi', 0, 'Synthetic uncertain', 'indeterminate');
+      ('bi', 'previous-bi', 0, 'Synthetic uncertain', 'indeterminate'),
+      ('bi', 'interrupted-bi', 3, 'Synthetic interrupted send', 'sending'),
+      ('bi', 'already-sent-bi', 3, 'Synthetic sent', 'sent');
     INSERT INTO bi_sources VALUES (10, 'synthetic source', 'awaiting_review', '', X'73796e746865746963', 'fixture', NULL, 'synthetic-bench');
+    INSERT INTO bi_sources VALUES (11, 'synthetic supplement', 'ready', '', X'73796e746865746963', 'fixture',
+      X'737570706c656d656e74', 'synthetic-bench');
     INSERT INTO bi_config VALUES ('target', 'synthetic-bench');
   `);
   telegram.prepare('INSERT INTO telegram_binding VALUES (?, ?)').run('main', hash(Buffer.from('synthetic fingerprint')));
