@@ -55,7 +55,7 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
       if (!visible(element)) continue;
       for (const key of ['aria-label', 'aria-description', 'title', 'placeholder', 'alt']) add(element, element.getAttribute(key));
       for (const key of ['aria-describedby', 'aria-labelledby']) {
-        for (const id of element.getAttribute(key)?.split(/\s+/) ?? []) {
+        for (const id of element.getAttribute(key)?.split(/\\s+/) ?? []) {
           const referenced = document.getElementById(id);
           if (referenced && !visible(referenced)) add(element, referenced.textContent);
         }

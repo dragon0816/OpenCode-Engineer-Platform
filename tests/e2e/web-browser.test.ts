@@ -266,6 +266,8 @@ try {
         // Restore the first settings section for the later navigation and reload checks.
         await selectSetting('assistant');
         await audit('#close-settings', '#chat-view');
+        await audit('#shortcuts summary', '#shortcuts');
+        await page.evaluate("document.querySelector('#shortcuts').open = false");
         const noOverflow = async (label: string) => {
           const size = await page.evaluate<{ scroll: number; client: number }>(`({
             scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth,
@@ -671,6 +673,8 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.ready("document.activeElement.dataset.section === 'assistant'");
+        await page.evaluate("document.querySelector('#assistant-name').value = '未儲存的名稱'");
+        await assertNativeDialogTextInThemes(page, '[data-section=appearance]', 'confirm');
         await page.evaluate(`
           window.confirm = () => false;
           document.querySelector('#assistant-name').value = '未儲存的名稱';
@@ -1186,6 +1190,9 @@ try {
         assert.equal(readFileSync(join(folder, 'sample.txt'), 'utf8'), 'SYNTHETIC_READ_ONLY');
         await reload();
         await page.ready("document.querySelector('#project-read-folder option') && document.querySelector('.message-quote')");
+        await page.evaluate("document.querySelector('#project-read').open = true");
+        await assertUiTextInThemes(page, '#project-read');
+        await page.evaluate("document.querySelector('#project-read').open = false");
 
 
         await page.evaluate(`
