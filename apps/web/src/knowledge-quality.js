@@ -1,4 +1,4 @@
-import { message, optionText, setText, t } from './i18n.js';
+import { bindFilePicker, message, optionText, setText, t } from './i18n.js';
 import { errorText, modelLabel, request, sampleKnowledgeID } from './api.js';
 
 const find = (id) => document.getElementById(id);
@@ -51,7 +51,10 @@ export function bindKnowledgeQuality(openPassage, messages) {
     rows.replaceChildren();
     if (!set) return;
     for (const question of set.questions) {
-      const row = node('li', question.query + ' · ' + kinds[question.class]);
+      const row = node('li');
+      const query = node('span', question.query);
+      query.className = 'question-content';
+      row.append(query, ' · ', node('span', kinds[question.class]));
       if (!set.builtIn) {
         row.append(' ', button(message('jobs.edit'), () => openEditor(question)), ' ', button(message('chat.delete'), () => {
           if (confirm(t('quality.delete-this-question'))) void save(set.questions.filter(({ id }) => id !== question.id));
@@ -142,10 +145,12 @@ export function bindKnowledgeQuality(openPassage, messages) {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const refreshQuestionPicker = bindFilePicker(find('quality-json-file'), message('ui.load-json-from-file'));
   find('quality-json-file').onchange = async (event) => {
     const input = event.currentTarget;
     const file = input.files[0];
     input.value = '';
+    refreshQuestionPicker();
     if (!file) return;
     if (file.size > 120 * 1024) {
       setText(status, message('quality.this-question-set-file-is-too-large'));

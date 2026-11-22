@@ -13,6 +13,7 @@ import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
 import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
+import { assertWorkbenchFits, selectLocale } from './gui-locales.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -65,7 +66,7 @@ const settingsRows: Record<string, Record<string, string[]>> = {
     'assistant-advanced': ['details #assistant-delegation:disabled', 'details small'],
   },
   appearance: {
-    'appearance-theme': ['#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
+    'appearance-theme': ['#settings-locale','#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
     'appearance-avatar': ['#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status'],
   },
   model: {
@@ -160,10 +161,10 @@ try {
       const tab = () => key('Tab', 'Tab', 9);
       const enter = () => key('Enter', 'Enter', 13);
       const escape = () => key('Escape', 'Escape', 27);
-      const reload = async () => {
+      const reload = async (connection = '已連線') => {
         await page.evaluate('window.__beforeReload = true');
         await page.command('Page.reload');
-        await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
+        await page.ready(`window.__beforeReload !== true && document.querySelector('#connection').textContent === ${JSON.stringify(connection)}`);
       };
       const click = async (selector: string) => {
         const point = await page.evaluate<{ x: number; y: number }>(`(() => {
@@ -216,10 +217,15 @@ try {
           })`);
         }
       };
+      await page.command('Page.addScriptToEvaluateOnNewDocument', {
+        source: "Object.defineProperty(navigator, 'language', { get: () => 'en-US' });",
+      });
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
       assert.equal(await page.evaluate("document.cookie.includes('oep_session')"), false);
       await page.ready("document.querySelector('#connection').textContent === '已連線'");
+      assert.equal(await page.evaluate("document.documentElement.lang"), 'zh-TW');
+      assert.equal(await page.evaluate("localStorage.getItem('oep.locale')"), null);
       await assertUiTextInThemes(page);
       if (!real) {
         const sections = ['rail-functions', 'rail-sessions', 'rail-assistants'];
@@ -283,12 +289,7 @@ try {
         await audit('#close-settings', '#chat-view');
         await audit('#shortcuts summary', '#shortcuts');
         await page.evaluate("document.querySelector('#shortcuts').open = false");
-        const noOverflow = async (label: string) => {
-          const size = await page.evaluate<{ scroll: number; client: number }>(`({
-            scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth,
-          })`);
-          assert.ok(size.scroll <= size.client, `${label}: ${size.scroll} > ${size.client}`);
-        };
+        const noOverflow = (label: string) => assertWorkbenchFits(page, label);
         for (const [width, height] of [[390, 844], [768, 1024], [1440, 900]]) {
           const narrow = width < 800;
           await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
@@ -318,7 +319,9 @@ try {
               await page.evaluate("document.querySelector('#knowledge-tab-overview').click()");
             }
           }
-          await page.evaluate("document.querySelector('#open-chat').click()");
+          await page.evaluate("document.querySelector('#open-chat').click(); document.querySelector('#top-menu').open = true");
+          await noOverflow(`${width} workbench menu`);
+          await page.evaluate("document.querySelector('#top-menu').open = false");
           if (narrow) {
             const targets = ['#toggle-sidebar', '#top-menu-trigger', '#pick', '#session-alias', '#send', '#shortcuts summary'];
             assert.deepEqual(await page.evaluate(`${JSON.stringify(targets)}.filter(selector => {
@@ -415,6 +418,14 @@ try {
         })`), true, 'The composer fits the remaining viewport');
         await page.command('Emulation.clearDeviceMetricsOverride');
         await page.ready('innerWidth > 900');
+        const browserWidth = await page.evaluate<number>('innerWidth');
+        for (const [width, height] of [[390, 844], [768, 1024], [1440, 900]]) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+          await page.ready(`innerWidth === ${width}`);
+          await assertWorkbenchFits(page, `${width} populated conversation`);
+        }
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await page.ready(`innerWidth === ${browserWidth}`);
         const artifactButton = "#chat-resources button[data-file*='/artifacts/']";
         const artifactTab = "#panel-tabs [role=tab][aria-selected=true]";
         const visiblePreview = "#file-preview [role=tabpanel]:not([hidden])";
@@ -476,6 +487,56 @@ try {
         }
         await page.command('Emulation.clearDeviceMetricsOverride');
         await page.ready("!matchMedia('(max-width: 800px)').matches");
+        await openPanel('toggle-files');
+        await clickArtifact();
+        await page.ready(`document.querySelector('${visiblePreview} table')`);
+        await page.evaluate(`(() => {
+          const editor = document.querySelector('#prompt');
+          editor.value = 'Draft with 合成資料';
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+          editor.focus();
+          editor.setSelectionRange(2, 8);
+          window.__languageTabs = [...document.querySelectorAll('#panel-tabs [role=tab]')];
+        })()`);
+        await click('#top-menu-trigger');
+        await page.evaluate("document.querySelector('#menu-locale').focus()");
+        await selectLocale(page, 'en', '#menu-locale');
+        assert.equal(await page.evaluate(`(() => {
+          const composer = document.querySelector('#prompt');
+          const tabs = [...document.querySelectorAll('#panel-tabs [role=tab]')];
+          return document.activeElement === composer && composer.value === 'Draft with 合成資料' &&
+            composer.selectionStart === 2 && composer.selectionEnd === 8 &&
+            !document.querySelector('#chat-view').hidden && !document.querySelector('#chat-files').hidden &&
+            tabs.length === 2 && tabs.every((tab, index) => tab === window.__languageTabs[index]) &&
+            tabs[0].textContent === 'Files' && tabs[1].getAttribute('aria-selected') === 'true' &&
+            document.querySelector('#connection').textContent === 'Connected';
+        })()`), true, 'Language switch preserves the view, tabs, draft, focus and selection');
+        const errorLocales = await page.evaluate<string[]>(`import('/api.js').then(async ({ request, errorText }) => {
+          try { await request('/api/projects/unknown/sessions'); }
+          catch (error) {
+            const message = errorText(error);
+            const before = message();
+            const select = document.querySelector('#settings-locale');
+            select.value = 'zh-TW';
+            select.dispatchEvent(new Event('change'));
+            const after = message();
+            select.value = 'en';
+            select.dispatchEvent(new Event('change'));
+            return [before, after];
+          }
+        })`);
+        assert.deepEqual(errorLocales, ['Project not found.', '找不到專案。']);
+        await reload('Connected');
+        assert.equal(await page.evaluate("localStorage.getItem('oep.locale')"), 'en');
+        assert.equal(await page.evaluate('document.documentElement.lang'), 'en');
+        await click('#open-settings');
+        await selectSetting('appearance');
+        await page.evaluate("document.querySelector('#settings-locale').focus()");
+        await selectLocale(page, 'zh-TW');
+        await page.ready("document.activeElement.id === 'settings-locale' && document.querySelector('#settings-appearance h2').textContent === '外觀'");
+        await selectSetting('assistant');
+        await click('#close-settings');
+        await page.ready("document.querySelectorAll('.tool-card').length === 1");
         await assertUiTextInThemes(page);
         assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
         await page.evaluate("document.querySelector('.tool-card summary').click()");
@@ -933,19 +994,23 @@ try {
         await page.ready("document.querySelector('#tab-work').getAttribute('aria-selected') === 'true'");
         await page.ready("document.querySelector('#panel-jobs').textContent.includes('知識庫工作')");
         await assertUiTextInThemes(page);
-        await page.evaluate(`(() => {
+        const summarizeJobs = (pending: number) => page.evaluate(`(() => {
           const fetchAPI = window.fetch;
           window.fetch = (path, options) => {
             if (path !== '/api/jobs') return fetchAPI(path, options);
             window.fetch = fetchAPI;
             return Promise.resolve(Response.json({
-              jobs: [{ completed: 1, review_status: 'pending' }, { completed: 0, expires: Date.now() + 10000 }],
+              jobs: [...Array.from({ length: ${pending} }, () => ({ completed: 1, review_status: 'pending' })),
+                { completed: 0, expires: Date.now() + 10000 }],
               schedules: [{ state: 'paused' }],
             }));
           };
           document.querySelector('#tab-work').click();
         })()`);
+        await summarizeJobs(1);
         await page.ready("document.querySelector('#panel-jobs').textContent.includes('待審核 1 筆、執行中 1 筆。排程：已暫停 1 筆')");
+        await summarizeJobs(2);
+        await page.ready("document.querySelector('#panel-jobs').textContent.includes('待審核 2 筆、執行中 1 筆。排程：已暫停 1 筆')");
         await page.evaluate("document.querySelector('#panel-jobs-link').click()");
         await page.ready("!document.querySelector('#jobs-view').hidden && document.activeElement.id === 'jobs-title'");
         await page.evaluate("document.querySelector('#open-jobs').click()");

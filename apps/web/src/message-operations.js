@@ -1,4 +1,4 @@
-import { joinText, LocalizedError, message, resolveText, setAttribute, setText, t } from './i18n.js';
+import { LocalizedError, message, resolveText, setAttribute, setText, t } from './i18n.js';
 import { request } from './api.js';
 
 function button(label, action) {
@@ -104,7 +104,13 @@ export function bindNotes(filter, list, download, jump) {
       }
       if (entry.rating) {
         const rating = document.createElement('p');
-        setText(rating, joinText([entry.rating === 'up' ? message('messages.thumbs-up') : message('messages.thumbs-down'), entry.reason]));
+        setText(rating, entry.rating === 'up' ? message('messages.thumbs-up') : message('messages.thumbs-down'));
+        if (entry.reason) {
+          const reason = document.createElement('span');
+          reason.dataset.uiContent = '';
+          reason.textContent = entry.reason;
+          rating.append(' · ', reason);
+        }
         row.append(rating);
       }
       row.append(button(message('messages.go-to-message'), () => jump(entry.messageID)));

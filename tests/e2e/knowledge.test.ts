@@ -19,6 +19,7 @@ import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
 import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
+import { inLocales, labelInLocale } from './gui-locales.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -147,15 +148,17 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           await browser.command('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
         }
       };
-      const selectors = (scope: string, expected: string[]) => browser.evaluate<string[]>(`(() => {
+      const selectors = (scope: string, expected: string[]) => inLocales(browser, locale => browser.evaluate<string[]>(`(() => {
         const root = document.querySelector(${JSON.stringify(scope)});
-        return ${JSON.stringify(expected)}.filter(selector => !root?.querySelector(selector));
-      })()`).then((missing) => assert.deepEqual(missing, [], scope));
-      const labels = (scope: string, expected: string[]) => browser.evaluate<string[]>(`(() => {
+        return ${JSON.stringify(expected.map(selector =>
+          selector.replace(/\[aria-label="([^"]+)"\]/g, (_match, label: string) =>
+            '[aria-label=' + JSON.stringify(labelInLocale(label, locale)) + ']')))}.filter(selector => !root?.querySelector(selector));
+      })()`).then((missing) => assert.deepEqual(missing, [], locale + ' ' + scope)));
+      const labels = (scope: string, expected: string[]) => inLocales(browser, locale => browser.evaluate<string[]>(`(() => {
         const root = document.querySelector(${JSON.stringify(scope)});
         const actions = [...root.querySelectorAll('button, summary, a')].map((item) => item.textContent.trim());
-        return ${JSON.stringify(expected)}.filter(label => !actions.includes(label));
-      })()`).then((missing) => assert.deepEqual(missing, [], scope));
+        return ${JSON.stringify(expected.map(label => label.startsWith('schedule-') ? label : labelInLocale(label, locale)))}.filter(label => !actions.includes(label));
+      })()`).then((missing) => assert.deepEqual(missing, [], locale + ' ' + scope)));
       const preview = '#file-preview .feature-preview:not([hidden])';
       const mapping = mappingChecks(browser, 'feature');
       const previewBody = preview + ' .preview-body';

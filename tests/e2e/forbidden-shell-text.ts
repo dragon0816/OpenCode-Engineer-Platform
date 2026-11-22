@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { assertLanguage, contentAttributes, contentText, inLocales, labelInLocale } from './gui-locales.ts';
+import type { Locale } from './gui-locales.ts';
 
 const forbidden = [
   /BI\s*審核示範/,
@@ -24,8 +26,8 @@ export function assertUiText(rendered: string, scope: string, advanced = false) 
   }
 }
 
-export async function assertNoForbiddenShellText(page: Page, selector = 'body') {
-  const rendered = await page.evaluate<{ normal: string; advanced: string } | null>(`(() => {
+export async function assertNoForbiddenShellText(page: Page, selector = 'body', locale?: Locale) {
+  const rendered = await page.evaluate<{ normal: string; advanced: string; shell: { text: string; source: string }[] } | null>(`(() => {
     const root = document.querySelector(${JSON.stringify(selector)});
     const visible = element => element.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
       !element.closest('template, script, style') &&
@@ -36,14 +38,25 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
     const insideAdvanced = element => {
       for (let detail = element.closest('details'); detail; detail = detail.parentElement.closest('details')) {
         const summary = detail.querySelector(':scope > summary');
-        if (summary?.textContent.trim().startsWith('進階') &&
+        if (summary?.textContent.trim().startsWith(document.documentElement.lang === 'en' ? 'Advanced' : '進階') &&
             !summary?.contains(element) && detail !== element) return true;
       }
       return false;
     };
     const parts = { normal: [], advanced: [] };
-    const add = (element, value) => {
-      if (value?.trim()) parts[insideAdvanced(element) ? 'advanced' : 'normal'].push(value.trim());
+    const shell = [];
+    const add = (element, value, attribute = false, contentSource = element) => {
+      if (!value?.trim()) return;
+      const text = value.trim();
+      parts[insideAdvanced(element) ? 'advanced' : 'normal'].push(text);
+      if (!contentSource.closest(${JSON.stringify(contentText)}) &&
+          (!attribute || !contentSource.closest(${JSON.stringify(contentAttributes)}))) {
+        const source = contentSource.localName + (contentSource.id ? '#' + contentSource.id : '');
+        const label = contentSource.id === 'remove-session-question' ? text.replace(/[「“].*[」”]/u, '') :
+          contentSource.id === 'project-working-root' ? text.split(' · ')[0] :
+          contentSource.id === 'knowledge-repository-status' ? text.replace(/\\btag-[a-z]\\b/g, '') : text;
+        shell.push({ text: label, source });
+      }
     };
     if (root === document.body) add(root, document.title);
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -53,20 +66,21 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
     const attributes = '[aria-label], [aria-description], [aria-describedby], [aria-labelledby], [title], [placeholder], [alt], select';
     for (const element of [root, ...root.querySelectorAll(attributes)]) {
       if (!visible(element)) continue;
-      for (const key of ['aria-label', 'aria-description', 'title', 'placeholder', 'alt']) add(element, element.getAttribute(key));
+      for (const key of ['aria-label', 'aria-description', 'title', 'placeholder', 'alt']) add(element, element.getAttribute(key), true);
       for (const key of ['aria-describedby', 'aria-labelledby']) {
         for (const id of element.getAttribute(key)?.split(/\\s+/) ?? []) {
           const referenced = document.getElementById(id);
-          if (referenced && !visible(referenced)) add(element, referenced.textContent);
+          if (referenced && !visible(referenced)) add(element, referenced.textContent, true, referenced);
         }
       }
-      if (element.matches('select')) for (const option of element.options) add(element, option.label);
+      if (element.matches('select')) for (const option of element.options) add(element, option.label, false, option);
     }
-    return { normal: parts.normal.join(' '), advanced: parts.advanced.join(' ') };
+    return { normal: parts.normal.join(' '), advanced: parts.advanced.join(' '), shell };
   })()`);
   assert.ok(rendered, 'Rendered UI is missing (' + selector + ')');
   assertUiText(rendered.normal, selector);
   assertUiText(rendered.advanced, selector, true);
+  if (locale) for (const { text, source } of rendered.shell) assertLanguage(text, locale, selector + ' ' + source);
 }
 
 export async function inThemes(page: Page, check: (theme: string) => Promise<void>) {
@@ -83,11 +97,11 @@ export async function inThemes(page: Page, check: (theme: string) => Promise<voi
 }
 
 export function assertUiTextInThemes(page: Page, scope = 'body') {
-  return inThemes(page, () => assertNoForbiddenShellText(page, scope));
+  return inLocales(page, locale => inThemes(page, () => assertNoForbiddenShellText(page, scope, locale)));
 }
 
 export async function assertNativeDialogTextInThemes(page: Page, selector: string, kind: 'confirm' | 'prompt', label?: string) {
-  await inThemes(page, async (theme) => {
+  await inLocales(page, locale => inThemes(page, async (theme) => {
     const message = await page.evaluate<string | null>(`(() => {
       const kind = ${JSON.stringify(kind)};
       const original = window[kind];
@@ -95,7 +109,7 @@ export async function assertNativeDialogTextInThemes(page: Page, selector: strin
       window[kind] = text => { message = text; return kind === 'confirm' ? false : null; };
       try {
         const scope = document.querySelector(${JSON.stringify(selector)});
-        const label = ${JSON.stringify(label ?? null)};
+        const label = ${JSON.stringify(label ? labelInLocale(label, locale) : null)};
         const opener = label ? [...scope.querySelectorAll('button')].find(button => button.textContent.trim() === label) : scope;
         opener.click();
       }
@@ -104,5 +118,6 @@ export async function assertNativeDialogTextInThemes(page: Page, selector: strin
     })()`);
     assert.ok(message, theme + ' ' + kind + ' did not open from ' + selector);
     assertUiText(message, theme + ' ' + selector);
-  });
+    assertLanguage(selector === '#attachments' ? message.replace(/[「“].*[」”]/u, '') : message, locale, selector + ' dialog');
+  }));
 }

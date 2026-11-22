@@ -1,4 +1,4 @@
-import { formatDate, formatList, joinText, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
+import { formatDate, formatList, joinText, message, optionText, setAttribute, setText, t } from './i18n.js';
 import { errorText, request, serverText } from './api.js';
 
 const find = (id) => document.getElementById(id);
@@ -13,14 +13,24 @@ const labels = {
   approved: message('jobs.approved'), published: message('jobs.published'), discarded: message('jobs.discarded'),
 };
 
+const submitted = message('jobs.submitted-for-review');
+const running = message('chat.running');
+const otherStatus = message('jobs.other-status');
+
 function jobState(row) {
-  return row.completed ? row.review_status === 'pending' ? message('jobs.pending-review') : labels[row.review_status] ?? message('jobs.submitted-for-review') :
-      row.expires > Date.now() ? message('chat.running') : message('jobs.queued');
+  return row.completed ? row.review_status === 'pending' ? labels.awaiting_review : labels[row.review_status] ?? submitted :
+    row.expires > Date.now() ? running : labels.queued;
 }
 
 function node(tag, text) {
   const element = document.createElement(tag);
   if (text !== undefined) setText(element, text);
+  return element;
+}
+
+function content(tag, text) {
+  const element = node(tag, text);
+  element.dataset.uiContent = '';
   return element;
 }
 
@@ -32,7 +42,7 @@ function button(label, action) {
 }
 
 function field(form, label, value = '', multiline = false) {
-  const wrapper = node('label', label + ' ');
+  const wrapper = node('label', label);
   const input = document.createElement(multiline ? 'textarea' : 'input');
   input.value = value;
   wrapper.append(input);
@@ -117,7 +127,8 @@ export function bindJobs(openPreview) {
 
   function control(parent, label, work, key = label) {
     const item = button(label, (event) => work(event.currentTarget));
-    item.dataset.featureFocus = resolveText(key);
+    item.toggleAttribute('data-ui-content', typeof label === 'string');
+    setAttribute(item, 'data-feature-focus', key);
     parent.append(item);
     return item;
   }
@@ -145,9 +156,10 @@ export function bindJobs(openPreview) {
     if (!rows.length) body.append(node('p', message('jobs.no-run-history-yet')));
     const list = node('ul');
     for (const row of rows) {
-      const item = node('li', joinText([row.schedule, localTime(row.utc, row.zone), labels[row.state] ?? message('chat.unknown-status')]));
+      const item = node('li');
+      item.append(content('span', row.schedule), ' · ', node('span', joinText([localTime(row.utc, row.zone), labels[row.state] ?? message('chat.unknown-status')])));
       const details = disclosure(message('ui.advanced'), 'feature-advanced');
-      details.append(node('p', `${row.wall} ${row.zone} · ${new Date(row.utc).toISOString()}`));
+      details.append(content('p', `${row.wall} ${row.zone} · ${new Date(row.utc).toISOString()}`));
       item.append(details);
       list.append(item);
     }
@@ -209,9 +221,11 @@ export function bindJobs(openPreview) {
   function showSource(body, id) {
     const source = status.sources.find((row) => row.id === id);
     if (!source) { body.append(node('p', message('jobs.could-not-find-this-intake-item'))); return; }
-    body.append(node('p', joinText([source.domain, labels[source.state]])));
+    const summary = node('p');
+    summary.append(content('span', source.domain), ' · ', node('span', labels[source.state]));
+    body.append(summary);
     const details = disclosure(message('ui.advanced'), 'feature-advanced');
-    details.append(node('p', source.ref), node('p', source.target ? message('jobs.target-knowledge-base-target', { target: source.target }) : message('jobs.standalone-intake')));
+    details.append(content('p', source.ref), node('p', source.target ? message('jobs.target-knowledge-base-target', { target: source.target }) : message('jobs.standalone-intake')));
     if (source.reason) details.append(node('p', serverText(source.reasonDetail, errorText(source.reason))));
     body.append(details);
     if (source.hasFile) {
@@ -343,6 +357,6 @@ export async function loadJobSummary() {
       }
       return totals.size ? formatList([...totals].map(([state, count]) => message('jobs.status-count', { status: state, count }))) : message('jobs.none');
     };
-    setText(summary, message('jobs.knowledge-base-jobs-jobs-schedules-schedules', { jobs: counts(status.jobs, jobState), schedules: counts(status.schedules ?? [], (row) => labels[row.state] ?? message('jobs.other-status')) }));
+    setText(summary, message('jobs.knowledge-base-jobs-jobs-schedules-schedules', { jobs: counts(status.jobs, jobState), schedules: counts(status.schedules ?? [], (row) => labels[row.state] ?? otherStatus) }));
   } catch { setText(summary, message('jobs.could-not-load-schedules-and-jobs-refresh')); }
 }

@@ -196,7 +196,10 @@ try {
     })()`), true);
     await evaluate("document.querySelector('[data-mcp-name]').value = 'SYNTHETIC_MCP'; document.querySelector('[name=dataScope]').focus()");
   }
-  if (marker) mapping.seen('settings-mcp-credentials');
+  if (marker) await mapping.check('settings-mcp-credentials', '#mcp-editor', {
+    selectors: ['[data-mcp-name]', '[data-mcp-value][type=password]', '.mcp-credential [type=checkbox]'],
+    labels: ['新增憑證欄位', '移除此欄位'],
+  });
   await assertUiTextInThemes(page, '#mcp-editor');
   await evaluate("window.syntheticExecutable = document.querySelector('[name=executable]').value; document.querySelector('[name=executable]').value = 'relative.exe'");
   await click('#mcp-form button[type=submit]');

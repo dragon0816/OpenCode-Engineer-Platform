@@ -1,4 +1,4 @@
-import { joinText, LocalizedError, message, setText } from './i18n.js';
+import { bindFilePicker, joinText, LocalizedError, message, setText } from './i18n.js';
 import { errorText, request, sampleKnowledgeID } from './api.js';
 
 const element = (tag, text) => {
@@ -37,7 +37,14 @@ function showComparison(parent, { previous, candidate }) {
     const display = (value) => typeof value === 'string' ? value : value === undefined ? message('review.none') : JSON.stringify(value);
     const compareField = (list, label, oldValue, newValue) => {
       if (JSON.stringify(oldValue) === JSON.stringify(newValue)) return;
-      list.append(element('li', joinText([label, joinText([display(oldValue), display(newValue)], ' → ')])));
+      const entry = element('li');
+      const parts = [label, display(oldValue), display(newValue)].map(text => {
+        const span = element('span', text);
+        span.toggleAttribute('data-ui-content', typeof text === 'string');
+        return span;
+      });
+      entry.append(parts[0], ' · ', parts[1], ' → ', parts[2]);
+      list.append(entry);
       counts.fields++;
     };
     compareField(changes, message('review.title'), old?.title, next?.title);
@@ -50,7 +57,11 @@ function showComparison(parent, { previous, candidate }) {
     if (!changes.childElementCount && !technical.childElementCount) continue;
     const state = !old ? 'added' : !next ? 'removed' : 'changed';
     counts[state]++;
-    parent.append(element('h4', joinText([{ added: message('review.add'), removed: message('chat.remove'), changed: message('review.change') }[state], (next ?? old).title])));
+    const heading = element('h4', { added: message('review.add'), removed: message('chat.remove'), changed: message('review.change') }[state]);
+    const title = element('span', (next ?? old).title);
+    title.dataset.uiContent = '';
+    heading.append(' · ', title);
+    parent.append(heading);
     if (changes.childElementCount) parent.append(changes);
     if (technical.childElementCount) advanced(parent).append(technical);
   }
@@ -84,9 +95,11 @@ export function bindReview(anchor, onPublish, openPreview) {
     const schemaOptions = advanced(panel);
     const version = inputLabel(schemaOptions, message('review.schema-version'));
     const fields = kind === 'bi' ? inputLabel(schemaOptions, message('review.required-fields-comma-separated')) : null;
-    const source = inputLabel(panel, message('review.choose-a-text-file'));
+    const source = element('input');
+    panel.append(source);
     source.type = 'file';
     source.accept = '.txt,.md,.markdown';
+    bindFilePicker(source, message('review.choose-a-text-file'));
     const pasted = inputLabel(panel, message('review.or-paste-source-text'), 'textarea');
     const sourceContent = element('div');
     const sourceText = inputLabel(sourceContent, message('review.source-preview-select-text-to-quote'), 'textarea');
@@ -315,7 +328,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       candidate.value = JSON.stringify({
         vault: { id: vault.value, title: vault.value, kind },
         schema: schema.sha256,
-        sources: [{ id: 'source', ref: sourceRef ?? 'source.txt', original: text, markdown: text }],
+        sources: [{ id: 'source', ref: sourceRef ?? '來源.txt', original: text, markdown: text }],
         cards: kind === 'bi' ? [{ id: 'card', type: 'record', key: 'card', title: '', version: '1',
           fields: Object.fromEntries(names.map((name) => [name, text])) }] : [],
         relationships: [],

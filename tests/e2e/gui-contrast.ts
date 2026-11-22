@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { inLocales } from './gui-locales.ts';
 import { inThemes } from './forbidden-shell-text.ts';
 
 type Check = {
@@ -19,7 +20,7 @@ export async function assertContrastInThemes(
   page: { evaluate<T>(expression: string): Promise<T> },
   checks: Check[],
 ) {
-  await inThemes(page, async (theme) => {
+  await inLocales(page, locale => inThemes(page, async (theme) => {
     const results = await page.evaluate<{ missing?: string; foreground: number[]; background: number[]; opacity: number }[]>(`(() => {
       const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
       const channels = color => {
@@ -43,7 +44,7 @@ export async function assertContrastInThemes(
     })()`);
     for (const [index, { selector, against, property = 'color' }] of checks.entries()) {
       const { foreground, background, missing, opacity } = results[index];
-      const label = [theme, selector, property, against].filter(Boolean).join(' ');
+      const label = [locale, theme, selector, property, against].filter(Boolean).join(' ');
       assert.ok(!missing, 'Missing contrast sample: ' + label);
       assert.equal(opacity, 1, label);
       assert.equal(foreground[3], 255, label);
@@ -52,5 +53,5 @@ export async function assertContrastInThemes(
       const ratio = (light[0] + 0.05) / (light[1] + 0.05);
       assert.ok(ratio >= (property === 'color' ? 4.5 : 3), label + ' ' + ratio.toFixed(2) + ':1');
     }
-  });
+  }));
 }

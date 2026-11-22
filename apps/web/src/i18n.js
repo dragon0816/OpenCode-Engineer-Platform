@@ -60,10 +60,34 @@ export function optionText(label, value) {
   return option;
 }
 
-export function formatDate(value, options, timestamp = true) {
+export function bindFilePicker(input, label = message('ui.choose-file')) {
+  const picker = document.createElement('div');
+  picker.className = 'file-picker';
+  const button = document.createElement('button');
+  button.type = 'button';
+  setText(button, label);
+  const instructions = input.getAttribute('aria-describedby');
+  if (instructions) button.setAttribute('aria-describedby', instructions);
+  button.addEventListener('click', () => input.click());
+  const name = document.createElement('small');
+  name.setAttribute('aria-live', 'polite');
+  const refresh = () => {
+    const filename = input.files[0]?.name;
+    name.toggleAttribute('data-file-name', Boolean(filename));
+    setText(name, filename ?? message('ui.no-file-selected'));
+  };
+  input.hidden = true;
+  input.after(picker);
+  picker.append(button, name);
+  input.addEventListener('change', refresh);
+  refresh();
+  return refresh;
+}
+
+export function formatDate(value, options) {
   return () => new Intl.DateTimeFormat(locale, options ?? {
     dateStyle: 'short',
-    ...(timestamp ? { timeStyle: 'medium' } : {}),
+    timeStyle: 'medium',
   }).format(new Date(value));
 }
 

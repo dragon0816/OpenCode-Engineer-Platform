@@ -153,6 +153,7 @@ export function bindMcpSettings(projects) {
     for (const server of snapshot.servers) {
       const card = element('article', '', 'mcp-card');
       const heading = element('h4', server.name);
+      heading.dataset.uiContent = '';
       heading.tabIndex = -1;
       heading.id = 'mcp-server-' + server.id;
       const badges = element('div', '', 'mcp-badges');
@@ -195,7 +196,11 @@ export function bindMcpSettings(projects) {
         }));
       card.append(heading, badges, element('p', joinText([server.transport === 'stdio' ? message('ui.local-program') : message('ui.remote-service'),
         allowed.length ? joinText(allowed, ', ') : message('tools.no-projects-allowed')])));
-      if (server.dataScope) card.append(element('p', server.dataScope));
+      if (server.dataScope) {
+        const scope = element('p', server.dataScope);
+        scope.dataset.uiContent = '';
+        card.append(scope);
+      }
       card.append(actions, panel);
       list.append(card);
     }

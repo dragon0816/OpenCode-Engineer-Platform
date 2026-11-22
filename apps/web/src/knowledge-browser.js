@@ -7,6 +7,12 @@ function node(tag, text) {
   if (text !== undefined) setText(element, text);
   return element;
 }
+function content(tag, text) {
+  const value = node(tag, text);
+  value.dataset.uiContent = '';
+  return value;
+}
+
 function button(text, action) {
   const element = node('button', text);
   element.type = 'button';
@@ -74,14 +80,14 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
     const key = JSON.stringify(['passage', active, passage.sourceVersion, passage.id, passage.locator, query]);
     const { body } = openPreview(key, message('cards.source-passage'), opener);
     const quote = node('blockquote', passage.text);
-    body.replaceChildren(node('p', `${passage.source} · ${passage.locator}`), quote);
+    body.replaceChildren(content('p', `${passage.source} · ${passage.locator}`), quote);
     if (passage.sourceVersion) {
       const details = node('details');
       details.append(node('summary', message('ui.advanced')), node('p', message('cards.source-version-version', { version: passage.sourceVersion })));
       body.append(details);
     }
     if (query) {
-      const excerpt = node('p');
+      const excerpt = content('p');
       highlight(excerpt, passage.text, query);
       body.prepend(excerpt);
     }
@@ -89,7 +95,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
   }
 
   async function openCard(id, opener) {
-    const { body, signal, setTitle } = openPreview(JSON.stringify(['card', active, id]), opener.textContent, opener);
+    const { body, signal, setTitle } = openPreview(JSON.stringify(['card', active, id]), message('cards.loading-card'), opener);
     if (body.childElementCount) return;
     body.append(node('p', message('cards.loading-card')));
     try {
@@ -108,7 +114,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         const state = node('details');
         state.append(node('summary', message('cards.field-status')), valueView(card.fieldStates?.[key]));
         field.append(provenance, state);
-        fields.append(node('dt', key), field);
+        fields.append(content('dt', key), field);
       }
       body.append(node('h3', message('cards.fields')), fields.childElementCount ? fields : node('p', message('cards.no-data')));
       body.append(node('h3', message('cards.evidence')));
@@ -154,7 +160,11 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
       if (current.signal.aborted) return;
       for (const [field, choices] of filters) {
         const select = form.elements.namedItem(field);
-        select.replaceChildren(optionText(message('ui.all'), ''), ...page[choices].map((item) => optionText(item, item)));
+        select.replaceChildren(optionText(message('ui.all'), ''), ...page[choices].map(item => {
+          const option = content('option', item);
+          option.value = item;
+          return option;
+        }));
         select.value = values[field];
         if (select.selectedIndex < 0) select.selectedIndex = 0;
       }
@@ -213,7 +223,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
       if (!passages.length) matches.append(node('p', ready ? message('cards.no-matching-passages') : message('cards.the-search-index-is-unavailable')));
       for (const passage of passages) {
         const row = node('article');
-        const snippet = node('p');
+        const snippet = content('p');
         highlight(snippet, passage.text, query);
         row.append(button(`${passage.source} · ${passage.locator}`, (event) => openPassage(passage, query, event.currentTarget)), snippet);
         matches.append(row);

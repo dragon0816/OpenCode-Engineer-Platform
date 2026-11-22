@@ -1,4 +1,4 @@
-import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
+import { bindFilePicker, formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
 import { connect, errorText, modelLabel, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
@@ -396,9 +396,9 @@ function action(text, handler) {
 }
 
 function formatFileSize(bytes) {
-  return () => getLocale() === 'zh-TW'
-    ? t('chat.byte-count', { count: formatNumber(bytes) })
-    : formatNumber(bytes, { style: 'unit', unit: 'byte', unitDisplay: 'long' })();
+  const number = formatNumber(bytes);
+  const withUnit = formatNumber(bytes, { style: 'unit', unit: 'byte', unitDisplay: 'long' });
+  return message('chat.byte-count', { count: () => getLocale() === 'zh-TW' ? number() : withUnit() });
 }
 
 function fileType(file) {
@@ -556,7 +556,9 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
   setAttribute(select, 'aria-label', message('chat.worksheet'));
   select.hidden = sheets.size === 1 && (lines || sheets.has('CSV')) && before.size <= 1;
   for (const name of new Set([...sheets.keys(), ...before.keys()])) {
-    select.append(optionText(lines ? message('chat.text') : name, name));
+    const option = optionText(lines ? message('chat.text') : name, name);
+    option.toggleAttribute('data-ui-content', !lines);
+    select.append(option);
   }
   const content = node('div');
   target.append(select, content);
@@ -726,6 +728,7 @@ function addTab(key, title, panel, dispose) {
   const item = node('div', undefined, 'panel-tab');
   item.setAttribute('role', 'presentation');
   const button = action(title, () => showTab(key));
+  button.toggleAttribute('data-ui-content', typeof title === 'string');
   const id = panel.id ? panel.id.slice('panel-'.length) : `preview-${++nextPreview}`;
   button.id = `tab-${id}`;
   panel.id ||= `panel-${id}`;
@@ -799,6 +802,7 @@ function openFeaturePreview(key, title, opener) {
   const abort = new AbortController();
   const panel = node('div', undefined, 'knowledge feature-preview');
   const heading = node('h2', title);
+  heading.toggleAttribute('data-ui-content', typeof title === 'string');
   const body = node('div', undefined, 'preview-body');
   panel.append(heading, body);
   find('file-preview').append(panel);
@@ -811,7 +815,10 @@ function openFeaturePreview(key, title, opener) {
     body,
     signal: abort.signal,
     setTitle(value) {
-      [heading, tab.button].forEach(element => setText(element, value));
+      for (const element of [heading, tab.button]) {
+        setText(element, value);
+        element.toggleAttribute('data-ui-content', typeof value === 'string');
+      }
       setAttribute(tab.item.querySelector('.close-tab'), 'aria-label', message('chat.close-title-tab', { title: value }));
     },
   };
@@ -1036,8 +1043,9 @@ function renderSessions() {
         prompt.focus();
       });
       setAttribute(link, 'title', label);
-      link.append(node('span', session.title || labels[session.agent], 'session-name'),
-        node('time', relativeTime(session.createdAt)));
+      const name = node('span', session.title || labels[session.agent], 'session-name');
+      name.classList.toggle('session-name-default', !session.title);
+      link.append(name, node('time', relativeTime(session.createdAt)));
       link.dataset.session = session.id;
       if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
@@ -1118,7 +1126,8 @@ function displayProjectFolders() {
   if (!active) return;
   setText(find('project-working-root'), message('chat.working-folder-path', { path: active.workingRoot }));
   find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
-    const row = node('li', folder);
+    const row = node('li');
+    row.append(node('span', folder));
     row.append(' ', sessionButton(message('chat.remove'), () => void changeProjectFolder('remove', folder)));
     return row;
   }));
@@ -1173,6 +1182,7 @@ function applyPreferences(preferences) {
   savedAssistant = JSON.stringify(assistantValues());
   setText(find('sidebar-assistant-name'), preferences.name || message('ui.assistant'));
   const introduction = find('sidebar-assistant-intro');
+  introduction.toggleAttribute('data-ui-content', Boolean(preferences.introduction));
   const intro = preferences.introduction || message('ui.local-engineering-assistant');
   setText(introduction, intro);
   setAttribute(introduction, 'title', intro);
@@ -1200,6 +1210,7 @@ find('assistant-settings').addEventListener('submit', async (event) => {
 const theme = find('theme');
 const density = find('density');
 const avatarFile = find('avatar-file');
+const refreshAvatarPicker = bindFilePicker(avatarFile);
 const appearanceStatus = find('appearance-status');
 const appearanceSave = find('save-appearance');
 const legacyTheme = localStorage.getItem('oep.theme');
@@ -1228,6 +1239,7 @@ function applyAppearance(value) {
   theme.value = savedAppearance.theme;
   density.value = value.density;
   avatarFile.value = '';
+  refreshAvatarPicker();
   avatarReset = false;
   showingAvatar = value.hasAvatar;
   document.querySelectorAll('.assistant-avatar').forEach(paintAvatar);
@@ -1239,6 +1251,7 @@ previewAppearance();
 find('avatar-reset').addEventListener('click', () => {
   avatarReset = true;
   avatarFile.value = '';
+  refreshAvatarPicker();
   setText(appearanceStatus, message('chat.saving-will-restore-the-default-avatar'));
 });
 avatarFile.addEventListener('change', () => { avatarReset = false; });
