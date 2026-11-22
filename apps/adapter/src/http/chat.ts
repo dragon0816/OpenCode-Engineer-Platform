@@ -256,13 +256,13 @@ export class ChatService {
     const first = await list();
     const data = first.data;
     const seen = new Set<string>();
-    let cursor = first.cursor.next;
+    let cursor = first.cursor?.next;
     while (cursor) {
       if (seen.has(cursor)) throw new Error('Repeated child transcript cursor');
       seen.add(cursor);
       const page = await list(cursor);
       data.push(...page.data);
-      cursor = page.cursor.next;
+      cursor = page.cursor?.next;
     }
     return { data };
   }
