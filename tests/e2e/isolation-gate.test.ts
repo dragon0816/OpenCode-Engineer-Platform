@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
+import { startGateway } from '../../apps/adapter/src/opencode/gateway.ts';
 import { knowledgeMcpName, knowledgeToolName } from '../../apps/adapter/src/opencode/knowledge-mcp.ts';
 import { waitForOutcome } from '../../apps/adapter/src/opencode/reconcile.ts';
 import { createSession, promptID, submitOnce } from '../../apps/adapter/src/opencode/sessions.ts';
@@ -28,7 +29,7 @@ const deny = { action: '*', resource: '*', effect: 'deny' } as const;
 const allow = { action: tool, resource: '*', effect: 'allow' } as const;
 const transportValue = 'synthetic-relay-field';
 const originalArgs = { sample: 'fixture' };
-const codecCases = ['sse', 'json', 'denied'] as const;
+const codecCases = ['sse', 'denied'] as const;
 type CodecCase = typeof codecCases[number];
 type ToolFunction = { name?: string; arguments?: string; parameters?: {
   properties: Record<string, unknown>; required: string[];
@@ -75,12 +76,12 @@ function addTransport(calls: CompletionCall[]) {
   return true;
 }
 
-test('pinned OpenCode transports relay-owned MCP arguments in both completion formats', { timeout: 120_000 }, async (context) => {
+test('pinned OpenCode transports relay-owned MCP arguments in SSE', { timeout: 120_000 }, async (context) => {
   const root = dataDirectory();
   const mcpKey = randomBytes(32).toString('hex');
   const relayKey = randomBytes(32).toString('hex');
   const inputs: { name?: string; arguments?: unknown }[] = [];
-  const observed = { streams: [] as boolean[], replayContext: 0, jsonSent: 0, denied: 0 };
+  const observed = { streams: [] as boolean[], replayContext: 0, denied: 0 };
   let current: { codec: CodecCase; nonce: string } | undefined;
   const mcp = await listen(async (request, response) => {
     assert.ok(request.headers.authorization === `Bearer ${mcpKey}`, 'MCP fixture authentication failed');
@@ -127,14 +128,6 @@ test('pinned OpenCode transports relay-owned MCP arguments in both completion fo
     }
     observed.streams.push(body.stream);
     const callID = 'call_synthetic_' + codec;
-    if (codec === 'json') {
-      const calls = [{ id: callID, type: 'function', function: { name: tool, arguments: JSON.stringify(originalArgs) } }];
-      assert.ok(addTransport(calls), 'JSON arguments could not be rewritten');
-      observed.jsonSent++;
-      send(response, 200, { id: 'chatcmpl-synthetic-json', object: 'chat.completion', created: 1, model: alias,
-        choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: calls }, finish_reason: 'tool_calls' }] });
-      return;
-    }
     const fixture = completion(alias, toolCall(0, callID, codec === 'denied' ? hidden : tool, originalArgs), 'tool_calls');
     const frames = await bufferedCompletion(fixture, (value) => value);
     const calls = (frames as unknown as Frame[]).flatMap((frame) => frame.choices.flatMap(({ delta }) => delta?.tool_calls ?? []));
@@ -184,10 +177,7 @@ test('pinned OpenCode transports relay-owned MCP arguments in both completion fo
         const admitted = await submitOnce(client, { sessionID, id: submissionID,
           text: `Synthetic ${codec} probe` + turnMarker(runID) + `Gate instructions\n[OEP policy_nonce: ${nonce}]` });
         assert.equal(admitted, 'accepted');
-        const outcome = await waitForOutcome(client, sessionID, undefined, 15_000, undefined, submissionID).catch((error: unknown) => {
-          if (codec === 'json' && error instanceof Error && error.message.includes('Probe deadline expired')) return 'observation deadline';
-          throw error;
-        });
+        const outcome = await waitForOutcome(client, sessionID, undefined, 15_000, undefined, submissionID);
         const calls = inputs.slice(previousCalls);
         if (codec === 'denied') {
           assert.equal(observed.denied, 1);
@@ -196,11 +186,7 @@ test('pinned OpenCode transports relay-owned MCP arguments in both completion fo
           return;
         }
 
-        if (codec === 'json') {
-          assert.ok(observed.jsonSent >= 1, 'Synthetic relay did not send a rewritten JSON completion');
-          assert.equal(calls.length, 1,
-            `OpenCode requested stream=${observed.streams.at(-1)} and reached ${outcome} without invoking MCP after the JSON completion`);
-        }
+        assert.equal(observed.streams.at(-1), true, 'Pinned OpenCode did not request SSE');
         assert.deepEqual(calls.map(({ name, arguments: args }) => [name, args]),
           [[knowledgeToolName, { ...originalArgs, [transport]: transportValue }]]);
         assert.equal(outcome, 'succeeded');
@@ -225,4 +211,34 @@ test('pinned OpenCode transports relay-owned MCP arguments in both completion fo
       } finally { current = undefined; }
     });
   }
+});
+
+test('the production OpenCode relay serves SSE and fails closed on non-streaming tool requests', async (context) => {
+  let json = false;
+  let requests = 0;
+  const relay = await startGateway({ alias, url: 'http://example.invalid', key: randomUUID(), managed: true,
+    trace: () => {}, fetch: async () => {
+      requests++;
+      return json ? Response.json({ choices: [{ message: { content: 'synthetic' }, finish_reason: 'stop' }] }) :
+        completion(alias, [{ role: 'assistant', content: 'synthetic' }], 'stop');
+    } });
+  context.after(relay.close);
+  const request = (fields: object) => fetch(`${relay.baseURL}/chat/completions`, {
+    method: 'POST', headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: alias, messages: [{ role: 'user', content: 'Synthetic' }], ...fields }),
+  });
+  const sse = await request({ stream: true });
+  assert.equal(sse.status, 200);
+  assert.equal(sse.headers.get('content-type'), 'text/event-stream');
+  assert.match(await sse.text(), /data: \[DONE\]/);
+  json = true;
+  const wrongFormat = await request({ stream: true });
+  assert.equal(wrongFormat.status, 502);
+  assert.ok(!(await wrongFormat.text()).includes('choices'));
+  for (const stream of [false, undefined, 'true', 1, null]) {
+    const rejected = await request({ stream, tools: [{ type: 'function', function: { name: tool } }] });
+    assert.equal(rejected.status, 400);
+    await rejected.body?.cancel();
+  }
+  assert.equal(requests, 2, 'Rejected tool requests reached the upstream gateway');
 });

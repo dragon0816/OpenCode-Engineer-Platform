@@ -41,7 +41,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
   const requests: GatewayTrace[] = [];
   const relay = await startGateway({
-    ...settings, alias, aliases, web: Boolean(profile), trace: (value) => {
+    ...settings, alias, aliases, web: Boolean(profile), managed: true, trace: (value) => {
       requests.push(value);
       audit('gateway.jsonl', value);
     },

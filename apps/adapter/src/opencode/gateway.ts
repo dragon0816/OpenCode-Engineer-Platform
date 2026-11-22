@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { ModelCall } from '../../../../packages/contracts/src/run.ts';
 import { jsonInput, send } from '../../../../scripts/phase0/probe-http.ts';
-import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson } from '../../../../scripts/phase0/probe-redaction.ts';
+import { boundedUpstreamText, bufferedCompletion, redactFields, redactJson, upstreamJson, UpstreamFormatError } from '../../../../scripts/phase0/probe-redaction.ts';
 
 import { countModelTools, limitHistory } from './turn-limits.ts';
 import type { TurnBoundary } from './turn-limits.ts';
@@ -33,7 +33,7 @@ export function gatewaySettings() {
   return { url, key };
 }
 
-type RequestBody = { model?: string; stream?: boolean; messages?: Parameters<typeof limitHistory>[0] };
+type RequestBody = { model?: string; stream?: boolean; tools?: unknown; messages?: Parameters<typeof limitHistory>[0] };
 
 function observeCompletion(frames: unknown[]) {
   type Payload = { content?: unknown; tool_calls?: unknown[] };
@@ -113,7 +113,7 @@ export function gatewayPing(options: GatewayConnection) {
 }
 
 export async function startGateway(options: GatewayConnection & {
-  alias: string; trace: (value: GatewayTrace) => void; web?: boolean; aliases?: readonly string[];
+  alias: string; trace: (value: GatewayTrace) => void; web?: boolean; aliases?: readonly string[]; managed?: boolean;
 }) {
   const { target, markers } = gatewayEndpoint(options, 'chat/completions');
   const key = randomBytes(32).toString('hex');
@@ -144,7 +144,9 @@ export async function startGateway(options: GatewayConnection & {
         let body: RequestBody | undefined;
         try { body = await jsonInput<RequestBody>(request, options.web ? 64 * 1024 * 1024 : undefined); }
         catch { status = 400; }
-        if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
+        if (options.managed && body?.stream !== true && body?.tools !== undefined &&
+            (!Array.isArray(body.tools) || body.tools.length > 0)) status = 400;
+        else if (body?.model && allowed.includes(body.model) && Array.isArray(body.messages)) {
           const boundary = turn;
           const filtered = boundary && limitHistory(body.messages, boundary.marker, boundary.limits);
           const policy = filtered ? boundary : undefined;
@@ -160,7 +162,11 @@ export async function startGateway(options: GatewayConnection & {
           if (!upstream.ok) {
             status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
             await upstream.body?.cancel().catch(() => undefined);
-          } else if (body.stream) {
+          } else if (body.stream === true) {
+            if (upstream.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream') {
+              await upstream.body?.cancel().catch(() => undefined);
+              throw new UpstreamFormatError('Unexpected upstream content type');
+            }
             const frames = await bufferedCompletion(upstream, redact);
             policy?.addTools(countModelTools(frames));
             signal.throwIfAborted();
