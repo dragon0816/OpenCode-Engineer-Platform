@@ -23,7 +23,7 @@ function jpegDimensions(bytes: Buffer) {
 export function parseAvatar(value: unknown) {
   if (value === null || value === undefined) return value;
   if (typeof value !== 'string' || value.length > maxBytes * 4 / 3 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
-    throw new HttpError(400, '頭像必須是 90 KiB 以內的 PNG 或 JPEG。');
+    throw new HttpError(400, 'avatar-type-or-size');
   }
   const bytes = Buffer.from(value, 'base64');
   let mime;
@@ -39,7 +39,7 @@ export function parseAvatar(value: unknown) {
     }
   }
   if (!mime || !dimensions || dimensions.some((dimension) => !dimension || dimension > maxDimension)) {
-    throw new HttpError(400, '請選擇有效的 PNG 或 JPEG，寬高各不得超過 1024 像素。');
+    throw new HttpError(400, 'avatar-dimensions');
   }
   return { bytes, mime };
 }

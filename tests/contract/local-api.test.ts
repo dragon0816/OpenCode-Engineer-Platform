@@ -33,9 +33,15 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     const pair = () => fetch(`${origin}/api/pair`, { method: 'POST', headers: { origin, 'content-type': 'application/json' },
       body: JSON.stringify({ ticket }) });
     const html = await fetch(origin);
-    assert.match(await html.text(), /OEP/);
+    assert.match(await html.text(), /<title data-i18n="ui\.oep-workbench"><\/title>/);
+    for (const [locale, title] of [['zh-TW', 'OEP 工程工作台'], ['en', 'OEP Workbench']]) {
+      const catalog = await fetch(origin + '/i18n/' + locale + '.js');
+      assert.equal(catalog.status, 200);
+      assert.match(catalog.headers.get('content-type')!, /^text\/javascript/);
+      assert.ok((await catalog.text()).includes(title));
+    }
     assert.match(html.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
-    for (const path of ['/', '/app.js', '/api.js', '/style.css']) {
+    for (const path of ['/', '/app.js', '/api.js', '/style.css', '/i18n.js', '/i18n/en.js', '/i18n/zh-TW.js']) {
       assert.ok(!(await (await fetch(origin + path)).text()).includes(secret));
     }
     const wrongHost = await new Promise<number | undefined>((resolve, reject) => {
@@ -45,7 +51,12 @@ test('local API restricts routing, pairing, mutations, file intake and session o
       }).on('error', reject).end();
     });
     assert.equal(wrongHost, 403);
-    assert.equal((await fetch(`${origin}/api/bootstrap`)).status, 401);
+    const unpaired = await fetch(`${origin}/api/bootstrap`);
+    assert.equal(unpaired.status, 401);
+    assert.deepEqual(await unpaired.json(), {
+      error: '請雙擊 Windows 啟動器開啟 OEP。',
+      errorDetail: { code: 'launch-required', text: '請雙擊 Windows 啟動器開啟 OEP。' },
+    });
     assert.equal((await fetch(origin, { headers: { origin: 'https://example.invalid' } })).status, 403);
     assert.equal((await fetch(origin, { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/pair`, { method: 'OPTIONS' })).status, 405);

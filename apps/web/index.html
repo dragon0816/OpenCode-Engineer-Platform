@@ -1,46 +1,46 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
-  <title>OEP 工程工作台</title>
+  <title data-i18n="ui.oep-workbench"></title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <div class="shell">
-    <aside class="sidebar navigation" aria-label="功能欄">
-      <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true">功能導覽</button>
+    <aside class="sidebar navigation" data-i18n-aria-label="ui.sidebar">
+      <button id="toggle-sidebar" type="button" aria-controls="session-sidebar" aria-expanded="true" data-i18n="ui.navigation"></button>
       <div id="session-sidebar">
       <div class="sidebar-assistant">
         <span class="assistant-avatar" aria-hidden="true">O</span>
-        <div><strong id="sidebar-assistant-name">助理</strong><small id="sidebar-assistant-intro">本機工程工作助理</small></div>
+        <div><strong id="sidebar-assistant-name" data-i18n="ui.assistant"></strong><small id="sidebar-assistant-intro" data-i18n="ui.local-engineering-assistant"></small></div>
       </div>
       <details class="rail-section" id="rail-functions" open>
-      <summary>主功能</summary>
-      <nav class="views" aria-label="工作台">
-        <button id="open-chat" type="button" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg>對話</button>
-        <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg>知識庫</button>
-        <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg>排程與工作</button>
-        <button id="open-review" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16H6zm3 8 2 2 4-4"/></svg>審核</button>
-        <button id="open-settings" type="button" aria-keyshortcuts="Control+,"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/></svg>設定</button>
+      <summary data-i18n="ui.main-features"></summary>
+      <nav class="views" data-i18n-aria-label="ui.workbench">
+        <button id="open-chat" type="button" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg><span data-i18n="ui.chat"></span></button>
+        <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg><span data-i18n="ui.knowledge-base"></span></button>
+        <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg><span data-i18n="ui.schedules-jobs"></span></button>
+        <button id="open-review" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16H6zm3 8 2 2 4-4"/></svg><span data-i18n="ui.review"></span></button>
+        <button id="open-settings" type="button" aria-keyshortcuts="Control+,"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/></svg><span data-i18n="ui.settings"></span></button>
       </nav>
       </details>
       <details class="rail-section" id="rail-sessions" open>
-      <summary>會話 <span class="rail-count" id="session-count" title="目前專案的會話數">0</span></summary>
+      <summary><span data-i18n="ui.session"></span> <span class="rail-count" id="session-count" data-i18n-title="ui.session-count-for-the-current-project">0</span></summary>
       <div class="session-search">
         <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
-        <input id="session-search" type="search" autocomplete="off" placeholder="搜尋會話" aria-label="搜尋會話">
-        <button id="clear-session-search" type="button" aria-label="清除搜尋" hidden>×</button>
+        <input id="session-search" type="search" autocomplete="off" data-i18n-placeholder="ui.search-sessions" data-i18n-aria-label="ui.search-sessions">
+        <button id="clear-session-search" type="button" data-i18n-aria-label="ui.clear-search" hidden>×</button>
       </div>
-      <nav id="sessions" aria-label="專案與會話"></nav>
+      <nav id="sessions" data-i18n-aria-label="ui.projects-and-sessions"></nav>
       </details>
       <details class="rail-section" id="rail-assistants" open>
-        <summary>助理 <span class="rail-count" id="assistant-count"></span></summary>
-        <label for="agent">新會話的助理</label>
+        <summary><span data-i18n="ui.assistant"></span> <span class="rail-count" id="assistant-count"></span></summary>
+        <label for="agent" data-i18n="ui.assistant-for-new-sessions"></label>
         <select id="agent" disabled>
-          <option value="inspector">資料分析</option>
-          <option value="workbook">Excel 工作表</option>
+          <option value="inspector" data-i18n="ui.data-analysis"></option>
+          <option value="workbook" data-i18n="ui.excel-worksheets"></option>
         </select>
       </details>
       </div>
@@ -48,467 +48,481 @@
     <main id="work-area">
     <header class="top">
       <div class="top-model">
-        <strong id="model">模型載入中</strong>
-        <span id="model-source">外部模型服務</span>
+        <strong id="model" data-i18n="ui.loading-model"></strong>
+        <span id="model-source" data-i18n="ui.external-model-service"></span>
         <p id="progress" role="status"></p>
       </div>
       <div class="top-actions">
-        <div class="top-identity"><strong>OEP · 本機使用者</strong><span id="connection" role="status">正在連線</span></div>
+        <div class="top-identity"><strong data-i18n="ui.oep-local-user"></strong><span id="connection" role="status" data-i18n="ui.connecting"></span></div>
         <details id="top-menu">
-          <summary id="top-menu-trigger" class="menu-trigger" aria-label="更多工作台選項" title="更多">⋯</summary>
+          <summary id="top-menu-trigger" class="menu-trigger" data-i18n-aria-label="ui.more-workbench-options" data-i18n-title="ui.more">⋯</summary>
           <div class="menu-actions">
-            <div class="panel-openers" aria-label="附加資料分頁" role="group">
-              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案</button>
-              <button type="button" id="open-work" aria-controls="chat-files">工作</button>
-              <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
-              <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
+            <div class="panel-openers" data-i18n-aria-label="ui.details-tabs" role="group">
+              <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false" data-i18n="ui.files"></button>
+              <button type="button" id="open-work" aria-controls="chat-files" data-i18n="ui.work"></button>
+              <button type="button" id="open-diff" aria-controls="chat-files" data-i18n="ui.change-comparison"></button>
+              <button type="button" id="open-notes" aria-controls="chat-files" data-i18n="ui.notes"></button>
             </div>
-            <button id="stop" class="button-danger" type="button" disabled>停止服務</button>
+            <label class="locale-picker" for="menu-locale">
+              <span data-i18n="ui.language"></span>
+              <select id="menu-locale">
+                <option value="zh-TW" data-i18n="ui.traditional-chinese"></option>
+                <option value="en" data-i18n="ui.english"></option>
+              </select>
+            </label>
+            <button id="stop" class="button-danger" type="button" disabled data-i18n="ui.stop-service"></button>
           </div>
         </details>
       </div>
     </header>
     <section id="settings-view" aria-labelledby="settings-title" hidden>
       <header class="settings-heading page-header">
-        <h1 id="settings-title" tabindex="-1">設定</h1>
-        <button id="close-settings" type="button">返回對話</button>
+        <h1 id="settings-title" tabindex="-1" data-i18n="ui.settings"></h1>
+        <button id="close-settings" type="button" data-i18n="ui.back-to-chat"></button>
       </header>
       <div class="settings-layout">
         <label id="settings-picker">
-          設定分類
+          <span data-i18n="ui.settings-categories"></span>
           <select id="settings-section"></select>
         </label>
-        <nav id="settings-nav" aria-label="設定分類">
-          <button type="button" data-section="assistant" aria-controls="settings-assistant" aria-current="page">助理</button>
-          <button type="button" data-section="appearance" aria-controls="settings-appearance">外觀</button>
-          <button type="button" data-section="model" aria-controls="settings-model">模型</button>
-          <button type="button" data-section="limits" aria-controls="settings-limits">回合限制</button>
-          <button type="button" data-section="projects" aria-controls="settings-projects">專案與資料夾</button>
-          <button type="button" data-section="integrations" aria-controls="settings-integrations">整合</button>
-          <button type="button" data-section="input" aria-controls="settings-input">輸入</button>
-          <button type="button" data-section="mcp" aria-controls="settings-mcp">外部工具</button>
-          <button type="button" data-section="runtime" aria-controls="settings-runtime">執行環境</button>
-          <button type="button" data-section="about" aria-controls="settings-about">關於</button>
+        <nav id="settings-nav" data-i18n-aria-label="ui.settings-categories">
+          <button type="button" data-section="assistant" aria-controls="settings-assistant" aria-current="page" data-i18n="ui.assistant"></button>
+          <button type="button" data-section="appearance" aria-controls="settings-appearance" data-i18n="ui.appearance"></button>
+          <button type="button" data-section="model" aria-controls="settings-model" data-i18n="ui.model"></button>
+          <button type="button" data-section="limits" aria-controls="settings-limits" data-i18n="ui.turn-limits"></button>
+          <button type="button" data-section="projects" aria-controls="settings-projects" data-i18n="ui.projects-folders"></button>
+          <button type="button" data-section="integrations" aria-controls="settings-integrations" data-i18n="ui.integrations"></button>
+          <button type="button" data-section="input" aria-controls="settings-input" data-i18n="ui.input"></button>
+          <button type="button" data-section="mcp" aria-controls="settings-mcp" data-i18n="ui.external-tools"></button>
+          <button type="button" data-section="runtime" aria-controls="settings-runtime" data-i18n="ui.runtime"></button>
+          <button type="button" data-section="about" aria-controls="settings-about" data-i18n="ui.about"></button>
         </nav>
         <div class="settings-content">
           <section id="settings-assistant" aria-labelledby="settings-assistant-title">
-            <h2 id="settings-assistant-title">助理</h2>
-            <p class="settings-help">設定助理的名稱、介紹和回覆方式。</p>
+            <h2 id="settings-assistant-title" data-i18n="ui.assistant"></h2>
+            <p class="settings-help" data-i18n="ui.set-the-assistants-name-introduction-and-reply"></p>
             <form id="assistant-settings">
-              <label for="assistant-name">助理名稱</label>
+              <label for="assistant-name" data-i18n="ui.assistant-name"></label>
               <input id="assistant-name" type="text" maxlength="80">
-              <label for="assistant-introduction">自我介紹</label>
+              <label for="assistant-introduction" data-i18n="ui.introduction"></label>
               <textarea id="assistant-introduction" maxlength="500"></textarea>
-              <label for="assistant-instructions">助理指示</label>
+              <label for="assistant-instructions" data-i18n="ui.assistant-instructions"></label>
               <textarea id="assistant-instructions" maxlength="4000"></textarea>
-              <small>新會話使用最新的指示，舊會話可能保留先前的指示。</small>
+              <small data-i18n="ui.new-sessions-use-the-latest-instructions-existing"></small>
               <div class="settings-actions">
-                <button id="save-assistant" type="submit" disabled>儲存助理設定</button>
+                <button id="save-assistant" type="submit" disabled data-i18n="ui.save-assistant-settings"></button>
                 <p id="settings-status" role="status"></p>
               </div>
             </form>
             <details class="settings-advanced">
-              <summary>進階</summary>
-              <p>助理指示用來定義角色與工作方式，也就是 <code>soul.md</code> 的用途。</p>
-              <label><input id="assistant-delegation" type="checkbox" disabled> 多助理委派</label>
-              <small>目前只允許主要助理執行工作。</small>
+              <summary data-i18n="ui.advanced"></summary>
+              <p data-i18n="ui.assistant-instructions-define-the-assistants-role-and"></p>
+              <label><input id="assistant-delegation" type="checkbox" disabled> <span data-i18n="ui.multi-assistant-delegation"></span></label>
+              <small data-i18n="ui.currently-only-the-main-assistant-can-run"></small>
             </details>
           </section>
           <section id="settings-appearance" aria-labelledby="settings-appearance-title" hidden>
-            <h2 id="settings-appearance-title">外觀</h2>
-            <p class="settings-help">調整主題、畫面間距和助理頭像。</p>
-            <form id="appearance-settings">
-              <label for="theme">外觀主題</label>
-              <select id="theme">
-                <option value="system">跟隨系統</option>
-                <option value="light">淺色</option>
-                <option value="dark">深色</option>
+            <h2 id="settings-appearance-title" data-i18n="ui.appearance"></h2>
+            <p class="settings-help" data-i18n="ui.change-the-theme-spacing-and-assistant-avatar"></p>
+            <label class="locale-picker" for="settings-locale">
+              <span data-i18n="ui.language"></span>
+              <select id="settings-locale">
+                <option value="zh-TW" data-i18n="ui.traditional-chinese"></option>
+                <option value="en" data-i18n="ui.english"></option>
               </select>
-              <label for="density">顯示密度</label>
-              <select id="density"><option value="comfortable">寬鬆</option><option value="compact">緊湊</option></select>
-              <label for="avatar-file">助理頭像</label>
+            </label>
+            <form id="appearance-settings">
+              <label for="theme" data-i18n="ui.theme"></label>
+              <select id="theme">
+                <option value="system" data-i18n="ui.follow-system"></option>
+                <option value="light" data-i18n="ui.light"></option>
+                <option value="dark" data-i18n="ui.dark"></option>
+              </select>
+              <label for="density" data-i18n="ui.display-density"></label>
+              <select id="density"><option value="comfortable" data-i18n="ui.comfortable"></option><option value="compact" data-i18n="ui.compact"></option></select>
+              <label for="avatar-file" data-i18n="ui.assistant-avatar"></label>
               <input id="avatar-file" type="file" accept="image/png,image/jpeg" aria-describedby="avatar-help">
-              <small id="avatar-help">PNG 或 JPEG，最多 90 KiB，寬高各不超過 1024 像素。</small>
+              <small id="avatar-help" data-i18n="ui.png-or-jpeg-up-to-90-kib"></small>
               <div class="settings-actions">
-                <button id="avatar-reset" type="button">還原預設頭像</button>
-                <button id="save-appearance" type="submit" disabled>儲存外觀</button>
+                <button id="avatar-reset" type="button" data-i18n="ui.restore-default-avatar"></button>
+                <button id="save-appearance" type="submit" disabled data-i18n="ui.save-appearance"></button>
                 <p id="appearance-status" role="status"></p>
               </div>
             </form>
           </section>
           <section id="settings-model" aria-labelledby="settings-model-title" hidden>
-            <h2 id="settings-model-title">模型</h2>
-            <p class="settings-help">選擇新會話的預設模型。</p>
+            <h2 id="settings-model-title" data-i18n="ui.model"></h2>
+            <p class="settings-help" data-i18n="ui.choose-the-default-model-for-new-sessions"></p>
             <p id="model-credentials"></p>
             <ul id="model-health"></ul>
             <form id="model-settings">
-              <label for="default-alias">新會話的預設模型</label>
+              <label for="default-alias" data-i18n="ui.default-model-for-new-sessions"></label>
               <select id="default-alias" disabled></select>
               <div class="settings-actions">
-                <button id="save-model" type="submit" disabled>儲存預設模型</button>
-                <button id="recheck-model" type="button" disabled>立即重新檢查</button>
+                <button id="save-model" type="submit" disabled data-i18n="ui.save-default-model"></button>
+                <button id="recheck-model" type="button" disabled data-i18n="ui.recheck-now"></button>
                 <p id="model-settings-status" role="status"></p>
               </div>
             </form>
             <details class="settings-advanced">
-              <summary>進階</summary>
-              <p>外部維運人員負責管理模型閘道及更新憑證。</p>
+              <summary data-i18n="ui.advanced"></summary>
+              <p data-i18n="ui.external-operators-manage-the-model-gateway-and"></p>
             </details>
           </section>
           <section id="settings-limits" aria-labelledby="settings-limits-title" hidden>
-            <h2 id="settings-limits-title">回合限制</h2>
-            <p class="settings-help">設定每次回覆可參考多少舊訊息、使用工具的次數與處理時間。</p>
+            <h2 id="settings-limits-title" data-i18n="ui.turn-limits"></h2>
+            <p class="settings-help" data-i18n="ui.set-how-much-history-how-many-tool"></p>
             <form id="limits-settings">
               <div id="limit-fields"></div>
               <div class="settings-actions">
-                <button id="save-limits" type="submit" disabled>儲存回合限制</button>
+                <button id="save-limits" type="submit" disabled data-i18n="ui.save-turn-limits"></button>
                 <p id="limits-status" role="status"></p>
               </div>
             </form>
             <details class="settings-advanced">
-              <summary>進階</summary>
-              <p>超出歷史上限時會省略較舊的完整對話回合，仍會納入新訊息與本次工具結果。</p>
+              <summary data-i18n="ui.advanced"></summary>
+              <p data-i18n="ui.when-history-reaches-its-limit-the-assistant"></p>
             </details>
           </section>
           <section id="settings-projects" aria-labelledby="settings-projects-title" hidden>
-            <h2 id="settings-projects-title">專案與資料夾</h2>
-            <p class="settings-help">查看專案的工作資料夾，並選擇可用來附加檔案的唯讀資料夾。</p>
-            <label>專案 <select id="folder-project"></select></label>
+            <h2 id="settings-projects-title" data-i18n="ui.projects-folders"></h2>
+            <p class="settings-help" data-i18n="ui.view-the-projects-working-folder-and-choose"></p>
+            <label><span data-i18n="ui.project"></span> <select id="folder-project"></select></label>
             <p id="project-working-root"></p>
-            <h3>唯讀資料夾</h3>
+            <h3 data-i18n="ui.read-only-folders"></h3>
             <ul id="project-folder-list"></ul>
             <form id="project-folder-form">
-              <label for="project-folder">本機資料夾的完整路徑</label>
+              <label for="project-folder" data-i18n="ui.full-path-to-the-local-folder"></label>
               <input id="project-folder" type="text" required>
               <div class="settings-actions">
-                <button type="submit">加入唯讀資料夾</button>
+                <button type="submit" data-i18n="ui.add-read-only-folder"></button>
                 <p id="project-folder-status" role="status"></p>
               </div>
             </form>
           </section>
           <section id="settings-integrations" aria-labelledby="settings-integrations-title" hidden>
-            <h2 id="settings-integrations-title">整合</h2>
-            <p class="settings-help">管理知識庫連結，並查看 Telegram 機器人的設定狀態。</p>
+            <h2 id="settings-integrations-title" data-i18n="ui.integrations"></h2>
+            <p class="settings-help" data-i18n="ui.manage-knowledge-base-access-and-check-telegram"></p>
             <form id="knowledge-settings">
-              <label><input id="knowledge-toolbox" type="checkbox" checked> 新會話可使用知識庫查詢工具</label>
-              <label for="atlas-url">Atlas 網址（選填）</label>
+              <label><input id="knowledge-toolbox" type="checkbox" checked> <span data-i18n="ui.enable-knowledge-base-queries-in-new-sessions"></span></label>
+              <label for="atlas-url" data-i18n="ui.atlas-url-optional"></label>
               <input id="atlas-url" type="url" maxlength="2048">
               <div class="settings-actions">
-                <button type="submit">儲存知識庫設定</button>
-                <button id="open-atlas" type="button" disabled>開啟 Atlas</button>
+                <button type="submit" data-i18n="ui.save-knowledge-base-settings"></button>
+                <button id="open-atlas" type="button" disabled data-i18n="ui.open-atlas"></button>
                 <p id="knowledge-settings-status" role="status"></p>
               </div>
             </form>
             <dl>
-              <dt>知識庫</dt><dd id="knowledge-configured">正在讀取…</dd>
-              <dt>Telegram 助理機器人</dt><dd id="telegram-main-status">正在讀取…</dd>
-              <dt>Telegram 知識庫機器人</dt><dd id="telegram-bi-status">正在讀取…</dd>
+              <dt data-i18n="ui.knowledge-base"></dt><dd id="knowledge-configured" data-i18n="ui.loading"></dd>
+              <dt data-i18n="ui.telegram-assistant-bot"></dt><dd id="telegram-main-status" data-i18n="ui.loading"></dd>
+              <dt data-i18n="ui.telegram-knowledge-base-bot"></dt><dd id="telegram-bi-status" data-i18n="ui.loading"></dd>
             </dl>
             <details class="settings-advanced">
-              <summary>進階</summary>
-              <h3>整合說明</h3>
+              <summary data-i18n="ui.advanced"></summary>
+              <h3 data-i18n="ui.integration-details"></h3>
               <p id="telegram-configured"></p>
               <ul>
-                <li>公司入口登入、橋接與憑證信任依賴 AEP 的組織服務。OEP 採本機配對。</li>
-                <li>SSH 決策依賴 AEP 的專用服務，因此未接入。</li>
-                <li>模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。</li>
-                <li>共用資料庫和資產庫訂閱需要公司服務及組織權限，因此未接入。</li>
+                <li data-i18n="ui.company-sign-in-bridging-and-credential-trust"></li>
+                <li data-i18n="ui.ssh-decisions-require-a-dedicated-aep-service"></li>
+                <li data-i18n="ui.external-operators-start-and-restart-the-model"></li>
+                <li data-i18n="ui.shared-databases-and-asset-subscriptions-require-company"></li>
               </ul>
             </details>
           </section>
           <section id="settings-input" aria-labelledby="settings-input-title" hidden>
-            <h2 id="settings-input-title">輸入</h2>
-            <p class="settings-help">開啟聽寫後，可用麥克風將語音填入對話輸入框。</p>
-            <label><input type="checkbox" id="enable-microphone"> 啟用麥克風語音輸入</label>
+            <h2 id="settings-input-title" data-i18n="ui.input"></h2>
+            <p class="settings-help" data-i18n="ui.enable-dictation-to-enter-messages-with-your"></p>
+            <label><input type="checkbox" id="enable-microphone"> <span data-i18n="ui.enable-microphone-input"></span></label>
             <p id="microphone-settings-status" role="status"></p>
           </section>
           <section id="settings-mcp" aria-labelledby="settings-mcp-title" hidden>
-            <h2 id="settings-mcp-title">外部工具</h2>
-            <p class="settings-help">加入外部工具，並選擇哪些專案可以使用它們。</p>
+            <h2 id="settings-mcp-title" data-i18n="ui.external-tools"></h2>
+            <p class="settings-help" data-i18n="ui.add-external-tools-and-choose-which-projects"></p>
             <div class="mcp-toolbar">
-              <h3>自訂伺服器</h3>
-              <button type="button" id="mcp-add">新增伺服器</button>
+              <h3 data-i18n="ui.custom-servers"></h3>
+              <button type="button" id="mcp-add" data-i18n="ui.add-server"></button>
             </div>
             <div class="mcp-restart" id="mcp-restart-bar" hidden>
-              <p>設定已儲存。重新啟動執行環境後才會套用，原有對話與檔案會保留。完成後會開啟 OEP。</p>
-              <button type="button" id="mcp-restart">重新啟動執行環境</button>
+              <p data-i18n="ui.settings-saved-restart-the-runtime-to-apply"></p>
+              <button type="button" id="mcp-restart" data-i18n="ui.restart-runtime"></button>
             </div>
             <p id="mcp-status" role="status"></p>
             <div id="mcp-servers"></div>
             <div class="settings-group">
-              <h3>內建知識庫 <span class="runtime-badge">由 OEP 管理</span></h3>
+              <h3><span data-i18n="ui.built-in-knowledge-base"></span> <span class="runtime-badge" data-i18n="ui.managed-by-oep"></span></h3>
               <p id="mcp-knowledge-status" role="status"></p>
-              <p id="mcp-knowledge-tools" hidden>內建工具：知識庫查詢</p>
-              <p>設定適用於新會話。</p>
+              <p id="mcp-knowledge-tools" hidden data-i18n="ui.built-in-tool-knowledge-base-query"></p>
+              <p data-i18n="ui.settings-apply-to-new-sessions"></p>
               <div class="settings-actions">
-                <button id="mcp-open-knowledge-settings" type="button">管理知識庫查詢工具</button>
+                <button id="mcp-open-knowledge-settings" type="button" data-i18n="ui.manage-the-knowledge-base-query-tool"></button>
               </div>
             </div>
             <dialog id="mcp-editor" aria-labelledby="mcp-editor-title">
               <form id="mcp-form">
                 <h3 id="mcp-editor-title"></h3>
-                <label>名稱 <input name="name" required maxlength="80" autofocus></label>
-                <label>連線方式
-                  <select name="transport"><option value="stdio">本機程式</option><option value="remote">遠端服務</option></select>
+                <label><span data-i18n="ui.name"></span> <input name="name" required maxlength="80" autofocus></label>
+                <label><span data-i18n="ui.connection-method"></span>
+                  <select name="transport"><option value="stdio" data-i18n="ui.local-program"></option><option value="remote" data-i18n="ui.remote-service"></option></select>
                 </label>
                 <div id="mcp-stdio-fields">
-                  <label>執行檔 <input name="executable" maxlength="2048"></label>
-                  <label>參數，每行一個 <textarea name="args" rows="3"></textarea></label>
-                  <label>工作資料夾 <input name="cwd" maxlength="2048"></label>
+                  <label><span data-i18n="ui.executable"></span> <input name="executable" maxlength="2048"></label>
+                  <label><span data-i18n="ui.arguments-one-per-line"></span> <textarea name="args" rows="3"></textarea></label>
+                  <label><span data-i18n="ui.working-folder"></span> <input name="cwd" maxlength="2048"></label>
                 </div>
                 <div id="mcp-remote-fields" hidden>
-                  <label>安全連線網址 <input name="url" type="url" maxlength="2048"></label>
-                  <label><input name="localService" type="checkbox"> 我確認允許連線至本機或私人網路服務</label>
+                  <label><span data-i18n="ui.secure-connection-url"></span> <input name="url" type="url" maxlength="2048"></label>
+                  <label><input name="localService" type="checkbox"> <span data-i18n="ui.allow-connections-to-local-or-private-network"></span></label>
                 </div>
                 <fieldset>
-                  <legend id="mcp-credential-title">程式的憑證欄位</legend>
-                  <p>值存入 Windows 使用者憑證。已設定的值會保持隱藏。</p>
+                  <legend id="mcp-credential-title" data-i18n="ui.program-credential-fields"></legend>
+                  <p data-i18n="ui.values-are-stored-in-windows-user-credentials"></p>
                   <div id="mcp-credential-rows"></div>
-                  <button type="button" id="mcp-add-credential">新增憑證欄位</button>
+                  <button type="button" id="mcp-add-credential" data-i18n="ui.add-credential-field"></button>
                 </fieldset>
                 <fieldset>
-                  <legend>允許使用的專案</legend>
+                  <legend data-i18n="ui.allowed-projects"></legend>
                   <div id="mcp-projects"></div>
                 </fieldset>
-                <label>資料範圍說明 <textarea name="dataScope" rows="2" maxlength="2000"></textarea></label>
+                <label><span data-i18n="ui.data-scope"></span> <textarea name="dataScope" rows="2" maxlength="2000"></textarea></label>
                 <details class="settings-advanced mcp-timeout-details">
-                  <summary>進階</summary>
-                  <p>外部工具使用 MCP。本機程式透過 stdio 連線，憑證以環境變數傳入。遠端服務使用 HTTPS 與 HTTP 標頭。</p>
-                  <p>等待時間上限（毫秒）</p>
+                  <summary data-i18n="ui.advanced"></summary>
+                  <p data-i18n="ui.external-tools-use-mcp-local-programs-connect"></p>
+                  <p data-i18n="ui.timeouts-ms"></p>
                   <div class="mcp-timeouts">
-                    <label>啟動 <input name="startup" type="number" min="100" max="120000" required></label>
-                    <label>工具清單 <input name="catalog" type="number" min="100" max="120000" required></label>
-                    <label>執行 <input name="execution" type="number" min="100" max="120000" required></label>
+                    <label><span data-i18n="ui.startup"></span> <input name="startup" type="number" min="100" max="120000" required></label>
+                    <label><span data-i18n="ui.tool-list"></span> <input name="catalog" type="number" min="100" max="120000" required></label>
+                    <label><span data-i18n="ui.execution"></span> <input name="execution" type="number" min="100" max="120000" required></label>
                   </div>
                   <p id="mcp-form-diagnostic" hidden></p>
                 </details>
-                <label><input name="enabled" type="checkbox"> 啟用伺服器</label>
+                <label><input name="enabled" type="checkbox"> <span data-i18n="ui.enable-server"></span></label>
                 <p id="mcp-form-status" role="status"></p>
                 <div class="settings-actions">
-                  <button type="submit">儲存</button>
-                  <button type="button" id="mcp-cancel">取消</button>
+                  <button type="submit" data-i18n="ui.save"></button>
+                  <button type="button" id="mcp-cancel" data-i18n="ui.cancel"></button>
                 </div>
               </form>
             </dialog>
           </section>
           <section id="settings-runtime" aria-labelledby="settings-runtime-title" hidden>
-            <h2 id="settings-runtime-title">執行環境</h2>
-            <p class="settings-help">查看本機服務使用的版本及啟動檢查結果。</p>
-            <p id="runtime-status" role="status">正在載入執行環境…</p>
+            <h2 id="settings-runtime-title" data-i18n="ui.runtime"></h2>
+            <p class="settings-help" data-i18n="ui.view-the-versions-used-by-local-services"></p>
+            <p id="runtime-status" role="status" data-i18n="ui.loading-runtime"></p>
             <dl id="runtime-details"></dl>
             <p id="runtime-agent"></p>
             <details class="settings-advanced">
-              <summary>進階</summary>
+              <summary data-i18n="ui.advanced"></summary>
               <dl id="runtime-fingerprints"></dl>
             </details>
           </section>
           <section id="settings-about" aria-labelledby="settings-about-title" hidden>
-            <h2 id="settings-about-title">關於</h2>
-            <p class="settings-help">查看 OEP 版本、資料存放位置、授權與使用說明。</p>
+            <h2 id="settings-about-title" data-i18n="ui.about"></h2>
+            <p class="settings-help" data-i18n="ui.view-the-oep-version-data-location-license"></p>
             <dl id="about-details"></dl>
             <p id="about-status" role="status"></p>
           </section>
         </div>
       </div>
     </section>
-    <section class="conversation" aria-label="對話" id="chat-view">
+    <section class="conversation" data-i18n-aria-label="ui.chat" id="chat-view">
       <header class="page-header">
-        <h1 id="session-title" tabindex="-1">對話</h1>
+        <h1 id="session-title" tabindex="-1" data-i18n="ui.chat"></h1>
       </header>
       <div id="error" role="alert" hidden></div>
-      <div id="messages" class="messages" aria-label="訊息">
-        <p class="empty">選擇或新增會話即可開始。</p>
+      <div id="messages" class="messages" data-i18n-aria-label="ui.messages">
+        <p class="empty" data-i18n="ui.select-or-create-a-session-to-start"></p>
       </div>
-      <button id="jump-latest" type="button" hidden>跳到最新訊息</button>
-      <section id="chat-resources" aria-label="會話檔案" hidden></section>
+      <button id="jump-latest" type="button" hidden data-i18n="ui.jump-to-latest-message"></button>
+      <section id="chat-resources" data-i18n-aria-label="ui.session-files" hidden></section>
       <dialog id="remove-session-card" aria-labelledby="remove-session-question">
         <form method="dialog">
           <h2 id="remove-session-question"></h2>
-          <p>刪除後，會話將從清單移除。</p>
-          <button value="reject" autofocus>取消</button>
-          <button value="accept" class="button-danger">確認刪除</button>
+          <p data-i18n="ui.deleting-this-session-removes-it-from-the"></p>
+          <button value="reject" autofocus data-i18n="ui.cancel"></button>
+          <button value="accept" class="button-danger" data-i18n="ui.confirm-deletion"></button>
         </form>
       </dialog>
       <form id="composer">
         <div id="drop">
-        <label for="prompt">訊息</label>
+        <label for="prompt" data-i18n="ui.messages"></label>
         <details id="project-read" hidden>
-          <summary>附加唯讀資料夾中的檔案</summary>
-          <label>資料夾 <select id="project-read-folder"></select></label>
-          <label>資料夾內的檔名 <input id="project-read-file" type="text"></label>
-          <button id="project-read-button" type="button">附加檔案副本</button>
+          <summary data-i18n="ui.attach-a-file-from-a-read-only"></summary>
+          <label><span data-i18n="ui.folder"></span> <select id="project-read-folder"></select></label>
+          <label><span data-i18n="ui.file-name-in-the-folder"></span> <input id="project-read-file" type="text"></label>
+          <button id="project-read-button" type="button" data-i18n="ui.attach-file-copy"></button>
         </details>
-        <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply">移除引用</button></div>
+        <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply" data-i18n="ui.remove-quote"></button></div>
         <div id="command-toast" role="status"></div>
-        <ul id="slash-palette" role="listbox" aria-label="指令" hidden></ul>
-        <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" placeholder="輸入想讓助理處理的內容" disabled required></textarea>
+        <ul id="slash-palette" role="listbox" data-i18n-aria-label="ui.commands" hidden></ul>
+        <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" data-i18n-placeholder="ui.tell-the-assistant-what-to-do" disabled required></textarea>
         <div class="composer-toolbar">
           <div class="composer-tools">
             <div class="composer-attachments">
-              <button id="pick" type="button" aria-describedby="attachment-help" disabled>附加檔案</button>
+              <button id="pick" type="button" aria-describedby="attachment-help" disabled data-i18n="ui.attach-files"></button>
               <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
-              <span id="attachment-help" hidden>可選取或拖放圖片、PDF、Excel、網頁與文字檔。單檔最多 20 MB。</span>
-              <button id="manage-attachments" type="button" aria-controls="chat-files" hidden>已選附件</button>
+              <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
+              <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
             </div>
-            <label class="composer-model">模型 <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
+            <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
             <div class="composer-input-options">
-              <button id="microphone" type="button" aria-pressed="false" hidden>開始聽寫</button>
-              <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
+              <button id="microphone" type="button" aria-pressed="false" hidden data-i18n="ui.start-dictation"></button>
+              <label id="workbook-option" hidden><input id="workbook" type="checkbox"> <span data-i18n="ui.create-excel-file"></span></label>
             </div>
           </div>
-          <button id="send" type="submit" disabled>送出</button>
-          <button id="cancel-turn" class="button-danger" type="button" hidden>停止處理</button>
+          <button id="send" type="submit" disabled data-i18n="ui.send"></button>
+          <button id="cancel-turn" class="button-danger" type="button" hidden data-i18n="ui.stop-processing"></button>
         </div>
         <div class="composer-status">
-          <small id="session-model-help">變更從下一則訊息生效。</small>
+          <small id="session-model-help" data-i18n="ui.changes-apply-to-the-next-message"></small>
           <small id="session-model-status" role="status"></small>
           <small id="upload-status" role="status"></small>
         </div>
         </div>
         <div class="composer-footer">
-          <small>Enter 送出，Shift + Enter 換行。</small>
-          <details id="shortcuts"><summary>鍵盤快捷鍵</summary>
-            <p>Enter 送出<br>Shift + Enter 換行<br>Esc 回到輸入框<br>Ctrl + Shift + S 停止處理</p>
+          <small data-i18n="ui.enter-to-send-shift-enter-for-a"></small>
+          <details id="shortcuts"><summary data-i18n="ui.keyboard-shortcuts"></summary>
+            <p><span data-i18n="ui.enter-to-send"></span><br><span data-i18n="ui.shift-enter-for-a-new-line"></span><br><span data-i18n="ui.esc-to-return-to-the-message-box"></span><br><span data-i18n="ui.ctrl-shift-s-to-stop-processing"></span></p>
           </details>
         </div>
       </form>
     </section>
     <section class="conversation knowledge" aria-labelledby="knowledge-title" id="knowledge-view" hidden>
       <header class="page-header knowledge-header">
-        <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
+        <h1 id="knowledge-title" tabindex="-1" data-i18n="ui.knowledge-base"></h1>
         <div class="knowledge-selection">
-          <label for="vault">已發布的知識庫</label>
-          <select id="vault" disabled><option value="">載入中</option></select>
+          <label for="vault" data-i18n="ui.published-knowledge-base"></label>
+          <select id="vault" disabled><option value="" data-i18n="ui.loading-2"></option></select>
           <p id="vault-status" role="status"></p>
         </div>
-        <div class="knowledge-tabs" role="tablist" aria-label="知識庫功能">
-          <button type="button" role="tab" id="knowledge-tab-overview" aria-controls="knowledge-overview" aria-selected="true">概覽</button>
-          <button type="button" role="tab" id="knowledge-tab-ask" aria-controls="knowledge-ask-panel" aria-selected="false" tabindex="-1">問答</button>
-          <button type="button" role="tab" id="knowledge-tab-quality" aria-controls="knowledge-quality" aria-selected="false" tabindex="-1">品質</button>
-          <button type="button" role="tab" id="knowledge-tab-build" aria-controls="knowledge-build" aria-selected="false" tabindex="-1">建置</button>
+        <div class="knowledge-tabs" role="tablist" data-i18n-aria-label="ui.knowledge-base-features">
+          <button type="button" role="tab" id="knowledge-tab-overview" aria-controls="knowledge-overview" aria-selected="true" data-i18n="ui.overview"></button>
+          <button type="button" role="tab" id="knowledge-tab-ask" aria-controls="knowledge-ask-panel" aria-selected="false" tabindex="-1" data-i18n="ui.q-a"></button>
+          <button type="button" role="tab" id="knowledge-tab-quality" aria-controls="knowledge-quality" aria-selected="false" tabindex="-1" data-i18n="ui.quality"></button>
+          <button type="button" role="tab" id="knowledge-tab-build" aria-controls="knowledge-build" aria-selected="false" tabindex="-1" data-i18n="ui.build"></button>
         </div>
       </header>
       <div class="knowledge-body">
         <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
-          <p class="page-help">瀏覽已發布的卡片，或搜尋來源段落。</p>
+          <p class="page-help" data-i18n="ui.browse-published-cards-or-search-source-passages"></p>
           <dl id="vault-details"></dl>
           <details id="vault-advanced">
-            <summary>進階</summary>
+            <summary data-i18n="ui.advanced"></summary>
             <dl id="vault-technical"></dl>
-            <button type="button" id="knowledge-rebuild" hidden>重建索引</button>
+            <button type="button" id="knowledge-rebuild" hidden data-i18n="ui.rebuild-search-index"></button>
             <p id="knowledge-rebuild-status" role="status"></p>
           </details>
           <details class="feature-more">
-            <summary>更多</summary>
+            <summary data-i18n="ui.more"></summary>
             <div class="knowledge-pager">
-              <button id="knowledge-demo-load" type="button">載入範例知識庫</button>
-              <button id="knowledge-demo-remove" type="button" hidden>移除範例知識庫</button>
-              <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> 允許將範例內容交給模型回答</label>
+              <button id="knowledge-demo-load" type="button" data-i18n="ui.load-sample-knowledge-base"></button>
+              <button id="knowledge-demo-remove" type="button" hidden data-i18n="ui.remove-sample-knowledge-base"></button>
+              <label id="demo-model-label"><input type="checkbox" id="demo-model-consent"> <span data-i18n="ui.allow-the-model-to-use-sample-content"></span></label>
               <span id="knowledge-demo-status" role="status"></span>
             </div>
           </details>
-          <p id="knowledge-overview-empty">請在「建置」匯入已發布的知識庫。</p>
+          <p id="knowledge-overview-empty" data-i18n="ui.use-build-to-import-a-published-knowledge"></p>
           <div id="knowledge-browser" hidden>
-            <h2>卡片預覽</h2>
+            <h2 data-i18n="ui.card-preview"></h2>
             <form id="knowledge-filters" class="knowledge-filters">
-              <label>卡片名稱或識別鍵 <input type="text" name="text" maxlength="500"></label>
-              <label>類型 <select name="type"><option value="">全部</option></select></label>
-              <label>分類 <select name="category"><option value="">全部</option></select></label>
-              <label>領域／資料夾 <select name="domain"><option value="">全部</option></select></label>
-              <label>資料 <select name="sample"><option value="">全部</option><option value="sample">範例資料</option><option value="regular">一般資料</option></select></label>
-              <button type="submit">篩選</button>
+              <label><span data-i18n="ui.card-name-or-key"></span> <input type="text" name="text" maxlength="500"></label>
+              <label><span data-i18n="ui.type"></span> <select name="type"><option value="" data-i18n="ui.all"></option></select></label>
+              <label><span data-i18n="ui.category"></span> <select name="category"><option value="" data-i18n="ui.all"></option></select></label>
+              <label><span data-i18n="ui.domain-folder"></span> <select name="domain"><option value="" data-i18n="ui.all"></option></select></label>
+              <label><span data-i18n="ui.data"></span> <select name="sample"><option value="" data-i18n="ui.all"></option><option value="sample" data-i18n="ui.sample-data"></option><option value="regular" data-i18n="ui.regular-data"></option></select></label>
+              <button type="submit" data-i18n="ui.filter"></button>
             </form>
-            <div id="knowledge-cards" tabindex="0" role="region" aria-label="卡片預覽"></div>
+            <div id="knowledge-cards" tabindex="0" role="region" data-i18n-aria-label="ui.card-preview"></div>
             <div class="knowledge-pager">
-              <button type="button" id="knowledge-prev" disabled>上一頁</button>
-              <button type="button" id="knowledge-next" disabled>下一頁</button>
+              <button type="button" id="knowledge-prev" disabled data-i18n="ui.previous"></button>
+              <button type="button" id="knowledge-next" disabled data-i18n="ui.next"></button>
               <span id="knowledge-browser-status" role="status"></span>
             </div>
-            <h2>段落全文搜尋</h2>
+            <h2 data-i18n="ui.passage-search"></h2>
             <form id="knowledge-fts" class="knowledge-filters">
-              <label>搜尋詞 <input type="text" name="query" maxlength="500" required></label>
-              <button type="submit">搜尋段落</button>
+              <label><span data-i18n="ui.search-term"></span> <input type="text" name="query" maxlength="500" required></label>
+              <button type="submit" data-i18n="ui.search-passages"></button>
             </form>
             <div id="knowledge-matches" aria-live="polite"></div>
           </div>
         </section>
         <section id="knowledge-ask-panel" role="tabpanel" aria-labelledby="knowledge-tab-ask" hidden>
           <div class="knowledge-answer-area">
-            <p class="page-help">使用目前選取的知識庫回答問題，並查看答案引用的段落。</p>
+            <p class="page-help" data-i18n="ui.ask-the-selected-knowledge-base-a-question"></p>
             <p id="knowledge-status" role="status"></p>
             <div id="knowledge-answer" aria-live="polite"></div>
           </div>
           <form id="knowledge-form">
-            <label for="knowledge-question">問題</label>
+            <label for="knowledge-question" data-i18n="ui.question"></label>
             <textarea id="knowledge-question" rows="3" maxlength="500" required disabled></textarea>
-            <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled>詢問知識庫</button></div>
+            <div class="compose-actions"><button id="knowledge-ask" type="submit" disabled data-i18n="ui.ask-knowledge-base"></button></div>
           </form>
         </section>
         <section id="knowledge-quality" role="tabpanel" aria-labelledby="knowledge-tab-quality" tabindex="0" hidden>
-          <p class="page-help">用題集檢查回答和引用是否符合預期。</p>
-          <p id="quality-status" role="status">請選擇知識庫。</p>
+          <p class="page-help" data-i18n="ui.use-question-sets-to-check-whether-answers"></p>
+          <p id="quality-status" role="status" data-i18n="ui.choose-a-knowledge-base"></p>
           <div id="quality-actions" hidden>
             <div class="knowledge-filters">
-              <label>題集 <select id="quality-sets"></select></label>
-              <button type="button" id="quality-run" disabled>執行題集</button>
-              <button type="button" id="quality-stop" disabled>取消執行</button>
+              <label><span data-i18n="ui.question-set"></span> <select id="quality-sets"></select></label>
+              <button type="button" id="quality-run" disabled data-i18n="ui.run-question-set"></button>
+              <button type="button" id="quality-stop" disabled data-i18n="ui.cancel-run"></button>
             </div>
-            <p id="quality-builtin-note" hidden>這組 48 道標準題可在允許模型使用的範例知識庫執行。</p>
+            <p id="quality-builtin-note" hidden data-i18n="ui.these-48-standard-questions-can-run-on"></p>
             <details id="quality-set-actions">
-              <summary>進階</summary>
-              <label>核准模型 <select id="quality-aliases"></select></label>
+              <summary data-i18n="ui.advanced"></summary>
+              <label><span data-i18n="ui.approved-model"></span> <select id="quality-aliases"></select></label>
               <form id="quality-add-set">
-                <label>新題集名稱 <input name="name" type="text" maxlength="80" required></label>
-                <button type="submit">新增題集</button>
+                <label><span data-i18n="ui.new-question-set-name"></span> <input name="name" type="text" maxlength="80" required></label>
+                <button type="submit" data-i18n="ui.add-question-set"></button>
               </form>
-              <button type="button" id="quality-remove-set">刪除題集</button>
+              <button type="button" id="quality-remove-set" data-i18n="ui.delete-question-set"></button>
               <details>
-                <summary>進階匯入與匯出</summary>
-                <label>從檔案載入 JSON <input id="quality-json-file" type="file" accept=".json,application/json"></label>
-                <label>題集 JSON<textarea id="quality-json" rows="5"></textarea></label>
-                <button type="button" id="quality-import">匯入並取代題目</button>
-                <button type="button" id="quality-export">匯出題集</button>
+                <summary data-i18n="ui.advanced-import-and-export"></summary>
+                <input id="quality-json-file" type="file" accept=".json,application/json">
+                <label><span data-i18n="ui.question-set-json"></span><textarea id="quality-json" rows="5"></textarea></label>
+                <button type="button" id="quality-import" data-i18n="ui.import-and-replace-questions"></button>
+                <button type="button" id="quality-export" data-i18n="ui.export-question-set"></button>
               </details>
             </details>
             <div id="quality-results" class="knowledge-results" aria-live="polite"></div>
             <details id="quality-question-list">
-              <summary>題目</summary>
+              <summary data-i18n="ui.questions"></summary>
               <ol id="quality-questions"></ol>
             </details>
             <form id="quality-editor" hidden>
-              <h2>編輯題目</h2>
-              <label>問題 <textarea name="query" rows="2" required maxlength="500"></textarea></label>
-              <label>預期答案 <textarea name="answer" rows="2" maxlength="2000"></textarea></label>
-              <label>類別 <select name="kind">
-                <option value="answerable">可回答</option><option value="no-evidence">缺乏證據</option>
-                <option value="conflict">證據衝突</option><option value="injection">含注入指令</option>
+              <h2 data-i18n="ui.edit-question"></h2>
+              <label><span data-i18n="ui.question"></span> <textarea name="query" rows="2" required maxlength="500"></textarea></label>
+              <label><span data-i18n="ui.expected-answer"></span> <textarea name="answer" rows="2" maxlength="2000"></textarea></label>
+              <label><span data-i18n="ui.kind"></span> <select name="kind">
+                <option value="answerable" data-i18n="ui.answerable"></option><option value="no-evidence" data-i18n="ui.missing-evidence"></option>
+                <option value="conflict" data-i18n="ui.conflicting-evidence"></option><option value="injection" data-i18n="ui.contains-injected-instructions"></option>
               </select></label>
-              <h3>預期證據</h3>
+              <h3 data-i18n="ui.expected-evidence"></h3>
               <div id="quality-evidence"></div>
-              <label>搜尋證據 <input type="text" name="passages" maxlength="500"></label>
-              <button type="button" id="quality-find">搜尋段落</button>
+              <label><span data-i18n="ui.search-evidence"></span> <input type="text" name="passages" maxlength="500"></label>
+              <button type="button" id="quality-find" data-i18n="ui.search-passages"></button>
               <ul id="quality-matches"></ul>
-              <button type="submit">儲存題目</button>
-              <button type="button" id="quality-new-question">新增另一題</button>
+              <button type="submit" data-i18n="ui.save-question"></button>
+              <button type="button" id="quality-new-question" data-i18n="ui.add-another-question"></button>
             </form>
           </div>
         </section>
         <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
-          <p class="page-help">匯入已發布的資料，或準備草稿送交審核。</p>
+          <p class="page-help" data-i18n="ui.import-published-data-or-prepare-drafts-for"></p>
           <details id="knowledge-repository">
-          <summary>從本機資料夾匯入</summary>
+          <summary data-i18n="ui.import-from-a-local-folder"></summary>
           <form id="knowledge-repository-form">
-            <label for="knowledge-folder">本機資料夾完整路徑</label>
+            <label for="knowledge-folder" data-i18n="ui.full-path-to-the-local-folder-2"></label>
             <input type="text" id="knowledge-folder" maxlength="2048" autocomplete="off" spellcheck="false" required>
-            <label><input type="checkbox" id="knowledge-model-consent"> 允許詢問時將此發布版本的證據送至模型</label>
+            <label><input type="checkbox" id="knowledge-model-consent"> <span data-i18n="ui.allow-evidence-from-this-release-to-be"></span></label>
             <div class="compose-actions">
-              <button id="knowledge-check-folder" type="submit">檢查資料夾</button>
-              <button id="knowledge-import-folder" type="submit">匯入發布版本</button>
+              <button id="knowledge-check-folder" type="submit" data-i18n="ui.check-folder"></button>
+              <button id="knowledge-import-folder" type="submit" data-i18n="ui.import-release"></button>
             </div>
           </form>
           <p id="knowledge-repository-status" role="status"></p>
           <details id="knowledge-repository-diagnostics" hidden>
-            <summary>進階</summary>
+            <summary data-i18n="ui.advanced"></summary>
             <p></p>
           </details>
         </details>
@@ -516,77 +530,77 @@
       </div>
     </section>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
-      <header class="page-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
+      <header class="page-header"><h1 id="jobs-title" tabindex="-1" data-i18n="ui.schedules-jobs"></h1></header>
       <div class="knowledge-body">
-        <p class="page-help">查看下次執行、已送出的工作與通知。</p>
+        <p class="page-help" data-i18n="ui.view-upcoming-runs-submitted-jobs-and-notifications"></p>
         <p id="jobs-status" role="status"></p>
         <div id="jobs-content"></div>
       </div>
     </section>
     <section class="conversation knowledge" id="review-view" aria-labelledby="review-title" hidden>
-      <header class="page-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
+      <header class="page-header"><h1 id="review-title" tabindex="-1" data-i18n="ui.review"></h1></header>
       <div class="knowledge-body">
-        <p class="page-help">查看草稿的變更與來源。先核准內容，再發布到知識庫。</p>
-        <button id="review-refresh" type="button">重新整理清單</button>
+        <p class="page-help" data-i18n="ui.check-draft-changes-and-sources-approve-content"></p>
+        <button id="review-refresh" type="button" data-i18n="ui.refresh-list"></button>
         <p id="review-status" role="status"></p>
         <section class="review-list" aria-labelledby="review-pending-title">
-          <h2 id="review-pending-title">待處理</h2>
-          <h3>卡片</h3>
+          <h2 id="review-pending-title" data-i18n="ui.pending"></h2>
+          <h3 data-i18n="ui.cards"></h3>
           <ul id="review-bi-pending" class="feature-list"></ul>
-          <h3>文章</h3>
+          <h3 data-i18n="ui.articles"></h3>
           <ul id="review-wiki-pending" class="feature-list"></ul>
         </section>
         <details class="feature-more review-list">
-          <summary>審核紀錄</summary>
-          <h3>卡片</h3>
+          <summary data-i18n="ui.review-history"></summary>
+          <h3 data-i18n="ui.cards"></h3>
           <ul id="review-bi-history" class="feature-list"></ul>
-          <h3>文章</h3>
+          <h3 data-i18n="ui.articles"></h3>
           <ul id="review-wiki-history" class="feature-list"></ul>
         </details>
         <details class="feature-more review-list" hidden>
-          <summary>匯入工作</summary>
+          <summary data-i18n="ui.import-jobs"></summary>
           <ul id="review-import-jobs"></ul>
         </details>
       </div>
     </section>
     </main>
-    <aside class="sidebar files" id="chat-files" aria-label="附加資料" hidden>
+    <aside class="sidebar files" id="chat-files" data-i18n-aria-label="ui.details" hidden>
       <div class="panel-header">
-        <button type="button" id="close-files">關閉附加資料</button>
-        <div id="panel-tabs" role="tablist" aria-label="附加資料分頁"></div>
+        <button type="button" id="close-files" data-i18n="ui.close-details"></button>
+        <div id="panel-tabs" role="tablist" data-i18n-aria-label="ui.details-tabs"></div>
       </div>
       <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" tabindex="0" hidden>
         <div id="file-list">
       <section aria-labelledby="attachments-title">
-        <h2 id="attachments-title">附件</h2>
+        <h2 id="attachments-title" data-i18n="ui.attachments"></h2>
         <p id="file-status" role="status"></p>
-        <ul id="attachments" aria-label="選擇這則訊息的附件"></ul>
+        <ul id="attachments" data-i18n-aria-label="ui.select-attachments-for-this-message"></ul>
       </section>
       <section aria-labelledby="artifacts-title">
-        <h2 id="artifacts-title">助理建立的檔案</h2>
-        <ul id="artifacts"><li>尚無可下載的檔案</li></ul>
+        <h2 id="artifacts-title" data-i18n="ui.files-created-by-the-assistant"></h2>
+        <ul id="artifacts"><li data-i18n="ui.no-downloadable-files-yet"></li></ul>
       </section>
         </div>
       </div>
       <div id="file-preview"></div>
       <div role="tabpanel" id="panel-work" aria-labelledby="tab-work" tabindex="0" hidden>
         <details id="panel-tools" hidden>
-          <summary>會話工具</summary>
-          <ul><li>知識庫查詢</li></ul>
+          <summary data-i18n="ui.session-tools"></summary>
+          <ul><li data-i18n="ui.knowledge-base-query"></li></ul>
         </details>
         <ul id="panel-runs"></ul>
         <p id="panel-jobs"></p>
-        <button id="panel-jobs-link" type="button">開啟排程與工作</button>
+        <button id="panel-jobs-link" type="button" data-i18n="ui.open-schedules-jobs"></button>
       <details open>
-        <summary id="activity-title">進行狀況</summary>
+        <summary id="activity-title" data-i18n="ui.activity"></summary>
         <ul id="activity" aria-live="polite"></ul>
       </details>
       </div>
       <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" tabindex="0" hidden></div>
       <div role="tabpanel" id="panel-notes" aria-labelledby="tab-notes" tabindex="0" hidden>
-        <label>篩選 <select id="notes-filter"><option value="all">全部</option><option value="rated">有評價</option><option value="noted">有筆記</option></select></label>
+        <label><span data-i18n="ui.filter"></span> <select id="notes-filter"><option value="all" data-i18n="ui.all"></option><option value="rated" data-i18n="ui.rated"></option><option value="noted" data-i18n="ui.with-notes"></option></select></label>
         <ul id="session-notes"></ul>
-        <button type="button" id="export-notes" disabled>匯出選取的筆記</button>
+        <button type="button" id="export-notes" disabled data-i18n="ui.export-selected-notes"></button>
       </div>
     </aside>
   </div>

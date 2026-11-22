@@ -92,6 +92,13 @@ body { margin: 0; }
 }
 .menu-actions :is(button, a) { width: 100%; text-align: start; }
 .menu-actions .panel-openers { display: grid; gap: var(--space-1); }
+.locale-picker { display: grid; gap: var(--space-1); max-inline-size: 100%; }
+.locale-picker select { min-inline-size: 0; }
+.file-picker { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.file-picker small { overflow-wrap: anywhere; min-inline-size: 0; }
+#settings-appearance > .locale-picker { display: grid; width: max-content; margin-block: var(--space-3); }
+.menu-actions .locale-picker { padding: var(--space-1); font-size: var(--text-sm); }
+
 .session-list .menu-actions { min-width: 8rem; }
 .menu-actions button { white-space: nowrap; }
 #work-area:not(:has(#chat-view:not([hidden]))) :is(.panel-openers, #progress) { display: none; }
@@ -296,6 +303,7 @@ summary { cursor: pointer; }
 .session-list li { align-items: center; margin: 0; }
 .session-list li > button { display: flex; align-items: center; gap: var(--space-2); }
 .session-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-name-default { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .session-list time { color: var(--muted); font-size: var(--text-xs); white-space: nowrap; font-weight: 400; }
 .session-list [aria-current="true"] { border-color: var(--link); background: var(--selected); color: var(--link); }
 @media (max-width: 800px) { #session-sidebar:not([hidden]) { min-height: 0; } }

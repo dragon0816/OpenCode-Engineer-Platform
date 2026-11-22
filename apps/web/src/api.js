@@ -1,21 +1,34 @@
+import { getLocale, hasMessage, joinText, LocalizedError, message, resolveText } from './i18n.js';
 let csrf;
 
 export const sampleKnowledgeID = 'oep-synthetic-demo';
 
 export function modelLabel(alias) {
-  return alias.startsWith('synthetic-') ? '已設定的模型' : alias;
+  return alias.startsWith('synthetic-') ? message('api.configured-model') : alias;
 }
 
-export class RequestError extends Error {
-  constructor(status, message) {
-    super(message);
+export function projectLabel(project) {
+  const names = { default: message('api.primary-workspace'), secondary: message('api.separate-workspace') };
+  return names[project.id] ?? project.title;
+}
+
+export class RequestError extends LocalizedError {
+  constructor(status, text) {
+    super(text);
     this.status = status;
   }
 }
 
-export function errorText(error, fallback = '無法完成操作。請稍後再試。') {
-  const message = typeof error === 'string' ? error : error?.message;
-  return typeof message === 'string' && /\p{Script=Han}/u.test(message) ? message : fallback;
+export function serverText(detail, fallback) {
+  const key = 'server.' + detail?.code;
+  return hasMessage(key) ? message(key, detail.params) : errorText(detail?.text, fallback);
+}
+
+export function errorText(error, fallback = message('api.could-not-complete-the-operation-try-again')) {
+  if (typeof error === 'function') return error;
+  if (error instanceof LocalizedError) return error.localizedText;
+  const text = typeof error === 'string' ? error : error?.message;
+  return typeof text === 'string' && /\p{Script=Han}/u.test(text) ? () => getLocale() === 'zh-TW' ? text : resolveText(fallback) : fallback;
 }
 
 export async function request(path, { data, file, bytes, sha256, signal } = {}) {
@@ -41,9 +54,13 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     result = await response.json();
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new Error('無法讀取 OEP 的回覆。請確認服務仍在執行，再試一次。', { cause: error });
+    throw new LocalizedError(message('api.could-not-read-the-oep-response-make'), { cause: error });
   }
-  if (!response.ok) throw new RequestError(response.status, errorText(result?.error));
+  if (!response.ok) {
+    const text = result?.errorDetail
+      ? serverText(result.errorDetail) : errorText(result?.error);
+    throw new RequestError(response.status, result?.errorPath ? joinText([result.errorPath, text]) : text);
+  }
   return result;
 }
 

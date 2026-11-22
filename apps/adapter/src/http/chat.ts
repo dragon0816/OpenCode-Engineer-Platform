@@ -15,6 +15,7 @@ import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookInput, workbookLimit, workbookName } from '../runs/web-workbook.ts';
 import { until } from '../../../../scripts/phase0/probe-http.ts';
 import { HttpError } from './errors.ts';
+import { describeTurnError, webMessage } from './messages.ts';
 import { turnMarker } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 
@@ -43,7 +44,9 @@ function toolText(value: unknown, redact: (text: string) => string): string {
 }
 
 export function publicRun(run: RunRecord) {
-  return { id: run.id, state: run.state, createdAt: run.createdAt, error: run.errors.at(-1), finishedAt: run.finishedAt,
+  const recorded = run.errors.at(-1);
+  const errorDetail = recorded ? describeTurnError(recorded) : undefined;
+  return { id: run.id, state: run.state, createdAt: run.createdAt, error: errorDetail?.text, errorDetail, finishedAt: run.finishedAt,
     artifact: run.state === 'verified' && run.artifact
       ? { name: workbookName, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
@@ -122,7 +125,7 @@ export class ChatService {
     const { upstreamID: sessionID } = session;
     let runs = this.store.turns(session.id);
     const latest = runs.at(-1);
-    let stateError: string | undefined;
+    let stateErrorDetail: ReturnType<typeof webMessage> | undefined;
     let messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt?: number; tools?: ToolCard[]; reply?: { id: string; text: string } }[] | undefined;
     try {
       const pending = latest && (active.has(latest.state) || latest.state === 'indeterminate');
@@ -163,10 +166,10 @@ export class ChatService {
         if (current.state === 'indeterminate') this.store.change(latest.id, 'failed', { finishedAt: Date.now() });
       }
     } catch {
-      stateError = 'OpenCode is temporarily unavailable. Saved runs and attachments are still available';
+      stateErrorDetail = webMessage('session-unavailable');
     }
     runs = this.store.turns(session.id);
-    return { session: publicSession(session), messages, stateError, runs: runs.map(publicRun),
+    return { session: publicSession(session), messages, stateError: stateErrorDetail?.text, stateErrorDetail, runs: runs.map(publicRun),
       attachments: this.store.attachments(session.id).map(publicAttachment), annotations: this.store.annotations(session.id) };
   }
 
@@ -174,16 +177,16 @@ export class ChatService {
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
-      if (existing.hash !== hash) throw new HttpError(409, 'Message ID was already used for different content');
+      if (existing.hash !== hash) throw new HttpError(409, 'message-id-in-use');
       return publicRun(existing.run);
     }
-    if (this.store.hasTurn(input.id)) throw new HttpError(409, 'Message ID is unavailable');
+    if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
     const prior = this.store.turns(session.id).at(-1);
-    if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'A turn in this session is still pending');
-    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(409, 'This session uses a different model. Create a session for the current model');
-    if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'Select the workbook agent to generate a workbook');
+    if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'turn-pending');
+    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(409, 'session-model-mismatch');
+    if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'workbook-assistant-required');
     for (const id of input.attachments) {
-      if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'Attachment not found in this session');
+      if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'session-attachment-not-found');
     }
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
@@ -207,7 +210,7 @@ export class ChatService {
 
   async cancel(session: WebSession, id: string) {
     const run = this.store.turn(session.id, id)?.run;
-    if (!run) throw new HttpError(404, '找不到回合。');
+    if (!run) throw new HttpError(404, 'turn-not-found');
     const execution = this.executing.get(id);
     if (execution && active.has(run.state)) {
       execution.stop.abort();
@@ -347,12 +350,12 @@ export class ChatService {
 
   download(session: WebSession, id: string) {
     const run = this.store.turn(session.id, id)?.run;
-    if (run?.state !== 'verified' || !run.artifact?.identity || run.receipt?.runID !== id) throw new HttpError(404, 'Verified artifact not found');
+    if (run?.state !== 'verified' || !run.artifact?.identity || run.receipt?.runID !== id) throw new HttpError(404, 'workbook-not-found');
     try {
       const directory = scopedPath(join(this.projectRoot(session.project), 'artifacts'), id);
       const output = openWorkspaceFile(directory, workbookName, workbookLimit, run.artifact.identity);
       return { name: workbookName, data: output.data, sha256: output.identity.sha256 };
-    } catch { throw new HttpError(409, 'Artifact is missing or has changed'); }
+    } catch { throw new HttpError(409, 'workbook-file-changed'); }
   }
 
   busy() {

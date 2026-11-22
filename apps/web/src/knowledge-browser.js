@@ -1,11 +1,18 @@
+import { joinText, message, optionText, setText, t } from './i18n.js';
 import { request } from './api.js';
 
 const find = (id) => document.getElementById(id);
 function node(tag, text) {
   const element = document.createElement(tag);
-  if (text !== undefined) element.textContent = text;
+  if (text !== undefined) setText(element, text);
   return element;
 }
+function content(tag, text) {
+  const value = node(tag, text);
+  value.dataset.uiContent = '';
+  return value;
+}
+
 function button(text, action) {
   const element = node('button', text);
   element.type = 'button';
@@ -14,8 +21,8 @@ function button(text, action) {
 }
 
 function valueView(value) {
-  if (value === null || value === undefined) return node('span', '無資料');
-  if (typeof value === 'boolean') return node('span', value ? '是' : '否');
+  if (value === null || value === undefined) return node('span', message('cards.no-data'));
+  if (typeof value === 'boolean') return node('span', value ? message('cards.yes') : message('cards.no'));
   if (typeof value !== 'object') return node('span', String(value));
   if (Array.isArray(value)) {
     const list = node('ul');
@@ -24,7 +31,7 @@ function valueView(value) {
       row.append(valueView(item));
       list.append(row);
     }
-    return value.length ? list : node('span', '無資料');
+    return value.length ? list : node('span', message('cards.no-data'));
   }
   const list = node('dl');
   for (const [key, item] of Object.entries(value)) {
@@ -32,12 +39,12 @@ function valueView(value) {
     field.append(valueView(item));
     list.append(node('dt', key), field);
   }
-  return list.childElementCount ? list : node('span', '無資料');
+  return list.childElementCount ? list : node('span', message('cards.no-data'));
 }
 
 function highlight(parent, content, query) {
   const terms = query.match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (!terms.length) { parent.textContent = content.slice(0, 240); return; }
+  if (!terms.length) { setText(parent, content.slice(0, 240)); return; }
   const pattern = new RegExp(terms.join('|'), 'giu');
   const match = pattern.exec(content);
   const start = Math.max(0, (match?.index ?? 0) - 55);
@@ -66,62 +73,62 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
   let sort = 'title';
   let descending = false;
   const filters = [['type', 'types'], ['category', 'categories'], ['domain', 'domains']];
-  const columns = [['title', '卡片'], ['key', '識別鍵'], ['type', '類型'], ['category', '分類'], ['domain', '領域／資料夾'], ['version', '版本']];
+  const columns = [['title', message('ui.cards')], ['key', message('cards.key')], ['type', message('ui.type')], ['category', message('ui.category')], ['domain', message('ui.domain-folder')], ['version', message('cards.version')]];
   const browse = (data, signal) => request('/api/knowledge/browse', { data: { vault: active, ...data }, signal });
 
   function openPassage(passage, query = '', opener) {
     const key = JSON.stringify(['passage', active, passage.sourceVersion, passage.id, passage.locator, query]);
-    const { body } = openPreview(key, '來源段落', opener);
+    const { body } = openPreview(key, message('cards.source-passage'), opener);
     const quote = node('blockquote', passage.text);
-    body.replaceChildren(node('p', `${passage.source} · ${passage.locator}`), quote);
+    body.replaceChildren(content('p', `${passage.source} · ${passage.locator}`), quote);
     if (passage.sourceVersion) {
       const details = node('details');
-      details.append(node('summary', '進階'), node('p', `來源版本 ${passage.sourceVersion}`));
+      details.append(node('summary', message('ui.advanced')), node('p', message('cards.source-version-version', { version: passage.sourceVersion })));
       body.append(details);
     }
     if (query) {
-      const excerpt = node('p');
+      const excerpt = content('p');
       highlight(excerpt, passage.text, query);
       body.prepend(excerpt);
     }
-    if (passage.cardId) body.append(button('開啟卡片', (event) => void openCard(passage.cardId, event.currentTarget)));
+    if (passage.cardId) body.append(button(message('cards.open-card'), (event) => void openCard(passage.cardId, event.currentTarget)));
   }
 
   async function openCard(id, opener) {
-    const { body, signal, setTitle } = openPreview(JSON.stringify(['card', active, id]), opener.textContent, opener);
+    const { body, signal, setTitle } = openPreview(JSON.stringify(['card', active, id]), message('cards.loading-card'), opener);
     if (body.childElementCount) return;
-    body.append(node('p', '正在讀取卡片。'));
+    body.append(node('p', message('cards.loading-card')));
     try {
       const { card, related, passages, history, evidence, revisions } = await browse({ card: id }, signal);
       if (signal.aborted) return;
       setTitle(card.title);
       body.replaceChildren();
       const details = node('details');
-      details.append(node('summary', '進階'), node('p', `${card.type} · ${card.key} · 版本 ${card.version}`));
+      details.append(node('summary', message('ui.advanced')), node('p', message('cards.type-key-version-version', { type: card.type, key: card.key, version: card.version })));
       const fields = node('dl');
       for (const [key, value] of Object.entries(card.fields)) {
         const field = node('dd');
         field.append(valueView(value));
         const provenance = node('details');
-        provenance.append(node('summary', '欄位出處'), valueView(card.fieldProvenance?.[key]));
+        provenance.append(node('summary', message('cards.field-source')), valueView(card.fieldProvenance?.[key]));
         const state = node('details');
-        state.append(node('summary', '欄位狀態'), valueView(card.fieldStates?.[key]));
+        state.append(node('summary', message('cards.field-status')), valueView(card.fieldStates?.[key]));
         field.append(provenance, state);
-        fields.append(node('dt', key), field);
+        fields.append(content('dt', key), field);
       }
-      body.append(node('h3', '欄位'), fields.childElementCount ? fields : node('p', '無資料'));
-      body.append(node('h3', '證據'));
-      if (!passages.length) body.append(node('p', '無資料'));
+      body.append(node('h3', message('cards.fields')), fields.childElementCount ? fields : node('p', message('cards.no-data')));
+      body.append(node('h3', message('cards.evidence')));
+      if (!passages.length) body.append(node('p', message('cards.no-data')));
       for (const passage of passages) {
         const record = evidence?.find((item) => item.passageIds.includes(passage.id));
         const reference = [record?.field, passage.source, passage.locator].filter(Boolean).join(' · ');
         body.append(button(reference, (event) => openPassage(passage, '', event.currentTarget)),
           node('blockquote', passage.text));
       }
-      for (const [direction, label] of [['from', '指向其他卡片'], ['to', '由其他卡片指向此卡片']]) {
+      for (const [direction, label] of [['from', message('cards.links-to-other-cards')], ['to', message('cards.linked-from-other-cards')]]) {
         body.append(node('h3', label));
         const links = related.filter((relation) => relation[direction] === id);
-        if (!links.length) body.append(node('p', '無資料'));
+        if (!links.length) body.append(node('p', message('cards.no-data')));
         const other = direction === 'from' ? 'to' : 'from';
         for (const relation of links) {
           const row = node('p');
@@ -131,14 +138,14 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         }
       }
       const changes = node('details');
-      changes.append(node('summary', '欄位變更紀錄'), valueView(history));
+      changes.append(node('summary', message('cards.field-change-history')), valueView(history));
       const publications = node('details');
-      publications.append(node('summary', '知識庫發布紀錄'));
+      publications.append(node('summary', message('cards.knowledge-base-release-history')));
       for (const revision of revisions) publications.append(node('p', revision.revision));
       details.append(changes, publications);
       body.append(details);
     } catch {
-      if (!signal.aborted) body.textContent = '無法讀取卡片，請重新開啟。';
+      if (!signal.aborted) setText(body, message('cards.could-not-load-this-card-open-it'));
     }
   }
 
@@ -147,13 +154,17 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
     const current = listing = new AbortController();
     find('knowledge-prev').disabled = find('knowledge-next').disabled = true;
     const values = Object.fromEntries(new FormData(form));
-    status.textContent = '正在讀取卡片。';
+    setText(status, message('cards.loading-card'));
     try {
       const page = await browse({ ...values, offset, sort, descending }, current.signal);
       if (current.signal.aborted) return;
       for (const [field, choices] of filters) {
         const select = form.elements.namedItem(field);
-        select.replaceChildren(new Option('全部', ''), ...page[choices].map((item) => new Option(item, item)));
+        select.replaceChildren(optionText(message('ui.all'), ''), ...page[choices].map(item => {
+          const option = content('option', item);
+          option.value = item;
+          return option;
+        }));
         select.value = values[field];
         if (select.selectedIndex < 0) select.selectedIndex = 0;
       }
@@ -163,7 +174,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         const header = node('th');
         header.scope = 'col';
         if (column === sort) header.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
-        const sortButton = button(label + (column === sort ? (descending ? ' ↓' : ' ↑') : ''), () => {
+        const sortButton = button(joinText([label, column === sort ? (descending ? ' ↓' : ' ↑') : ''], ''), () => {
           descending = sort === column && !descending;
           sort = column;
           offset = 0;
@@ -179,11 +190,11 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         for (const [column] of columns) {
           const cell = row.insertCell();
           if (column === 'title') cell.append(button(card.title, (event) => void openCard(card.id, event.currentTarget)));
-          else cell.textContent = card[column] || '無資料';
+          else setText(cell, card[column] || message('cards.no-data'));
         }
       }
       results.replaceChildren(table);
-      status.textContent = page.total ? `第 ${offset + 1}–${offset + page.cards.length} 張，共 ${page.total} 張` : '沒有符合條件的卡片。';
+      setText(status, page.total ? message('cards.cards-start-end-of-total', { start: offset + 1, end: offset + page.cards.length, total: page.total }) : message('cards.no-matching-cards'));
       find('knowledge-prev').disabled = offset === 0;
       find('knowledge-next').disabled = offset + page.cards.length >= page.total;
       if (focus === 'prev' || focus === 'next') {
@@ -191,7 +202,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         (control.disabled ? results : control).focus();
       } else if (focus) results.querySelector(`[data-sort="${focus}"]`)?.focus();
     } catch {
-      if (!current.signal.aborted) status.textContent = '無法讀取卡片。請重新套用篩選。';
+      if (!current.signal.aborted) setText(status, message('cards.could-not-load-cards-apply-the-filters'));
     }
   }
 
@@ -204,35 +215,35 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
     searching?.abort();
     const current = searching = new AbortController();
     const query = search.elements.query.value.trim();
-    matches.replaceChildren(node('p', '正在搜尋段落。'));
+    matches.replaceChildren(node('p', message('cards.searching-passages')));
     try {
       const { passages, ready } = await browse({ query }, current.signal);
       if (current.signal.aborted) return;
       matches.replaceChildren();
-      if (!passages.length) matches.append(node('p', ready ? '找不到符合的段落。' : '索引目前無法查詢。'));
+      if (!passages.length) matches.append(node('p', ready ? message('cards.no-matching-passages') : message('cards.the-search-index-is-unavailable')));
       for (const passage of passages) {
         const row = node('article');
-        const snippet = node('p');
+        const snippet = content('p');
         highlight(snippet, passage.text, query);
         row.append(button(`${passage.source} · ${passage.locator}`, (event) => openPassage(passage, query, event.currentTarget)), snippet);
         matches.append(row);
       }
     } catch {
-      if (!current.signal.aborted) matches.replaceChildren(node('p', '無法搜尋段落。'));
+      if (!current.signal.aborted) matches.replaceChildren(node('p', message('cards.could-not-search-passages')));
     }
   });
 
   rebuild.addEventListener('click', async () => {
-    if (!confirm('要重建所有知識庫的搜尋索引嗎？')) return;
+    if (!confirm(t('cards.rebuild-the-search-index-for-all-knowledge'))) return;
     rebuild.disabled = true;
     const result = find('knowledge-rebuild-status');
-    result.textContent = '正在重建搜尋索引。';
+    setText(result, message('cards.rebuilding-the-search-index'));
     try {
       const { rebuilt } = await request('/api/knowledge/rebuild', { data: { confirmed: true } });
       await refreshVaults();
-      result.textContent = `已重建 ${rebuilt} 個發布版本的搜尋索引。`;
+      setText(result, message('cards.rebuilt-search-indexes-releases-count', { count: rebuilt }));
     } catch {
-      result.textContent = '無法重建搜尋索引。請再試一次。';
+      setText(result, message('cards.could-not-rebuild-the-search-index-try'));
     } finally { rebuild.disabled = false; }
   });
 

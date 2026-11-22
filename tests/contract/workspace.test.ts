@@ -4,12 +4,23 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { strToU8, unzipSync, zipSync } from 'fflate';
+import { HttpError } from '../../apps/adapter/src/http/errors.ts';
+import type { WebMessageCode } from '../../apps/adapter/src/http/messages.ts';
 import { AttachmentService, convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { failRun, finishWorkbook, verifyWorkbookReceipt } from '../../apps/adapter/src/runs/excel.ts';
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { publishWorkbook, workbookInput } from '../../apps/adapter/src/runs/web-workbook.ts';
+
+function rejectsWith(status: number, code: WebMessageCode) {
+  return (error: unknown) => {
+    assert.ok(error instanceof HttpError);
+    assert.equal(error.status, status);
+    assert.equal(error.detail.code, code);
+    return true;
+  };
+}
 
 function directory() {
   mkdirSync('.phase0', { recursive: true });
@@ -84,17 +95,17 @@ test('XLSX conversion keeps both worksheet names, all fixture cells and row loca
     rewrite((xml) => xml.replace('r="3"', 'r="501"')),
     rewrite((xml) => '<!DOCTYPE worksheet [<!ENTITY nested "BOUNDED">]>' + xml),
     Buffer.from('not a zip'),
-  ]) await assert.rejects(convertWorkbook(file), /Unsupported XLSX/);
+  ]) await assert.rejects(convertWorkbook(file), rejectsWith(422, 'excel-conversion-unavailable'));
   const parts = unzipSync(source);
   const book = Buffer.from(parts['xl/workbook.xml']).toString();
   const item = book.match(/<sheet .*?\/>/)![0];
   parts['xl/workbook.xml'] = strToU8(book.replace('</sheets>', item.repeat(9) + '</sheets>'));
-  await assert.rejects(convertWorkbook(Buffer.from(zipSync(parts))), /Unsupported XLSX/);
+  await assert.rejects(convertWorkbook(Buffer.from(zipSync(parts))), rejectsWith(422, 'excel-conversion-unavailable'));
   const inflated = Buffer.from(source);
   const directoryEntry = inflated.indexOf(Buffer.from('504b0102', 'hex'));
   assert.notEqual(directoryEntry, -1);
   inflated.writeUInt32LE(100 * 1024 * 1024 + 1, directoryEntry + 24);
-  await assert.rejects(convertWorkbook(inflated), /Unsupported XLSX/);
+  await assert.rejects(convertWorkbook(inflated), rejectsWith(422, 'excel-conversion-unavailable'));
 });
 
 test('upload quota includes projections and staging cleanup preserves indexed files', async () => {
@@ -108,7 +119,7 @@ test('upload quota includes projections and staging cleanup preserves indexed fi
     const identity = { device: '', inode: '', created: '', modified: '', changed: '', sha256: '', bytes: 200 * 1024 * 1024 - data.length };
     store.saveAttachment('owner', { id: 'control', name: 'synthetic', mime: 'text/plain', original: identity });
     await assert.rejects(service.upload('owner', root, 'table.xlsx',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data.length, async () => data), /quota/);
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data.length, async () => data), rejectsWith(413, 'session-storage-full'));
     assert.equal(store.attachments('owner').length, 1);
     store.createSession({ id: 'clean', upstreamID: 'second', agent: 'inspector', alias: 'synthetic', createdAt: 2 });
     const uploaded = await service.upload('clean', root, 'notes.txt', 'text/plain', 3, async () => Buffer.from('abc'));
@@ -144,7 +155,7 @@ test('invalid model workbook JSON produces no downloadable file', async () => {
   mkdirSync(output);
   const run = { id: 'invalid', workspace: root, mode: 'synthetic', state: 'background' as const, createdAt: 1, retries: 0, errors: [] };
   writeFileSync(scopedPath(root, workbookInput(run.id)), '[{"name":"Notes","rows":[["A"]}]');
-  await assert.rejects(publishWorkbook(output, root, run), /invalid workbook JSON/);
+  await assert.rejects(publishWorkbook(output, root, run), rejectsWith(422, 'workbook-data-invalid'));
   assert.deepEqual(readdirSync(output), []);
 });
 

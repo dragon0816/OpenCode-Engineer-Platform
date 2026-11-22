@@ -18,7 +18,7 @@ export async function publishWorkbook(root: string, workspace: string, run: RunR
   if (Number(BigInt(input.identity.created) / 1_000_000n) < run.createdAt) throw new Error('Workbook data is stale');
   let sheets: unknown;
   try { sheets = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(input.data)); }
-  catch { throw new HttpError(422, 'The model wrote invalid workbook JSON. Try the workbook request again'); }
+  catch { throw new HttpError(422, 'workbook-data-invalid'); }
   const bytes = workbook(sheets);
   await convertWorkbook(Buffer.from(bytes));
   signal?.throwIfAborted();

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { inLocales, labelInLocale } from './gui-locales.ts';
 
 type Page = { evaluate<T>(expression: string): Promise<T> };
 type Controls = { selectors?: string[]; labels?: string[] };
@@ -22,16 +23,19 @@ export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'featu
     seen,
 
     async check(id: string, scope: string, { selectors = [], labels = [] }: Controls) {
-      const missing = await page.evaluate<string[]>(`(() => {
-        const root = document.querySelector(${JSON.stringify(scope)});
-        if (!root) return [${JSON.stringify(scope)}];
-        const actions = Array.from(root.querySelectorAll('button, summary, a'), (node) => node.textContent.trim());
-        return [
-          ...${JSON.stringify(selectors)}.filter(selector => !root.querySelector(selector)),
-          ...${JSON.stringify(labels)}.filter(label => !actions.includes(label)),
-        ];
-      })()`);
-      assert.deepEqual(missing, [], id + ' (' + scope + ')');
+      await inLocales(page, async (locale) => {
+        const translated = labels.map(label => labelInLocale(label, locale));
+        const missing = await page.evaluate<string[]>(`(() => {
+          const root = document.querySelector(${JSON.stringify(scope)});
+          if (!root) return [${JSON.stringify(scope)}];
+          const actions = Array.from(root.querySelectorAll('button, summary, a'), node => node.textContent.trim());
+          return [
+            ...${JSON.stringify(selectors)}.filter(selector => !root.querySelector(selector)),
+            ...${JSON.stringify(translated)}.filter(label => !actions.includes(label)),
+          ];
+        })()`);
+        assert.deepEqual(missing, [], locale + ' ' + id + ' (' + scope + ')');
+      });
       seen(id);
     },
 

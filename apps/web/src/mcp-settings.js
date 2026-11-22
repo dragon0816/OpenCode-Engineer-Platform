@@ -1,10 +1,11 @@
-import { request } from './api.js';
+import { joinText, message, setAttribute, setText, textNode, t } from './i18n.js';
+import { errorText, projectLabel, request, serverText } from './api.js';
 
 const endpoint = '/api/settings/mcp';
 const find = (id) => document.getElementById(id);
 const element = (tag, text, className) => {
   const node = document.createElement(tag);
-  if (text) node.textContent = text;
+  if (text) setText(node, text);
   if (className) node.className = className;
   return node;
 };
@@ -14,8 +15,8 @@ const control = (text, action) => {
   button.addEventListener('click', action);
   return button;
 };
-const labels = { connected: '已連線', disabled: '已停用', pending: '等待連線',
-  failed: '連線失敗，請執行連線測試。', needs_auth: '需要憑證' };
+const labels = { connected: message('chat.connected'), disabled: message('chat.disabled'), pending: message('chat.awaiting-connection'),
+  failed: message('tools.connection-failed-run-a-connection-test'), needs_auth: message('chat.credentials-required') };
 const connectionDetails = /\b(?:HTTPS|TLS|stdio|MCP)\b/i;
 
 export function bindMcpSettings(projects) {
@@ -56,14 +57,14 @@ export function bindMcpSettings(projects) {
     });
     value.autocomplete = 'new-password';
     value.maxLength = 4096;
-    const nameLabel = element('label', '名稱');
-    const valueLabel = element('label', entry.configured ? '新憑證（已設定）' : '憑證（尚未設定）');
+    const nameLabel = element('label', message('ui.name'));
+    const valueLabel = element('label', entry.configured ? message('tools.new-credential-configured') : message('tools.credential-unconfigured'));
     nameLabel.append(name);
     valueLabel.append(value);
     valueLabel.hidden = !secret.checked;
     const secretLabel = element('label', '', 'mcp-secret');
-    secretLabel.append(secret, entry.configured ? ' 輸入新憑證（已設定）' : ' 輸入憑證');
-    row.append(nameLabel, secretLabel, valueLabel, control('移除此欄位', () => {
+    secretLabel.append(secret, textNode(entry.configured ? message('tools.enter-new-credential-configured') : message('tools.enter-credential')));
+    row.append(nameLabel, secretLabel, valueLabel, control(message('tools.remove-field'), () => {
       row.remove();
       find('mcp-add-credential').focus();
     }));
@@ -78,7 +79,7 @@ export function bindMcpSettings(projects) {
     field('url').required = remote;
     field('executable').required = !remote;
     field('cwd').required = !remote;
-    find('mcp-credential-title').textContent = remote ? '服務的憑證欄位' : '程式的憑證欄位';
+    setText(find('mcp-credential-title'), remote ? message('tools.service-credential-fields') : message('ui.program-credential-fields'));
   }
 
   function open(server, trigger) {
@@ -91,7 +92,7 @@ export function bindMcpSettings(projects) {
     changed = server?.id;
     opener = trigger;
     saved = false;
-    find('mcp-editor-title').textContent = server ? '編輯伺服器' : '新增伺服器';
+    setText(find('mcp-editor-title'), server ? message('tools.edit-server') : message('ui.add-server'));
     for (const name of ['name', 'transport', 'cwd', 'url', 'dataScope']) {
       field(name).value = server?.[name] ?? (name === 'transport' ? 'stdio' : '');
     }
@@ -102,14 +103,15 @@ export function bindMcpSettings(projects) {
     for (const name of ['startup', 'catalog', 'execution']) field(name).value = server?.timeouts[name] ?? 15000;
     rows.replaceChildren();
     for (const entry of server?.environment ?? []) credential(entry);
-    const choices = projects().map(({ id, title }) => {
+    const choices = projects().map((project) => {
+      const { id } = project;
       const label = element('label');
       const input = element('input');
       input.type = 'checkbox';
       input.name = 'project';
       input.value = id;
       input.checked = server?.appliesToProjects.includes(id) ?? false;
-      label.append(input, ' ' + title);
+      label.append(input, ' ', textNode(projectLabel(project)));
       return label;
     });
     find('mcp-projects').replaceChildren(...choices);
@@ -120,12 +122,12 @@ export function bindMcpSettings(projects) {
   function renderResult(panel, result, server, apply) {
     panel.replaceChildren();
     if (!result) return;
-    if (result.ok) panel.append(element('p', '連線測試成功。工具設定會在重新啟動後套用至新會話。'));
+    if (result.ok) panel.append(element('p', message('tools.connection-test-passed-tool-settings-apply-to')));
     else if (connectionDetails.test(result.reason)) {
       const diagnostic = element('details', '', 'settings-advanced');
-      diagnostic.append(element('summary', '進階'), element('p', result.reason));
-      panel.append(element('p', '連線測試失敗。請檢查服務的網址和連線設定。'), diagnostic);
-    } else panel.append(element('p', result.reason));
+      diagnostic.append(element('summary', message('ui.advanced')), element('p', serverText(result.reasonDetail, errorText(result.reason))));
+      panel.append(element('p', message('tools.connection-test-failed-check-the-service-url')), diagnostic);
+    } else panel.append(element('p', serverText(result.reasonDetail, errorText(result.reason))));
     if (!result.ok || !result.tools.length) return;
     const tools = element('ul');
     for (const { name, description } of result.tools) {
@@ -133,11 +135,12 @@ export function bindMcpSettings(projects) {
       item.append(element('strong', name), ...(description ? [element('p', description)] : []));
       if (/^[a-z0-9_]{1,120}$/.test(name)) {
         const enabled = !server.deniedTools.includes(name);
-        const toggle = control(enabled ? '停用工具' : '啟用工具', (event) =>
+        const label = enabled ? message('tools.disable-tool') : message('tools.enable-tool');
+        const toggle = control(label, (event) =>
           apply({ action: 'tool', tool: name, enabled: !enabled }, event.currentTarget));
-        toggle.setAttribute('aria-label', toggle.textContent + ' ' + name);
+        setAttribute(toggle, 'aria-label', joinText([label, name], ' '));
         item.append(toggle);
-      } else item.append(element('p', '此工具名稱僅供查看。'));
+      } else item.append(element('p', message('tools.this-tool-name-is-read-only')));
       tools.append(item);
     }
     panel.append(tools);
@@ -146,18 +149,19 @@ export function bindMcpSettings(projects) {
   function render(snapshot) {
     find('mcp-restart-bar').hidden = !snapshot.restartRequired;
     list.replaceChildren();
-    if (!snapshot.servers.length) list.append(element('p', '尚未新增自訂伺服器。'));
+    if (!snapshot.servers.length) list.append(element('p', message('tools.no-custom-servers-yet')));
     for (const server of snapshot.servers) {
       const card = element('article', '', 'mcp-card');
       const heading = element('h4', server.name);
+      heading.dataset.uiContent = '';
       heading.tabIndex = -1;
       heading.id = 'mcp-server-' + server.id;
       const badges = element('div', '', 'mcp-badges');
-      for (const text of [server.enabled ? '已啟用' : '已停用', server.enabled && (!server.restartRequired || server.status !== 'pending') && labels[server.status],
-        server.restartRequired && '等待重新啟動']) {
+      for (const text of [server.enabled ? message('jobs.enabled') : message('chat.disabled'), server.enabled && (!server.restartRequired || server.status !== 'pending') && labels[server.status],
+        server.restartRequired && message('tools.restart-pending')]) {
         if (text) badges.append(element('span', text, 'runtime-badge'));
       }
-      const allowed = projects().filter(({ id }) => server.appliesToProjects.includes(id)).map(({ title }) => title);
+      const allowed = projects().filter(({ id }) => server.appliesToProjects.includes(id)).map(projectLabel);
       const panel = element('div', '', 'mcp-result');
       panel.setAttribute('role', 'status');
 
@@ -170,29 +174,33 @@ export function bindMcpSettings(projects) {
           if (data.action === 'remove') results.delete(server.id);
           render(next);
           (find(heading.id) ?? find('mcp-add')).focus();
-        } catch (error) { status.textContent = error.message; }
+        } catch (error) { setText(status, errorText(error)); }
         finally { button.disabled = false; }
       };
       renderResult(panel, results.get(server.id), server, apply);
-      actions.append(control('編輯', (event) => open(server, event.currentTarget)),
-        control(server.enabled ? '停用' : '啟用', (event) => apply({ action: 'enable', enabled: !server.enabled }, event.currentTarget)),
-        control('測試連線', async (event) => {
+      actions.append(control(message('jobs.edit'), (event) => open(server, event.currentTarget)),
+        control(server.enabled ? message('tools.disable') : message('tools.enable'), (event) => apply({ action: 'enable', enabled: !server.enabled }, event.currentTarget)),
+        control(message('tools.test-connection'), async (event) => {
           const button = event.currentTarget;
           button.disabled = true;
-          panel.textContent = '正在測試連線…';
+          setText(panel, message('tools.testing-connection'));
           try {
             const result = await request(endpoint + '/test', { data: { id: server.id } });
             results.set(server.id, result);
             renderResult(panel, result, server, apply);
-          } catch (error) { panel.textContent = error.message; }
+          } catch (error) { setText(panel, errorText(error)); }
           finally { button.disabled = false; button.focus({ preventScroll: true }); panel.scrollIntoView({ block: 'nearest' }); }
         }),
-        control('移除', (event) => {
-          if (window.confirm('要移除此伺服器設定嗎？')) void apply({ action: 'remove' }, event.currentTarget);
+        control(message('chat.remove'), (event) => {
+          if (window.confirm(t('tools.remove-this-server-configuration'))) void apply({ action: 'remove' }, event.currentTarget);
         }));
-      card.append(heading, badges, element('p', (server.transport === 'stdio' ? '本機程式' : '遠端服務') +
-        ' · ' + (allowed.length ? allowed.join('、') : '尚未允許任何專案')));
-      if (server.dataScope) card.append(element('p', server.dataScope));
+      card.append(heading, badges, element('p', joinText([server.transport === 'stdio' ? message('ui.local-program') : message('ui.remote-service'),
+        allowed.length ? joinText(allowed, ', ') : message('tools.no-projects-allowed')])));
+      if (server.dataScope) {
+        const scope = element('p', server.dataScope);
+        scope.dataset.uiContent = '';
+        card.append(scope);
+      }
       card.append(actions, panel);
       list.append(card);
     }
@@ -214,7 +222,7 @@ export function bindMcpSettings(projects) {
     saving = true;
     const buttons = [...form.querySelectorAll('button')];
     for (const button of buttons) button.disabled = true;
-    formStatus.textContent = '正在儲存…';
+    setText(formStatus, message('chat.saving'));
     formDiagnostic.hidden = true;
     formDiagnostic.textContent = '';
     const kind = field('transport').value;
@@ -244,10 +252,10 @@ export function bindMcpSettings(projects) {
       (find('mcp-server-' + changed) ?? find('mcp-add')).focus();
     } catch (error) {
       if (connectionDetails.test(error.message)) {
-        formStatus.textContent = '無法儲存伺服器。請檢查網址是否支援安全連線。';
-        formDiagnostic.textContent = error.message;
+        setText(formStatus, message('tools.could-not-save-the-server-check-that'));
+        setText(formDiagnostic, errorText(error));
         formDiagnostic.hidden = false;
-      } else formStatus.textContent = error.message;
+      } else setText(formStatus, errorText(error));
     }
     finally {
       saving = false;
@@ -258,13 +266,13 @@ export function bindMcpSettings(projects) {
     restart.disabled = true;
     try {
       await request(endpoint + '/restart', { data: {} });
-      status.textContent = '正在重新啟動。請使用即將開啟的 OEP 分頁。';
-    } catch (error) { status.textContent = error.message; restart.disabled = false; }
+      setText(status, message('tools.restarting-continue-in-the-oep-tab-that'));
+    } catch (error) { setText(status, errorText(error)); restart.disabled = false; }
   });
 
   return async () => {
     status.textContent = '';
     try { render(await request(endpoint + '/custom')); }
-    catch { status.textContent = '無法讀取自訂伺服器。請重新整理。'; }
+    catch { setText(status, message('tools.could-not-load-custom-servers-refresh-the')); }
   };
 }

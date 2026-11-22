@@ -1,3 +1,4 @@
+import { WebMessageError } from '../http/errors.ts';
 import { pinIpv4 } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { statSync } from 'node:fs';
 import { win32 } from 'node:path';
@@ -16,29 +17,29 @@ export type CustomRemoteMcp = ReturnType<typeof validateCustomRemoteMcp>;
 export type CustomMcp = CustomStdioMcp | CustomRemoteMcp;
 
 function validateCommon(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
-  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('伺服器識別碼無效。');
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new WebMessageError('mcp-invalid-server-id');
   const { name, enabled, timeouts, dataScope, appliesToProjects, deniedTools = [] } = input;
   if (typeof name !== 'string' || !name.trim() || name.length > 80 || /[\u0000-\u001f]/.test(name)) {
-    throw new Error('請輸入 1 到 80 字的名稱。');
+    throw new WebMessageError('mcp-invalid-name');
   }
-  if (typeof enabled !== 'boolean') throw new Error('請檢查啟用設定。');
-  if (!timeouts || typeof timeouts !== 'object') throw new Error('請設定逾時時間。');
+  if (typeof enabled !== 'boolean') throw new WebMessageError('mcp-invalid-enabled');
+  if (!timeouts || typeof timeouts !== 'object') throw new WebMessageError('mcp-timeouts-required');
   const milliseconds = (value: unknown) => {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 100 || value > 120_000) {
-      throw new Error('逾時時間須介於 100 到 120000 毫秒。');
+      throw new WebMessageError('mcp-invalid-timeouts');
     }
     return value;
   };
   const timing = timeouts as Record<string, unknown>;
-  if (typeof dataScope !== 'string' || dataScope.length > 2000) throw new Error('資料範圍說明最多 2000 字。');
+  if (typeof dataScope !== 'string' || dataScope.length > 2000) throw new WebMessageError('mcp-data-scope-limit');
   if (!Array.isArray(appliesToProjects) || !appliesToProjects.every((project): project is ProjectID =>
     projects.includes(project)) || new Set(appliesToProjects).size !== appliesToProjects.length) {
-    throw new Error('請選擇有效的專案。');
+    throw new WebMessageError('mcp-invalid-project');
   }
   if (!Array.isArray(deniedTools) || deniedTools.length > 50 ||
       !deniedTools.every((tool): tool is string => typeof tool === 'string' && customMcpTool.test(tool)) ||
       new Set(deniedTools).size !== deniedTools.length) {
-    throw new Error('請檢查工具設定。');
+    throw new WebMessageError('mcp-invalid-tool');
   }
   return { id, name: name.trim(), enabled, timeouts: {
     startup: milliseconds(timing.startup), catalog: milliseconds(timing.catalog),
@@ -49,26 +50,26 @@ function validateCommon(id: string, input: Record<string, unknown>, projects: re
 export function validateCustomStdioMcp(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
   const common = validateCommon(id, input, projects);
   const { transport, command, cwd, environment } = input;
-  if (transport !== 'stdio') throw new Error('請檢查連線方式。');
+  if (transport !== 'stdio') throw new WebMessageError('mcp-invalid-transport');
   if (!Array.isArray(command) || command.length < 1 || command.length > 51 ||
       !command.every((argument): argument is string => typeof argument === 'string' && argument.length <= 2048 && !argument.includes('\0'))) {
-    throw new Error('請逐行輸入執行檔和參數。');
+    throw new WebMessageError('mcp-invalid-arguments');
   }
   const [executable, ...args] = command;
   if (!localPath.test(executable) || unsafePath.test(executable.slice(2)) || executable.slice(2).includes(':') ||
       win32.extname(executable).toLowerCase() !== '.exe') {
-    throw new Error('請輸入本機執行檔的完整路徑。');
+    throw new WebMessageError('mcp-executable-path');
   }
   if (typeof cwd !== 'string' || cwd.length > 2048 || !localPath.test(cwd) ||
       /[\u0000-\u001f<>:"|?*]/.test(cwd.slice(2)) || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error('請選擇現有的本機工作資料夾。');
+    throw new WebMessageError('mcp-working-folder');
   }
-  if (!Array.isArray(environment) || environment.length > 30) throw new Error('最多可設定 30 個環境變數。');
+  if (!Array.isArray(environment) || environment.length > 30) throw new WebMessageError('mcp-environment-limit');
   const names = new Set<string>();
   const references = environment.map((entry: unknown) => {
     const variable = typeof entry === 'string' ? entry.toUpperCase() : '';
     if (typeof entry !== 'string' || !environmentName.test(entry) || blockedEnvironment.test(variable) || names.has(variable)) {
-      throw new Error('環境變數名稱無效、重複或由系統管理。');
+      throw new WebMessageError('mcp-environment-invalid');
     }
     names.add(variable);
     return { name: entry, reference: `OEP_MCP_${id.toUpperCase()}_${variable}` };
@@ -85,14 +86,14 @@ export function validateCustomRemoteMcp(id: string, input: Record<string, unknow
   const url = typeof rawUrl === 'string' && rawUrl.length <= 2048 && !/[\\\s]/.test(rawUrl) ? URL.parse(rawUrl) : null;
   if (transport !== 'remote' || !url || url.protocol !== 'https:' || url.username || url.password ||
       url.hash || url.search || url.hostname.startsWith('[') || typeof localService !== 'boolean') {
-    throw new Error('請輸入 HTTPS 網址，並移除網址中的憑證、查詢參數及片段。');
+    throw new WebMessageError('mcp-url-invalid');
   }
-  if (!Array.isArray(headers) || headers.length > 30) throw new Error('最多可設定 30 個 HTTP 標頭。');
+  if (!Array.isArray(headers) || headers.length > 30) throw new WebMessageError('mcp-header-limit');
   const names = new Set<string>();
   const environment = headers.map((name: unknown) => {
     const suffix = typeof name === 'string' ? name.toUpperCase().replaceAll('-', '_') : '';
     if (typeof name !== 'string' || !headerName.test(name) || managedHeader.test(name) || names.has(suffix)) {
-      throw new Error('HTTP 標頭名稱無效、重複或由系統管理。');
+      throw new WebMessageError('mcp-header-invalid');
     }
     names.add(suffix);
     return { name, reference: `OEP_MCP_${id.toUpperCase()}_${suffix}` };
@@ -104,6 +105,6 @@ export async function pinCustomRemoteMcp(server: CustomRemoteMcp, signal: AbortS
   try {
     return await pinIpv4(new URL(server.url).hostname, server.localService, signal);
   } catch {
-    throw new Error('網址無法解析，或指向未確認的本機或私人位址。');
+    throw new WebMessageError('mcp-network-address');
   }
 }

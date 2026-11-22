@@ -1,10 +1,13 @@
-import { connect, errorText, modelLabel, request, RequestError } from './api.js';
+import { bindFilePicker, formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
+import { connect, errorText, modelLabel, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
 import { bindJobs, loadJobSummary } from './jobs.js';
+
+initializeLocale();
 
 const find = (id) => document.getElementById(id);
 const model = find('model');
@@ -31,15 +34,15 @@ const artifactList = find('artifacts');
 const uploadStatus = find('upload-status');
 const connection = find('connection');
 const notice = find('error');
-const labels = { inspector: '資料分析', workbook: 'Excel 工作表' };
+const labels = { inspector: message('ui.data-analysis'), workbook: message('ui.excel-worksheets') };
 const statuses = {
-  accepted: '已接收，等待執行', running: '助理處理中', awaiting_permission: '正在檢查工具權限',
-  background: '正在產生並驗證工作簿', indeterminate: '正在核對未確定的結果', failed: '這次處理未完成', verified: '已完成', cancelled: '已停止這次處理',
+  accepted: message('chat.accepted-and-queued'), running: message('chat.assistant-is-working'), awaiting_permission: message('chat.checking-tool-permissions'),
+  background: message('chat.creating-and-verifying-the-workbook'), indeterminate: message('chat.checking-the-outcome'), failed: message('chat.this-turn-could-not-finish'), verified: message('chat.completed'), cancelled: message('chat.this-turn-was-stopped'),
 };
 const eventLabels = {
-  working: '開始處理', responding: '模型開始回覆', 'tool-started': '準備使用工具', 'tool-running': '工具執行中',
-  'tool-completed': '工具完成', 'tool-failed': '工具未完成', recovering: '模型正在重試',
-  permission: '正在檢查工具權限', finished: '處理完成', failed: '處理失敗', interrupted: '處理已停止',
+  working: message('chat.started-processing'), responding: message('chat.model-started-replying'), 'tool-started': message('chat.preparing-to-use-a-tool'), 'tool-running': message('chat.tool-running'),
+  'tool-completed': message('chat.tool-completed'), 'tool-failed': message('chat.tool-could-not-finish'), recovering: message('chat.model-is-retrying'),
+  permission: message('chat.checking-tool-permissions'), finished: message('chat.processing-completed'), failed: message('chat.processing-failed'), interrupted: message('chat.processing-stopped'),
 };
 const activeStates = new Set(['accepted', 'running', 'awaiting_permission', 'background', 'indeterminate']);
 const knownSessions = new Map();
@@ -51,7 +54,7 @@ const replyChip = find('reply-chip');
 function renderReply() {
   const reply = replies.get(current?.id);
   replyChip.hidden = !reply;
-  find('reply-chip-text').textContent = reply ? '回覆 · ' + reply.text.slice(0, 120) : '';
+  setText(find('reply-chip-text'), reply ? message('chat.reply-text', { text: reply.text.slice(0, 120) }) : '');
 }
 find('clear-reply').addEventListener('click', () => {
   replies.delete(current?.id);
@@ -72,14 +75,13 @@ let stopped = false;
 let knowledge;
 const voice = bindVoice(find('enable-microphone'), find('microphone'), find('microphone-settings-status'), prompt, () => current, showError);
 
-const limitErrors = new Map([
-  ['已停止：達到回合時限。', '已停止，因為達到回合時限。請縮短要求，或在設定調整回合時限後重送。'],
-  ['已停止：達到工具呼叫次數上限。', '已停止，因為達到工具呼叫次數上限。請把要求拆成幾步，或在設定調整上限後重送。'],
-]);
+const limitErrors = {
+  'turn-time-limit': message('chat.the-turn-reached-its-time-limit-shorten'),
+  'turn-tool-limit': message('chat.the-turn-reached-its-tool-call-limit'),
+};
 
 function showError(error) {
-  const message = error ? errorText(error) : '';
-  notice.textContent = limitErrors.get(message) ?? message;
+  setText(notice, error ? errorText(error) : '');
   notice.hidden = !error;
 }
 
@@ -105,7 +107,7 @@ function setControls() {
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
-  if (text) element.textContent = text;
+  if (text) setText(element, text);
   if (className) element.className = className;
   return element;
 }
@@ -114,21 +116,22 @@ function emptyList(element, text) {
   element.replaceChildren(node('li', text, 'empty'));
 }
 
-const relative = new Intl.RelativeTimeFormat('zh-Hant', { numeric: 'auto' });
-function relativeTime(timestamp) {
+const relativeTime = (timestamp) => () => formatRelativeTime(timestamp);
+function formatRelativeTime(timestamp) {
+  const relative = new Intl.RelativeTimeFormat(getLocale(), { numeric: 'auto' });
   const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
   const sameDay = new Date(timestamp).toDateString() === new Date().toDateString();
   if (!sameDay) {
     const day = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
     return relative.format((day(new Date(timestamp)) - day(new Date())) / 86400000, 'day');
   }
-  if (minutes < 1) return '剛剛';
-  if (minutes < 60) return `${minutes} 分鐘前`;
+  if (minutes < 1) return t('chat.just-now');
+  if (minutes < 60) return relative.format(-minutes, 'minute');
   return relative.format(-Math.floor(minutes / 60), 'hour');
 }
 
 function sessionLabel(session) {
-  return session.title || `${labels[session.agent]} · ${relativeTime(session.createdAt)}`;
+  return session.title || joinText([labels[session.agent], relativeTime(session.createdAt)]);
 }
 
 function bindRowMenu(menu, trigger, actions) {
@@ -179,9 +182,9 @@ function appendMarkdown(target, text) {
       if (i < lines.length) i++;
       const value = block.join('\n');
       const section = node('div', '', 'code-block');
-      const copy = sessionButton('複製程式碼', async () => {
-        try { await navigator.clipboard.writeText(value); copy.textContent = '已複製'; }
-        catch { copy.textContent = '無法複製'; }
+      const copy = sessionButton(message('chat.copy-code'), async () => {
+        try { await navigator.clipboard.writeText(value); setText(copy, message('chat.copied')); }
+        catch { setText(copy, message('chat.could-not-copy')); }
       });
       const pre = node('pre');
       pre.append(node('code', value));
@@ -222,24 +225,24 @@ function toolCard(tool, previous) {
     card.append(node('summary'), node('div', '', 'tool-details'));
   }
   const duration = Math.max(0, (tool.finishedAt ?? Date.now()) - tool.startedAt);
-  const status = { running: '執行中', done: '完成', failed: '失敗', cancelled: '已停止' }[tool.status];
+  const status = { running: message('chat.running'), done: message('chat.done'), failed: message('chat.failed'), cancelled: message('chat.stopped') }[tool.status];
   card.dataset.status = tool.status;
-  card.firstElementChild.textContent = `進階 · 工具${status} · ${(duration / 1000).toFixed(1)} 秒`;
+  setText(card.firstElementChild, message('chat.advanced-tool-status-status-seconds-s', { status, seconds: (duration / 1000).toFixed(1) }));
   const fields = card.lastElementChild;
   const signature = JSON.stringify([tool.name, tool.input, tool.output]);
   if (fields.dataset.signature === signature) return card;
   fields.dataset.signature = signature;
-  fields.replaceChildren(node('p', `工具名稱：${tool.name}`));
-  for (const [label, value] of [['輸入', tool.input], ['輸出', tool.output]]) {
+  fields.replaceChildren(node('p', message('chat.tool-name-name', { name: tool.name })));
+  for (const [label, value] of [[message('ui.input'), tool.input], [message('chat.output'), tool.output]]) {
     fields.append(node('strong', label));
     const excerpt = node('pre', value ? value.slice(0, 800) : '—');
     fields.append(excerpt);
     if (value.length > 800) {
-      const toggle = sessionButton('顯示全部', () => {
+      const toggle = sessionButton(message('chat.show-all'), () => {
         const expanded = toggle.getAttribute('aria-expanded') === 'true';
         toggle.setAttribute('aria-expanded', String(!expanded));
-        toggle.textContent = expanded ? '顯示全部' : '收合內容';
-        excerpt.textContent = expanded ? value.slice(0, 800) : value;
+        setText(toggle, expanded ? message('chat.show-all') : message('chat.collapse'));
+        setText(excerpt, expanded ? value.slice(0, 800) : value);
       });
       toggle.setAttribute('aria-expanded', 'false');
       fields.append(toggle);
@@ -263,7 +266,7 @@ function render(context) {
         const card = eventCards.get(event.id) ?? node('details', '', 'event-card');
         if (!card.dataset.event) {
           card.dataset.event = event.id;
-          card.append(node('summary', eventLabels[event.kind]), node('time', new Date(event.createdAt).toLocaleString('zh-Hant')));
+          card.append(node('summary', eventLabels[event.kind]), node('time', formatDate(event.createdAt)));
         }
         fragment.append(card);
       }
@@ -276,8 +279,8 @@ function render(context) {
       entry.dataset.id = item.id;
       entry.tabIndex = -1;
       if (item.role === 'assistant') entry.append(avatar());
-      const role = node('strong', item.role === 'user' ? '你' : labels[state.session.agent]);
-      if (item.createdAt) role.title = new Date(item.createdAt).toLocaleString('zh-Hant');
+      const role = node('strong', item.role === 'user' ? message('chat.you') : labels[state.session.agent]);
+      if (item.createdAt) setAttribute(role, 'title', formatDate(item.createdAt));
       entry.append(role);
       if (item.reply) entry.append(node('blockquote', item.reply.text, 'message-quote'));
       const content = node('div');
@@ -289,7 +292,7 @@ function render(context) {
         replies.set(id, reference);
         renderReply();
         prompt.focus();
-      }, showError, (text) => { find('command-toast').textContent = text; },
+      }, showError, (text) => { setText(find('command-toast'), text); },
       () => { if (current === context) renderNotes(context); },
       (trigger) => openSection('notes', trigger)));
       fragment.append(entry);
@@ -297,7 +300,7 @@ function render(context) {
     appendEvents(Infinity);
     messages.replaceChildren(fragment);
     if (focused?.isConnected) focused.focus({ preventScroll: true });
-    if (!state.messages.length) messages.append(node('p', '上傳附件或直接輸入訊息。', 'empty'));
+    if (!state.messages.length) messages.append(node('p', message('chat.attach-files-or-enter-a-message-to'), 'empty'));
     messages.scrollTop = follow ? messages.scrollHeight : offset;
     jump.hidden = atBottom();
     context.renderedMessages = true;
@@ -312,7 +315,9 @@ function render(context) {
     context.pendingAt = undefined;
   }
   updateProgress();
-  if (state.stateError || latest?.error) showError(state.stateError || latest.error);
+  const detail = state.stateErrorDetail ?? latest?.errorDetail;
+  if (detail) showError(limitErrors[detail.code] ?? serverText(detail));
+  else if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
   renderPanel(context);
   renderNotes(context);
@@ -333,7 +338,7 @@ function renderPanel(context) {
     const button = previousButtons.get(url)
       ?? action(file.name, () => void openPreview(file, url, context, button));
     button.dataset.file = url;
-    button.setAttribute('aria-label', `預覽 ${file.name}`);
+    setAttribute(button, 'aria-label', message('chat.preview-name', { name: file.name }));
     resourceButtons.push(button);
   }
   attachmentList.replaceChildren();
@@ -350,7 +355,7 @@ function renderPanel(context) {
     label.append(checkbox, node('span', attachment.name));
     const entry = node('li');
     entry.append(label);
-    if (attachment.converted) entry.append(node('small', '已轉成含工作表與列號的 CSV'));
+    if (attachment.converted) entry.append(node('small', message('chat.converted-to-csv-with-worksheet-names-and')));
     const url = `${path}/attachments/${attachment.id}`;
     addFileDetails(entry, attachment, url, context, true);
     addResource(attachment, url);
@@ -365,26 +370,22 @@ function renderPanel(context) {
     addResource(artifact, url);
     artifactList.append(entry);
   }
-  if (!artifactList.children.length) emptyList(artifactList, '尚無可下載的檔案');
+  if (!artifactList.children.length) emptyList(artifactList, message('ui.no-downloadable-files-yet'));
   const focused = document.activeElement;
   resources.replaceChildren(...resourceButtons);
   resources.hidden = resourceButtons.length === 0;
   if (resourceButtons.includes(focused)) focused.focus({ preventScroll: true });
   const ledger = find('panel-runs');
   ledger.replaceChildren(...state.runs.toReversed().map((run) =>
-    node('li', `${formatDate(run.createdAt)} · ${statuses[run.state] ?? '狀態未知'}`)));
-  if (!ledger.children.length) emptyList(ledger, '此會話尚無工作紀錄');
+    node('li', joinText([formatDate(run.createdAt), statuses[run.state] ?? message('chat.unknown-status')]))));
+  if (!ledger.children.length) emptyList(ledger, message('chat.no-job-history-for-this-session'));
   renderDiffChoices(context);
 }
 
 function updateAttachmentCount() {
   const button = find('manage-attachments');
   button.hidden = !current?.state?.attachments.length;
-  button.textContent = `已選附件 ${current?.selected.size ?? 0}`;
-}
-
-function formatDate(at) {
-  return new Date(at).toLocaleString('zh-TW');
+  setText(button, message('chat.selected-attachments-count', { count: current?.selected.size ?? 0 }));
 }
 
 function action(text, handler) {
@@ -394,30 +395,36 @@ function action(text, handler) {
   return button;
 }
 
+function formatFileSize(bytes) {
+  const number = formatNumber(bytes);
+  const withUnit = formatNumber(bytes, { style: 'unit', unit: 'byte', unitDisplay: 'long' });
+  return message('chat.byte-count', { count: () => getLocale() === 'zh-TW' ? number() : withUnit() });
+}
+
 function fileType(file) {
   return file.name.includes('.') ? file.name.split('.').at(-1).toUpperCase() : file.mime;
 }
 
 function addFileDetails(entry, file, url, context, attachment = false) {
-  const download = node('a', attachment ? '下載' : file.name);
+  const download = node('a', attachment ? message('chat.download') : file.name);
   download.href = url;
   download.download = file.name;
   const actions = node('div', undefined, 'file-actions');
   const hash = action(file.sha256.slice(0, 12), async () => {
     try {
       await navigator.clipboard.writeText(file.sha256);
-      find('file-status').textContent = '已複製檔案校驗碼。';
-    } catch { find('file-status').textContent = '無法複製檔案校驗碼。請再試一次。'; }
+      setText(find('file-status'), message('chat.file-checksum-copied'));
+    } catch { setText(find('file-status'), message('chat.could-not-copy-the-file-checksum-try')); }
   });
-  hash.setAttribute('aria-label', `複製 ${file.name} 的 SHA-256`);
-  hash.title = file.sha256;
+  setAttribute(hash, 'aria-label', message('chat.copy-sha-256-for-name', { name: file.name }));
+  setAttribute(hash, 'title', file.sha256);
   if (!attachment) entry.append(download);
-  entry.append(node('small', `${file.bytes.toLocaleString('zh-TW')} 位元組 · ${fileType(file)} · ${formatDate(file.createdAt)}`));
-  const open = action('預覽', () => void openPreview(file, url, context, open));
-  open.setAttribute('aria-label', `預覽 ${file.name}`);
+  entry.append(node('small', message('chat.size-type-date', { size: formatFileSize(file.bytes), type: fileType(file), date: formatDate(file.createdAt) })));
+  const open = action(message('chat.preview'), () => void openPreview(file, url, context, open));
+  setAttribute(open, 'aria-label', message('chat.preview-name', { name: file.name }));
   actions.append(open);
-  if (attachment) actions.append(download, action('移除', async () => {
-    if (!confirm(`要移除「${file.name}」嗎？`)) return;
+  if (attachment) actions.append(download, action(message('chat.remove'), async () => {
+    if (!confirm(t('chat.remove-name', { name: file.name }))) return;
     try {
       await request(url, { data: {}, signal: context.abort.signal });
       if (current !== context) return;
@@ -425,17 +432,17 @@ function addFileDetails(entry, file, url, context, attachment = false) {
       if (panelTabs.has(url)) closeTab(url);
       refresh(context);
     } catch (error) {
-      if (current === context) showError(new Error(error.status === 409 ? '請等這次處理結束後再移除附件。' : '無法移除附件。請再試一次。'));
+      if (current === context) showError(new LocalizedError(error.status === 409 ? message('chat.wait-for-this-turn-to-finish-before') : message('chat.could-not-remove-the-attachment-try-again')));
     }
   }));
   const advanced = node('details');
-  advanced.append(node('summary', '進階'), hash);
+  advanced.append(node('summary', message('ui.advanced')), hash);
   entry.append(actions, advanced);
 }
 
 async function previewResponse(url, signal) {
   const response = await fetch(`${url}/preview`, { signal });
-  if (!response.ok) throw new Error('無法載入預覽');
+  if (!response.ok) throw new LocalizedError(message('chat.could-not-load-the-preview'));
   return response;
 }
 
@@ -451,18 +458,18 @@ async function openPreview(file, url, context, opener) {
   const body = node('div', undefined, 'preview-body');
   const title = node('h2', file.name);
   const actions = node('div', undefined, 'file-actions');
-  const download = node('a', '下載');
+  const download = node('a', message('chat.download'));
   download.href = url;
   download.download = file.name;
   if (file.mime !== 'application/pdf') {
-    const browser = node('a', '在瀏覽器開啟');
+    const browser = node('a', message('chat.open-in-browser'));
     browser.href = `${url}/preview`;
     browser.target = '_blank';
     browser.rel = 'noopener noreferrer';
     actions.append(browser);
   }
   actions.append(download);
-  panel.append(title, node('small', `${fileType(file)} · ${file.bytes.toLocaleString('zh-TW')} 位元組 · ${formatDate(file.createdAt)}`), actions, body);
+  panel.append(title, node('small', message('chat.type-size-date', { type: fileType(file), size: formatFileSize(file.bytes), date: formatDate(file.createdAt) })), actions, body);
   addTab(url, file.name, panel, () => {
     abort.abort();
     if (objectURL) URL.revokeObjectURL(objectURL);
@@ -470,10 +477,10 @@ async function openPreview(file, url, context, opener) {
   });
   showTab(url, opener);
   if (file.mime === 'application/pdf') {
-    body.textContent = '目前無法預覽 PDF。請下載後開啟。';
+    setText(body, message('chat.pdf-preview-is-unavailable-download-the-file'));
     return;
   }
-  body.textContent = '正在載入預覽…';
+  setText(body, message('chat.loading-preview'));
   try {
     const result = await previewResponse(url, AbortSignal.any([abort.signal, context.abort.signal]));
     const data = file.mime.startsWith('image/') ? await result.blob() : await result.text();
@@ -489,17 +496,17 @@ async function openPreview(file, url, context, opener) {
       body.append(image);
     } else if (extension === 'html' || extension === 'htm') {
       const frame = node('iframe');
-      frame.title = file.name;
+      setAttribute(frame, 'title', file.name);
       frame.setAttribute('sandbox', '');
       frame.inert = true;
       frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark">${data}`;
-      body.append(node('p', '預覽只顯示檔案內容。'), frame);
+      body.append(node('p', message('chat.the-preview-shows-file-content-only')), frame);
     } else if (extension === 'csv' || extension === 'xlsx') {
       renderSheets(body, readSheets(data, extension === 'xlsx'));
     } else if (extension === 'md') appendMarkdown(body, data);
     else body.append(node('pre', data));
   } catch {
-    if (!abort.signal.aborted && current === context) body.textContent = '無法預覽這個檔案。請下載後開啟。';
+    if (!abort.signal.aborted && current === context) setText(body, message('chat.could-not-preview-this-file-download-it'));
   }
 }
 
@@ -546,10 +553,12 @@ function readSheets(source, workbook) {
 
 function renderSheets(target, sheets, before = new Map(), lines = false) {
   const select = node('select');
-  select.setAttribute('aria-label', '工作表');
+  setAttribute(select, 'aria-label', message('chat.worksheet'));
   select.hidden = sheets.size === 1 && (lines || sheets.has('CSV')) && before.size <= 1;
   for (const name of new Set([...sheets.keys(), ...before.keys()])) {
-    select.append(new Option(name, name));
+    const option = optionText(lines ? message('chat.text') : name, name);
+    option.toggleAttribute('data-ui-content', !lines);
+    select.append(option);
   }
   const content = node('div');
   target.append(select, content);
@@ -561,7 +570,7 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
     const table = node('table');
     const scroller = node('div', undefined, 'table-scroll');
     scroller.tabIndex = 0;
-    scroller.setAttribute('aria-label', lines ? '文字變更對照' : '表格內容');
+    setAttribute(scroller, 'aria-label', lines ? message('chat.text-change-comparison') : message('chat.table-contents'));
     scroller.append(table);
     const tbody = table.createTBody();
     let index = 0;
@@ -573,7 +582,7 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
         if ((old[cell] ?? '') !== (next[cell] ?? '')) changes++;
       }
     }
-    const more = action('顯示更多', appendRows);
+    const more = action(message('chat.show-more'), appendRows);
     function appendRows() {
       const end = Math.min(index + 200, length);
       for (; index < end; index++) {
@@ -589,15 +598,15 @@ function renderSheets(target, sheets, before = new Map(), lines = false) {
           const td = tr.insertCell();
           if (diff && old !== next) {
             td.className = 'changed-cell';
-            td.append(node('del', old || '（空白）'), node('ins', next || '（空白）'));
-          } else td.textContent = next;
+            td.append(node('del', old || message('chat.blank')), node('ins', next || message('chat.blank')));
+          } else setText(td, next);
         }
       }
       more.hidden = index >= length;
     }
     content.replaceChildren();
-    if (diff) content.append(node('p', lines ? `${changes} 行有變更` : `這張工作表有 ${changes} 個儲存格有變更`));
-    if (rows.some((row) => row.length > 100)) content.append(node('p', '預覽顯示前 100 欄。'));
+    if (diff) content.append(node('p', lines ? message('chat.changed-rows-count', { count: changes }) : message('chat.changed-cells-on-this-worksheet-count', { count: changes })));
+    if (rows.some((row) => row.length > 100)) content.append(node('p', message('chat.the-preview-shows-the-first-100-columns')));
     content.append(scroller, more);
     appendRows();
   }
@@ -620,13 +629,13 @@ function renderDiffChoices(context) {
     earlier.set(run.artifact.name, run);
   }
   if (!pairs.length) {
-    target.append(node('p', '此會話沒有可比較的檔案版本。'));
+    target.append(node('p', message('chat.this-session-has-no-file-versions-to')));
     return;
   }
   const choice = node('select');
-  choice.setAttribute('aria-label', '檔案版本');
+  setAttribute(choice, 'aria-label', message('chat.file-versions'));
   for (const [index, [, run]] of pairs.entries()) {
-    choice.append(new Option(`${run.artifact.name} · 版本 ${pairs.length - index + 1}`, String(index)));
+    choice.append(optionText(message('chat.name-version-version', { name: run.artifact.name, version: pairs.length - index + 1 }), String(index)));
   }
   const body = node('div', undefined, 'preview-body');
   let controller;
@@ -635,22 +644,22 @@ function renderDiffChoices(context) {
     const abort = new AbortController();
     controller = abort;
     const [prior, run] = pairs[Number(choice.value)];
-    body.textContent = '正在比較版本…';
+    setText(body, message('chat.comparing-versions'));
     try {
       const signal = AbortSignal.any([abort.signal, context.abort.signal]);
       const [before, after] = await Promise.all([prior, run].map(async ({ id }) =>
         (await previewResponse(`${context.path}/artifacts/${id}`, signal)).text()));
       if (signal.aborted || !body.isConnected) return;
-      body.replaceChildren(node('small', `比較前 · ${formatDate(prior.createdAt)}`),
-        node('small', `比較後 · ${formatDate(run.createdAt)}`));
+      body.replaceChildren(node('small', message('chat.before-date', { date: formatDate(prior.createdAt) })),
+        node('small', message('chat.after-date', { date: formatDate(run.createdAt) })));
       if (/\.xlsx$/i.test(run.artifact.name)) renderSheets(body, readSheets(after, true), readSheets(before, true));
-      else renderSheets(body, new Map([['文字', after.split(/\r?\n/).map((line) => [line])]]),
-        new Map([['文字', before.split(/\r?\n/).map((line) => [line])]]), true);
+      else renderSheets(body, new Map([['text', after.split(/\r?\n/).map((line) => [line])]]),
+        new Map([['text', before.split(/\r?\n/).map((line) => [line])]]), true);
     } catch {
-      if (!abort.signal.aborted) body.textContent = '無法比較這兩個版本。請重新選擇版本。';
+      if (!abort.signal.aborted) setText(body, message('chat.could-not-compare-these-versions-select-the'));
     }
   }
-  target.append(choice, action('比較版本', () => void compare()), body);
+  target.append(choice, action(message('chat.compare-versions'), () => void compare()), body);
 }
 
 function updateProgress() {
@@ -658,9 +667,9 @@ function updateProgress() {
   const latest = current.state?.runs.at(-1);
   const startedAt = current.pendingAt ?? (activeStates.has(latest?.state) ? latest.createdAt : undefined);
   const elapsed = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : undefined;
-  const label = current.pendingAt || latest?.state === 'running' ? '正在產生回覆' : statuses[latest?.state];
-  const text = elapsed === undefined ? (label ?? '等待訊息') : `${label}，已等候 ${elapsed} 秒`;
-  if (progress.textContent !== text) progress.textContent = text;
+  const label = current.pendingAt || latest?.state === 'running' ? message('chat.generating-a-reply') : statuses[latest?.state];
+  const text = elapsed === undefined ? (label ?? message('chat.waiting-for-a-message')) : message('chat.status-elapsed-seconds-s', { status: label, seconds: elapsed });
+  if (progress.textContent !== resolveText(text)) setText(progress, text);
 }
 setInterval(updateProgress, 1000);
 
@@ -689,9 +698,27 @@ const rightPanel = find('chat-files');
 const panelToggle = find('toggle-files');
 const topMenu = find('top-menu');
 const menuTrigger = find('top-menu-trigger');
+const menuLocale = find('menu-locale');
+const localePickers = [menuLocale, find('settings-locale')];
+let focusBeforeTopMenu;
+topMenu.addEventListener('focusin', ({ relatedTarget }) => {
+  if (relatedTarget && !topMenu.contains(relatedTarget)) focusBeforeTopMenu = relatedTarget;
+});
+for (const picker of localePickers) {
+  picker.value = getLocale();
+  picker.addEventListener('change', () => {
+    setLocale(picker.value);
+    for (const entry of localePickers) entry.value = getLocale();
+    if (picker !== menuLocale) return;
+    const restore = topMenu.contains(document.activeElement);
+    topMenu.open = false;
+    if (restore) (visibleOpener(focusBeforeTopMenu) || menuTrigger).focus({ preventScroll: true });
+  });
+}
+
 const panelNarrow = matchMedia('(max-width: 900px)');
 const panelTabs = new Map();
-const panelSections = { files: '檔案', work: '工作', diff: '變更對照', notes: '筆記' };
+const panelSections = { files: message('ui.files'), work: message('ui.work'), diff: message('ui.change-comparison'), notes: message('ui.notes') };
 const closeFiles = find('close-files');
 let activeTab;
 let panelOpener;
@@ -701,6 +728,7 @@ function addTab(key, title, panel, dispose) {
   const item = node('div', undefined, 'panel-tab');
   item.setAttribute('role', 'presentation');
   const button = action(title, () => showTab(key));
+  button.toggleAttribute('data-ui-content', typeof title === 'string');
   const id = panel.id ? panel.id.slice('panel-'.length) : `preview-${++nextPreview}`;
   button.id = `tab-${id}`;
   panel.id ||= `panel-${id}`;
@@ -711,7 +739,7 @@ function addTab(key, title, panel, dispose) {
   button.setAttribute('aria-controls', panel.id);
   const close = action('×', () => closeTab(key));
   close.className = 'close-tab';
-  close.setAttribute('aria-label', `關閉 ${title} 分頁`);
+  setAttribute(close, 'aria-label', message('chat.close-title-tab', { title }));
   item.append(button, close);
   find('panel-tabs').append(item);
   panelTabs.set(key, { button, item, panel, dispose });
@@ -735,7 +763,7 @@ function updatePanelLayout() {
   rightPanel.setAttribute('role', overlay ? 'dialog' : 'complementary');
   if (overlay) rightPanel.setAttribute('aria-modal', 'true');
   else rightPanel.removeAttribute('aria-modal');
-  closeFiles.textContent = !panelNarrow.matches ? '關閉附加資料' : find('chat-view').hidden ? '返回頁面' : '返回對話';
+  setText(closeFiles, !panelNarrow.matches ? message('ui.close-details') : find('chat-view').hidden ? message('chat.back-to-page') : message('ui.back-to-chat'));
 }
 
 function showTab(key, opener) {
@@ -774,6 +802,7 @@ function openFeaturePreview(key, title, opener) {
   const abort = new AbortController();
   const panel = node('div', undefined, 'knowledge feature-preview');
   const heading = node('h2', title);
+  heading.toggleAttribute('data-ui-content', typeof title === 'string');
   const body = node('div', undefined, 'preview-body');
   panel.append(heading, body);
   find('file-preview').append(panel);
@@ -786,8 +815,11 @@ function openFeaturePreview(key, title, opener) {
     body,
     signal: abort.signal,
     setTitle(value) {
-      heading.textContent = tab.button.textContent = value;
-      tab.item.querySelector('.close-tab').setAttribute('aria-label', `關閉 ${value} 分頁`);
+      for (const element of [heading, tab.button]) {
+        setText(element, value);
+        element.toggleAttribute('data-ui-content', typeof value === 'string');
+      }
+      setAttribute(tab.item.querySelector('.close-tab'), 'aria-label', message('chat.close-title-tab', { title: value }));
     },
   };
   tab.preview = preview;
@@ -895,7 +927,7 @@ function select(id) {
   find('file-status').textContent = '';
   renderNotes(null);
   renderReply();
-  find('runtime-agent').textContent = session ? `目前會話助理：${labels[session.agent]}` : '目前沒有選取會話。';
+  setText(find('runtime-agent'), session ? message('chat.session-assistant-assistant', { assistant: labels[session.agent] }) : message('chat.no-session-selected'));
   closePanel(false);
   find('chat-resources').replaceChildren();
   find('chat-resources').hidden = true;
@@ -904,12 +936,12 @@ function select(id) {
   jump.hidden = true;
   if (!session) {
     updateSessionAlias();
-    sessionTitle.textContent = '對話';
+    setText(sessionTitle, message('ui.chat'));
     progress.textContent = '';
     messages.replaceChildren();
     attachmentList.replaceChildren();
-    emptyList(artifactList, '尚無可下載的檔案');
-    emptyList(activityList, '目前沒有進行中的工作。');
+    emptyList(artifactList, message('ui.no-downloadable-files-yet'));
+    emptyList(activityList, message('chat.no-jobs-in-progress'));
     uploadStatus.textContent = '';
     prompt.value = '';
     showError();
@@ -918,15 +950,15 @@ function select(id) {
     return;
   }
   localStorage.setItem(`oep.activeSession.${project}`, id);
-  sessionTitle.textContent = sessionLabel(session);
+  setText(sessionTitle, sessionLabel(session));
   const draft = drafts.get(id);
   prompt.value = draft?.text ?? '';
   workbook.checked = draft?.workbook ?? false;
   find('workbook-option').hidden = session.agent !== 'workbook';
-  messages.replaceChildren(node('p', '載入會話中', 'empty'));
+  messages.replaceChildren(node('p', message('chat.loading-session'), 'empty'));
   attachmentList.replaceChildren();
-  emptyList(artifactList, '尚無可下載的檔案');
-  emptyList(activityList, '目前沒有進行中的工作。');
+  emptyList(artifactList, message('ui.no-downloadable-files-yet'));
+  emptyList(activityList, message('chat.no-jobs-in-progress'));
   uploadStatus.textContent = '';
   showError();
   if (!selections.has(id)) selections.set(id, new Set());
@@ -940,12 +972,12 @@ function select(id) {
   renderSessions();
   events.onopen = () => {
     if (current !== context || stopped) return;
-    connection.textContent = '已連線';
+    setText(connection, message('chat.connected'));
     refresh(context);
   };
   events.onerror = () => {
     if (current !== context || stopped) return;
-    connection.textContent = '重新連線中';
+    setText(connection, message('chat.reconnecting'));
     refresh(context);
   };
   events.addEventListener('activity', (event) => {
@@ -953,7 +985,7 @@ function select(id) {
     const detail = JSON.parse(event.data);
     if (eventLabels[detail.kind]) {
       if (activityList.firstElementChild?.classList.contains('empty')) activityList.replaceChildren();
-      activityList.prepend(node('li', eventLabels[detail.kind] + (detail.tool ? ` · ${detail.tool}` : '')));
+      activityList.prepend(node('li', joinText([eventLabels[detail.kind], detail.tool])));
       while (activityList.children.length > 8) activityList.lastElementChild.remove();
     }
     refresh(context);
@@ -976,15 +1008,15 @@ function sessionButton(label, action) {
 
 let collapsedProject;
 function renderSessions() {
-  find('session-count').textContent = knownSessions.size;
-  const query = find('session-search').value.trim().toLocaleLowerCase();
+  setText(find('session-count'), knownSessions.size);
+  const query = find('session-search').value.trim().toLocaleLowerCase(getLocale());
   find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
   for (const entry of projects) {
     const section = node('section', undefined, 'project');
     const heading = node('h2', '', 'project-heading');
     const expanded = entry.id === project && collapsedProject !== entry.id;
-    const projectButton = sessionButton(entry.title, () => {
+    const projectButton = sessionButton(projectLabel(entry), () => {
       if (entry.id !== project) { collapsedProject = undefined; void changeProject(entry.id); return; }
       collapsedProject = expanded ? entry.id : undefined;
       renderSessions();
@@ -996,32 +1028,33 @@ function renderSessions() {
     section.append(heading);
     const create = sessionButton('+', () => { collapsedProject = undefined; return createSession(entry.id); });
     create.id = entry.id === 'default' ? 'new-session' : 'new-session-secondary';
-    create.setAttribute('aria-label', `${entry.title}新增會話`);
+    setAttribute(create, 'aria-label', message('chat.new-session-in-project', { project: projectLabel(entry) }));
     heading.append(create);
     sessions.append(section);
     if (!expanded) continue;
     const list = node('ul', undefined, 'session-list');
     for (const session of knownSessions.values()) {
       const label = sessionLabel(session);
-      if (!label.toLocaleLowerCase().includes(query)) continue;
+      if (!resolveText(label).toLocaleLowerCase(getLocale()).includes(query)) continue;
       const row = node('li');
       const link = sessionButton(undefined, () => {
         select(session.id);
         if (narrowNavigation.matches) setSidebar(false);
         prompt.focus();
       });
-      link.title = label;
-      link.append(node('span', session.title || labels[session.agent], 'session-name'),
-        node('time', relativeTime(session.createdAt)));
+      setAttribute(link, 'title', label);
+      const name = node('span', session.title || labels[session.agent], 'session-name');
+      name.classList.toggle('session-name-default', !session.title);
+      link.append(name, node('time', relativeTime(session.createdAt)));
       link.dataset.session = session.id;
       if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
       const summary = node('summary', '⋯', 'menu-trigger');
-      summary.setAttribute('aria-label', `「${label}」的更多選項`);
-      summary.title = '更多';
-      const rename = sessionButton('重新命名', () => renameSession(session));
-      const remove = sessionButton('刪除', () => removeSession(session, summary));
+      setAttribute(summary, 'aria-label', message('chat.more-options-for-session', { session: label }));
+      setAttribute(summary, 'title', message('ui.more'));
+      const rename = sessionButton(message('chat.rename'), () => renameSession(session));
+      const remove = sessionButton(message('chat.delete'), () => removeSession(session, summary));
       remove.classList.add('button-danger');
       rename.dataset.action = 'rename';
       remove.dataset.action = 'remove';
@@ -1033,7 +1066,7 @@ function renderSessions() {
       list.append(row);
     }
     section.append(list);
-    if (!list.children.length) section.append(node('p', query ? '找不到符合的會話' : '尚無會話'));
+    if (!list.children.length) section.append(node('p', query ? message('chat.no-matching-sessions') : message('chat.no-sessions-yet')));
   }
 }
 
@@ -1061,17 +1094,17 @@ async function upload(files) {
   const failures = [];
   for (const file of files) {
     if (current !== context || stopped) break;
-    if (file.size > 20 * 1024 * 1024) { failures.push(`${file.name} · 檔案超過 20 MB，請選擇較小的檔案。`); continue; }
-    uploadStatus.textContent = `上傳中 · ${file.name}`;
+    if (file.size > 20 * 1024 * 1024) { failures.push(message('chat.name-this-file-exceeds-20-mb-choose', { name: file.name })); continue; }
+    setText(uploadStatus, message('chat.uploading-name', { name: file.name }));
     try {
       const result = await request(`${context.path}/attachments`, { file });
       context.selected.add(result.id);
       succeeded++;
-    } catch (error) { failures.push(`${file.name} · ${error.message}`); }
+    } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
   }
   if (current === context && !stopped) {
-    uploadStatus.textContent = succeeded ? `已上傳 ${succeeded} 個檔案。可勾選這則訊息要附上的檔案。` : '';
-    if (failures.length) { context.requestError = true; showError(failures.join('\n')); }
+    setText(uploadStatus, succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '');
+    if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
     refresh(context);
   }
   uploadBusy = false;
@@ -1085,27 +1118,28 @@ const folderStatus = find('project-folder-status');
 
 function updateProjectRead() {
   const folders = projectFolders.find((entry) => entry.id === project)?.folders ?? [];
-  find('project-read-folder').replaceChildren(...folders.map((path) => new Option(path, path)));
+  find('project-read-folder').replaceChildren(...folders.map((path) => optionText(path, path)));
   setControls();
 }
 function displayProjectFolders() {
   const active = projectFolders.find((entry) => entry.id === folderProject.value);
   if (!active) return;
-  find('project-working-root').textContent = '工作資料夾 · ' + active.workingRoot;
+  setText(find('project-working-root'), message('chat.working-folder-path', { path: active.workingRoot }));
   find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
-    const row = node('li', folder);
-    row.append(' ', sessionButton('移除', () => void changeProjectFolder('remove', folder)));
+    const row = node('li');
+    row.append(node('span', folder));
+    row.append(' ', sessionButton(message('chat.remove'), () => void changeProjectFolder('remove', folder)));
     return row;
   }));
 }
 async function changeProjectFolder(action, folder) {
   try {
     projectFolders = await request('/api/settings/projects', { data: { action, folder, project: folderProject.value } });
-    folderStatus.textContent = action === 'add' ? '已加入唯讀資料夾。' : '已移除唯讀資料夾。';
+    setText(folderStatus, action === 'add' ? message('chat.read-only-folder-added') : message('chat.read-only-folder-removed'));
     if (action === 'add') folderForm.reset();
     displayProjectFolders();
     updateProjectRead();
-  } catch (error) { folderStatus.textContent = error.message; }
+  } catch (error) { setText(folderStatus, errorText(error)); }
 }
 folderProject.addEventListener('change', displayProjectFolders);
 folderForm.addEventListener('submit', (event) => {
@@ -1126,7 +1160,7 @@ find('project-read-button').addEventListener('click', async () => {
     if (current === context) {
       field.value = '';
       find('project-read').open = false;
-      uploadStatus.textContent = '已附加檔案副本。';
+      setText(uploadStatus, message('chat.attached-a-file-copy'));
       refresh(context);
     }
   } catch (error) {
@@ -1146,10 +1180,12 @@ function assistantValues() {
 function applyPreferences(preferences) {
   for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
   savedAssistant = JSON.stringify(assistantValues());
-  find('sidebar-assistant-name').textContent = preferences.name || '助理';
+  setText(find('sidebar-assistant-name'), preferences.name || message('ui.assistant'));
   const introduction = find('sidebar-assistant-intro');
-  introduction.textContent = preferences.introduction || '本機工程工作助理';
-  introduction.title = introduction.textContent;
+  introduction.toggleAttribute('data-ui-content', Boolean(preferences.introduction));
+  const intro = preferences.introduction || message('ui.local-engineering-assistant');
+  setText(introduction, intro);
+  setAttribute(introduction, 'title', intro);
 }
 find('assistant-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1159,12 +1195,12 @@ find('assistant-settings').addEventListener('submit', async (event) => {
   const controls = [...event.currentTarget.elements];
   controls.forEach((control) => { control.disabled = true; });
   settingsSaving = true;
-  find('settings-status').textContent = '正在儲存…';
+  setText(find('settings-status'), message('chat.saving'));
   try {
     applyPreferences(await request('/api/settings', { data }));
-    find('settings-status').textContent = '已儲存';
+    setText(find('settings-status'), message('chat.saved'));
   } catch {
-    find('settings-status').textContent = '無法儲存助理設定，請再試一次。';
+    setText(find('settings-status'), message('chat.could-not-save-assistant-settings-try-again'));
   } finally {
     settingsSaving = false;
     controls.forEach((control) => { control.disabled = stopped; });
@@ -1174,6 +1210,7 @@ find('assistant-settings').addEventListener('submit', async (event) => {
 const theme = find('theme');
 const density = find('density');
 const avatarFile = find('avatar-file');
+const refreshAvatarPicker = bindFilePicker(avatarFile);
 const appearanceStatus = find('appearance-status');
 const appearanceSave = find('save-appearance');
 const legacyTheme = localStorage.getItem('oep.theme');
@@ -1202,6 +1239,7 @@ function applyAppearance(value) {
   theme.value = savedAppearance.theme;
   density.value = value.density;
   avatarFile.value = '';
+  refreshAvatarPicker();
   avatarReset = false;
   showingAvatar = value.hasAvatar;
   document.querySelectorAll('.assistant-avatar').forEach(paintAvatar);
@@ -1213,7 +1251,8 @@ previewAppearance();
 find('avatar-reset').addEventListener('click', () => {
   avatarReset = true;
   avatarFile.value = '';
-  appearanceStatus.textContent = '儲存後會還原預設頭像。';
+  refreshAvatarPicker();
+  setText(appearanceStatus, message('chat.saving-will-restore-the-default-avatar'));
 });
 avatarFile.addEventListener('change', () => { avatarReset = false; });
 async function encodeAvatar(file) {
@@ -1229,16 +1268,16 @@ find('appearance-settings').addEventListener('submit', async (event) => {
   const fields = [theme, density, avatarFile, find('avatar-reset'), appearanceSave];
   fields.forEach((field) => { field.disabled = true; });
   settingsSaving = true;
-  appearanceStatus.textContent = '正在儲存…';
+  setText(appearanceStatus, message('chat.saving'));
   try {
     const data = { theme: theme.value, density: density.value };
     if (avatarFile.files.length) data.avatar = await encodeAvatar(avatarFile.files[0]);
     else if (avatarReset) data.avatar = null;
     applyAppearance(await request('/api/settings/appearance', { data }));
     localStorage.removeItem('oep.theme');
-    appearanceStatus.textContent = '已儲存';
+    setText(appearanceStatus, message('chat.saved'));
   } catch {
-    appearanceStatus.textContent = '無法儲存外觀。請確認圖片格式、檔案大小及寬高。';
+    setText(appearanceStatus, message('chat.could-not-save-the-appearance-settings-check'));
   } finally {
     settingsSaving = false;
     fields.forEach((field) => { field.disabled = stopped; });
@@ -1255,7 +1294,7 @@ let modelSettings;
 function aliasOptions(select, selected, aliases, configuredDefault) {
   select.replaceChildren(...aliases.map(({ alias }) => {
     const label = modelLabel(alias);
-    const option = node('option', alias === configuredDefault ? `設定預設 · ${label}` : label);
+    const option = node('option', alias === configuredDefault ? message('chat.default-in-settings-model', { model: label }) : label);
     option.value = alias;
     return option;
   }));
@@ -1265,29 +1304,29 @@ function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
   aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? [], modelSettings?.defaultAlias);
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
-  if (modelSettings) model.textContent = modelLabel(session?.alias ?? modelSettings.defaultAlias);
+  if (modelSettings) setText(model, modelLabel(session?.alias ?? modelSettings.defaultAlias));
 }
 function applyModel(value, draft = value.defaultAlias) {
   modelSettings = value;
   aliasOptions(defaultAlias, draft, value.aliases);
-  find('model-credentials').textContent = value.credentialsConfigured ? '憑證已設定' : '憑證未設定';
+  setText(find('model-credentials'), value.credentialsConfigured ? message('chat.credentials-configured') : message('chat.credentials-missing'));
   find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
-    node('li', `${modelLabel(alias)} · ${healthy ? '可用' : '無法通過檢查'}`)));
+    node('li', joinText([modelLabel(alias), healthy ? message('chat.available') : message('chat.check-failed')]))));
   updateSessionAlias();
   for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
 }
 async function updateModel(recheck) {
   const draft = defaultAlias.value;
   if (!recheck) settingsSaving = true;
-  modelStatus.textContent = recheck ? '正在檢查…' : '正在儲存…';
+  setText(modelStatus, recheck ? message('chat.checking') : message('chat.saving'));
   for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = true;
   try {
     const path = '/api/settings/model' + (recheck ? '/recheck' : '');
     const value = await request(path, { data: recheck ? {} : { alias: draft } });
     applyModel(value, recheck ? defaultAlias.value : undefined);
-    modelStatus.textContent = recheck ? '已重新檢查' : '已儲存';
+    setText(modelStatus, recheck ? message('chat.recheck-complete') : message('chat.saved'));
   } catch (error) {
-    modelStatus.textContent = error.status === 429 ? '請等候 30 秒再重新檢查。' : '無法更新模型設定。請再試一次。';
+    setText(modelStatus, error.status === 429 ? message('chat.wait-30-seconds-before-checking-again') : message('chat.could-not-update-model-settings-try-again'));
     for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
   } finally { if (!recheck) settingsSaving = false; }
 }
@@ -1305,9 +1344,9 @@ sessionAlias.addEventListener('change', async () => {
   try {
     const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
     knownSessions.set(session.id, session);
-    if (current === context) status.textContent = '模型已切換';
+    if (current === context) setText(status, message('chat.model-switched'));
   } catch (error) {
-    if (current === context) status.textContent = error.status === 409 ? '請等這次處理結束。' : '無法切換模型。請再試一次。';
+    if (current === context) setText(status, error.status === 409 ? message('chat.wait-for-this-turn-to-finish') : message('chat.could-not-switch-models-try-again'));
   } finally {
     context.aliasUpdating = false;
     if (current === context) {
@@ -1320,8 +1359,8 @@ function modelDirty() {
   return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
 }
 const limitLabels = {
-  recentMessages: '最近訊息則數', historyBytes: '歷史訊息容量上限',
-  toolCalls: '工具呼叫次數上限', timeoutSeconds: '回合時限（秒）',
+  recentMessages: message('chat.recent-messages'), historyBytes: message('chat.history-size-limit'),
+  toolCalls: message('chat.tool-call-limit'), timeoutSeconds: message('chat.turn-timeout-seconds'),
 };
 const limitsStatus = find('limits-status');
 const saveLimits = find('save-limits');
@@ -1340,7 +1379,7 @@ function applyLimits({ values, fields }) {
       input.min = field.min;
       input.max = field.max;
       input.required = true;
-      const help = node('small', `範圍 ${field.min} 至 ${field.max}，預設 ${field.initial}。`);
+      const help = node('small', message('chat.range-min-max-default-initial', { min: field.min, max: field.max, initial: field.initial }));
       help.id = `${id}-help`;
       input.setAttribute('aria-describedby', help.id);
       const row = node('div');
@@ -1360,14 +1399,14 @@ find('limits-settings').addEventListener('submit', async (event) => {
   if (saveLimits.disabled) return;
   saveLimits.disabled = true;
   settingsSaving = true;
-  limitsStatus.textContent = '正在儲存…';
+  setText(limitsStatus, message('chat.saving'));
   const data = Object.fromEntries([...limitInputs].map(([key, input]) => [key, input.valueAsNumber]));
   for (const input of limitInputs.values()) input.disabled = true;
   try {
     applyLimits(await request('/api/settings/limits', { data }));
-    limitsStatus.textContent = '已儲存';
+    setText(limitsStatus, message('chat.saved'));
   } catch {
-    limitsStatus.textContent = '無法儲存回合限制。請檢查數值範圍。';
+    setText(limitsStatus, message('chat.could-not-save-the-turn-limits-check'));
   } finally {
     settingsSaving = false;
     for (const input of limitInputs.values()) input.disabled = stopped;
@@ -1380,12 +1419,12 @@ function assistantDirty() {
 function discardSettings() {
   if (settingsSaving) return false;
   if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return true;
-  if (!window.confirm('設定尚未儲存。要捨棄變更嗎？')) return false;
+  if (!window.confirm(t('chat.discard-unsaved-settings'))) return false;
   if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
   if (appearanceDirty()) applyAppearance(savedAppearance);
   if (modelDirty()) applyModel(modelSettings);
   if (limitsDirty()) for (const [key, input] of limitInputs) input.value = savedLimits[key];
-  find('settings-status').textContent = appearanceStatus.textContent = modelStatus.textContent = limitsStatus.textContent = '';
+  [find('settings-status'), appearanceStatus, modelStatus, limitsStatus].forEach(element => setText(element, ''));
   return true;
 }
 window.addEventListener('beforeunload', (event) => {
@@ -1406,31 +1445,31 @@ function applyKnowledgeSettings({ atlasUrl, toolbox }) {
 }
 async function loadKnowledgeSettings() {
   try { applyKnowledgeSettings(await request('/api/settings/knowledge')); }
-  catch { knowledgeSettingsStatus.textContent = '無法讀取知識庫設定。請重新整理。'; }
+  catch { setText(knowledgeSettingsStatus, message('chat.could-not-load-knowledge-base-settings-refresh')); }
 }
-const configuredLabel = (configured) => configured ? '已設定' : '未設定';
+const configuredLabel = (configured) => configured ? message('chat.configured') : message('chat.unconfigured');
 async function loadTelegramStatus() {
   const mainStatus = find('telegram-main-status');
   const biStatus = find('telegram-bi-status');
-  mainStatus.textContent = biStatus.textContent = '正在讀取…';
+  [mainStatus, biStatus].forEach(element => setText(element, message('ui.loading')));
   try {
     const { main, bi } = await request('/api/jobs');
-    mainStatus.textContent = configuredLabel(main);
-    biStatus.textContent = configuredLabel(bi);
-  } catch { mainStatus.textContent = biStatus.textContent = '無法讀取，請重新整理'; }
+    setText(mainStatus, configuredLabel(main));
+    setText(biStatus, configuredLabel(bi));
+  } catch { [mainStatus, biStatus].forEach(element => setText(element, message('chat.could-not-load-refresh-the-page'))); }
 }
 knowledgeSettings.addEventListener('submit', async (event) => {
   event.preventDefault();
-  knowledgeSettingsStatus.textContent = '正在儲存…';
+  setText(knowledgeSettingsStatus, message('chat.saving'));
   try {
     applyKnowledgeSettings(await request('/api/settings/knowledge', {
       data: { atlasUrl: atlasInput.value, toolbox: find('knowledge-toolbox').checked },
     }));
-    knowledgeSettingsStatus.textContent = '已儲存。';
-  } catch (error) { knowledgeSettingsStatus.textContent = error.message; }
+    setText(knowledgeSettingsStatus, message('chat.saved-2'));
+  } catch (error) { setText(knowledgeSettingsStatus, errorText(error)); }
 });
 atlasButton.addEventListener('click', () => {
-  if (savedAtlas && window.confirm('要在新分頁開啟 Atlas 嗎？')) {
+  if (savedAtlas && window.confirm(t('chat.open-atlas-in-a-new-tab'))) {
     window.open(savedAtlas, '_blank', 'noopener,noreferrer');
   }
 });
@@ -1442,7 +1481,7 @@ const settingsSectionPicker = find('settings-section');
 const settingsSectionKey = 'oep.settings.section';
 const savedSection = localStorage.getItem(settingsSectionKey);
 let activeSettingsSection = settingsSections.some((entry) => entry.dataset.section === savedSection) ? savedSection : 'assistant';
-settingsSectionPicker.replaceChildren(...settingsSections.map((entry) => new Option(entry.textContent, entry.dataset.section)));
+settingsSectionPicker.replaceChildren(...settingsSections.map((entry) => optionText(message(entry.dataset.i18n), entry.dataset.section)));
 
 function renderSettingsSection() {
   for (const [index, entry] of settingsSections.entries()) {
@@ -1465,16 +1504,16 @@ const loadCustomMcp = bindMcpSettings(() => projects);
 async function loadMcpSettings() {
   void loadCustomMcp();
   const status = find('mcp-knowledge-status');
-  status.textContent = '正在讀取連線狀態…';
+  setText(status, message('chat.checking-connection'));
   find('mcp-knowledge-tools').hidden = true;
   try {
     const [server] = await request('/api/settings/mcp');
-    status.textContent = {
-      connected: '已連線', disabled: '已停用', failed: '無法連線至內建知識庫。請檢查整合設定。',
-      needs_auth: '需要憑證', pending: '等待連線', unconfigured: '尚未設定知識庫',
-    }[server.status];
+    setText(status, {
+      connected: message('chat.connected'), disabled: message('chat.disabled'), failed: message('chat.could-not-connect-to-the-built-in'),
+      needs_auth: message('chat.credentials-required'), pending: message('chat.awaiting-connection'), unconfigured: message('chat.no-knowledge-base-configured'),
+    }[server.status]);
     find('mcp-knowledge-tools').hidden = !server.tools.length;
-  } catch { status.textContent = '無法讀取連線狀態。請重新整理。'; }
+  } catch { setText(status, message('chat.could-not-check-the-connection-refresh-the')); }
 }
 
 function loadActiveSettingsSection() {
@@ -1560,7 +1599,7 @@ for (const section of document.querySelectorAll('.rail-section')) {
   section.open = localStorage.getItem(key) !== 'false';
   section.addEventListener('toggle', () => localStorage.setItem(key, String(section.open)));
 }
-find('assistant-count').textContent = agent.options.length;
+setText(find('assistant-count'), agent.options.length);
 function syncNavigation() {
   const view = ['chat', 'jobs', 'knowledge', 'review'].find((id) => !find(id + '-view').hidden);
   const visible = 'open-' + view;
@@ -1596,14 +1635,14 @@ document.addEventListener('click', (event) => {
 });
 
 async function renameSession(session) {
-  const title = window.prompt('請輸入會話名稱', sessionLabel(session));
+  const title = window.prompt(t('chat.enter-a-session-name'), resolveText(sessionLabel(session)));
   if (title === null) return;
   try {
     const renamed = await request(`${sessionPath(session.id)}/rename`, { data: { title } });
     if (project !== session.project) return;
     addSession(renamed);
     renderSessions();
-    if (current?.id === session.id) sessionTitle.textContent = sessionLabel(renamed);
+    if (current?.id === session.id) setText(sessionTitle, sessionLabel(renamed));
     sessions.querySelector(`[data-session="${session.id}"]`)?.focus();
   } catch (error) { showError(error); }
 }
@@ -1611,7 +1650,7 @@ async function renameSession(session) {
 async function removeSession(session, opener) {
   const card = find('remove-session-card');
   const path = sessionPath(session.id);
-  find('remove-session-question').textContent = `確定刪除「${sessionLabel(session)}」？`;
+  setText(find('remove-session-question'), message('chat.delete-session', { session: sessionLabel(session) }));
   card.returnValue = 'reject';
   const decision = await new Promise((resolve) => {
     card.addEventListener('close', () => resolve(card.returnValue), { once: true });
@@ -1630,7 +1669,7 @@ async function removeSession(session, opener) {
     if (current?.id === session.id) select([...knownSessions.keys()].at(-1));
     renderSessions();
     (sessions.querySelector('[aria-current="true"]') ?? find('session-search')).focus();
-    find('command-toast').textContent = '已刪除會話。';
+    setText(find('command-toast'), message('chat.session-deleted'));
   } catch (error) { showError(error); }
 }
 
@@ -1688,15 +1727,15 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
   async '/new'() {
     const previous = current?.id;
     const created = await createSession(project);
-    if (created && created.id !== previous) return { text: '已新增會話。' };
+    if (created && created.id !== previous) return { text: message('chat.session-created') };
   },
   async '/stop'() {
     await stopTurn();
-    return { text: '已送出停止要求。' };
+    return { text: message('chat.stop-requested') };
   },
   async '/model'(alias) {
     const context = current;
-    if (!modelSettings?.aliases.some((entry) => entry.alias === alias)) throw new Error('請輸入核准的模型名稱。');
+    if (!modelSettings?.aliases.some((entry) => entry.alias === alias)) throw new LocalizedError(message('chat.enter-an-approved-model-name'));
     const previous = knownSessions.get(context.id)?.alias;
     async function change(value) {
       const session = await request(context.path + '/model', { data: { alias: value } });
@@ -1707,28 +1746,28 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
     }
     await change(alias);
     return {
-      text: '已切換模型。',
+      text: message('chat.model-switched-2'),
       undo: previous && previous !== alias ? () => change(previous) : undefined,
     };
   },
   async '/theme'(value) {
-    if (!['light', 'dark'].includes(value)) throw new Error('請輸入 light 或 dark。');
+    if (!['light', 'dark'].includes(value)) throw new LocalizedError(message('chat.enter-light-or-dark'));
     const previous = savedAppearance.theme;
     async function change(next) {
       applyAppearance(await request('/api/settings/appearance', { data: { theme: next, density: savedAppearance.density } }));
       localStorage.removeItem('oep.theme');
     }
     await change(value);
-    return { text: '已切換主題。', undo: previous !== value ? () => change(previous) : undefined };
+    return { text: message('chat.theme-switched'), undo: previous !== value ? () => change(previous) : undefined };
   },
   '/attach'() {
-    if (pick.disabled) throw new Error('目前無法選擇附件。請確認會話已開啟。');
+    if (pick.disabled) throw new LocalizedError(message('chat.could-not-select-attachments-open-a-session'));
     pick.click();
   },
   async '/ask'(argument) {
     const [, vault, question] = /^(\S+)\s+([\s\S]+)$/.exec(argument) ?? [];
-    if (!vault) throw new Error('請輸入知識庫識別碼和問題。');
-    if (!knowledge) throw new Error('知識庫尚未設定。請查看整合設定。');
+    if (!vault) throw new LocalizedError(message('chat.enter-a-knowledge-base-id-and-a'));
+    if (!knowledge) throw new LocalizedError(message('chat.no-knowledge-base-configured-check-the-integration'));
     await knowledge.ask(vault, question);
   },
   '/clear-search'() {
@@ -1736,7 +1775,7 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
     const previous = search.value;
     find('clear-session-search').click();
     prompt.focus();
-    return { text: '已清除會話搜尋。', undo: previous ? () => {
+    return { text: message('chat.session-search-cleared'), undo: previous ? () => {
       search.value = previous;
       renderSessions();
     } : undefined };
@@ -1790,7 +1829,7 @@ find('composer').addEventListener('submit', async (event) => {
     if (error instanceof RequestError) submitted.delete(context.id);
     if (current === context) {
       context.requestError = true;
-      showError(error instanceof RequestError ? error : '未能確認是否送達。可用相同內容再次按送出以核對。');
+      showError(error instanceof RequestError ? error : message('chat.delivery-could-not-be-confirmed-send-the'));
     }
   } finally {
     sending = false;
@@ -1801,7 +1840,7 @@ find('composer').addEventListener('submit', async (event) => {
 async function stopTurn() {
   const context = current;
   const id = runningID(context);
-  if (!id || context.cancelling) throw new Error('目前沒有可停止的回合。');
+  if (!id || context.cancelling) throw new LocalizedError(message('chat.theres-no-active-turn-to-stop'));
   context.cancelling = true;
   setControls();
   try {
@@ -1835,7 +1874,7 @@ stop.addEventListener('click', async () => {
     stopped = true;
     current?.events.close();
     current?.abort.abort();
-    connection.textContent = '服務已停止';
+    setText(connection, message('chat.service-stopped'));
     knowledge?.disable();
     agent.disabled = true;
     renderSessions();
@@ -1848,24 +1887,24 @@ stop.addEventListener('click', async () => {
 
 try {
   const bootstrap = await connect();
-  connection.textContent = '已連線';
-  model.textContent = modelLabel(bootstrap.alias);
-  request('/api/settings/limits').then(applyLimits).catch(() => { limitsStatus.textContent = '無法載入回合限制。請重新整理。'; });
-  request('/api/settings/model').then(applyModel).catch(() => { modelStatus.textContent = '無法載入模型設定。請重新整理。'; });
+  setText(connection, message('chat.connected'));
+  setText(model, modelLabel(bootstrap.alias));
+  request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
+  request('/api/settings/model').then(applyModel).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   request('/api/settings/projects').then((entries) => {
     projectFolders = entries;
-    folderProject.replaceChildren(...entries.map(({ title, id }) => new Option(title, id)));
+    folderProject.replaceChildren(...entries.map(entry => optionText(projectLabel(entry), entry.id)));
     folderProject.value = project;
     displayProjectFolders();
     updateProjectRead();
-  }).catch(() => { folderStatus.textContent = '無法載入專案資料夾。請重新整理。'; });
+  }).catch(() => { setText(folderStatus, message('chat.could-not-load-project-folders-refresh-the')); });
   request('/api/settings/about').then(({ version, license, pin, root }) => {
     const details = find('about-details');
-    for (const [term, value] of [['OEP 版本', version], ['資料目錄', root], ['OpenCode 固定版本', pin], ['授權', license]]) {
+    for (const [term, value] of [[message('chat.oep-version'), version], [message('chat.data-directory'), root], [message('chat.pinned-opencode-version'), pin], [message('chat.license'), license]]) {
       details.append(node('dt', term), node('dd', value));
     }
     const repository = 'https://github.com/dragon0816/OpenCode-Engineer-Platform';
-    for (const [label, path] of [['使用說明', '/blob/main/README.md'], ['工作台文件', '/blob/main/docs/GUI_LAYOUT.md']]) {
+    for (const [label, path] of [[message('chat.help'), '/blob/main/README.md'], [message('chat.workbench-documentation'), '/blob/main/docs/GUI_LAYOUT.md']]) {
       const link = node('a', label);
       link.href = repository + path;
       link.target = '_blank';
@@ -1875,34 +1914,34 @@ try {
       description.append(link);
       details.append(description);
     }
-  }).catch(() => { find('about-status').textContent = '無法載入版本資訊。請重新整理。'; });
+  }).catch(() => { setText(find('about-status'), message('chat.could-not-load-version-information-refresh-the')); });
   request('/api/settings/runtime').then((runtime) => {
-    find('runtime-status').textContent = runtime.compatible ? '固定版本已通過啟動檢查。' : '執行版本與固定版本不相符。';
+    setText(find('runtime-status'), runtime.compatible ? message('chat.the-pinned-version-passed-startup-checks') : message('chat.the-running-version-differs-from-the-pinned'));
     const details = find('runtime-details');
-    for (const [name, value] of [['OpenCode 固定版本', runtime.pin], ['執行版本', runtime.version]]) {
+    for (const [name, value] of [[message('chat.pinned-opencode-version'), runtime.pin], [message('chat.running-version'), runtime.version]]) {
       details.append(node('dt', name), node('dd', value));
     }
     const fingerprints = find('runtime-fingerprints');
     for (const [name, value] of [
-      ['提交雜湊', runtime.commit],
-      ['介面雜湊', runtime.openapi], ['Windows 執行檔雜湊', runtime.binary], ['用戶端雜湊', runtime.client],
+      [message('chat.commit-hash'), runtime.commit],
+      [message('chat.interface-hash'), runtime.openapi], [message('chat.windows-executable-hash'), runtime.binary], [message('chat.client-hash'), runtime.client],
     ]) {
       fingerprints.append(node('dt', name), node('dd', value));
     }
-    find('knowledge-configured').textContent = configuredLabel(runtime.knowledgeConfigured);
-    find('telegram-configured').textContent = 'Telegram 整合：' + configuredLabel(runtime.telegramConfigured);
+    setText(find('knowledge-configured'), configuredLabel(runtime.knowledgeConfigured));
+    setText(find('telegram-configured'), message('chat.telegram-integration', { status: configuredLabel(runtime.telegramConfigured) }));
   }).catch(() => {
-    find('runtime-status').textContent = '無法載入執行環境資訊。請重新整理。';
-    find('knowledge-configured').textContent = '無法讀取，請重新整理';
+    setText(find('runtime-status'), message('chat.could-not-load-runtime-information-refresh-the'));
+    setText(find('knowledge-configured'), message('chat.could-not-load-refresh-the-page'));
   });
   request('/api/settings/appearance').then((appearance) => {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;
-  }).catch(() => { appearanceStatus.textContent = '無法載入外觀設定。請重新整理。'; });
+  }).catch(() => { setText(appearanceStatus, message('chat.could-not-load-appearance-settings-refresh-the')); });
   request('/api/settings').then((preferences) => {
     applyPreferences(preferences);
     find('save-assistant').disabled = stopped;
-  }).catch(() => { find('settings-status').textContent = '無法載入助理設定。請重新整理。'; });
+  }).catch(() => { setText(find('settings-status'), message('chat.could-not-load-assistant-settings-refresh-the')); });
   projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;
@@ -1923,6 +1962,6 @@ try {
   });
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
 } catch (error) {
-  connection.textContent = '尚未連線';
-  showError(error instanceof RequestError && error.status === 401 ? '請雙擊 Windows 啟動器開啟 OEP。' : error);
+  setText(connection, message('chat.disconnected'));
+  showError(error instanceof RequestError && error.status === 401 ? message('chat.double-click-the-windows-launcher-to-open') : error);
 }

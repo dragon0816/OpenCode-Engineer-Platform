@@ -1,9 +1,10 @@
+import { LocalizedError, message, resolveText, setAttribute, setText, t } from './i18n.js';
 import { request } from './api.js';
 
 function button(label, action) {
   const element = document.createElement('button');
   element.type = 'button';
-  element.textContent = label;
+  setText(element, label);
   element.addEventListener('click', action);
   return element;
 }
@@ -18,7 +19,7 @@ async function copy(text) {
     document.body.append(field);
     field.select();
     try {
-      if (!document.execCommand('copy')) throw new Error('無法複製文字。請選取文字後手動複製。');
+      if (!document.execCommand('copy')) throw new LocalizedError(message('messages.could-not-copy-the-text-select-it'));
     } finally {
       field.remove();
       focused?.focus();
@@ -30,8 +31,8 @@ export function messageActions(context, item, content, reply, report, notify, up
   const details = document.createElement('details');
   details.className = 'message-actions';
   const summary = document.createElement('summary');
-  summary.textContent = '更多';
-  summary.setAttribute('aria-label', '更多訊息操作');
+  setText(summary, message('ui.more'));
+  setAttribute(summary, 'aria-label', message('messages.more-message-actions'));
   details.append(summary);
   const current = () => context.state.annotations?.find((entry) => entry.messageID === item.id);
   async function save(field, value, reason) {
@@ -48,25 +49,25 @@ export function messageActions(context, item, content, reply, report, notify, up
       } catch (error) { report(error); }
     }));
   }
-  add('複製文字', async () => { await copy(content.innerText); notify('已複製文字。'); });
-  add('複製 Markdown', async () => {
+  add(message('messages.copy-text'), async () => { await copy(content.innerText); notify(message('messages.text-copied')); });
+  add(message('messages.copy-markdown'), async () => {
     await copy(item.role === 'user' ? item.text.split('\n').map((line) => '> ' + line).join('\n') : item.text);
-    notify('已複製 Markdown。');
+    notify(message('messages.markdown-copied'));
   });
-  add('回覆這則訊息', () => reply(item));
-  for (const [value, label] of [['up', '讚'], ['down', '倒讚']]) {
+  add(message('messages.reply-to-this-message'), () => reply(item));
+  for (const [value, label] of [['up', message('messages.thumbs-up')], ['down', message('messages.thumbs-down')]]) {
     add(label, async () => {
-      const reason = window.prompt('請輸入原因，可留空（最多 200 字）', current()?.reason ?? '');
+      const reason = window.prompt(t('messages.enter-an-optional-reason-up-to-200'), resolveText(current()?.reason ?? ''));
       if (reason !== null) await save('rating', value, reason);
     });
   }
-  add('刪除評價', () => save('rating', null));
-  add('新增或編輯筆記', async () => {
-    const value = window.prompt('請輸入筆記（最多 500 字）', current()?.note ?? '');
+  add(message('messages.remove-rating'), () => save('rating', null));
+  add(message('messages.add-or-edit-note'), async () => {
+    const value = window.prompt(t('messages.enter-a-note-up-to-500-characters'), resolveText(current()?.note ?? ''));
     if (value !== null) await save('note', value);
   });
-  add('刪除筆記', () => save('note', null));
-  add('查看會話筆記', () => openNotes(summary));
+  add(message('messages.delete-note'), () => save('note', null));
+  add(message('messages.view-session-notes'), () => openNotes(summary));
   details.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && details.open) {
       event.preventDefault();
@@ -103,16 +104,22 @@ export function bindNotes(filter, list, download, jump) {
       }
       if (entry.rating) {
         const rating = document.createElement('p');
-        rating.textContent = (entry.rating === 'up' ? '讚' : '倒讚') + (entry.reason ? ' · ' + entry.reason : '');
+        setText(rating, entry.rating === 'up' ? message('messages.thumbs-up') : message('messages.thumbs-down'));
+        if (entry.reason) {
+          const reason = document.createElement('span');
+          reason.dataset.uiContent = '';
+          reason.textContent = entry.reason;
+          rating.append(' · ', reason);
+        }
         row.append(rating);
       }
-      row.append(button('前往訊息', () => jump(entry.messageID)));
+      row.append(button(message('messages.go-to-message'), () => jump(entry.messageID)));
       list.append(row);
     }
     if (!list.children.length) {
       const empty = document.createElement('li');
       empty.className = 'empty';
-      empty.textContent = '沒有符合的筆記或評價。';
+      setText(empty, message('messages.no-matching-notes-or-ratings'));
       list.append(empty);
     }
     selection = new Set([...selection].filter((id) => annotations.some((entry) => entry.messageID === id && entry.note)));
@@ -121,7 +128,7 @@ export function bindNotes(filter, list, download, jump) {
   filter.addEventListener('change', () => render());
   download.addEventListener('click', () => {
     const entries = active.state.annotations.filter((entry) => entry.note && selection.has(entry.messageID));
-    const data = ['# 會話筆記', ...entries.map((entry) => entry.note.split('\n').map((line) => '> ' + line).join('\n'))].join('\n\n');
+    const data = [t('messages.session-notes'), ...entries.map((entry) => entry.note.split('\n').map((line) => '> ' + line).join('\n'))].join('\n\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([data + '\n'], { type: 'text/markdown;charset=utf-8' }));
     link.download = 'notes.md';

@@ -30,10 +30,10 @@ const textDecoder = new TextDecoder('utf-8', { fatal: true });
 export function uploadName(encoded: string) {
   let name: string;
   try { name = decodeURIComponent(encoded); }
-  catch { throw new HttpError(400, 'Invalid filename'); }
+  catch { throw new HttpError(400, 'filename-invalid'); }
   if (!name || name !== name.trim() || name.length > 150 || name.includes('..') ||
       /[\\/:*?"<>|\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u.test(name) ||
-      /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) throw new HttpError(400, 'Invalid filename');
+      /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) throw new HttpError(400, 'filename-invalid');
   return name;
 }
 
@@ -42,7 +42,7 @@ export function uploadType(name: string, declared: string) {
   const input = declared.split(';')[0].trim().toLowerCase();
   const text = mime === 'text/plain' && ['text/plain', 'text/csv', 'text/markdown'].includes(input);
   if (!mime || !(input === mime || input === 'application/octet-stream' || text)) {
-    throw new HttpError(415, 'Unsupported file type');
+    throw new HttpError(415, 'attachment-type');
   }
   return mime;
 }
@@ -52,7 +52,7 @@ function decodeText(bytes: Buffer) {
     const value = textDecoder.decode(bytes);
     if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new Error('Invalid text');
     return value;
-  } catch { throw new HttpError(422, 'Text attachments must contain UTF-8 text'); }
+  } catch { throw new HttpError(422, 'attachment-text-encoding'); }
 }
 
 function startsWith(data: Buffer, signature: Buffer | string) {
@@ -66,8 +66,8 @@ export function convertWorkbook(data: Buffer): Promise<Buffer> {
       windowsHide: true, timeout: 10_000, maxBuffer: maxProjection + 4096, encoding: 'buffer',
       env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH },
     }, (error, output) => {
-      if (error) reject(new HttpError(422, error.killed ? 'Excel conversion timed out or exceeded its output limit' :
-        'Unsupported XLSX, conversion limit exceeded, or Python unavailable'));
+      if (error) reject(new HttpError(422, error.killed ? 'excel-conversion-limit' :
+        'excel-conversion-unavailable'));
       else resolve(output);
     });
     worker.stdin?.on('error', () => { /* The worker exit controls the result. */ });
@@ -81,7 +81,7 @@ function validate(data: Buffer, mime: string) {
     mime === 'image/jpeg' && !startsWith(data, jpeg) ||
     mime === 'application/pdf' && !startsWith(data, '%PDF-') ||
     mime === workbookType && !startsWith(data, Buffer.from('504b0304', 'hex'))) {
-    throw new HttpError(415, 'File contents do not match the declared type');
+    throw new HttpError(415, 'attachment-type-mismatch');
   }
 }
 
@@ -97,15 +97,15 @@ export class AttachmentService {
   constructor(store: WebStore) { this.store = store; }
 
   async upload(sessionID: string, workspace: string, name: string, mime: string, bytes: number, body: () => Promise<Buffer>) {
-    if (this.pending >= 3) throw new HttpError(429, 'Uploads are busy. Try again shortly');
-    if (this.store.attachmentBytes(sessionID) + bytes > quota) throw new HttpError(413, 'Session workspace quota exceeded');
+    if (this.pending >= 3) throw new HttpError(429, 'upload-busy');
+    if (this.store.attachmentBytes(sessionID) + bytes > quota) throw new HttpError(413, 'session-storage-full');
     this.pending++;
     try {
       const data = await body();
       validate(data, mime);
       const projection = mime === workbookType ? await convertWorkbook(data) : undefined;
       if (this.store.attachmentBytes(sessionID) + data.length + (projection?.length ?? 0) > quota) {
-        throw new HttpError(413, 'Session workspace quota exceeded');
+        throw new HttpError(413, 'session-storage-full');
       }
       const id = randomUUID();
       const paths: string[] = [];
@@ -137,18 +137,18 @@ export class AttachmentService {
 
   read(sessionID: string, workspace: string, id: string, preview: boolean) {
     const record = this.store.attachment(sessionID, id);
-    if (!record) throw new HttpError(404, 'Attachment not found in this session');
+    if (!record) throw new HttpError(404, 'session-attachment-not-found');
     const projection = preview && record.projection;
     const identity = projection || record.original;
     try {
       const { data } = openWorkspaceFile(workspace, projection ? projectionName(id) : sourceName(id),
         preview && !media(record.mime) ? maxProjection : maxUpload, identity);
       return { data, name: record.name, sha256: identity.sha256, mime: projection ? 'text/plain' : record.mime };
-    } catch { throw new HttpError(409, 'Attachment is missing, too large to preview, or has changed'); }
+    } catch { throw new HttpError(409, 'attachment-preview-unavailable'); }
   }
 
   remove(sessionID: string, workspace: string, id: string) {
-    if (!this.store.deleteAttachment(sessionID, id)) throw new HttpError(404, 'Attachment not found in this session');
+    if (!this.store.deleteAttachment(sessionID, id)) throw new HttpError(404, 'session-attachment-not-found');
     try { this.clean(sessionID, workspace); }
     catch { /* Startup retries cleanup of unreferenced files. */ }
   }
@@ -171,23 +171,23 @@ export class AttachmentService {
     let textBytes = 0;
     for (const id of references) {
       const record = this.store.attachment(sessionID, id);
-      if (!record) throw new HttpError(404, 'Attachment not found in this session');
+      if (!record) throw new HttpError(404, 'session-attachment-not-found');
       try {
         const { data } = openWorkspaceFile(workspace, sourceName(id), maxUpload, record.original);
         if (media(record.mime)) {
           mediaBytes += data.length;
-          if (mediaBytes > 40 * MiB) throw new HttpError(413, 'Media in one message exceeds 40 MiB');
+          if (mediaBytes > 40 * MiB) throw new HttpError(413, 'message-media-limit');
           parts.push({ uri: `data:${record.mime};base64,${data.toString('base64')}`, name: record.name });
         } else {
           const bytes = record.projection ?
             openWorkspaceFile(workspace, projectionName(id), maxProjection, record.projection).data : data;
           textBytes += bytes.length;
-          if (textBytes > maxProjection) throw new HttpError(413, 'Text in one message exceeds 1 MiB. Select a smaller document');
+          if (textBytes > maxProjection) throw new HttpError(413, 'message-text-limit');
           text.push(`Attachment ${JSON.stringify(record.name)} (${record.projection ? 'sheet/row CSV' : 'UTF-8 text'}):\n${decodeText(bytes)}`);
         }
       } catch (error) {
         if (error instanceof HttpError) throw error;
-        throw new HttpError(409, 'Attachment is missing or has changed. Upload it again');
+        throw new HttpError(409, 'attachment-changed');
       }
     }
     return { files: parts, text: text.join('\n\n') };
