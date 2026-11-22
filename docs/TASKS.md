@@ -205,3 +205,5 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 加入跨 schema 升級 fixture、失敗版本目錄回收與相對路徑診斷。
 - [x] 強制隔離測試資料目錄，修正 MCP 測試結果與 Job 成員確認的交接。 [驗收紀錄](reviews/HARDENING_UPGRADE_TESTS_REPORT.md)
 - [ ] 由審核者在 OEP 關閉後驗收 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+- [Phase 3B／3B2 多助理與交辦設計](design/PHASE3B_MULTI_AGENT_DESIGN.md)
