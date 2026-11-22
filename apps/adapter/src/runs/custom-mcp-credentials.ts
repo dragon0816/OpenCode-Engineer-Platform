@@ -31,6 +31,10 @@ export function saveCustomMcpCredential(name: string, value: unknown) {
 
 export function readCustomMcpCredentials(names: string[]): Record<string, string> {
   if (names.some((name) => !referenceName.test(name))) throw new WebMessageError('credential-name');
+  return readUserCredentials(names);
+}
+
+export function readUserCredentials(names: string[]): Record<string, string> {
   if (!names.length) return {};
   const script = readInput + "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $values=@{}; foreach ($name in $inputData.names) { $value=[Environment]::GetEnvironmentVariable($name,'User'); if ($value) { $values[$name]=$value } }; $values | ConvertTo-Json -Compress";
   return JSON.parse(run(script, { names }));

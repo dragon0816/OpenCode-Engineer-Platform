@@ -85,7 +85,7 @@ export class BiService {
   }
 
   async intake(id: number, origin: Destination, text: string, file: IntakeFile | undefined, signal: AbortSignal) {
-    if (origin.agentId !== 'bi' || origin.accountId !== 'telegram-bi' || origin.bindingRevision !== 1) {
+    if (origin.agentId !== 'bi' || origin.accountId !== 'telegram-bi') {
       throw new Error('Invalid BI intake owner');
     }
     const db = this.storage.db;

@@ -117,20 +117,23 @@ export class ChannelSpool {
     });
   }
 
-  claimOutbound(binding: Binding, now: number): Claimed | undefined {
+  claimOutbound(binding: Pick<Binding, 'accountId'> & Partial<Binding>, now: number): Claimed | undefined {
     const row = this.spoolDb.prepare(`UPDATE channel_outbound SET state='sending', attempts=attempts+1 WHERE rowid=(
       SELECT item.rowid FROM channel_outbound AS item
-      WHERE item.account_id=? AND item.binding_revision=? AND item.agent_id=? AND item.state='pending' AND item.due_at<=?
+      WHERE item.account_id=? AND item.binding_revision=COALESCE(?,item.binding_revision)
+        AND item.agent_id=COALESCE(?,item.agent_id) AND item.state='pending' AND item.due_at<=?
         AND NOT EXISTS (SELECT 1 FROM channel_outbound AS throttle WHERE throttle.account_id=item.account_id
           AND throttle.state='pending' AND throttle.reason_code='rate-limited' AND throttle.due_at>?)
         AND NOT EXISTS (SELECT 1 FROM channel_outbound AS prior WHERE prior.account_id=item.account_id
           AND prior.conversation_key=item.conversation_key AND prior.state IN ('pending','sending')
           AND prior.rowid<item.rowid) ORDER BY item.rowid LIMIT 1)
-      RETURNING conversation_key AS conversationKey, effect_key AS effectKey, payload, attempts`)
-      .get(binding.accountId, binding.bindingRevision, binding.agentId, now, now);
+      RETURNING conversation_key AS conversationKey, binding_revision AS bindingRevision, agent_id AS agentId,
+        effect_key AS effectKey, payload, attempts`)
+      .get(binding.accountId, binding.bindingRevision ?? null, binding.agentId ?? null, now, now);
     if (!row) return;
     const { text, locale } = JSON.parse(String(row.payload)) as Pick<OutboundMessage, 'text' | 'locale'>;
-    return { ...binding, conversationKey: String(row.conversationKey), effectKey: String(row.effectKey),
+    return { accountId: binding.accountId, bindingRevision: Number(row.bindingRevision), agentId: String(row.agentId),
+      conversationKey: String(row.conversationKey), effectKey: String(row.effectKey),
       attempts: Number(row.attempts), text, locale };
   }
 

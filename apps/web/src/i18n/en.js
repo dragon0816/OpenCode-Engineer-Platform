@@ -1,4 +1,13 @@
 export default {
+  'server.CHANNEL_ACCOUNT_IN_USE': "This Telegram account is already bound to assistant {agentId}.",
+  'server.channel-settings-invalid': "Enter valid channel account settings.",
+  'server.channel-binding-stale': "The channel binding changed. Reload it and confirm again.",
+  'server.channel-binding-busy': "This account still has work or messages to process.",
+  'server.channel-confirmation-required': "Confirm the change to this channel binding.",
+  'server.channel-account-not-found': "This channel account was not found.",
+  'server.channel-identity-changed': "The credential’s bot or allowed user does not match this account.",
+  'server.channel-credential-unavailable': "A valid Telegram user credential is unavailable.",
+  'server.channel-verification-failed': "The Telegram account could not be verified.",
   'server.credential-access': "Couldn’t access Windows user credentials.",
   'server.credential-name': "The credential name is invalid.",
   'server.credential-value': "Enter a valid credential value.",

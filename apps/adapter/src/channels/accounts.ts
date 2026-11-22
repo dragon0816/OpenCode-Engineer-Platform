@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { Binding } from './transport.ts';
 
 export const legacyChannels = [
   { bot: 'main', accountId: 'telegram-main', credentialRef: 'OEP_TELEGRAM_MAIN_BOT_TOKEN', handler: 'chat' },
@@ -6,6 +7,16 @@ export const legacyChannels = [
 ] as const;
 export const legacyAllowlistRef = 'OEP_TELEGRAM_ALLOWED_USER_ID';
 export type LegacyChannel = typeof legacyChannels[number];
+export type ChannelHandler = 'chat' | 'bi_intake';
+export type ChannelAccount = Binding & {
+  credentialRef: string;
+  allowlistRef: string;
+  handler: ChannelHandler;
+  state: 'unverified' | 'enabled' | 'disabled';
+  fingerprint: string | null;
+};
+
+export const telegramCredentialRef = /^OEP_TELEGRAM_[A-Z][A-Z0-9_]{0,63}_BOT_TOKEN$/;
 
 export const legacyChannelAccounts = () => legacyChannels.map(({ accountId, credentialRef, handler, bot }) =>
   [accountId, 'telegram', null, credentialRef, legacyAllowlistRef, bot, handler, 'unverified', 1, 0, 0] as const);

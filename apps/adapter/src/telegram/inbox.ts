@@ -18,9 +18,9 @@ export type Message = {
   photo?: { file_id: string; file_size?: number }[];
 };
 export type Update = { update_id: number; message?: Message };
-export type Intake = { bot: Bot; id: number; topic: number; payload: string };
+export type Intake = { bot: Bot; id: number; topic: number; payload: string; destination?: Destination };
 
-export function telegramBatch(bot: Bot, owner: string, updates: Update[], checkpoint: string, now: number) {
+export function telegramBatch(bot: Bot, owner: string, updates: Update[], checkpoint: string, now: number, legacy = true) {
   let next = Number(checkpoint || 0);
   const events: InboundEnvelope[] = [];
   for (const update of [...updates].sort((a, b) => a.update_id - b.update_id)) {
@@ -38,7 +38,8 @@ export function telegramBatch(bot: Bot, owner: string, updates: Update[], checkp
       continue;
     }
     const { text, document, photo } = message;
-    events.push({ eventKey, receivedAt: now, conversationKey: topicKey(topic), lane: telegramLane(bot, text),
+    const conversationKey = legacy ? topicKey(topic) : `chat:${owner}:${topicKey(topic)}`;
+    events.push({ eventKey, receivedAt: now, conversationKey, lane: telegramLane(bot, text),
       payload: { text, document, photo } });
   }
   return { events, nextCheckpoint: String(next) };
@@ -84,8 +85,16 @@ export class TelegramInbox extends ChannelSpool {
       payload: row.payload, started: row.started, attempts: row.attempts };
   }
 
+  nextBound(bot: Bot, binding: Binding, lane: Lane, now: number) {
+    const row = this.nextInbound(binding, lane, now);
+    if (!row) return;
+    const { conversationKey } = row;
+    return { bot, id: Number(row.eventKey), topic: Number(conversationKey.split(':').at(-1)), payload: row.payload,
+      started: row.started, attempts: row.attempts, destination: { ...binding, conversationKey } };
+  }
+
   attempt(row: Intake, now: number, due: number) {
-    this.attemptInbound({ accountId: legacyBinding(row.bot).accountId, eventKey: String(row.id) }, now, due);
+    this.attemptInbound({ accountId: row.destination?.accountId ?? legacyBinding(row.bot).accountId, eventKey: String(row.id) }, now, due);
   }
 
   notify(bot: Bot, id: string, topic: number, text: string, locale: ChannelLocale = 'zh-TW') {
@@ -112,20 +121,21 @@ export class TelegramInbox extends ChannelSpool {
   }
 
   complete(row: Intake, text: string, failed = false, locale: ChannelLocale = 'zh-TW') {
-    this.completeInbound(String(row.id), { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic),
+    const destination = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
+    this.completeInbound(String(row.id), { ...destination,
       effectKey: 'update-' + row.id, locale, text }, failed);
   }
 
-  conversation(binding: Binding, topic: number) {
+  conversation(binding: Binding, conversationKey: string) {
     return this.db.prepare(`SELECT session_id AS session FROM channel_conversations
       WHERE account_id=? AND conversation_key=? AND binding_revision=? AND agent_id=?`)
-      .get(binding.accountId, topicKey(topic), binding.bindingRevision, binding.agentId);
+      .get(binding.accountId, conversationKey, binding.bindingRevision, binding.agentId);
   }
 
-  rememberConversation(binding: Binding, topic: number, session: string) {
+  rememberConversation(binding: Binding, conversationKey: string, session: string) {
     this.db.prepare(`INSERT INTO channel_conversations VALUES (?,?,?,?,?)
       ON CONFLICT(account_id,conversation_key,binding_revision) DO UPDATE SET session_id=excluded.session_id
       WHERE channel_conversations.agent_id=excluded.agent_id`)
-      .run(binding.accountId, topicKey(topic), binding.bindingRevision, binding.agentId, session);
+      .run(binding.accountId, conversationKey, binding.bindingRevision, binding.agentId, session);
   }
 }

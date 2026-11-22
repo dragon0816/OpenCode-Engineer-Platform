@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lsta
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
-import { legacyChannelAccounts } from '../../apps/adapter/src/channels/accounts.ts';
+import { legacyAllowlistRef, legacyChannelAccounts, legacyChannels, telegramCredentialRef } from '../../apps/adapter/src/channels/accounts.ts';
 import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
   from '../../apps/adapter/src/telegram/channel-migration.ts';
 import { openBiReviewStore, verifyBiSourceOwners, verifyBiSourceReceipts } from '../../apps/adapter/src/bi/source-ownership.ts';
@@ -38,9 +38,19 @@ async function credentials() {
   if (!file) return [];
   if (!file.isFile()) throw new Error('Invalid web database');
   return useDatabase(path, (db) => {
-    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='mcp_servers'").get()) return [];
     const names = new Set();
-    for (const { id, definition } of db.prepare('SELECT id, definition FROM mcp_servers').iterate()) {
+    const hasTable = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
+    const legacyRefs = new Set(legacyChannels.map(({ credentialRef }) => credentialRef));
+    if (hasTable.get('channel_accounts')) {
+      for (const { credential_ref, allowlist_ref } of db.prepare("SELECT credential_ref, allowlist_ref FROM channel_accounts WHERE provider='telegram'").iterate()) {
+        if (!telegramCredentialRef.test(credential_ref) || allowlist_ref !== legacyAllowlistRef) {
+          throw new Error('Invalid Telegram credential reference');
+        }
+        if (!legacyRefs.has(credential_ref)) names.add(credential_ref);
+      }
+    }
+    const mcp = hasTable.get('mcp_servers') ? db.prepare('SELECT id, definition FROM mcp_servers').iterate() : [];
+    for (const { id, definition } of mcp) {
       if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid MCP identifier');
       const { transport, environment } = JSON.parse(definition);
       const remote = transport === 'remote';

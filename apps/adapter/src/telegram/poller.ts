@@ -1,7 +1,7 @@
 import type { Bot, Intake, Lane, TelegramInbox, Update } from './inbox.ts';
 import { telegramBatch } from './inbox.ts';
 import { legacyBinding } from './channel-migration.ts';
-import type { ChannelLocale, ChannelTransport, Delivery, OutboundMessage } from '../channels/transport.ts';
+import type { Binding, ChannelLocale, ChannelTransport, Delivery, OutboundMessage } from '../channels/transport.ts';
 import { channelText } from '../channels/catalog.ts';
 
 export const workDeadline = 120_000;
@@ -85,11 +85,13 @@ export class TelegramTransport implements ChannelTransport {
   private readonly bot: Bot;
   private readonly owner: string;
   private readonly api: TelegramApi;
+  private readonly legacy: boolean;
 
-  constructor(bot: Bot, owner: string, api: TelegramApi) {
+  constructor(bot: Bot, owner: string, api: TelegramApi, legacy = true) {
     this.bot = bot;
     this.owner = owner;
     this.api = api;
+    this.legacy = legacy;
   }
 
   async verifyAccount(signal: AbortSignal) {
@@ -103,7 +105,7 @@ export class TelegramTransport implements ChannelTransport {
       offset: Number(checkpoint || 0), timeout: pollSeconds, allowed_updates: ['message'],
     }, signal);
     signal.throwIfAborted();
-    return telegramBatch(this.bot, this.owner, updates, checkpoint, clock());
+    return telegramBatch(this.bot, this.owner, updates, checkpoint, clock(), this.legacy);
   }
 
   fetchAttachment(reference: string, limit: number, signal: AbortSignal) {
@@ -111,10 +113,12 @@ export class TelegramTransport implements ChannelTransport {
   }
 
   async deliver(message: OutboundMessage, signal: AbortSignal, attempts: number, clock: () => number): Promise<Delivery> {
-    if (!/^topic:(0|[1-9]\d*)$/.test(message.conversationKey)) {
+    const key = this.legacy ? message.conversationKey :
+      message.conversationKey.startsWith(`chat:${this.owner}:`) ? message.conversationKey.slice(`chat:${this.owner}:`.length) : '';
+    if (!/^topic:(0|[1-9]\d*)$/.test(key)) {
       return { state: 'failed', reasonCode: 'invalid-destination' };
     }
-    const topic = Number(message.conversationKey.slice('topic:'.length));
+    const topic = Number(key.slice('topic:'.length));
     if (!Number.isSafeInteger(topic)) return { state: 'failed', reasonCode: 'invalid-destination' };
     try {
       const result = await this.api.call<{ message_id?: number }>('sendMessage', {
@@ -131,12 +135,20 @@ export class TelegramTransport implements ChannelTransport {
   }
 }
 
+type ReceiveBatch = Awaited<ReturnType<ChannelTransport['receive']>>;
+type PollBinding = {
+  binding: Binding;
+  legacy: boolean;
+  admit(batch: ReceiveBatch, checkpoint: string, now: number): void;
+};
+
 export class TelegramPoller {
   private pollDue = 0;
   private failures = 0;
   private polling = false;
   private sending = false;
   private readonly lanes = new Set<Lane>();
+  private readonly handlers = new Set<Promise<string | undefined>>();
   pollConflict = false;
 
   readonly bot: Bot;
@@ -144,24 +156,29 @@ export class TelegramPoller {
   private readonly inbox: TelegramInbox;
   private readonly handle: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
   private readonly locale: () => ChannelLocale;
+  private readonly account?: PollBinding;
 
   constructor(bot: Bot, owner: string, api: TelegramApi, inbox: TelegramInbox, handle: TelegramPoller['handle'],
-    locale: () => ChannelLocale = () => 'zh-TW') {
+    locale: () => ChannelLocale = () => 'zh-TW', account?: PollBinding) {
     this.bot = bot;
-    this.transport = new TelegramTransport(bot, owner, api);
+    this.transport = new TelegramTransport(bot, owner, api, account?.legacy);
     this.inbox = inbox;
     this.handle = handle;
     this.locale = locale;
+    this.account = account;
   }
+
+  busy() { return this.sending || this.lanes.size > 0 || this.handlers.size > 0; }
 
   async poll(signal: AbortSignal, clock = Date.now) {
     if (this.polling || this.pollConflict || signal.aborted || clock() < this.pollDue) return;
     this.polling = true;
     try {
-      const binding = legacyBinding(this.bot);
+      const binding = this.account?.binding ?? legacyBinding(this.bot);
       const checkpoint = this.inbox.checkpoint(binding.accountId);
       const batch = await this.transport.receive(checkpoint, signal, clock);
-      this.inbox.admitBatch(binding, batch.events, batch.nextCheckpoint, clock(), checkpoint);
+      if (this.account) this.account.admit(batch, checkpoint, clock());
+      else this.inbox.admitBatch(binding, batch.events, batch.nextCheckpoint, clock(), checkpoint);
       this.failures = 0;
     } catch (error) {
       if (error instanceof TelegramError && error.status === 409) this.pollConflict = true;
@@ -174,7 +191,9 @@ export class TelegramPoller {
   async process(lane: Lane, signal: AbortSignal, clock = Date.now) {
     if (this.lanes.has(lane) || signal.aborted) return;
     const now = clock();
-    const row = this.inbox.next(this.bot, lane, now);
+    const row = this.account
+      ? this.inbox.nextBound(this.bot, this.account.binding, lane, now)
+      : this.inbox.next(this.bot, lane, now);
     if (!row) return;
     const locale = this.locale();
     const deadline = (row.started ?? now) + workDeadline;
@@ -189,7 +208,12 @@ export class TelegramPoller {
       let release!: () => void;
       const interrupted = new Promise<undefined>((resolve) => { release = () => resolve(undefined); });
       attemptSignal.addEventListener('abort', release, { once: true });
-      try { result = await Promise.race([this.handle(row, attemptSignal), interrupted]); }
+      try {
+        const handling = Promise.resolve(this.handle(row, attemptSignal));
+        this.handlers.add(handling);
+        void handling.then(() => this.handlers.delete(handling), () => this.handlers.delete(handling));
+        result = await Promise.race([handling, interrupted]);
+      }
       catch { /* The persisted attempt and retry time cover handler failures and restarts. */ }
       finally { attemptSignal.removeEventListener('abort', release); }
       if (signal.aborted) return;
@@ -209,7 +233,7 @@ export class TelegramPoller {
   }
 
   private async send(signal: AbortSignal, clock: () => number) {
-    const message = this.inbox.claimOutbound(legacyBinding(this.bot), clock());
+    const message = this.inbox.claimOutbound(this.account ? { accountId: this.account.binding.accountId } : legacyBinding(this.bot), clock());
     if (message) this.inbox.finishOutbound(message, await this.transport.deliver(message, signal, message.attempts, clock));
   }
 }

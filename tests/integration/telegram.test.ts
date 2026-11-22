@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { maxWorkAttempts, TelegramApi, TelegramPoller, TelegramTransport, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
@@ -18,11 +19,228 @@ import type { Runtime } from '../../apps/launcher/src/runtime.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { BiScheduler } from '../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
+import { until } from '../../scripts/phase0/probe-http.ts';
 
 function folder() {
   mkdirSync('.phase0', { recursive: true });
   return mkdtempSync(resolve('.phase0', 'telegram-'));
 }
+
+test('paired channel settings verify a third bot, route specialist sessions and drain before rebinding', async () => {
+  const data = folder();
+  const root = join(data, 'web');
+  mkdirSync(root);
+  const store = new WebStore(join(root, 'web.sqlite'));
+  store.close();
+  {
+    using db = new DatabaseSync(join(root, 'web.sqlite'));
+    db.exec(`INSERT INTO agents VALUES
+      ('analysis','specialist',NULL,'active','Synthetic specialist','','',NULL,NULL,'synthetic-specialist','en',1,0,0);
+      INSERT INTO agent_workspaces VALUES ('analysis','analysis','managed','web/agents/analysis',NULL,1,'unclassified',0);`);
+  }
+  const alias = 'synthetic-primary';
+  const primaryRef = 'OEP_TELEGRAM_THIRD_BOT_TOKEN';
+  const alternateRef = 'OEP_TELEGRAM_ROTATED_BOT_TOKEN';
+  const credentials: Record<string, string> = {
+    OEP_TELEGRAM_ALLOWED_USER_ID: '42',
+    OEP_TELEGRAM_MAIN_BOT_TOKEN: '71:fixture-main',
+    OEP_TELEGRAM_BI_BOT_TOKEN: '72:fixture-bi',
+    [primaryRef]: '73:fixture-third',
+    [alternateRef]: '73:fixture-rotation',
+  };
+  const firstPrompt = Promise.withResolvers<void>();
+  const releaseStalePoll = Promise.withResolvers<void>();
+  let thirdEvent = 1;
+  let conflicted = false;
+  let holdPoll = false;
+  let stalePollPending = false;
+  const receives = new Map<number, number[]>();
+  const sends: { bot: number; text: string; topic: number }[] = [];
+  const provider = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const input = JSON.parse(raw);
+    const [, path, method] = req.url!.split('/');
+    const id = Number(path.slice(3).split(':')[0]);
+    const reply = (result: unknown) => res.end(JSON.stringify({ ok: true, result }));
+    if (method === 'getMe') reply({ id, is_bot: true });
+    else if (method === 'getUpdates') {
+      receives.set(id, [...receives.get(id) ?? [], input.offset]);
+      if (id === 73 && conflicted) {
+        res.statusCode = 409;
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+      let update_id = id === 73 ? thirdEvent : 1;
+      if (id === 73 && holdPoll) {
+        holdPoll = false;
+        stalePollPending = true;
+        await releaseStalePoll.promise;
+        update_id = 99;
+      }
+      reply([{ update_id, message: { chat: { type: 'private', id: 42 }, from: { id: 42 }, message_thread_id: 7,
+        text: id === 72 ? '/status' : 'Synthetic input ' + id + ' event ' + update_id } }]);
+    } else {
+      sends.push({ bot: id, text: input.text, topic: input.message_thread_id });
+      reply({ message_id: sends.length });
+    }
+  });
+  await new Promise<void>((done) => provider.listen(0, '127.0.0.1', done));
+  const address = provider.address();
+  assert(address && typeof address === 'object');
+  type UserMessage = { id: string; type: 'user'; text: string };
+  type AssistantMessage = { id: string; type: 'assistant'; content: { type: 'text'; text: string }[] };
+  type SessionInput = { agent: string; location: { directory: string }; model: { id: string } };
+  const profiles = new Map<string, SessionInput & { id: string }>();
+  const messages = new Map<string, (UserMessage | AssistantMessage)[]>();
+  const prompts: { sessionID: string; text: string }[] = [];
+  const runtime = {
+    root, alias, aliases: [alias, 'synthetic-specialist'], modelSeat: new ModelSeat(),
+    gatewayCursor: () => 0, gatewaySince: () => [{ status: 200, output: 'text' }], setTurnBoundary: () => {},
+    redact: (value: string) => value, endpoint: { request: async () => new Response(null, { status: 503 }) },
+    client: {
+      session: {
+        create: async (input: SessionInput) => {
+          const session = { ...input, id: randomUUID() };
+          profiles.set(session.id, session);
+          return session;
+        },
+        get: async ({ sessionID }: { sessionID: string }) => ({ ...profiles.get(sessionID), outcome: 'succeeded' }),
+        prompt: async ({ sessionID, id, text }: { sessionID: string; id: string; text: string }) => {
+          prompts.push({ sessionID, text });
+          if (text.startsWith('Synthetic input 73 event 1')) await firstPrompt.promise;
+          const reply = text.includes('Reply to the user in English.') ? 'English synthetic answer' : '合成回答';
+          messages.set(sessionID, [{ id: randomUUID(), type: 'assistant', content: [{ type: 'text', text: reply }] },
+            { id, type: 'user', text }, ...messages.get(sessionID) ?? []]);
+          return { id, sessionID };
+        },
+        update: async () => {}, active: async () => ({}), inbox: { list: async () => [] }, interrupt: async () => {},
+      },
+      permission: { list: async () => [] },
+      message: { list: async ({ sessionID, type }: { sessionID: string; type?: string }) =>
+        ({ data: (messages.get(sessionID) ?? []).filter((item) => !type || type === item.type) }) },
+    },
+  } as unknown as Runtime;
+  const start = () => startAdapter(root, runtime, () => {}, true, undefined, {
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials[name]])),
+    createApi: (value) => new TelegramApi(value, 'http://127.0.0.1:' + address.port),
+  });
+  let adapter: Awaited<ReturnType<typeof start>> | undefined;
+  const ready = (check: () => unknown) => until(async () => check() ? true : undefined, 16_000);
+  try {
+    adapter = await start();
+    const url = new URL(adapter.pairURL());
+    const { origin } = url;
+    const endpoint = origin + '/api/settings/channels';
+    const requestHeaders = { origin, 'content-type': 'application/json' };
+    const pair = await fetch(origin + '/api/pair', { method: 'POST', headers: requestHeaders,
+      body: JSON.stringify({ ticket: new URLSearchParams(url.hash.slice(1)).get('pair') }) });
+    assert.equal(pair.status, 200);
+    const cookie = pair.headers.get('set-cookie')!.split(';')[0];
+    const { csrf } = await pair.json();
+    const headers = { ...requestHeaders, cookie, 'x-oep-csrf': csrf };
+    const post = (input: object, authorized = headers) =>
+      fetch(endpoint, { method: 'POST', headers: authorized, body: JSON.stringify(input) });
+    const list = async () => (await (await fetch(endpoint, { headers })).json()).accounts as {
+      accountId: string; agentId: string; credentialRef: string; bindingRevision: number; pollState: string; replyLocale: string;
+    }[];
+    const expect = async (response: Response, status: number, code: string) => {
+      assert.equal(response.status, status);
+      assert.equal((await response.json()).errorDetail.code, code);
+    };
+    assert.equal((await fetch(endpoint)).status, 401);
+    assert.equal((await fetch(endpoint, { headers: { cookie } })).status, 403);
+    assert.equal((await post({ action: 'verify', credentialRef: primaryRef }, { ...headers, cookie: '' })).status, 401);
+    assert.equal((await post({ action: 'verify', credentialRef: primaryRef }, { ...headers, 'x-oep-csrf': '' })).status, 403);
+    await expect(await post({ action: 'verify', credentialRef: primaryRef, token: credentials[primaryRef] }), 400, 'channel-settings-invalid');
+    assert.deepEqual(await (await post({ action: 'verify', credentialRef: primaryRef })).json(), { verified: true });
+    const bind = { action: 'bind', credentialRef: primaryRef, agentId: 'analysis' };
+    await expect(await post(bind), 409, 'channel-confirmation-required');
+    const created = await Promise.all([primaryRef, alternateRef].map((credentialRef) => post({ ...bind, credentialRef, confirmed: true })));
+    assert.deepEqual(created.map((response) => response.status).sort(), [200, 409]);
+    const account = (await list()).find(({ agentId }) => agentId === 'analysis')!;
+    assert.equal(account.replyLocale, 'en');
+    const availableRef = [primaryRef, alternateRef].find((ref) => ref !== account.credentialRef)!;
+    const duplicate = await created.find((response) => response.status === 409)!.json();
+    assert.equal(duplicate.errorDetail.code, 'CHANNEL_ACCOUNT_IN_USE');
+    assert.deepEqual(duplicate.errorDetail.params, { accountId: account.accountId, agentId: 'analysis' });
+    await expect(await post({ action: 'verify', credentialRef: availableRef }), 409, 'CHANNEL_ACCOUNT_IN_USE');
+    assert(!(await (await fetch(endpoint, { headers })).text()).includes(credentials[account.credentialRef]));
+    await ready(() => prompts.some(({ text }) => text.startsWith('Synthetic input 73 event 1')));
+    const rebind = { action: 'rebind', accountId: account.accountId, agentId: 'main', credentialRef: availableRef,
+      bindingRevision: account.bindingRevision, confirmed: true };
+    await expect(await post(rebind), 409, 'channel-binding-busy');
+    firstPrompt.resolve();
+    await ready(() => [71, 72, 73].every((bot) => sends.some((send) => send.bot === bot)));
+    assert.deepEqual(sends.find(({ bot }) => bot === 73), { bot: 73, text: 'English synthetic answer', topic: 7 });
+    assert.deepEqual(sends.find(({ bot }) => bot === 71), { bot: 71, text: '合成回答', topic: 7 });
+    assert.match(sends.find(({ bot }) => bot === 72)?.text ?? '', /BI 工作/);
+    const specialist = profiles.get(prompts.find(({ text }) => text.startsWith('Synthetic input 73 event 1'))!.sessionID)!;
+    assert.equal(specialist.model.id, 'synthetic-specialist');
+    assert.equal(dirname(specialist.location.directory), join(root, 'agents/analysis/model-work'));
+    holdPoll = true;
+    await ready(() => stalePollPending);
+    assert.equal((await post(rebind)).status, 200);
+    releaseStalePoll.resolve();
+    await expect(await post(rebind), 409, 'channel-binding-stale');
+    const namesFile = join(data, 'credential-references.json');
+    const exported = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/windows/data-snapshot.mjs',
+      'credentials', data, namesFile], { encoding: 'utf8' });
+    assert.equal(exported.status, 0, exported.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(namesFile, 'utf8')), [availableRef]);
+    {
+      const spool = new TelegramInbox(join(root, 'telegram.sqlite'), false);
+      try {
+        spool.enqueueOutbound({ accountId: account.accountId, agentId: 'analysis', bindingRevision: 1,
+          conversationKey: 'chat:42:topic:7', effectKey: 'late-original-reply', locale: 'en', text: 'Late original reply' });
+      } finally { spool.db.close(); }
+    }
+    thirdEvent = 2;
+    await ready(() => sends.some(({ text }) => text === 'Late original reply') && sends.filter(({ bot }) => bot === 73).length === 3);
+    {
+      using db = new DatabaseSync(join(root, 'telegram-chat.sqlite'), { readOnly: true });
+      const owners = db.prepare(`SELECT agent_id,workspace_id,origin,channel_account_id,conversation_key,binding_revision
+        FROM session_ownership ORDER BY channel_account_id,binding_revision`).all().map((row) => Object.values(row));
+      assert.equal(owners.length, 3);
+      assert(owners.some((row) => JSON.stringify(row) === JSON.stringify(
+        ['analysis', 'analysis', 'channel', account.accountId, 'chat:42:topic:7', 1])));
+      assert(owners.some((row) => JSON.stringify(row) === JSON.stringify(
+        ['main', 'legacy-default', 'channel', account.accountId, 'chat:42:topic:7', 2])));
+      assert(owners.some((row) => row[3] === 'telegram-main' && row[4] === 'topic:7'));
+    }
+    {
+      using db = new DatabaseSync(join(root, 'telegram.sqlite'), { readOnly: true });
+      assert.deepEqual(Object.values(db.prepare("SELECT agent_id,binding_revision,state FROM channel_outbound WHERE effect_key='late-original-reply'").get()!),
+        ['analysis', 1, 'sent']);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM channel_inbound WHERE event_key='1' AND status='handled'").get()?.n, 3);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM channel_inbound WHERE event_key='99'").get()?.n, 0);
+      assert.equal(db.prepare('SELECT checkpoint FROM channel_cursors WHERE account_id=?').get(account.accountId)?.checkpoint, '3');
+    }
+    conflicted = true;
+    await until(async () => (await list()).some(({ accountId, pollState }) =>
+      accountId === account.accountId && pollState === 'poll-conflict') ? true : undefined, 4_000);
+    const unbind = { action: 'unbind', accountId: account.accountId, bindingRevision: 2, confirmed: true };
+    assert.equal((await post(unbind)).status, 200);
+    assert.equal((await list()).find(({ accountId }) => accountId === account.accountId)?.pollState, 'disabled');
+    conflicted = false;
+    assert.equal((await post({ ...unbind, action: 'bind', bindingRevision: 3 })).status, 200);
+    await adapter.close();
+    adapter = undefined;
+    const polls = receives.get(73)!.length;
+    adapter = await start();
+    await ready(() => (receives.get(73)?.length ?? 0) > polls);
+    assert.equal(receives.get(73)!.at(-1), 3);
+    assert.equal(prompts.length, 3);
+    assert.equal(sends.length, 5);
+  } finally {
+    firstPrompt.resolve();
+    releaseStalePoll.resolve();
+    await adapter?.close();
+    provider.closeAllConnections();
+    await new Promise<void>((done) => provider.close(() => done()));
+    rmSync(data, { recursive: true });
+  }
+});
 
 test('two fake bots reconcile duplicate updates, process crashes, blocked links, timeout and 429', async () => {
   const root = folder();
