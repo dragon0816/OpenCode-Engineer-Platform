@@ -251,7 +251,9 @@ test('the production OpenCode relay serves SSE and fails closed on non-streaming
 });
 
 test('the built-in broker completes a native status call and shares the model seat across origins', { timeout: 120_000 }, async (context) => {
-  const root = mkdtempSync(join(dataDirectory(), 'broker-'));
+  const fixture = mkdtempSync(join(dataDirectory(), 'broker-'));
+  const root = fixture.length < 147 ? join(fixture, 'p'.repeat(147 - fixture.length)) : fixture;
+  mkdirSync(root, { recursive: true });
   const profile = join(root, 'profile');
   const audit = join(root, 'launch');
   for (const dir of [profile, audit, join(root, 'sessions'), join(root, 'model-work'), join(root, 'artifacts')]) mkdirSync(dir);
@@ -313,24 +315,30 @@ test('the built-in broker completes a native status call and shares the model se
   const chat = new ChatService(telegram, runtime, root, join(audit, 'telegram-turns.jsonl'), () => {}, store);
   const router = new TelegramRouter(inbox, runtime, chat, telegram);
   const signal = AbortSignal.timeout(35_000);
+  const observe = async <T>(phase: string, operation: () => Promise<T>) => {
+    const started = performance.now();
+    try { return await operation(); }
+    finally { context.diagnostic(`${phase}: ${Math.round(performance.now() - started)} ms`); }
+  };
   try {
     store.savePreferences('Synthetic agent display', '', 'Synthetic agent instructions');
     const session = await web.create('inspector');
     const id = randomUUID();
     await web.submit(session, { id, text: 'Synthetic Web status', attachments: [], workbook: false });
-    await until(() => Promise.resolve(calls.includes('Web') || undefined), 10_000);
+    await observe('Web first request', () => until(() => Promise.resolve(calls.includes('Web') || undefined), 10_000));
     await enteredWeb.promise;
     const row = { id: 42, topic: 3, bot: 'main' as const, payload: JSON.stringify({ text: 'Synthetic Telegram Main' }) };
     const main = router.handle(row, signal);
-    await until(() => Promise.resolve(telegram.sessions().some((item) => telegram.turns(item.id).length > 0) || undefined), 10_000);
+    await observe('Telegram admission', () => until(() =>
+      Promise.resolve(telegram.sessions().some((item) => telegram.turns(item.id).length > 0) || undefined), 10_000));
     const localTurn = telegram.sessions().flatMap((item) => telegram.turns(item.id))[0];
     assert.equal(store.workItems.byRun('channel', localTurn.id)?.state, 'queued');
     const bi = runtime.knowledge!.propose('Synthetic BI proposal', { fixture: 'Synthetic input' }, signal);
     assert.deepEqual(calls, ['Web']);
     releaseWeb.resolve();
-    await main;
-    assert.deepEqual(await bi, { content: 'Synthetic BI proposal' });
-    assert.equal(await until(() => router.handle(row, signal), 15_000), 'Synthetic verified reply');
+    await observe('Telegram initial handoff', () => main);
+    assert.deepEqual(await observe('BI proposal', () => bi), { content: 'Synthetic BI proposal' });
+    assert.equal(await observe('Telegram verified reply', () => until(() => router.handle(row, signal), 15_000)), 'Synthetic verified reply');
     assert.deepEqual(calls, ['Web', 'Web tool result', 'BI', 'Telegram Main']);
     assert.equal(store.get(id).state, 'verified');
     assert.deepEqual(modelStatusSchema, { type: 'object', properties: {}, required: [], additionalProperties: false });
@@ -348,14 +356,20 @@ test('the built-in broker completes a native status call and shares the model se
     const forged = await web.create('inspector');
     const forgedID = randomUUID();
     await web.submit(forged, { id: forgedID, text: 'Synthetic model transport forgery', attachments: [], workbook: false });
-    await until(() => Promise.resolve(store.get(forgedID).state === 'failed' || undefined), 20_000);
+    await observe('Native forgery refusal', () => until(() => Promise.resolve(store.get(forgedID).state === 'failed' || undefined), 20_000));
     const denied = await web.state(forged);
     assert.ok(!denied.messages?.some(({ tools }) => tools?.some(({ name }) => name === statusTool)));
 
     const writer = await web.create('workbook');
     artifactID = randomUUID();
     await web.submit(writer, { id: artifactID, text: 'Synthetic broker workbook', attachments: [], workbook: true });
-    await until(() => Promise.resolve(store.get(artifactID).state === 'verified' || undefined), 25_000);
+    const manifest = join(store.get(artifactID).workspace, 'generated', artifactID, 'manifest-workbook.json.json');
+    assert.ok(manifest.length > 260, 'The workbook manifest must exercise Windows extended-length paths');
+    const workbookState = await observe('Workbook verification', () => until(() => {
+      const { state } = store.get(artifactID);
+      return Promise.resolve(['verified', 'failed', 'cancelled', 'indeterminate'].includes(state) ? state : undefined);
+    }, 25_000));
+    assert.equal(workbookState, 'verified');
     const output = web.download(writer, artifactID);
     assert.deepEqual(output.data, Buffer.from(workbook(d08)));
     const oracle = execFileSync(process.env.OEP_PYTHON || 'python', [
@@ -374,7 +388,8 @@ test('the built-in broker completes a native status call and shares the model se
     ] as const) {
       const id = randomUUID();
       await web.submit(session, { id, text: 'Synthetic ' + fileCase, attachments: [], workbook: false });
-      await until(() => Promise.resolve(store.get(id).state === (successful ? 'verified' : 'failed') || undefined), 20_000);
+      await observe(fileCase, () => until(() =>
+        Promise.resolve(store.get(id).state === (successful ? 'verified' : 'failed') || undefined), 20_000));
     }
     assert.match(fileResults.get('own attachment') ?? '', /Synthetic session-private file/);
     assert.match(fileResults.get('own artifact') ?? '', /output\.xlsx/);

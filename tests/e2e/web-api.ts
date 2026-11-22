@@ -12,10 +12,14 @@ export async function webAPI(pairURL: string) {
   const { csrf } = await response.json();
   return {
     origin,
-    get: (path: string, signal?: AbortSignal) => fetch(origin + path, { headers: { cookie }, signal }),
+    get: (path: string, signal?: AbortSignal) => fetch(origin + path, { headers: { cookie, 'x-oep-csrf': csrf }, signal }),
     post: (path: string, data: object) => fetch(origin + path, {
       method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'x-oep-csrf': csrf },
       body: JSON.stringify(data),
+    }),
+    upload: (path: string, name: string, data: string) => fetch(origin + path, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'text/plain', 'x-oep-csrf': csrf,
+        'x-oep-filename': encodeURIComponent(name) }, body: data,
     }),
   };
 }

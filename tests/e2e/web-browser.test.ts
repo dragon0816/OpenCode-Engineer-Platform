@@ -848,6 +848,15 @@ try {
         for (const [section, title, controls] of settingsPages) {
           await click(`#settings-nav [data-section="${section}"]`);
           await expectSetting(section, title);
+          if (section === 'channels') {
+            await page.ready("document.querySelector('#budget-delegationsPerMessage')?.value === '3'");
+            await page.evaluate(`
+              document.querySelector('#budget-delegationsPerMessage').value = '2';
+              document.querySelector('#delegation-budgets').requestSubmit();
+            `);
+            await page.ready("document.querySelector('#delegation-budget-status').textContent === '已儲存'");
+            assert.equal(await page.evaluate("document.querySelector('#budget-delegationsPerMessage').value"), '2');
+          }
           if (section === 'integrations') {
             await page.ready(`[...document.querySelectorAll('#telegram-main-status, #telegram-bi-status')]
               .every(status => /^(已設定|未設定)$/.test(status.textContent))`);
