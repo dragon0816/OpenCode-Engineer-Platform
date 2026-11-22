@@ -6,6 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
+import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
+import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import type { Turn } from '../../apps/adapter/src/http/chat.ts';
 import { delegateTool, listSpecialistsTool, readFileTool, statusTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { DelegationService } from '../../apps/adapter/src/runs/delegation.ts';
@@ -26,6 +28,174 @@ const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 type Tool = { name: string; parameters: { properties: object; required: string[]; additionalProperties: boolean } };
 type Request = Omit<WireRequest, 'tools'> & { tools?: { function: Tool }[] };
 type ModelCall = { name: string; args: Record<string, unknown> };
+
+test('Telegram Main and BI route durable notices to the original bot and topic', { timeout: 120_000 }, async () => {
+  const root = mkdtempSync(join(dataDirectory(), 'delegation-notices-'));
+  const profile = join(root, 'profile');
+  const launch = join(root, 'launch');
+  mkdirSync(profile);
+  mkdirSync(launch);
+  const specialist = randomUUID();
+  const quote = 'zircon calibration witness';
+  const vault = 'synthetic-calibration';
+  let proposalCalls = 0;
+  let askCalls = 0;
+  const runtime = await startRuntime(launch, { url: 'http://example.invalid', key: randomUUID(), alias, aliases: [alias], isolatedJob: true,
+    fetch: async (_target, init) => {
+      if (!init?.body) return Response.json({ data: [{ id: alias }] });
+      const request = JSON.parse(String(init.body)) as Request & { stream?: boolean };
+      const lastUser = request.messages.findLastIndex(({ role }) => role === 'user');
+      const user = String(request.messages[lastUser]?.content);
+      const reply = (content: string) => completion(request.model, [{ role: 'assistant', content }], 'stop');
+      if (request.stream) {
+        if (user.includes('Synthetic Main delegate')) {
+          if (request.messages.at(-1)?.role !== 'tool') return completion(request.model,
+            toolCall(0, 'call_telegram_specialist', delegateTool, { specialistId: specialist, task: 'Synthetic Telegram child',
+              requestKey: 'telegram-specialist' }), 'tool_calls');
+          return reply('已交辦');
+        }
+        if (user.includes('Synthetic Telegram child')) return reply('Synthetic child result');
+        return reply('Synthetic separate chat reply');
+      }
+      const body = JSON.stringify(request.messages);
+      let content = 'Synthetic healthy reply';
+      if (body.includes('verbatim contiguous source quote')) {
+        proposalCalls++;
+        const cited = body.includes(quote) ? quote : 'missing evidence';
+        content = JSON.stringify({ title: 'Calibration materials', fields: { material: { value: cited, quote: cited } } });
+      } else if (body.includes(quote)) {
+        const input = JSON.parse(user) as { evidence: { id: string; text: string }[] };
+        const passage = input.evidence.find(({ text }) => text.includes(quote))!;
+        askCalls++;
+        content = JSON.stringify({ state: 'answer', citations: [{ passageID: passage.id, quote }] });
+      }
+      return Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] });
+    },
+  }, profile);
+  const main = 31;
+  const bi = 32;
+  const owner = 42;
+  const updates = new Map<number, Update[]>([[main, []], [bi, []]]);
+  const deliveries: { bot: number; topic: number; text: string }[] = [];
+  const message = (bot: number, id: number, topic: number, body: Partial<NonNullable<Update['message']>>) =>
+    updates.get(bot)!.push({ update_id: id, message: { chat: { id: owner, type: 'private' }, from: { id: owner },
+      message_thread_id: topic, ...body } });
+  class SyntheticTelegram extends TelegramApi {
+    private readonly bot: number;
+    constructor(value: string) { super(value); this.bot = Number(value.split(':', 1)[0]); }
+    override async call<T>(method: string, payload: unknown): Promise<T> {
+      if (method === 'getMe') return { id: this.bot, is_bot: true } as T;
+      if (method === 'getUpdates') return updates.get(this.bot)!.filter(({ update_id }) =>
+        update_id >= Number((payload as { offset?: number }).offset ?? 0)) as T;
+      if (method === 'sendMessage') {
+        const { text, message_thread_id: topic } = payload as { text: string; message_thread_id: number };
+        deliveries.push({ text, bot: this.bot, topic });
+        return { message_id: deliveries.length } as T;
+      }
+      throw new Error('Unexpected synthetic Telegram operation');
+    }
+    override async file() { return Buffer.from('Synthetic original retained until supplemented'); }
+  }
+  const start = () => startAdapter(root, runtime, () => {}, true, undefined, {
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? String(owner) :
+      (name === 'OEP_TELEGRAM_MAIN_BOT_TOKEN' ? main : bi) + ':' + randomUUID()])),
+    createApi: (value) => new SyntheticTelegram(value),
+  });
+  let adapter: Awaited<ReturnType<typeof startAdapter>> | undefined;
+  try {
+    const knowledge = runtime.knowledge!.reviewStore;
+    const schema = knowledge.installReviewSchema(vault, 'calibration', '1', ['material']);
+    const original = 'Synthetic baseline measurement reference.';
+    knowledge.stage('calibration-baseline', {
+      vault: { id: vault, kind: 'bi', title: 'Synthetic calibration' }, schema: schema.sha256, allowModel: true,
+      sources: [{ id: 'baseline', ref: 'baseline.txt', original, markdown: original }],
+      cards: [{ id: 'baseline', key: 'baseline', type: 'record', title: 'Baseline', version: '1', fields: { material: original } }],
+      relationships: [], evidence: [{ sourceId: 'baseline', cardId: 'baseline', field: 'material', start: 0, end: original.length }],
+    });
+    knowledge.decideReview('calibration-baseline', 0, 'approved');
+    knowledge.publishReview('calibration-baseline');
+    const central = new WebStore(join(root, 'web.sqlite'));
+    let workspace: string;
+    try {
+      central.createAgent(central.agentCreation(specialist, { name: 'Synthetic verifier', knowledgeReads: [vault] }, () => {}));
+      workspace = central.defaultWorkspace(specialist)!;
+    } finally { central.close(); }
+    adapter = await start();
+    const api = await webAPI(adapter.pairURL());
+    const json = async (response: Response, status = 200) => {
+      assert.equal(response.status, status);
+      return response.json();
+    };
+    const sent = (bot: number, topic: number, text: string) => deliveries.filter((row) =>
+      row.bot === bot && row.topic === topic && row.text.includes(text));
+    const waitSent = (bot: number, topic: number, text: string, count = 1) =>
+      until(async () => sent(bot, topic, text).length >= count || undefined, 12_000);
+    await json(await api.post('/api/jobs', { action: 'configure', domain: 'synthetic', target: vault, origins: [] }));
+    message(main, 1, 7, { text: 'Synthetic Main delegate' });
+    message(bi, 2, 9, { document: { file_id: 'synthetic-original', file_name: 'original.pdf' } });
+    await waitSent(main, 7, 'Synthetic child result');
+    assert.equal(sent(main, 7, '已交辦給Synthetic verifier').length, 1);
+    assert.equal(sent(main, 7, '已交辦').filter(({ text }) => text === '已交辦').length, 1);
+    assert.ok(deliveries.findIndex(({ text }) => text === '已交辦') < deliveries.findIndex(({ text }) => text.includes('Synthetic child result')));
+    await waitSent(bi, 9, '需要補件');
+    message(bi, 3, 9, { text: '/supplement 2 Synthetic unsupported assertion' });
+    await waitSent(bi, 9, '需要補件', 2);
+    assert.equal(proposalCalls, 1);
+    assert.equal(knowledge.reviews().some(({ id }) => id === 'telegram-bi-2'), false);
+
+    message(bi, 4, 9, { text: '/supplement 2 Synthetic documents preserve the ' + quote });
+    await waitSent(bi, 9, '已送審');
+    assert.equal(proposalCalls, 2);
+    const reviewPath = '/api/knowledge/reviews';
+    const { reviews } = await json(await api.get(reviewPath));
+    const pending = reviews.find(({ id }: { id: string }) => id === 'telegram-bi-2');
+    assert.equal(pending?.status, 'pending');
+    assert.equal(pending?.agentSource, 'BI 資料處理');
+    assert.equal(pending?.origin, 'telegram');
+    assert.ok(!JSON.stringify(knowledge.retrieve(vault, quote)).includes(quote));
+    const policy = new WebStore(join(root, 'web.sqlite'));
+    try {
+      const scope = () => ({ model: alias, vaults: policy.executionKnowledgeReads(specialist, workspace) });
+      assert.ok(scope().vaults.includes(vault));
+      const ask = () => runtime.knowledge!.scopedAsk({ vault, question: quote }, AbortSignal.timeout(15_000), scope);
+      assert.equal((await ask()).state, 'abstain');
+      assert.equal(askCalls, 0);
+      message(bi, 5, 9, { text: '/publish telegram-bi-2' });
+      await waitSent(bi, 9, '請在工作台核准');
+      assert.equal(knowledge.publicationNotice(pending.id), false);
+      await json(await api.post(reviewPath, { action: 'publish', id: pending.id }), 422);
+      await json(await api.post(reviewPath, { action: 'approve', id: pending.id, edit: pending.edit }));
+      assert.equal(knowledge.publicationNotice(pending.id), false);
+      await json(await api.post(reviewPath, { action: 'publish', id: pending.id }));
+      await json(await api.post(reviewPath, { action: 'publish', id: pending.id }));
+      await waitSent(bi, 9, 'BI 審核已發布');
+      assert.ok(JSON.stringify(knowledge.retrieve(vault, quote)).includes(quote));
+      const answer = await ask();
+      assert.equal(answer.state, 'verified');
+      assert.equal(answer.state === 'verified' && answer.citations[0]?.quote, quote);
+      assert.equal(askCalls, 1);
+    } finally { policy.close(); }
+    const prime = deliveries.length;
+    await adapter.close();
+    adapter = await start();
+    message(bi, 6, 9, { text: '/status 2' });
+    await waitSent(bi, 9, '收件 2 已送審', 2);
+    assert.equal(deliveries.length, prime + 1);
+    assert.equal(sent(bi, 9, 'BI 審核已發布').length, 1);
+    assert.equal(sent(main, 7, 'Synthetic child result').length, 1);
+    assert.equal(sent(main, 7, '已交辦給Synthetic verifier').length, 1);
+    assert.equal(deliveries.some(({ bot, text }) => bot === main && (text.includes('收件 2') || text.includes(quote))), false);
+    using inbox = new DatabaseSync(join(root, 'telegram.sqlite'), { readOnly: true });
+    const effects = inbox.prepare(`SELECT effect_key FROM channel_outbound WHERE account_id='telegram-main'
+      AND effect_key LIKE 'delegation:%' AND state='sent' ORDER BY rowid`).all().map(({ effect_key }) => String(effect_key));
+    assert.equal(effects.length, 2);
+    assert.match(effects[0], /^delegation:[a-f\d-]+:acceptance$/);
+    assert.equal(effects[1], effects[0].replace(/acceptance$/, 'completion'));
+  } finally {
+    try { await adapter?.close(); }
+    finally { assert.equal((await runtime.stop()).orphans, 0); }
+  }
+});
 
 test('attachment upload and handoff copy support a long specialist data root', () => {
   return (async () => {
@@ -352,6 +522,9 @@ test('the paired Web adapter delivers specialist runs, cancellations, caps, and 
     const b = await detail(other);
     assert.notEqual(a.childRunId, b.childRunId);
     assert.notEqual(a.childSessionId, b.childSessionId);
+    assert.equal(a.run.messagesUnavailable, false);
+    assert.ok(a.run.messages.some(({ tools }: { tools?: { name: string }[] }) => tools?.some(({ name }) => name === writeFileTool)));
+    assert.ok(a.run.timeline.some(({ state }: { state: string }) => state === 'verified'));
     assert.equal(db.prepare('SELECT origin FROM session_ownership WHERE session_id=?').get(a.childSessionId)?.origin, 'delegation');
     assert.deepEqual(requests.map(({ task, model }) => [task, model]),
       [['first', otherModel], ['first', otherModel], ['first', otherModel], ['second', alias]]);

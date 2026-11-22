@@ -9,6 +9,7 @@ import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
+import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
 import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
@@ -20,6 +21,8 @@ import { assertWorkbenchFits, selectLocale } from './gui-locales.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
+import { webAPI } from './web-api.ts';
+import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 
 const real = process.argv.includes('--real');
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
@@ -94,6 +97,8 @@ const settingsRows: Record<string, Record<string, string[]>> = {
 };
 const syntheticKey = randomUUID();
 const syntheticURL = 'http://example.invalid/v1';
+const delegationTargets: string[] = [];
+let biAttachment: string;
 const synthetic: typeof fetch = async (target, init) => {
   if (String(target) === `${syntheticURL}/models` && init?.method === 'GET') {
     return Response.json({ object: 'list', data: aliases.map((id) => ({ object: 'model', id })) });
@@ -123,6 +128,34 @@ const synthetic: typeof fetch = async (target, init) => {
     assert.match(user, /資料查核/);
     assert.match(user, /保留來源引用/);
     return completion(model, [{ role: 'assistant', content: '已核對合成資料' }], 'stop');
+  }
+  if (user.includes('SYNTHETIC_DELEGATION_RESULTS') || user.includes('做成 BI 卡片')) {
+    const count = messages.slice(messages.findLastIndex(({ role }) => role === 'user') + 1).filter(({ role }) => role === 'tool').length;
+    const bi = user.includes('做成 BI 卡片');
+    const target = bi ? (count === 0 && 'bi') : delegationTargets[count];
+    if (target) {
+      const task = bi ? '請將來源做成 BI 知識卡' : count ? 'SYNTHETIC_CHILD_WAIT' : 'SYNTHETIC_CHILD_EXPORT';
+      return completion(model, toolCall(0, 'call_delegate_' + count, delegateTool,
+        { specialistId: target, task, requestKey: 'task-' + count, ...(bi && { attachmentIds: [biAttachment] }) }), 'tool_calls');
+    }
+    return completion(model, [{ role: 'assistant', content: '已交辦' }], 'stop');
+  }
+  if (user.includes('SYNTHETIC_CHILD_EXPORT')) {
+    if (messages.at(-1)?.role !== 'tool') {
+      return completion(model, toolCall(0, 'call_report', writeFileTool, { name: 'measurement-summary.txt', content: delegationExport }), 'tool_calls');
+    }
+    return completion(model, [{ role: 'assistant', content: '量測項目已核對，摘要已整理。' }], 'stop');
+  }
+  if (user.includes('SYNTHETIC_CHILD_WAIT')) {
+    const signal = init?.signal;
+    if (!signal?.aborted) await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+    return completion(model, [{ role: 'assistant', content: '資料已整理。' }], 'stop');
+  }
+  if (user.includes('SYNTHETIC_DELEGATION_FOLLOWUP')) {
+    assert.match(user, /Completed delegations from this conversation/);
+    assert.match(user, /量測項目已核對/);
+    assert.match(user, /fileIds/);
+    return completion(model, [{ role: 'assistant', content: '已核對交辦結果' }], 'stop');
   }
   if (user.includes('SYNTHETIC_TOOL_LIMIT')) {
     assert.equal(model, gatewayAliases[1]);
@@ -1511,6 +1544,8 @@ try {
         await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
 
         await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures: process.env.OEP_CAPTURE_SLICE4 === '1' });
+        await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
+          fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

@@ -701,3 +701,44 @@ summary { cursor: pointer; }
   #prompt { min-height: 48px; max-height: max(48px, 20dvh); }
   #drop > label, .composer-footer { display: none; }
 }
+@media (max-width: 480px) {
+  .composer-model { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .composer-model select { width: 100%; }
+}
+.delegation-card {
+  display: grid;
+  gap: .55rem;
+  border: 1px solid var(--line);
+  border-radius: .65rem;
+  padding: .75rem;
+  margin-block: .7rem .2rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.delegation-card p,
+.delegation-transcript p { margin: 0; }
+.delegation-header,
+.delegation-actions,
+.delegation-files li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem .65rem;
+}
+.delegation-status { font-weight: 600; }
+.delegation-unread {
+  font-size: .85em;
+  border: 1px solid currentColor;
+  border-radius: 1rem;
+  padding-inline: .45rem;
+}
+.delegation-files,
+.delegation-timeline {
+  margin-block: .4rem;
+  padding-inline-start: 1.25rem;
+  overflow-wrap: anywhere;
+}
+.delegation-files li + li,
+.delegation-timeline li + li { margin-block-start: .4rem; }
+.delegation-timeline time { margin-inline-end: .55rem; }
+.delegation-transcript { margin-block: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; }

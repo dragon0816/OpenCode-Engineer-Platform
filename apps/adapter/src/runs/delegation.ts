@@ -19,11 +19,13 @@ export class DelegationService {
   readonly handoff: DelegationHandoff;
   readonly ledger: WebStore['delegations'];
   private readonly dispatcher: Dispatcher;
+  private readonly notify: (sessionID: string) => void;
   private readonly stopped = new Map<string, AbortController>();
 
-  constructor(central: WebStore, webRoot: string, dispatcher: Dispatcher) {
+  constructor(central: WebStore, webRoot: string, dispatcher: Dispatcher, notify: (sessionID: string) => void = () => {}) {
     this.ledger = central.delegations;
     this.dispatcher = dispatcher;
+    this.notify = notify;
     this.handoff = new DelegationHandoff(webRoot);
     this.handoff.clean((id) => this.ledger.hasFiles(id));
   }
@@ -58,11 +60,13 @@ export class DelegationService {
       finish: (item, result) => {
         let verified: ReturnType<typeof landed>;
         try { verified = landed(item); }
-        catch { return this.ledger.finish(item, 'indeterminate', 'export-verification-unavailable'); }
+        catch { return this.changed(item.sourceKey, this.ledger.finish(item, 'indeterminate', 'export-verification-unavailable')); }
         const state = verified ? 'succeeded' : result.state === 'succeeded' ? 'indeterminate' : result.state;
-        return this.ledger.finish(item, state, result.reason ?? (state === 'indeterminate' ? 'child-receipt-unavailable' : undefined), verified);
+        return this.changed(item.sourceKey,
+          this.ledger.finish(item, state, result.reason ?? (state === 'indeterminate' ? 'child-receipt-unavailable' : undefined), verified));
       },
       expireInTransaction: (item) => this.ledger.expire(item),
+      expired: (item) => this.changed(item.sourceKey, true),
       recover: async (item) => {
         if (landed(item)) return { state: 'succeeded' };
         const row = this.ledger.get(item.sourceKey);
@@ -81,13 +85,14 @@ export class DelegationService {
         const row = this.ledger.get(item.sourceKey);
         return row?.targetAgentId === 'bi' || chat.canResolveTurn(item, outcome);
       },
-      resolve: (item, outcome) => this.ledger.resolve(item, outcome, landed(item)),
+      resolve: (item, outcome) => this.changed(item.sourceKey, this.ledger.resolve(item, outcome, landed(item))),
       resolved: (item, outcome) => chat.resolveTurn(item, outcome),
     });
     const execute = async (item: WorkLease, stop: AbortSignal): Promise<{ state: WorkOutcome; reason?: string }> => {
       const id = item.sourceKey;
       const row = this.ledger.get(id)!;
       this.ledger.claim(item);
+      this.changed(id, true);
       const stopped = new AbortController();
       this.stopped.set(id, stopped);
       const limitMs = Math.min(row.reservedMs, store.turnLimits().timeoutSeconds * 1000);
@@ -189,12 +194,21 @@ export class DelegationService {
   async cancel(id: string) {
     const row = this.ledger.cancel(id);
     if (!row) return;
+    this.changed(id, true);
     const active = this.stopped.get(id);
     if (active) {
       active.abort();
       await this.dispatcher.wait(row.workId);
     }
     return this.ledger.inspect(id);
+  }
+
+  private changed(id: string, committed: boolean) {
+    if (committed) {
+      const row = this.ledger.get(id);
+      if (row?.parentStore === 'web') this.notify(row.parentSessionId);
+    }
+    return committed;
   }
 
   exportFile(id: string, fileId: string) {
@@ -248,8 +262,10 @@ export class DelegationService {
       try {
         const manifest = this.handoff.stage(id, files);
         signal.throwIfAborted();
-        return this.ledger.atomic(() => this.ledger.replay(parent, args.requestKey, hash) ??
+        const receipt = this.ledger.atomic(() => this.ledger.replay(parent, args.requestKey, hash) ??
           this.ledger.admit(id, randomUUID(), parent, args, hash, manifest));
+        this.changed(receipt.delegationId, true);
+        return receipt;
       } finally {
         if (files.length && !this.ledger.hasFiles(id)) this.handoff.discard(id);
         this.dispatcher.kick();

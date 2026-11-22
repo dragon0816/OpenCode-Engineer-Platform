@@ -81,6 +81,7 @@ function showComparison(parent, { previous, candidate }) {
 export function bindReview(anchor, onPublish, openPreview) {
   const endpoint = '/api/knowledge/reviews';
   const refreshers = [];
+  let openBiReview;
   const queueStatus = document.getElementById('review-status');
   for (const kind of ['bi', 'wiki']) {
     const panel = element('details');
@@ -331,6 +332,12 @@ export function bindReview(anchor, onPublish, openPreview) {
       }
     }
     refreshers.push(refresh);
+    if (kind === 'bi') openBiReview = async (id, opener, signal) => {
+      await refresh();
+      if (signal.aborted) return;
+      if (!reviewRows.has(id)) throw new LocalizedError(message('review.could-not-open-this-review-item-refresh'));
+      openReview(id, opener, message('review.submitted-draft'));
+    };
 
     button(schemaOptions, message('review.install-schema-and-create-a-draft-template'), async () => {
       const names = fields ? fields.value.split(',').map((value) => value.trim()).filter(Boolean) : [];
@@ -475,5 +482,5 @@ export function bindReview(anchor, onPublish, openPreview) {
     } catch { setText(queueStatus, message('review.could-not-load-the-review-list-refresh')); }
   }
   document.getElementById('review-refresh').addEventListener('click', () => void refreshQueue());
-  return refreshQueue;
+  return { refreshReviews: refreshQueue, openBiReview };
 }

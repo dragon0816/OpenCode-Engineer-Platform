@@ -51,6 +51,7 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
+  ['/delegations.js', ['src/delegations.js', 'text/javascript; charset=utf-8']],
   ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
@@ -119,17 +120,18 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
   const dispatcher = new Dispatcher(store.workItems);
+  const sessions = new Map(store.sessions().map((session) => [session.id, session]));
+  const upstreamIDs = new Map([...sessions.values()].filter((session) => store.sessionOwner(session)?.origin === 'web')
+    .map((session) => [session.upstreamID, session.id]));
+  const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const delegations = (() => {
-    try { return new DelegationService(store, root, dispatcher); }
-    catch (error) { store.close(); throw error; }
+    try { return new DelegationService(store, root, dispatcher, (id) => events.notify(id, 'delegation')); }
+    catch (error) { void events.close(); store.close(); throw error; }
   })();
   const telegram = (() => {
     try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations); }
-    catch (error) { store.close(); throw error; }
+    catch (error) { void events.close(); store.close(); throw error; }
   })();
-  const sessions = new Map(store.sessions().map((session) => [session.id, session]));
-  const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
-  const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher, delegations);
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const management = agentManagement(root, store, runtime, telegram);
@@ -218,20 +220,37 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, { values: store.delegations.budgets(), fields });
       return;
     }
-    const delegation = /^\/api\/delegations\/([a-f\d-]{36})(?:\/(cancel|files\/([a-f\d-]{36})))?$/.exec(path);
+    const delegation = /^\/api\/delegations\/([a-f\d-]{36})(?:\/(cancel|files\/([a-f\d-]{36})(\/preview)?))?$/.exec(path);
     if (delegation) {
-      const [, id, action, fileId] = delegation;
+      const [, id, action, fileId, preview] = delegation;
       if (method === 'GET' && fileId) {
         let file;
         try { file = delegations.exportFile(id, fileId); }
         catch { throw new HttpError(409, 'delegation-export-changed'); }
         if (!file) throw new HttpError(404, 'delegation-not-found');
-        response.writeHead(200, { 'Content-Type': file.mime, 'Content-Length': file.data.length,
-          'Content-Disposition': `attachment; filename="${file.name}"`, 'X-OEP-SHA256': file.sha256 }).end(file.data);
-      } else if (method === 'GET' && !action || method === 'POST' && action === 'cancel') {
-        const detail = action ? await delegations.cancel(id) : store.delegations.inspect(id);
+        if (preview) response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8',
+          'X-OEP-SHA256': file.sha256 }).end(file.data);
+        else sendDownload(response, file, file.mime);
+      } else if (method === 'POST' && action === 'cancel') {
+        const detail = await delegations.cancel(id);
         if (!detail) throw new HttpError(404, 'delegation-not-found');
         send(response, 200, detail);
+      } else if (method === 'GET' && !action) {
+        const detail = store.delegations.inspect(id);
+        if (!detail) throw new HttpError(404, 'delegation-not-found');
+        const row = store.delegations.get(id)!;
+        const [child] = row.childSessionId ? store.sessions(false, row.childSessionId) : [];
+        const owner = child && store.sessionOwner(child);
+        const run = child && row.childRunId && owner?.origin === 'delegation' && owner.agentID === row.targetAgentId
+          ? store.turn(child.id, row.childRunId)?.run : undefined;
+        const state = run && row.targetAgentId !== 'bi' ? await chat.state(child, true) : undefined;
+        const intake = run && row.targetAgentId === 'bi' ? telegram.delegationBi.delegationSource(id, run.id) : undefined;
+        const task = run && row.targetAgentId === 'bi' ? store.workItems.get(row.workId)?.payload.task : undefined;
+        send(response, 200, { ...detail, run: run && {
+          timeline: store.timeline(run.id), model: run.alias, messages: state?.messages?.filter((item) => item.runId === run.id),
+          messagesUnavailable: Boolean(state?.stateErrorDetail), intake,
+          task: typeof task === 'string' ? runtime.redact(task) : undefined,
+        } });
       } else throw new HttpError(405, 'method-not-allowed');
       return;
     }
@@ -573,7 +592,14 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
             const id = typeof input.id === 'string' ? input.id : '';
             await telegram.runBi(id, input.action === 'stage' ? input.draft as Candidate : undefined);
             send(response, 200, { id });
-          } else send(response, 200, reviewAction(reviewStore, input));
+          } else {
+            const result = reviewAction(reviewStore, input);
+            if (input.action === 'publish' && typeof input.id === 'string') {
+              const parent = store.delegations.publicationParent(input.id);
+              if (parent?.parentStore === 'web') events.notify(parent.parentSessionId, 'delegation');
+            }
+            send(response, 200, result);
+          }
         }
         catch { throw new HttpError(422, 'review-failed'); }
       }
@@ -866,8 +892,23 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       return;
     }
     if (method === 'GET' && resource === 'action-decisions') send(response, 200, store.actionDecisions(id));
-    else if (method === 'GET' && resource === 'state') send(response, 200, { ...await chat.state(session), activity: events.cards(id) });
+    else if (method === 'GET' && resource === 'state') {
+      const state = await chat.state(session);
+      const cards = agentID === 'main' ? store.delegations.cards(id) : [];
+      const delegations = cards.map((card) => {
+        const review = 'reviewRef' in card && card.reviewRef?.reviewId;
+        return { ...card, specialistName: runtime.redact(card.specialistName),
+          published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
+      });
+      send(response, 200, { ...state, activity: events.cards(id), delegations });
+    }
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
+    else if (method === 'POST' && resource === 'delegation-seen') {
+      const { id: delegationId } = await body(request);
+      if (typeof delegationId !== 'string' || !uuid.test(delegationId)) throw new HttpError(404, 'delegation-not-found');
+      if (store.delegations.markSeen(id, delegationId)) events.notify(id, 'delegation');
+      send(response, 200, {});
+    }
     else if (method === 'POST' && resource === 'attachments') {
       const attachment = await upload(request, chat, session);
       events.notify(session.id);

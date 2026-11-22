@@ -340,10 +340,11 @@ const schema = this.reviewSchema(input.vault.id, base);
     const existing = this.db.prepare('SELECT original FROM reviews WHERE id=?').get(key(id));
     if (existing) {
       if (existing.original !== original) throw new Error('Review key already exists with different input');
-      if (this.ownsBi && provenance.origin === 'telegram') {
-        const recorded = this.db.prepare('SELECT source_key,delivery_destination FROM review_provenance WHERE review_id=?').get(id);
+      if (this.ownsBi && (provenance.origin === 'telegram' || provenance.runId)) {
+        const recorded = this.db.prepare('SELECT origin,source_key,run_id,delivery_destination FROM review_provenance WHERE review_id=?').get(id);
         const expected = reviewProvenanceRow(id, provenance);
-        if (recorded?.source_key !== expected[3] || recorded?.delivery_destination !== expected[5]) {
+        if (recorded?.origin !== expected[2] || recorded?.source_key !== expected[3] ||
+            recorded?.run_id !== expected[4] || recorded?.delivery_destination !== expected[5]) {
           throw new Error('Review key belongs to another source');
         }
       }
@@ -392,8 +393,10 @@ const schema = this.reviewSchema(input.vault.id, base);
       if (!row) throw new Error('Job lease is no longer active');
       const saved = this.ownsBi ? this.db.prepare('SELECT origin FROM bi_job_ownership WHERE job_id=?').get(id)?.origin : 'legacy';
       if (typeof saved !== 'string') throw new Error('BI job ownership is missing');
+      const delegated = saved === 'owner' && source?.origin === 'owner' && source.runId &&
+        source.sourceKey === id && id === 'delegation-' + source.runId;
       const provenance = saved === 'telegram' ? source ?? recoverBiTelegramSource(this.path, id) :
-        { origin: saved as BiProvenance['origin'] };
+        delegated ? source : { origin: saved as BiProvenance['origin'] };
       if (!provenance || (saved === 'telegram' && (provenance.origin !== 'telegram' || provenance.sourceKey !== id))) {
         throw new Error('BI job source is unavailable');
       }
@@ -464,10 +467,18 @@ const schema = this.reviewSchema(input.vault.id, base);
     return {
       jobs: this.db.prepare('SELECT id,expires,completed FROM ingest_jobs ORDER BY id').all(),
       effects: this.db.prepare('SELECT * FROM ingest_effects ORDER BY job').all(),
-      intents: this.db.prepare(this.ownsBi ? `SELECT n.*,p.delivery_destination AS destination,p.source_key AS sourceKey
-        FROM notification_intents n LEFT JOIN review_provenance p ON p.review_id=n.review ORDER BY n.review` :
-        'SELECT * FROM notification_intents ORDER BY review').all(),
+      intents: this.publicationIntents(),
     };
+  }
+
+  publicationIntents() {
+    return this.db.prepare(this.ownsBi ? `SELECT n.*,p.delivery_destination AS destination,p.source_key AS sourceKey,p.origin
+      FROM notification_intents n LEFT JOIN review_provenance p ON p.review_id=n.review ORDER BY n.review` :
+      'SELECT * FROM notification_intents ORDER BY review').all();
+  }
+
+  publicationNotice(reviewId: string) {
+    return this.db.prepare('SELECT review FROM notification_intents WHERE review=?').get(reviewId) !== undefined;
   }
 
   private review(id: string) {

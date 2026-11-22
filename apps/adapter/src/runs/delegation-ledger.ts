@@ -141,6 +141,64 @@ export class DelegationLedger {
       childSessionId: row.childSessionId, childRunId: row.childRunId };
   }
 
+  cards(sessionId: string) {
+    const rows = this.db.prepare(`SELECT ${columns},a.name AS specialistName,
+      EXISTS (SELECT 1 FROM delegation_notices n WHERE n.delegation_id=d.id AND n.seen_at IS NULL
+        AND n.kind IN ('completion','correction')) AS unread,
+      EXISTS (SELECT 1 FROM delegation_events e WHERE e.delegation_id=d.id
+        AND e.reason_code IN ('completed-during-cancellation','outcome-already-recorded')
+        AND d.status IN ('succeeded','needs_input')) AS completedDuringCancellation
+      FROM delegations d JOIN agents a ON a.id=d.target_agent_id
+      WHERE d.parent_store='web' AND d.parent_session_id=? ORDER BY d.created_at,d.rowid`)
+      .all(sessionId) as (Row & { specialistName: string; unread: number; completedDuringCancellation: number })[];
+    return rows.map((row) => ({ ...this.receipt(row), parentRunId: row.parentRunId, targetAgentId: row.targetAgentId,
+      specialistName: row.specialistName, unread: Boolean(row.unread),
+      completedDuringCancellation: Boolean(row.completedDuringCancellation) }));
+  }
+
+  markSeen(sessionId: string, id: string) {
+    return Boolean(this.db.prepare(`UPDATE delegation_notices SET seen_at=?
+      WHERE delegation_id=? AND kind IN ('completion','correction') AND seen_at IS NULL AND EXISTS (
+        SELECT 1 FROM delegations WHERE id=? AND parent_store='web' AND parent_session_id=?)`)
+      .run(Date.now(), id, id, sessionId).changes);
+  }
+
+  channelNotices() {
+    return this.db.prepare(`SELECT ${columns},a.name AS specialistName,n.kind,n.effect_key AS effectKey,
+      EXISTS(SELECT 1 FROM delegation_notices c WHERE c.delegation_id=d.id AND c.kind='correction') AS corrected
+      FROM delegation_notices n JOIN delegations d ON n.delegation_id=d.id JOIN agents a ON a.id=d.target_agent_id
+      WHERE d.parent_store='channel' AND n.state='pending' ORDER BY n.rowid`).all() as
+      (Row & { specialistName: string; kind: 'acceptance' | 'completion' | 'correction'; effectKey: string; corrected: number })[];
+  }
+
+  markOutboxed(effectKey: string) {
+    this.db.prepare("UPDATE delegation_notices SET state='outboxed' WHERE effect_key=? AND state='pending'").run(effectKey);
+  }
+
+  publicationParent(reviewId: string) {
+    if (!reviewId.startsWith('delegation-')) return;
+    const row = this.db.prepare(`SELECT ${columns} FROM delegations d WHERE child_run_id=? AND target_agent_id='bi'
+      AND status='succeeded' AND json_extract(result,'$.reviewRef.reviewId')=?`)
+      .get(reviewId.slice('delegation-'.length), reviewId) as Row | undefined;
+    if (!row) return;
+    const completionOutboxed = Boolean(this.db.prepare(`SELECT 1 FROM delegation_notices
+      WHERE delegation_id=? AND kind IN ('completion','correction') AND state='outboxed'
+      AND NOT EXISTS(SELECT 1 FROM delegation_notices WHERE delegation_id=? AND state='pending')`).get(row.id, row.id));
+    return { ...row, completionOutboxed };
+  }
+
+  context(parent: DelegationParent, before: number) {
+    const rows = this.db.prepare(`SELECT d.id,d.status,d.result,a.name FROM delegations d
+      JOIN agents a ON a.id=d.target_agent_id
+      WHERE d.parent_store=? AND d.parent_session_id=? AND d.parent_run_id<>? AND d.finished_at<=?
+      ORDER BY d.finished_at DESC,d.rowid DESC LIMIT 6`).all(parent.store, parent.sessionId, parent.runId, before);
+    return rows.map(({ id, status, result, name }) => {
+      const { summary, files, reviewRef } = JSON.parse(String(result)) as DelegationResult;
+      return { delegationId: id, specialist: name, status, summary: summary?.slice(0, 500).toWellFormed(),
+        fileIds: files?.map((file) => file.fileId), reviewId: reviewRef?.reviewId };
+    });
+  }
+
   claim(item: WorkLease) {
     this.atomic(() => {
       const { sourceKey: id } = item;
@@ -301,6 +359,8 @@ export class DelegationLedger {
     this.addKey(parent, input.requestKey, id);
     this.addFiles(id, 'inbound', files);
     this.event(id, 'queued', 'accepted');
+    if (parent.channel) this.db.prepare(`INSERT INTO delegation_notices (delegation_id,kind,state,effect_key,created_at)
+      VALUES (?,'acceptance','pending',?,?)`).run(id, `delegation:${id}:acceptance`, now);
     return this.receipt(this.get(id)!);
   }
 

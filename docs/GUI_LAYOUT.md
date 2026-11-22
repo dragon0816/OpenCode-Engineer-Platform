@@ -130,11 +130,16 @@
 | 建置／單筆審核／進階 | 附加資料／審核項目／進階 | 審核代號、前一版本及發布版本、草稿 JSON、儲存修訂、非待審稿唯讀 | <!-- ui:feature-review-editor -->
 | 建置／單筆審核／決定 | 附加資料／審核項目 | 核准、拒絕、文章捨棄草稿、另一步發布、更多中的回復前一版本與重新啟用、操作狀態 | <!-- ui:feature-review-actions -->
 | 來源抽屜／關閉 | 附加資料／分頁及區域 | 分頁關閉、關閉附加資料、窄版返回頁面、Esc、方向鍵切換及焦點還原 | <!-- ui:feature-preview-close -->
+| 交辦結果 | 對話／主助理訊息下方 | 專職名稱、狀態、未讀、摘要、標為已讀、查看執行紀錄、匯出檔案預覽及下載 | <!-- ui:delegation-card -->
+| 交辦取消 | 對話／交辦結果卡 | 取消交辦、確認與取消後狀態 | <!-- ui:delegation-cancel -->
+| 交辦執行 | 附加資料／執行紀錄 | 執行與效果時間線、模型、工具活動、交辦對話及匯出檔案 | <!-- ui:delegation-run -->
+| BI 交辦 | 對話／交辦結果卡及附加資料／執行紀錄 | 已送審、查看審核、下載收件來源、發布通知 | <!-- ui:delegation-bi -->
 
 ## 附加資料
 
 - 點選對話中的檔案，或選取工作台選單中的「檔案」、「工作」、「變更對照」、「筆記」，即可開啟分頁。訊息操作另提供「查看會話筆記」。
 - 每個分頁可以關閉。關閉最後一頁會釋放右側空間，中央內容會展開。切換會話、切到另一個主頁面或重新載入時，會清除當前開啟的分頁。
+- 「查看執行紀錄」會開啟專職助理的唯讀紀錄，並保留中央的主助理對話。開啟終態紀錄或「標為已讀」會清除未讀標記。BI 審核與匯出檔案可從結果卡或執行紀錄開啟。
 - Markdown、HTML、XLSX／CSV、PNG／JPEG、文字及變更對照沿用既有的預覽。檔案可下載原始內容。適用時可另開既有預覽網址，HTML 會以純文字開啟，XLSX 會開啟轉出的表格文字。PDF 提供檔案資料與下載。
 - 900 px 以下，附加資料覆蓋整個視窗，底下的功能欄與中央內容暫停接收輸入。「返回對話」或「返回頁面」會關閉覆蓋畫面並還原焦點。
 - Tab 可到達功能欄、分頁及關閉按鈕。方向鍵與 Home／End 選擇分頁，Delete 關閉目前分頁，Esc 關閉整區並將焦點交還開啟控制項。
@@ -147,6 +152,8 @@
 |---|---|---|---|---|
 | 對話 | [PNG](validation/gui/conversation-light-wide.png) | [PNG](validation/gui/conversation-dark-wide.png) | [PNG](validation/gui/conversation-light-narrow.png) | [PNG](validation/gui/conversation-dark-narrow.png) |
 | 對話與 Excel 檔案 | [PNG](validation/gui/conversation-artifact-light-wide.png) | [PNG](validation/gui/conversation-artifact-dark-wide.png) | [PNG](validation/gui/conversation-artifact-light-narrow.png) | [PNG](validation/gui/conversation-artifact-dark-narrow.png) |
+| 交辦結果卡 | [PNG](validation/gui/slice6-cards-zh-TW-wide-light.png) | [PNG](validation/gui/slice6-cards-zh-TW-wide-dark.png) | [PNG](validation/gui/slice6-cards-zh-TW-narrow-light.png) | [PNG](validation/gui/slice6-cards-zh-TW-narrow-dark.png) |
+| 交辦執行紀錄 | [PNG](validation/gui/slice6-run-zh-TW-wide-light.png) | [PNG](validation/gui/slice6-run-zh-TW-wide-dark.png) | [PNG](validation/gui/slice6-run-zh-TW-narrow-light.png) | [PNG](validation/gui/slice6-run-zh-TW-narrow-dark.png) |
 | 設定／助理 | [PNG](validation/gui/settings-assistant-light-wide.png) | [PNG](validation/gui/settings-assistant-dark-wide.png) | [PNG](validation/gui/settings-assistant-light-narrow.png) | [PNG](validation/gui/settings-assistant-dark-narrow.png) |
 | 設定／外觀 | [PNG](validation/gui/settings-appearance-light-wide.png) | [PNG](validation/gui/settings-appearance-dark-wide.png) | [PNG](validation/gui/settings-appearance-light-narrow.png) | [PNG](validation/gui/settings-appearance-dark-narrow.png) |
 | 設定／模型 | [PNG](validation/gui/settings-model-light-wide.png) | [PNG](validation/gui/settings-model-dark-wide.png) | [PNG](validation/gui/settings-model-light-narrow.png) | [PNG](validation/gui/settings-model-dark-narrow.png) |
@@ -173,8 +180,12 @@
 |---|---|---|---|---|
 | 對話 | [PNG](validation/gui/conversation-light-wide-en.png) | [PNG](validation/gui/conversation-dark-wide-en.png) | [PNG](validation/gui/conversation-light-narrow-en.png) | [PNG](validation/gui/conversation-dark-narrow-en.png) |
 | 對話與 Excel 檔案 | [PNG](validation/gui/conversation-artifact-light-wide-en.png) | [PNG](validation/gui/conversation-artifact-dark-wide-en.png) | [PNG](validation/gui/conversation-artifact-light-narrow-en.png) | [PNG](validation/gui/conversation-artifact-dark-narrow-en.png) |
+| 交辦結果卡 | [PNG](validation/gui/slice6-cards-en-wide-light.png) | [PNG](validation/gui/slice6-cards-en-wide-dark.png) | [PNG](validation/gui/slice6-cards-en-narrow-light.png) | [PNG](validation/gui/slice6-cards-en-narrow-dark.png) |
+| 交辦執行紀錄 | [PNG](validation/gui/slice6-run-en-wide-light.png) | [PNG](validation/gui/slice6-run-en-wide-dark.png) | [PNG](validation/gui/slice6-run-en-narrow-light.png) | [PNG](validation/gui/slice6-run-en-narrow-dark.png) |
 | 設定／外觀 | [PNG](validation/gui/settings-appearance-light-wide-en.png) | [PNG](validation/gui/settings-appearance-dark-wide-en.png) | [PNG](validation/gui/settings-appearance-light-narrow-en.png) | [PNG](validation/gui/settings-appearance-dark-narrow-en.png) |
 | 設定／模型 | [PNG](validation/gui/settings-model-light-wide-en.png) | [PNG](validation/gui/settings-model-dark-wide-en.png) | [PNG](validation/gui/settings-model-light-narrow-en.png) | [PNG](validation/gui/settings-model-dark-narrow-en.png) |
 | 知識庫 | [PNG](validation/gui/slice3a-overview-light-wide-en.png) | [PNG](validation/gui/slice3a-overview-dark-wide-en.png) | [PNG](validation/gui/slice3a-overview-light-narrow-en.png) | [PNG](validation/gui/slice3a-overview-dark-narrow-en.png) |
 | 排程與工作 | [PNG](validation/gui/jobs-list-light-wide-en.png) | [PNG](validation/gui/jobs-list-dark-wide-en.png) | [PNG](validation/gui/jobs-list-light-narrow-en.png) | [PNG](validation/gui/jobs-list-dark-narrow-en.png) |
 | 審核 | [PNG](validation/gui/review-list-light-wide-en.png) | [PNG](validation/gui/review-list-dark-wide-en.png) | [PNG](validation/gui/review-list-light-narrow-en.png) | [PNG](validation/gui/review-list-dark-narrow-en.png) |
+
+窄版執行中的交辦卡片：[繁中淺色](validation/gui/slice6-running-zh-TW-narrow-light.png)、[繁中深色](validation/gui/slice6-running-zh-TW-narrow-dark.png)、[英文淺色](validation/gui/slice6-running-en-narrow-light.png)、[英文深色](validation/gui/slice6-running-en-narrow-dark.png)。
