@@ -252,15 +252,15 @@ export class ChatService {
 
   private async childMessages(sessionID: string) {
     const options = call();
-    const list = (cursor?: string) => this.runtime.client.message.list({ sessionID, order: 'desc', limit: 100, cursor }, options);
-    const first = await list();
+    const client = this.runtime.client.message;
+    const first = await client.list({ sessionID, order: 'desc', limit: 100 }, options);
     const data = first.data;
     const seen = new Set<string>();
     let cursor = first.cursor?.next;
     while (cursor) {
       if (seen.has(cursor)) throw new Error('Repeated child transcript cursor');
       seen.add(cursor);
-      const page = await list(cursor);
+      const page = await client.list({ sessionID, limit: 100, cursor }, options);
       data.push(...page.data);
       cursor = page.cursor?.next;
     }
