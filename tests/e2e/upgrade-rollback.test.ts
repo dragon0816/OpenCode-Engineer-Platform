@@ -72,12 +72,9 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
         INSERT INTO ingest_jobs(id,payload) VALUES ('job','{}');`);
     }
     const webDatabase = join(web, 'web.sqlite');
-    new WebStore(webDatabase).close();
     {
       using db = new DatabaseSync(webDatabase);
-      db.exec(`INSERT INTO runs VALUES ('run','accepted','{}');
-        INSERT INTO run_events(run_id,at,state,record) VALUES ('run',1,'accepted','{}');
-        INSERT INTO web_sessions VALUES ('session','upstream','inspector','synthetic',1);`);
+      db.exec(readFileSync(new URL('../fixtures/upgrade/web-before-model-selection.sql', import.meta.url), 'utf8'));
     }
     const telegram = join(web, 'telegram.sqlite');
     const inbox = new TelegramInbox(telegram);
@@ -114,11 +111,16 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     writeFileSync(v2, zip);
     for (let cycle = 0; cycle < 2; cycle++) {
       let start = performance.now();
-      upgrade();
+      assert.match(upgrade(), /資料比對通過/);
       t.diagnostic('本機升級時間 ' + Math.round(performance.now() - start) + ' ms');
       assert.equal(read(pointer).version, version);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].before.userVersion, 1);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+      const webMigration = read(journalPath).migration['web/web.sqlite'];
+      for (const table of ['web_model_catalog', 'web_model_selection']) {
+        assert.equal(Object.hasOwn(webMigration.before.counts, table), false);
+        assert.equal(webMigration.after.counts[table], 0);
+      }
       const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',
         'const { KnowledgeStore } = await import(process.argv[1]); new KnowledgeStore(process.argv[2]).close();',
