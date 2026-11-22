@@ -1,5 +1,6 @@
 import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src/run.ts';
 import type { Agent } from '../opencode/sessions.ts';
+import { maxSelectedModels } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Ledger } from './ledger.ts';
@@ -14,6 +15,7 @@ export type ProjectID = typeof projects[number]['id'];
 
 export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null; knowledgeDisabled?: number };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
+type ModelCatalog = { ids: string[]; discoveredAt: number };
 
 export class WebStore extends Ledger {
   constructor(file: string) {
@@ -45,6 +47,15 @@ export class WebStore extends Ledger {
     CREATE TABLE IF NOT EXISTS web_model_settings (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       alias TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_model_catalog (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      ids TEXT NOT NULL,
+      discovered_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS web_model_selection (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      ids TEXT NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS web_project_folders (
       project TEXT NOT NULL,
@@ -241,6 +252,49 @@ export class WebStore extends Ledger {
       this.db.prepare('INSERT INTO web_model_settings VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET alias = excluded.alias').run(alias);
       this.auditSettings('model');
     });
+  }
+
+  modelCatalog(): ModelCatalog | undefined {
+    const row = this.db.prepare('SELECT ids, discovered_at FROM web_model_catalog WHERE id = 1').get();
+    if (row) return { ids: JSON.parse(String(row.ids)) as string[], discoveredAt: Number(row.discovered_at) };
+  }
+
+  modelChoices(builtIns: readonly string[]) {
+    return [...new Set([...(this.modelCatalog()?.ids ?? []), ...builtIns])];
+  }
+
+  modelSelection(builtIns: readonly string[], fallback = builtIns[0]) {
+    const row = this.db.prepare('SELECT ids FROM web_model_selection WHERE id = 1').get();
+    const ids = row ? JSON.parse(String(row.ids)) as string[] : [...builtIns];
+    const saved = this.defaultAlias();
+    return { ids, defaultAlias: saved && ids.includes(saved) ? saved : ids.includes(fallback) ? fallback : ids[0] };
+  }
+
+  saveModelSelection(ids: unknown, alias: unknown, builtIns: readonly string[]) {
+    const choices = this.modelChoices(builtIns);
+    if (!Array.isArray(ids) || !ids.length || ids.length > maxSelectedModels || new Set(ids).size !== ids.length ||
+        !ids.every((id) => typeof id === 'string' && choices.includes(id)) || typeof alias !== 'string' || !ids.includes(alias)) return false;
+    this.transaction(() => this.writeModelSelection(ids, alias));
+    return true;
+  }
+
+  saveModelCatalog(catalog: ModelCatalog, builtIns: readonly string[]) {
+    this.transaction(() => {
+      this.db.prepare('INSERT OR REPLACE INTO web_model_catalog VALUES (1, ?, ?)').run(JSON.stringify(catalog.ids), catalog.discoveredAt);
+      const selection = this.modelSelection(builtIns);
+      const choices = new Set([...catalog.ids, ...builtIns]);
+      const remaining = selection.ids.filter((id) => choices.has(id));
+      if (remaining.length === selection.ids.length) return;
+      if (!remaining.length) remaining.push(builtIns[0]);
+      const alias = remaining.includes(selection.defaultAlias) ? selection.defaultAlias : remaining[0];
+      this.writeModelSelection(remaining, alias);
+    });
+  }
+
+  private writeModelSelection(ids: string[], alias: string) {
+    this.db.prepare('INSERT OR REPLACE INTO web_model_selection VALUES (1, ?)').run(JSON.stringify(ids));
+    this.db.prepare('INSERT OR REPLACE INTO web_model_settings VALUES (1, ?)').run(alias);
+    this.auditSettings('model');
   }
 
   saveSessionAlias(id: string, alias: string) {

@@ -12,7 +12,10 @@ import type { TurnBoundary } from './turn-limits.ts';
 
 export const providerID = 'oep-relay';
 export const gatewayAliases = ['gpt-5.4-mini', 'claude-haiku-4-5-20251001'] as const;
+export const maxDiscoveredModels = 256;
+export const maxSelectedModels = 8;
 export type GatewayTrace = ModelCall;
+type GatewayConnection = { url: string; key: string; fetch?: typeof fetch };
 
 export function gatewaySettings() {
   let url = process.env.OEP_LITELLM_BASE_URL;
@@ -58,9 +61,7 @@ function observeCompletion(frames: unknown[]) {
   return observation;
 }
 
-export async function startGateway(options: {
-  url: string; key: string; alias: string; trace: (value: GatewayTrace) => void; fetch?: typeof fetch; web?: boolean; aliases?: readonly string[];
-}) {
+function gatewayEndpoint(options: GatewayConnection, endpoint: string) {
   let configured: URL;
   try { configured = new URL(options.url); }
   catch { throw new Error('Gateway URL is invalid'); }
@@ -68,13 +69,35 @@ export async function startGateway(options: {
       configured.search || configured.hash || !options.key) throw new Error('Gateway configuration is invalid');
   const base = configured.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
   const target = new URL(configured);
-  target.pathname = `${base}/v1/chat/completions`;
-  const key = randomBytes(32).toString('hex');
-  const redact = redactFields([options.key, options.url, configured.origin, configured.host, configured.hostname, key]);
-  const credential = Buffer.from(`Bearer ${key}`);
-  const allowed = options.aliases ?? [options.alias];
-  async function ping(alias: string) {
-    if (!allowed.includes(alias)) return false;
+  target.pathname = `${base}/v1/${endpoint}`;
+  return { target, markers: [options.key, options.url, configured.origin, configured.host, configured.hostname] };
+}
+
+export async function discoverGatewayModels(options: GatewayConnection, signal = AbortSignal.timeout(8_000)) {
+  try {
+    const { target, markers } = gatewayEndpoint(options, 'models');
+    const redact = redactFields(markers);
+    const response = await (options.fetch ?? fetch)(target, {
+      method: 'GET', redirect: 'manual', signal, headers: { authorization: `Bearer ${options.key}` },
+    });
+    if (response.status !== 200) { await response.body?.cancel(); return; }
+    const value = upstreamJson(await boundedUpstreamText(response)) as { object?: unknown; data?: unknown } | null;
+    if (value?.object !== 'list' || !Array.isArray(value.data)) return;
+    const ids = new Set<string>();
+    for (const row of value.data) {
+      if (!row || typeof row.id !== 'string') return;
+      if (/^[a-z\d_][a-z\d_.:/@+~-]{0,159}$/i.test(row.id) && !row.id.includes('://') && redact(row.id) === row.id) {
+        ids.add(row.id);
+      }
+      if (ids.size === maxDiscoveredModels) break;
+    }
+    if (ids.size) return { ids: [...ids], discoveredAt: Date.now() };
+  } catch { /* Return a fixed failure without upstream details or credentials. */ }
+}
+
+export function gatewayPing(options: GatewayConnection) {
+  const { target } = gatewayEndpoint(options, 'chat/completions');
+  return async (alias: string) => {
     try {
       const response = await (options.fetch ?? fetch)(target, {
         method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(8_000),
@@ -86,7 +109,19 @@ export async function startGateway(options: {
       const value = upstreamJson(await boundedUpstreamText(response)) as { choices?: unknown[] } | null;
       return Boolean(value?.choices?.length && observeCompletion([value]).output === 'text');
     } catch { return false; }
-  }
+  };
+}
+
+export async function startGateway(options: GatewayConnection & {
+  alias: string; trace: (value: GatewayTrace) => void; web?: boolean; aliases?: readonly string[];
+}) {
+  const { target, markers } = gatewayEndpoint(options, 'chat/completions');
+  const key = randomBytes(32).toString('hex');
+  const redact = redactFields([...markers, key]);
+  const credential = Buffer.from(`Bearer ${key}`);
+  const allowed = options.aliases ?? [options.alias];
+  const testModel = gatewayPing(options);
+  const ping = async (alias: string) => allowed.includes(alias) && testModel(alias);
   let turn: TurnBoundary | undefined;
   let requests = 0;
   const outages = new Set<AbortController>();
