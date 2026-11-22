@@ -483,7 +483,7 @@ async function openPreview(file, url, context, opener) {
       frame.title = file.name;
       frame.setAttribute('sandbox', '');
       frame.inert = true;
-      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'">${data}`;
+      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark">${data}`;
       body.append(node('p', '預覽只顯示檔案內容。'), frame);
     } else if (extension === 'csv' || extension === 'xlsx') {
       renderSheets(body, readSheets(data, extension === 'xlsx'));

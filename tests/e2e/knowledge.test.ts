@@ -18,6 +18,7 @@ import { goldFixture } from '../fixtures/knowledge/gold.ts';
 import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
 import { assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertContrastInThemes } from './gui-contrast.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
@@ -158,7 +159,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const previewBody = preview + ' .preview-body';
       const panelIsOpen = "!document.querySelector('#chat-files').hidden";
       const closePreview = () => browser.evaluate("document.querySelector('#close-files').click()");
-      const featureText = async (scope: string) => assertUiTextInThemes(browser, scope);
+      const featureText = async (scope: string) => {
+        await assertUiTextInThemes(browser, scope);
+        await assertContrastInThemes(browser, [{ selector: scope }]);
+      };
       const clickLabel = (scope: string, label: string) => browser.evaluate(
         `[...document.querySelector(${JSON.stringify(scope)}).querySelectorAll('button, summary')]
           .find(element => element.textContent.trim() === ${JSON.stringify(label)}).click()`);

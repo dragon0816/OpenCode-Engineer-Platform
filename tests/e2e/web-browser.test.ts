@@ -12,6 +12,7 @@ import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
 import { assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertContrastInThemes } from './gui-contrast.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -202,11 +203,21 @@ try {
           await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
           await assertUiTextInThemes(page, scope);
         };
+        await assertContrastInThemes(page, [
+          { selector: '#connection' }, { selector: '#session-title' }, { selector: '#messages .empty' },
+          { selector: '#prompt' }, { selector: '#prompt', property: 'borderTopColor', against: '#drop' },
+          { selector: '#top-menu-trigger', property: 'borderTopColor', against: '.top' },
+        ]);
         await audit('#top-menu-trigger', '#top-menu');
+        await assertContrastInThemes(page, [{ selector: '#stop' }, { selector: '#toggle-files' }]);
         await audit('#top-menu-trigger');
         await audit('#open-settings', '#settings-view');
         await selectSetting('mcp');
         await audit('#mcp-add', '#mcp-editor');
+        await assertContrastInThemes(page, [
+          { selector: '#mcp-editor-title' }, { selector: '#mcp-editor [name=name]' },
+          { selector: '#mcp-editor [name=name]', property: 'borderTopColor', against: '#mcp-editor' },
+        ]);
         await audit('#mcp-add-credential', '#mcp-editor');
         await audit('#mcp-editor details > summary', '#mcp-editor');
         await audit('#mcp-cancel', '#settings-view');
@@ -579,6 +590,10 @@ try {
           }
           if (section === 'mcp') await page.ready("document.querySelector('#mcp-servers').children.length > 0");
           await assertUiTextInThemes(page, `#settings-${section}`);
+          await assertContrastInThemes(page, [
+            { selector: `#settings-${section} h2` }, { selector: `#settings-${section} .settings-help` },
+            { selector: '#close-settings', property: 'borderTopColor', against: '#settings-view' },
+          ]);
           const disclosures = `#settings-${section} > details.settings-advanced`;
           await page.evaluate(`document.querySelectorAll('${disclosures}').forEach(details => { details.open = true; })`);
           await assertUiTextInThemes(page, `#settings-${section}`);
@@ -934,6 +949,10 @@ try {
         await openPanel('open-diff');
         await page.evaluate("document.querySelector('#panel-diff button').click()");
         await page.ready("document.querySelector('#panel-diff').textContent.includes('1 個儲存格') && document.querySelectorAll('.changed-cell').length === 1");
+        await assertContrastInThemes(page, [
+          { selector: '#tab-diff' }, { selector: '.changed-cell del' }, { selector: '.changed-cell ins' },
+          { selector: '#tab-diff', property: 'borderTopColor', against: '.panel-header' },
+        ]);
         await assertUiTextInThemes(page);
         if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
         await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");

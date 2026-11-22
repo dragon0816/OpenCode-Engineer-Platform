@@ -62,15 +62,19 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
   assertUiText(rendered.advanced, selector, true);
 }
 
-export async function assertUiTextInThemes(page: Page, scope = 'body') {
+export async function inThemes(page: Page, check: (theme: string) => Promise<void>) {
   const original = await page.evaluate<string | null>("document.documentElement.getAttribute('data-theme')");
   try {
     for (const theme of ['light', 'dark']) {
       await page.evaluate('document.documentElement.dataset.theme = ' + JSON.stringify(theme));
-      await assertNoForbiddenShellText(page, scope);
+      await check(theme);
     }
   } finally {
     await page.evaluate("document.documentElement.toggleAttribute('data-theme', " + (original !== null) + "); " +
       (original === null ? '' : 'document.documentElement.dataset.theme = ' + JSON.stringify(original)));
   }
+}
+
+export function assertUiTextInThemes(page: Page, scope = 'body') {
+  return inThemes(page, () => assertNoForbiddenShellText(page, scope));
 }
