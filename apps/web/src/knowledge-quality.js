@@ -1,10 +1,11 @@
-import { modelLabel, request, sampleKnowledgeID } from './api.js';
+import { message, optionText, setText, t } from './i18n.js';
+import { errorText, modelLabel, request, sampleKnowledgeID } from './api.js';
 
 const find = (id) => document.getElementById(id);
-const kinds = { answerable: '可回答', 'no-evidence': '缺乏證據', conflict: '證據衝突', injection: '含注入指令' };
+const kinds = { answerable: message('ui.answerable'), 'no-evidence': message('ui.missing-evidence'), conflict: message('ui.conflicting-evidence'), injection: message('ui.contains-injected-instructions') };
 function node(tag, text) {
   const element = document.createElement(tag);
-  element.textContent = text ?? '';
+  setText(element, text ?? '');
   return element;
 }
 function button(text, work) {
@@ -52,13 +53,13 @@ export function bindKnowledgeQuality(openPassage, messages) {
     for (const question of set.questions) {
       const row = node('li', question.query + ' · ' + kinds[question.class]);
       if (!set.builtIn) {
-        row.append(' ', button('編輯', () => openEditor(question)), ' ', button('刪除', () => {
-          if (confirm('要刪除這道題目嗎？')) void save(set.questions.filter(({ id }) => id !== question.id));
+        row.append(' ', button(message('jobs.edit'), () => openEditor(question)), ' ', button(message('chat.delete'), () => {
+          if (confirm(t('quality.delete-this-question'))) void save(set.questions.filter(({ id }) => id !== question.id));
         }));
       }
       rows.append(row);
     }
-    if (!set.questions.length) rows.append(node('li', '請新增題目。'));
+    if (!set.questions.length) rows.append(node('li', message('quality.add-a-question-to-get-started')));
     openEditor();
   }
 
@@ -83,7 +84,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
   async function refresh(preferred) {
     loading?.abort();
     const active = loading = new AbortController();
-    status.textContent = selected ? '正在讀取題集。' : '請先在建置中匯入知識庫。';
+    setText(status, selected ? message('quality.loading-question-sets') : message('quality.use-build-to-import-a-knowledge-base'));
     catalog = [];
     render();
     if (!selected) return;
@@ -91,13 +92,13 @@ export function bindKnowledgeQuality(openPassage, messages) {
       const data = await setRequest({}, active.signal);
       if (active.signal.aborted) return;
       catalog = data.sets;
-      sets.replaceChildren(...catalog.map(({ name, builtIn }) => new Option(builtIn ? '標準題集' : name, name)));
+      sets.replaceChildren(...catalog.map(({ name, builtIn }) => optionText(builtIn ? message('quality.standard-question-set') : name, name)));
       if (catalog.some(({ name }) => name === preferred)) sets.value = preferred;
-      aliases.replaceChildren(...data.aliases.map((alias) => new Option(modelLabel(alias), alias)));
-      status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
+      aliases.replaceChildren(...data.aliases.map((alias) => optionText(modelLabel(alias), alias)));
+      setText(status, selected.modelEnabled ? '' : message('quality.model-access-is-disabled-for-this-release'));
       render();
     } catch {
-      if (!active.signal.aborted) status.textContent = '無法讀取題集。請重新選擇知識庫。';
+      if (!active.signal.aborted) setText(status, message('quality.could-not-load-question-sets-select-the'));
     }
   }
 
@@ -112,7 +113,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       else preferredSets.set(vault.id, name);
       if (selected?.id === vault.id) await refresh(preferredSets.get(vault.id));
     } catch (error) {
-      if (selected === vault) status.textContent = error.message;
+      if (selected === vault) setText(status, errorText(error));
     } finally {
       saving = false;
       actions.inert = false;
@@ -125,13 +126,13 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const form = event.currentTarget;
     const name = form.elements.name.value.trim();
     if (!name) return;
-    if (catalog.some((set) => set.name === name)) status.textContent = '已有同名題集。請使用其他名稱。';
+    if (catalog.some((set) => set.name === name)) setText(status, message('quality.a-question-set-already-uses-that-name'));
     else {
       form.reset();
       void save([], name);
     }
   };
-  find('quality-remove-set').onclick = () => { if (confirm('要刪除此題集嗎？')) void save(null); };
+  find('quality-remove-set').onclick = () => { if (confirm(t('quality.delete-this-question-set'))) void save(null); };
   find('quality-export').onclick = () => {
     json.value = JSON.stringify(current()?.questions ?? [], null, 2);
     const url = URL.createObjectURL(new Blob([json.value], { type: 'application/json' }));
@@ -147,18 +148,18 @@ export function bindKnowledgeQuality(openPassage, messages) {
     input.value = '';
     if (!file) return;
     if (file.size > 120 * 1024) {
-      status.textContent = '題集檔案太大。請選擇較小的檔案。';
+      setText(status, message('quality.this-question-set-file-is-too-large'));
       return;
     }
     const set = current();
     try {
       const text = await file.text();
       if (current() === set) json.value = text;
-    } catch { status.textContent = '無法讀取題集檔案。請重新選擇。'; }
+    } catch { setText(status, message('quality.could-not-read-the-question-set-file')); }
   };
   find('quality-import').onclick = () => {
     try { void save(JSON.parse(json.value)); }
-    catch { status.textContent = '無法匯入題集。請在進階區檢查檔案格式。'; }
+    catch { setText(status, message('quality.could-not-import-the-question-set-check')); }
   };
 
   find('quality-find').onclick = async () => {
@@ -171,16 +172,16 @@ export function bindKnowledgeQuality(openPassage, messages) {
       const data = await request('/api/knowledge/browse', { data: { vault: vault.id, query } });
       if (selected !== vault || current() !== set || editing !== id) return;
       matches.replaceChildren();
-      if (!data.passages.length) matches.append(node('p', '找不到段落。'));
+      if (!data.passages.length) matches.append(node('p', message('quality.no-passages-found')));
       for (const passage of data.passages) {
         const row = node('li');
-        row.append(button('選取證據', () => {
+        row.append(button(message('quality.select-evidence'), () => {
           if (!picked.includes(passage.id) && picked.length < 10) picked.push(passage.id);
           renderEvidence();
         }), ' ', button(passage.source + ' · ' + passage.locator, (event) => openPassage(passage, '', event.currentTarget)), node('p', passage.text.slice(0, 200)));
         matches.append(row);
       }
-    } catch { status.textContent = '無法搜尋段落。請再試一次。'; }
+    } catch { setText(status, message('quality.could-not-search-passages-try-again')); }
   };
 
   find('quality-new-question').onclick = () => { openEditor(); editor.elements.query.focus(); };
@@ -191,7 +192,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const question = { id: editing ?? crypto.randomUUID(), query: editor.elements.query.value,
       answer: editor.elements.answer.value || null, class: editor.elements.kind.value, evidence: picked };
     if (question.class === 'answerable' && (!question.answer?.trim() || !question.evidence.length)) {
-      status.textContent = '可回答題目需要預期答案與證據。';
+      setText(status, message('quality.answerable-questions-require-an-expected-answer-and'));
       return;
     }
     void save(editing ? set.questions.map((row) => row.id === editing ? question : row) : [...set.questions, question]);
@@ -214,26 +215,26 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const thresholds = node('details');
     thresholds.hidden = true;
     const metrics = node('p');
-    thresholds.append(node('summary', '進階評分'), metrics);
+    thresholds.append(node('summary', message('quality.advanced-scoring')), metrics);
     const table = node('table');
     const header = table.createTHead().insertRow();
-    for (const text of ['題目', '狀態', '可用', '引用重現', '耗時']) header.append(node('th', text));
+    for (const text of [message('ui.questions'), message('quality.status'), message('chat.available'), message('quality.citations-reproduced'), message('quality.duration')]) header.append(node('th', text));
     const body = table.createTBody();
     results.replaceChildren(title, table, thresholds);
     const pending = questions.map((question) => ({ question, row: body.insertRow() }));
     for (const { question, row } of pending) {
-      row.insertCell().textContent = question.query;
-      row.insertCell().textContent = '待執行';
+      setText(row.insertCell(), question.query);
+      setText(row.insertCell(), message('quality.queued-to-run'));
     }
     const totals = { recall: 0, done: 0, usable: 0, refused: 0, citations: 0, reproduced: 0, unsupported: 0, errors: 0 };
     let index = 0;
     const answerable = questions.filter((question) => question.class === 'answerable').length;
     const unanswerable = questions.length - answerable;
-    title.textContent = `執行中 · 0／${questions.length}`;
+    setText(title, message('quality.running-done-total', { done: 0, total: questions.length }));
     async function worker() {
       while (!active.signal.aborted && index < pending.length) {
         const { question, row } = pending[index++];
-        row.cells[1].textContent = '執行中';
+        setText(row.cells[1], message('chat.running'));
         try {
           const report = await request('/api/knowledge/benchmark-question', {
             data: { vault, revision, alias, name, id: question.id }, signal: active.signal,
@@ -248,24 +249,24 @@ export function bindKnowledgeQuality(openPassage, messages) {
           totals.citations += citations;
           totals.reproduced += reproducible;
           const details = node('details');
-          details.append(node('summary', result.state === 'verified' ? '已回答' : result.state === 'abstain' ? '已拒答' : '失敗'));
-          details.append(node('p', usable || abstained ? '符合預期。' :
-            result.state === 'verified' ? '答案或引用與預期不符。' : '未取得預期答案。'));
-          if (result.reason) details.append(node('p', messages[result.reason] ?? '本次詢問無法完成。'));
-          if (question.answer) details.append(node('p', '預期：' + question.answer));
-          if (result.answer) details.append(node('p', '實際：' + result.answer));
+          details.append(node('summary', result.state === 'verified' ? message('quality.answered') : result.state === 'abstain' ? message('quality.refused') : message('chat.failed')));
+          details.append(node('p', usable || abstained ? message('quality.met-expectations') :
+            result.state === 'verified' ? message('quality.the-answer-or-citations-differed-from-expectations') : message('quality.the-expected-answer-was-missing')));
+          if (result.reason) details.append(node('p', messages[result.reason] ?? message('quality.could-not-complete-this-query')));
+          if (question.answer) details.append(node('p', message('quality.expected-answer', { answer: question.answer })));
+          if (result.answer) details.append(node('p', message('quality.actual-answer', { answer: result.answer })));
           for (const citation of result.citations ?? []) details.append(button(citation.source + ' · ' + citation.locator,
             (event) => openPassage({ ...citation, text: citation.context }, citation.quote, event.currentTarget)));
           row.cells[1].replaceChildren(details);
-          row.insertCell().textContent = usable || abstained ? '是' : '否';
-          row.insertCell().textContent = citations ? reproducible + '／' + citations : '—';
-          row.insertCell().textContent = elapsedMs + ' ms';
+          setText(row.insertCell(), usable || abstained ? message('cards.yes') : message('cards.no'));
+          setText(row.insertCell(), citations ? reproducible + '／' + citations : '—');
+          setText(row.insertCell(), elapsedMs + ' ms');
         } catch (error) {
           if (active.signal.aborted) return;
           totals.errors++;
-          row.cells[1].textContent = error.message;
+          setText(row.cells[1], errorText(error));
         }
-        title.textContent = `執行中 · ${++totals.done}／${questions.length}`;
+        setText(title, message('quality.running-done-total', { done: ++totals.done, total: questions.length }));
       }
     }
     await Promise.all([worker(), worker()]);
@@ -273,12 +274,12 @@ export function bindKnowledgeQuality(openPassage, messages) {
     running = undefined;
     const meets = answerable > 0 && unanswerable > 0 && totals.citations > 0 && totals.usable / answerable >= 0.9 &&
       totals.refused / unanswerable >= 0.95 && totals.recall / answerable >= recallTarget && totals.citations === totals.reproduced && totals.unsupported === 0 && totals.errors === 0;
-    title.textContent = active.signal.aborted ? `已取消 · 完成 ${totals.done}／${questions.length}` :
-      meets ? '題集檢查通過。' : '題集檢查未通過。';
+    setText(title, active.signal.aborted ? message('quality.canceled-completed-done-total', { done: totals.done, total: questions.length }) :
+      meets ? message('quality.question-set-passed') : message('quality.question-set-failed'));
     thresholds.hidden = active.signal.aborted;
-    metrics.textContent = `D03 ${meets ? '通過' : '未通過'} · 前五段證據召回率 ${answerable ? (100 * totals.recall / answerable).toFixed(0) + '%' : '—'}（≥${recallTarget * 100}%） · 可答可用 ${totals.usable}／${answerable}（≥90%） · 不可答拒答 ${totals.refused}／${unanswerable}（≥95%） · 引用重現 ${totals.reproduced}／${totals.citations}（100%） · 關鍵無證據答案 ${totals.unsupported}（0）`;
+    setText(metrics, message('quality.d03-result-top-five-evidence-recall-recall', { result: meets ? message('quality.passed') : message('quality.failed'), recall: answerable ? (100 * totals.recall / answerable).toFixed(0) + '%' : '—', target: recallTarget * 100, usable: totals.usable, answerable, refused: totals.refused, unanswerable, reproduced: totals.reproduced, citations: totals.citations, unsupported: totals.unsupported }));
     if (active.signal.aborted) {
-      for (const { row } of pending) if (row.cells[1].textContent === '執行中' || row.cells[1].textContent === '待執行') row.cells[1].textContent = '已取消';
+      for (const { row } of pending) if (row.cells[1].textContent === t('chat.running') || row.cells[1].textContent === t('quality.queued-to-run')) setText(row.cells[1], message('quality.canceled'));
     }
     sets.disabled = false;
     editor.inert = rows.inert = false;

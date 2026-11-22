@@ -1,3 +1,4 @@
+import { message, setText } from './i18n.js';
 export function bindVoice(enabled, button, status, composer, getContext, report) {
   let recognition;
   enabled.checked = localStorage.getItem('oep.microphone') === 'on';
@@ -13,18 +14,18 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
     recognition = undefined;
     prior?.abort();
     button.setAttribute('aria-pressed', 'false');
-    button.textContent = '開始聽寫';
+    setText(button, message('ui.start-dictation'));
   }
 
   enabled.addEventListener('change', () => {
     localStorage.setItem('oep.microphone', enabled.checked ? 'on' : 'off');
-    status.textContent = enabled.checked ? '可在輸入框啟動聽寫。' : '語音輸入已關閉。';
+    setText(status, enabled.checked ? message('voice.start-dictation-in-the-message-box') : message('voice.voice-input-is-off'));
     update();
   });
   button.addEventListener('click', () => {
     if (recognition) { cancel(); return; }
     const Speech = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Speech) { report('這個瀏覽器無法使用聽寫。請直接輸入訊息。'); return; }
+    if (!Speech) { report(message('voice.this-browser-doesnt-support-dictation-enter-the')); return; }
     const context = getContext();
     try {
       const capture = new Speech();
@@ -34,23 +35,23 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
       capture.onresult = (event) => {
         if (recognition !== capture || context !== getContext() || composer.disabled) return;
         const text = event.results[event.resultIndex]?.[0]?.transcript?.trim();
-        if (!text) { report('沒有聽到語音。請再試一次，或直接輸入。'); return; }
+        if (!text) { report(message('voice.no-speech-detected-try-again-or-type')); return; }
         composer.value = (composer.value ? composer.value + ' ' + text : text).slice(0, composer.maxLength);
         composer.focus();
         report();
       };
       capture.onerror = (event) => {
         if (recognition !== capture) return;
-        report(['not-allowed', 'service-not-allowed'].includes(event.error) ? '無法使用麥克風。請在瀏覽器允許麥克風權限。' : '無法完成聽寫。請再試一次。');
+        report(['not-allowed', 'service-not-allowed'].includes(event.error) ? message('voice.could-not-access-the-microphone-allow-microphone') : message('voice.could-not-complete-dictation-try-again'));
         cancel();
       };
       capture.onend = () => { if (recognition === capture) cancel(); };
       capture.start();
       button.setAttribute('aria-pressed', 'true');
-      button.textContent = '取消聽寫';
+      setText(button, message('voice.cancel-dictation'));
     } catch (error) {
       cancel();
-      report(error.name === 'NotAllowedError' ? '無法使用麥克風。請在瀏覽器允許麥克風權限。' : '無法完成聽寫。請再試一次。');
+      report(error.name === 'NotAllowedError' ? message('voice.could-not-access-the-microphone-allow-microphone') : message('voice.could-not-complete-dictation-try-again'));
     }
   });
   update();

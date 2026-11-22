@@ -1,25 +1,26 @@
-import { request } from './api.js';
+import { formatDate, joinText, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
+import { errorText, request } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const panel = find('jobs-content');
 const view = find('jobs-view');
 const open = find('open-jobs');
 const labels = {
-  pending: '等待送出', sent: '已送出', failed: '失敗', indeterminate: '送達未確認', sending: '傳送中',
-  draft: '待核准', active: '已啟用', paused: '已暫停', rejected: '已拒絕', removed: '已移除',
-  queued: '等待執行', missed: '已略過', expired: '超過補跑期限', ready: '待處理',
-  awaiting_review: '待審核', blocked: '需要補件',
-  approved: '已核准', published: '已發布', discarded: '已捨棄',
+  pending: message('jobs.queued-for-delivery'), sent: message('jobs.sent'), failed: message('chat.failed'), indeterminate: message('jobs.delivery-unconfirmed'), sending: message('jobs.sending'),
+  draft: message('jobs.awaiting-approval'), active: message('jobs.enabled'), paused: message('jobs.paused'), rejected: message('jobs.rejected'), removed: message('jobs.removed'),
+  queued: message('jobs.queued'), missed: message('jobs.skipped'), expired: message('jobs.missed-retry-window'), ready: message('ui.pending'),
+  awaiting_review: message('jobs.pending-review'), blocked: message('jobs.more-information-needed'),
+  approved: message('jobs.approved'), published: message('jobs.published'), discarded: message('jobs.discarded'),
 };
 
 function jobState(row) {
-  return row.completed ? row.review_status === 'pending' ? '待審核' : labels[row.review_status] ?? '已送審' :
-      row.expires > Date.now() ? '執行中' : '等待執行';
+  return row.completed ? row.review_status === 'pending' ? message('jobs.pending-review') : labels[row.review_status] ?? message('jobs.submitted-for-review') :
+      row.expires > Date.now() ? message('chat.running') : message('jobs.queued');
 }
 
 function node(tag, text) {
   const element = document.createElement(tag);
-  if (text !== undefined) element.textContent = text;
+  if (text !== undefined) setText(element, text);
   return element;
 }
 
@@ -46,10 +47,10 @@ function disclosure(label, className) {
   return menu;
 }
 
-const localTime = (timestamp, zone) => new Intl.DateTimeFormat('zh-TW', {
+const localTime = (timestamp, zone) => formatDate(timestamp, {
   dateStyle: 'medium', timeStyle: 'short', timeZone: zone,
-}).format(timestamp);
-const botLabel = (bot) => bot === 'bi' ? '知識庫機器人' : '助理機器人';
+});
+const botLabel = (bot) => bot === 'bi' ? message('jobs.knowledge-base-bot') : message('jobs.assistant-bot');
 const minute = 60_000;
 
 function upcoming(schedules, occurrences, now) {
@@ -84,7 +85,11 @@ export function bindJobs(openPreview) {
   const statusMessage = find('jobs-status');
   const previews = new Map();
   const feedback = new Set([statusMessage]);
-  const say = (message) => { for (const region of feedback) region.textContent = message; };
+  let currentMessage;
+  const say = (text) => {
+    currentMessage = text;
+    for (const region of feedback) setText(region, text);
+  };
   let status;
   let updating = false;
   let filterValue = '';
@@ -92,7 +97,7 @@ export function bindJobs(openPreview) {
   function preview(key, title, opener, draw) {
     const tab = openPreview('jobs-' + key, title, opener);
     if (previews.has(key)) return;
-    const notice = node('p', statusMessage.textContent);
+    const notice = node('p', currentMessage);
     notice.setAttribute('role', 'status');
     tab.body.before(notice);
     feedback.add(notice);
@@ -112,7 +117,7 @@ export function bindJobs(openPreview) {
 
   function control(parent, label, work, key = label) {
     const item = button(label, (event) => work(event.currentTarget));
-    item.dataset.featureFocus = key;
+    item.dataset.featureFocus = resolveText(key);
     parent.append(item);
     return item;
   }
@@ -120,7 +125,7 @@ export function bindJobs(openPreview) {
   async function update(data) {
     if (updating) return;
     updating = true;
-    say('正在讀取…');
+    say(message('ui.loading'));
     try {
       status = await request('/api/jobs', data ? { data } : undefined);
       const focus = document.activeElement?.dataset.featureFocus;
@@ -130,18 +135,18 @@ export function bindJobs(openPreview) {
         const matches = document.querySelectorAll(`[data-feature-focus="${CSS.escape(focus)}"]`);
         [...matches].find((item) => item.getClientRects().length && !item.closest('[inert]'))?.focus({ preventScroll: true });
       }
-      say(data ? '已更新。' : '');
-    } catch (error) { say(error.message); }
+      say(data ? message('jobs.updated') : '');
+    } catch (error) { say(errorText(error)); }
     finally { updating = false; }
   }
 
   function history(body, schedule) {
     const rows = (status.occurrences ?? []).filter((row) => !schedule || row.schedule === schedule);
-    if (!rows.length) body.append(node('p', '目前沒有執行紀錄。'));
+    if (!rows.length) body.append(node('p', message('jobs.no-run-history-yet')));
     const list = node('ul');
     for (const row of rows) {
-      const item = node('li', `${row.schedule} · ${localTime(row.utc, row.zone)} · ${labels[row.state] ?? '狀態未知'}`);
-      const details = disclosure('進階', 'feature-advanced');
+      const item = node('li', joinText([row.schedule, localTime(row.utc, row.zone), labels[row.state] ?? message('chat.unknown-status')]));
+      const details = disclosure(message('ui.advanced'), 'feature-advanced');
       details.append(node('p', `${row.wall} ${row.zone} · ${new Date(row.utc).toISOString()}`));
       item.append(details);
       list.append(item);
@@ -150,13 +155,13 @@ export function bindJobs(openPreview) {
   }
 
   function scheduleEditor(body, row) {
-    const id = field(body, '排程名稱', row?.id);
-    const time = field(body, '當地時間', row?.time ?? '09:00');
+    const id = field(body, message('jobs.schedule-name'), row?.id);
+    const time = field(body, message('jobs.local-time'), row?.time ?? '09:00');
     time.type = 'time';
-    const zone = field(body, '時區', row?.zone ?? 'Asia/Taipei');
-    const advanced = disclosure('進階', 'feature-advanced');
+    const zone = field(body, message('jobs.time-zone'), row?.zone ?? 'Asia/Taipei');
+    const advanced = disclosure(message('ui.advanced'), 'feature-advanced');
     body.append(advanced);
-    const candidate = field(advanced, '工作參數（JSON）', row ? JSON.stringify(JSON.parse(row.payload), null, 2) : '', true);
+    const candidate = field(advanced, message('jobs.job-parameters-json'), row ? JSON.stringify(JSON.parse(row.payload), null, 2) : '', true);
     const error = node('p');
     error.setAttribute('role', 'status');
     const save = (action) => {
@@ -166,35 +171,35 @@ export function bindJobs(openPreview) {
           : { action, id: id.value, candidate: payload });
       } catch {
         advanced.open = true;
-        error.textContent = '無法讀取工作設定。請檢查 JSON 格式。';
+        setText(error, message('jobs.could-not-read-the-job-settings-check'));
         candidate.focus();
       }
     };
     advanced.append(error);
-    control(body, '儲存待核准排程', () => save('schedule'));
-    control(body, '立即送出工作', () => save('immediate'));
+    control(body, message('jobs.save-schedule-for-approval'), () => save('schedule'));
+    control(body, message('jobs.submit-job-now'), () => save('immediate'));
   }
 
   function inbox(body) {
-    body.append(node('p', `助理機器人${status.main ? '已設定' : '未設定'} · 知識庫機器人${status.bi ? '已設定' : '未設定'}`));
-    const settings = disclosure('進階', 'feature-advanced');
-    const domain = field(settings, '領域', status.domain || 'telegram');
-    const origins = field(settings, '核准的 HTTPS 來源（每行一個）', status.origins.join('\n'), true);
-    const target = field(settings, '目標知識庫代號（選填）', status.target);
-    settings.append(node('p', '未指定目標時，每筆收件會建立獨立草稿。指定目標後，來源會送到模型服務產生提案，再由人工核准及發布。'));
-    control(settings, '儲存收件設定', () => update({
+    body.append(node('p', message('jobs.assistant-bot-assistant-knowledge-base-bot-knowledge', { assistant: status.main ? message('chat.configured') : message('chat.unconfigured'), knowledge: status.bi ? message('chat.configured') : message('chat.unconfigured') })));
+    const settings = disclosure(message('ui.advanced'), 'feature-advanced');
+    const domain = field(settings, message('jobs.domain'), status.domain || 'telegram');
+    const origins = field(settings, message('jobs.approved-https-sources-one-per-line'), status.origins.join('\n'), true);
+    const target = field(settings, message('jobs.target-knowledge-base-id-optional'), status.target);
+    settings.append(node('p', message('jobs.with-no-target-selected-each-intake-item')));
+    control(settings, message('jobs.save-intake-settings'), () => update({
       action: 'configure', domain: domain.value, origins: origins.value.split(/\s+/).filter(Boolean), target: target.value.trim(),
     }));
     const filter = node('select');
-    filter.setAttribute('aria-label', '收件狀態篩選');
-    filter.append(new Option('全部', ''), ...['ready', 'blocked', 'awaiting_review'].map((value) => new Option(labels[value], value)));
+    setAttribute(filter, 'aria-label', message('jobs.filter-by-intake-status'));
+    filter.append(optionText(message('ui.all'), ''), ...['ready', 'blocked', 'awaiting_review'].map((value) => optionText(labels[value], value)));
     filter.value = filterValue;
     const sources = node('div');
     const showSources = () => {
       const matches = status.sources.filter((source) => !filter.value || source.state === filter.value);
-      sources.replaceChildren(node('p', `${matches.length} 筆`));
-      for (const row of matches) control(sources, `收件 ${row.id} · ${labels[row.state]}`, (opener) =>
-        preview('source-' + row.id, `收件 ${row.id}`, opener, (content) => showSource(content, row.id)));
+      sources.replaceChildren(node('p', message('jobs.results-count', { count: matches.length })));
+      for (const row of matches) control(sources, message('jobs.intake-id-status', { id: row.id, status: labels[row.state] }), (opener) =>
+        preview('source-' + row.id, message('jobs.intake-id', { id: row.id }), opener, (content) => showSource(content, row.id)));
     };
     filter.addEventListener('change', () => { filterValue = filter.value; showSources(); });
     body.append(settings, filter, sources);
@@ -203,35 +208,35 @@ export function bindJobs(openPreview) {
 
   function showSource(body, id) {
     const source = status.sources.find((row) => row.id === id);
-    if (!source) { body.append(node('p', '找不到這筆收件。')); return; }
-    body.append(node('p', `${source.domain} · ${labels[source.state]}`));
-    const details = disclosure('進階', 'feature-advanced');
-    details.append(node('p', source.ref), node('p', source.target ? '目標知識庫 ' + source.target : '獨立收件'));
+    if (!source) { body.append(node('p', message('jobs.could-not-find-this-intake-item'))); return; }
+    body.append(node('p', joinText([source.domain, labels[source.state]])));
+    const details = disclosure(message('ui.advanced'), 'feature-advanced');
+    details.append(node('p', source.ref), node('p', source.target ? message('jobs.target-knowledge-base-target', { target: source.target }) : message('jobs.standalone-intake')));
     if (source.reason) details.append(node('p', source.reason));
     body.append(details);
     if (source.hasFile) {
-      const download = node('a', '下載來源');
+      const download = node('a', message('jobs.download-source'));
       download.href = '/api/jobs/source/' + source.id;
       body.append(download);
     }
     if (source.state === 'blocked') {
-      const text = field(body, '補件文字', '', true);
-      control(body, '送審', () => update({ action: 'supplement', id, text: text.value }));
+      const text = field(body, message('jobs.additional-information'), '', true);
+      control(body, message('jobs.submit-for-review'), () => update({ action: 'supplement', id, text: text.value }));
     }
   }
 
   function delivery(body) {
-    if (!status.delivery.length) body.append(node('p', '目前沒有通知紀錄。'));
-    for (const row of status.delivery) body.append(node('p', `${botLabel(row.bot)} · ${labels[row.state] ?? '狀態未知'} · ${row.count} 筆`));
+    if (!status.delivery.length) body.append(node('p', message('jobs.no-notification-history-yet')));
+    for (const row of status.delivery) body.append(node('p', message('jobs.bot-status-count-count', { bot: botLabel(row.bot), status: labels[row.state] ?? message('chat.unknown-status'), count: row.count })));
     if (status.unresolvedDelivery.length) {
-      const unresolved = disclosure('需核對的通知', 'feature-more');
+      const unresolved = disclosure(message('jobs.notifications-to-verify'), 'feature-more');
       for (const row of status.unresolvedDelivery) {
-        const line = node('p', `${botLabel(row.bot)} · ${labels[row.state]} · 嘗試 ${row.attempts} 次 `);
-        const details = disclosure('進階', 'feature-advanced');
-        details.append(node('p', '通知代號 ' + row.id));
+        const line = node('p', message('jobs.bot-status-attempts-count', { bot: botLabel(row.bot), status: labels[row.state], count: row.attempts }));
+        const details = disclosure(message('ui.advanced'), 'feature-advanced');
+        details.append(node('p', message('jobs.notification-id-id', { id: row.id })));
         unresolved.append(line, details);
-        if (row.state === 'indeterminate') control(unresolved, '手動重送', () => {
-          if (window.confirm('原通知可能已送達。重送可能產生重複訊息，仍要重送嗎？')) {
+        if (row.state === 'indeterminate') control(unresolved, message('jobs.resend-manually'), () => {
+          if (window.confirm(t('jobs.the-original-notification-may-have-arrived-resending'))) {
             void update({ action: 'resend', bot: row.bot, id: row.id });
           }
         }, 'resend-' + row.bot + '-' + row.id);
@@ -239,7 +244,7 @@ export function bindJobs(openPreview) {
       body.append(unresolved);
     }
     for (const row of status.failedIntakes) {
-      body.append(node('p', `${botLabel(row.bot)} · 收件 ${row.id} 處理失敗 · 嘗試 ${row.attempts} 次 · ${localTime(row.firstSeen)}`));
+      body.append(node('p', message('jobs.bot-intake-id-failed-attempts-count-date', { bot: botLabel(row.bot), id: row.id, count: row.attempts, date: localTime(row.firstSeen) })));
     }
   }
 
@@ -248,67 +253,67 @@ export function bindJobs(openPreview) {
     const next = upcoming(schedules, occurrences, Date.now());
     const toolbar = node('div');
     toolbar.className = 'knowledge-pager';
-    control(toolbar, '新增排程', (opener) => preview('editor', '新增排程', opener, (body) => scheduleEditor(body)));
-    control(toolbar, '執行紀錄', (opener) => preview('history', '執行紀錄', opener, history));
-    control(toolbar, '重新整理', () => update());
-    const more = disclosure('更多', 'feature-more');
+    control(toolbar, message('jobs.new-schedule'), (opener) => preview('editor', message('jobs.new-schedule'), opener, (body) => scheduleEditor(body)));
+    control(toolbar, message('jobs.run-history'), (opener) => preview('history', message('jobs.run-history'), opener, history));
+    control(toolbar, message('jobs.refresh'), () => update());
+    const more = disclosure(message('ui.more'), 'feature-more');
     more.querySelector('summary').dataset.featureFocus = 'jobs-more';
-    control(more, 'Telegram 收件', (opener) => preview('inbox', 'Telegram 收件', opener, inbox));
-    control(more, '通知紀錄', (opener) => preview('delivery', '通知紀錄', opener, delivery));
+    control(more, message('jobs.telegram-intake'), (opener) => preview('inbox', message('jobs.telegram-intake'), opener, inbox));
+    control(more, message('jobs.notification-history'), (opener) => preview('delivery', message('jobs.notification-history'), opener, delivery));
     toolbar.append(more);
     const list = node('ul');
     list.className = 'feature-list';
     for (const row of schedules.filter(({ state }) => state !== 'removed')) {
       const item = node('li');
       const state = labels[row.state];
-      const when = next.has(row.id) ? '下次執行 ' + localTime(next.get(row.id), row.zone) : '目前沒有下次執行時間';
+      const when = next.has(row.id) ? message('jobs.next-run-time', { time: localTime(next.get(row.id), row.zone) }) : message('jobs.no-upcoming-run');
       control(item, row.id, (opener) => preview('schedule-' + row.id, row.id, opener, (body) => {
         const latest = (status.schedules ?? []).find(({ id }) => id === row.id);
-        body.append(node('p', labels[latest?.state] ?? '已移除'));
+        body.append(node('p', labels[latest?.state] ?? message('jobs.removed')));
         if (!latest || latest.state === 'removed') return;
-        body.append(node('p', `每日 ${latest.time} · ${latest.zone}`));
-        control(body, '執行紀錄', (trigger) => preview('history-' + row.id, '執行紀錄 · ' + row.id, trigger,
+        body.append(node('p', message('jobs.daily-at-time-zone', { time: latest.time, zone: latest.zone })));
+        control(body, message('jobs.run-history'), (trigger) => preview('history-' + row.id, message('jobs.run-history-name', { name: row.id }), trigger,
           (content) => history(content, row.id)), 'schedule-history-' + row.id);
       }), 'schedule-' + row.id);
-      item.append(node('small', state + ' · ' + when));
-      const actions = disclosure('更多', 'feature-more');
+      item.append(node('small', joinText([state, when])));
+      const actions = disclosure(message('ui.more'), 'feature-more');
       actions.querySelector('summary').dataset.featureFocus = 'schedule-more-' + row.id;
-      control(actions, '編輯', (opener) => preview('edit-' + row.id, '編輯排程 · ' + row.id, opener, (body) => {
+      control(actions, message('jobs.edit'), (opener) => preview('edit-' + row.id, message('jobs.edit-schedule-name', { name: row.id }), opener, (body) => {
         const latest = (status.schedules ?? []).find(({ id }) => id === row.id);
         if (latest?.state !== 'removed') scheduleEditor(body, latest);
       }), 'schedule-more-' + row.id);
-      const changes = row.state === 'draft' ? [['active', '核准'], ['rejected', '拒絕']] :
-        row.state === 'active' ? [['paused', '暫停']] : row.state === 'paused' ? [['active', '恢復']] : [];
-      for (const [state, label] of [...changes, ['removed', '移除']]) {
+      const changes = row.state === 'draft' ? [['active', message('jobs.approve')], ['rejected', message('jobs.reject')]] :
+        row.state === 'active' ? [['paused', message('jobs.pause')]] : row.state === 'paused' ? [['active', message('jobs.resume')]] : [];
+      for (const [state, label] of [...changes, ['removed', message('chat.remove')]]) {
         control(actions, label, () => update({ action: 'state', id: row.id, state }), 'schedule-more-' + row.id);
       }
       if (['active', 'paused'].includes(row.state)) {
-        control(actions, '立即執行', () => update({ action: 'runNow', id: row.id }), 'schedule-more-' + row.id);
+        control(actions, message('jobs.run-now'), () => update({ action: 'runNow', id: row.id }), 'schedule-more-' + row.id);
       }
       item.append(actions);
       list.append(item);
     }
     for (const [index, row] of jobs.entries()) {
       const item = node('li');
-      const title = occurrences.find(({ job }) => job === row.id)?.schedule ?? `知識庫工作 ${jobs.length - index}`;
+      const title = occurrences.find(({ job }) => job === row.id)?.schedule ?? message('jobs.knowledge-base-job-number', { number: jobs.length - index });
       control(item, title, (opener) => preview('job-' + row.id, title, opener, (body) => {
         const latest = status.jobs.find(({ id }) => id === row.id);
-        if (!latest) { body.append(node('p', '找不到這項工作。')); return; }
+        if (!latest) { body.append(node('p', message('jobs.could-not-find-this-job'))); return; }
         body.append(node('p', jobState(latest)));
-        const details = disclosure('進階', 'feature-advanced');
-        details.append(node('p', '工作代號 ' + latest.id));
+        const details = disclosure(message('ui.advanced'), 'feature-advanced');
+        details.append(node('p', message('jobs.job-id-id', { id: latest.id })));
         body.append(details);
       }), 'job-' + row.id);
       item.append(node('small', jobState(row)));
       if (!row.completed) {
-        const actions = disclosure('更多', 'feature-more');
+        const actions = disclosure(message('ui.more'), 'feature-more');
         actions.querySelector('summary').dataset.featureFocus = 'job-more-' + row.id;
-        control(actions, '立即執行', () => update({ action: 'runJob', id: row.id }), 'job-more-' + row.id);
+        control(actions, message('jobs.run-now'), () => update({ action: 'runJob', id: row.id }), 'job-more-' + row.id);
         item.append(actions);
       }
       list.append(item);
     }
-    panel.replaceChildren(toolbar, list.childElementCount ? list : node('p', '目前沒有排程或工作。'));
+    panel.replaceChildren(toolbar, list.childElementCount ? list : node('p', message('jobs.no-schedules-or-jobs-yet')));
   }
 
   open.addEventListener('click', () => {
@@ -327,7 +332,7 @@ export function bindJobs(openPreview) {
 
 export async function loadJobSummary() {
   const summary = find('panel-jobs');
-  summary.textContent = '正在讀取排程與工作…';
+  setText(summary, message('jobs.loading-schedules-and-jobs'));
   try {
     const status = await request('/api/jobs');
     const counts = (rows, stateLabel) => {
@@ -336,8 +341,8 @@ export async function loadJobSummary() {
         const state = stateLabel(row);
         totals.set(state, (totals.get(state) ?? 0) + 1);
       }
-      return [...totals].map(([state, count]) => `${state} ${count} 筆`).join('、') || '無';
+      return totals.size ? joinText([...totals].map(([state, count]) => message('jobs.status-count', { status: state, count })), ', ') : message('jobs.none');
     };
-    summary.textContent = `知識庫工作：${counts(status.jobs, jobState)}。排程：${counts(status.schedules ?? [], (row) => labels[row.state] ?? '其他狀態')}。`;
-  } catch { summary.textContent = '無法讀取排程與工作。請重新整理。'; }
+    setText(summary, message('jobs.knowledge-base-jobs-jobs-schedules-schedules', { jobs: counts(status.jobs, jobState), schedules: counts(status.schedules ?? [], (row) => labels[row.state] ?? message('jobs.other-status')) }));
+  } catch { setText(summary, message('jobs.could-not-load-schedules-and-jobs-refresh')); }
 }

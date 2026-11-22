@@ -47,6 +47,9 @@ const assets = new Map([
   ['/knowledge-browser.js', ['src/knowledge-browser.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
+  ['/i18n.js', ['src/i18n.js', 'text/javascript; charset=utf-8']],
+  ['/i18n/en.js', ['src/i18n/en.js', 'text/javascript; charset=utf-8']],
+  ['/i18n/zh-TW.js', ['src/i18n/zh-TW.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['src/style.css', 'text/css; charset=utf-8']],
 ]);
 

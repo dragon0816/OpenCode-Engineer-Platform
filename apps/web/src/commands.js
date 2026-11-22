@@ -1,12 +1,13 @@
+import { joinText, message, setText } from './i18n.js';
 const commands = [
-  ['/new', '', '新增會話'],
-  ['/stop', '', '停止處理'],
-  ['/model', ' <模型>', '切換模型'],
-  ['/theme', ' light|dark', '切換主題'],
-  ['/attach', '', '選擇附件'],
-  ['/ask', ' <知識庫> <問題>', '詢問知識庫'],
-  ['/clear-search', '', '清除會話搜尋'],
-  ['/help', '', '顯示指令說明'],
+  ['/new', '', message('commands.new-session')],
+  ['/stop', '', message('ui.stop-processing')],
+  ['/model', message('commands.model'), message('commands.switch-model')],
+  ['/theme', ' light|dark', message('commands.switch-theme')],
+  ['/attach', '', message('commands.choose-attachments')],
+  ['/ask', message('commands.knowledge-base-question'), message('ui.ask-knowledge-base')],
+  ['/clear-search', '', message('commands.clear-session-search')],
+  ['/help', '', message('commands.show-command-help')],
 ];
 
 export function bindCommands(prompt, list, toast, handlers, report) {
@@ -43,7 +44,7 @@ export function bindCommands(prompt, list, toast, handlers, report) {
       const option = document.createElement('li');
       option.id = 'slash-option-' + index;
       option.setAttribute('role', 'option');
-      option.textContent = entry[0] + entry[1] + ' · ' + entry[2];
+      setText(option, commandHelp(entry));
       option.addEventListener('pointerdown', (event) => event.preventDefault());
       option.addEventListener('click', () => choose(entry));
       list.append(option);
@@ -54,17 +55,19 @@ export function bindCommands(prompt, list, toast, handlers, report) {
     select(0);
   }
 
+  const commandHelp = ([name, args, label]) => joinText([joinText([name, args], ''), label]);
+
   function notify(text, undo) {
-    toast.textContent = text;
+    setText(toast, text);
     if (!undo) return;
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = '復原';
+    setText(button, message('commands.undo'));
     button.addEventListener('click', async () => {
       button.disabled = true;
       try {
         await undo();
-        notify('已復原。');
+        notify(message('commands.undone'));
       } catch (error) {
         report(error);
         button.disabled = false;
@@ -78,14 +81,14 @@ export function bindCommands(prompt, list, toast, handlers, report) {
     const original = prompt.value;
     const [, name, argument = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(original.trim()) ?? [];
     const command = commands.find(([key]) => key === name);
-    if (!command) { report('無法辨識這個指令。輸入 /help 查看可用指令。'); return; }
-    if (!command[1] && argument) { report('此指令不需要其他文字。請刪除指令後的文字。'); return; }
+    if (!command) { report(message('commands.unknown-command-enter-help-for-available-commands')); return; }
+    if (!command[1] && argument) { report(message('commands.this-command-takes-no-arguments-remove-the')); return; }
     busy = true;
     close();
     report();
     prompt.value = '';
     try {
-      if (name === '/help') notify(commands.map(([key, args, label]) => key + args + ' · ' + label).join('\n'));
+      if (name === '/help') notify(joinText(commands.map(commandHelp), '\n'));
       else {
         const result = await handlers[name](argument);
         if (result) notify(result.text, result.undo);
