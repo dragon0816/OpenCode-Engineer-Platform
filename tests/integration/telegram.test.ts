@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { maxWorkAttempts, TelegramApi, TelegramPoller, TelegramTransport, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
 import { legacyChannels } from '../../apps/adapter/src/channels/accounts.ts';
-import { reviewAction } from '../../apps/adapter/src/http/review.ts';
+import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { ModelSeat } from '../../apps/adapter/src/opencode/model-seat.ts';
@@ -136,9 +136,43 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     assert.equal(new Set(sends.map((send) => JSON.stringify(send))).size, sends.length);
     await router.bi.supplement(2, 'Synthetic manual supplement', signal);
     assert.equal(store.reconciliation().effects.length, 24);
-    reviewAction(store, { action: 'approve', id: 'telegram-bi-2', edit: 0 });
-    reviewAction(store, { action: 'publish', id: 'telegram-bi-2' });
-    reviewAction(store, { action: 'publish', id: 'telegram-bi-2' });
+    const webRoot = join(root, 'workbench');
+    mkdirSync(webRoot);
+    const adapter = await startAdapter(webRoot, {
+      ...runtime, root: webRoot, endpoint: { request: async () => new Response(null, { status: 503 }) },
+    } as unknown as Runtime, () => {}, false);
+    try {
+      const url = new URL(adapter.pairURL());
+      const { origin } = url;
+      const ticket = new URLSearchParams(url.hash.slice(1)).get('pair');
+      const headers = { origin, 'content-type': 'application/json' };
+      const reviews = origin + '/api/knowledge/reviews';
+      const review = (action: string, authorization = {}) => fetch(reviews, {
+        method: 'POST', headers: { ...headers, ...authorization },
+        body: JSON.stringify({ action, id: 'telegram-bi-2', edit: 0 }),
+      });
+      assert.equal((await fetch(reviews)).status, 401);
+      assert.equal((await review('approve')).status, 401);
+      const pair = await fetch(origin + '/api/pair', { method: 'POST', headers, body: JSON.stringify({ ticket }) });
+      assert.equal(pair.status, 200);
+      const cookie = pair.headers.get('set-cookie')!.split(';')[0];
+      const { csrf } = await pair.json();
+      const authorization = { cookie, 'x-oep-csrf': csrf };
+      assert.equal((await review('approve', { cookie })).status, 403);
+      const response = await fetch(reviews, { headers: { cookie } });
+      assert.equal(response.status, 200);
+      const pending = (await response.json()).reviews.find(({ id }: { id: string }) => id === 'telegram-bi-2');
+      assert.equal(pending?.status, 'pending');
+      assert.equal(pending?.agentSource, 'BI 資料處理');
+      assert.equal(pending?.agentId, 'bi');
+      assert.equal(pending?.origin, 'telegram');
+      assert.equal(store.snapshot('intake-telegram-2'), undefined);
+      assert.equal((await review('publish', authorization)).status, 422);
+      assert.equal((await review('approve', authorization)).status, 200);
+      assert.equal((await review('publish', authorization)).status, 200);
+      assert.equal((await review('publish', authorization)).status, 200);
+      assert.ok(store.snapshot('intake-telegram-2'));
+    } finally { await adapter.close(); }
     assert.equal(store.reconciliation().intents.length, 1);
     assert.equal(store.reviews().find(({ id }) => id === 'telegram-bi-2')?.agentSource, 'BI 資料處理');
     let modelCalls = 0;
@@ -184,6 +218,11 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
       recovered.notifyReviews(store.reconciliation().intents);
       await restarted.deliver(signal, () => start + 6002);
       assert.equal(sends.filter((send) => send.text.startsWith('BI 審核')).length, 1);
+      recovered.notifyReviews([{ review: 'unknown-origin', sourceKey: null, destination: null }]);
+      recovered.notifyReviews([{ review: 'unknown-origin', sourceKey: null, destination: null }]);
+      assert.deepEqual(recovered.db.prepare(`SELECT account_id, conversation_key, binding_revision, agent_id
+        FROM channel_outbound WHERE effect_key='review-unknown-origin'`).all().map((row) => ({ ...row })),
+      [{ account_id: 'telegram-bi', conversation_key: 'topic:0', binding_revision: 1, agent_id: 'bi' }]);
     } finally { recovered.db.close(); }
   } finally {
     server.closeAllConnections();

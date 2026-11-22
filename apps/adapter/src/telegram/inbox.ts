@@ -101,6 +101,7 @@ export class TelegramInbox extends ChannelSpool {
       const destination = typeof sourceKey === 'string' ? find.get(sourceKey) as Destination | undefined : undefined;
       if (receipt && (!destination || receipt !== JSON.stringify(destination))) continue;
       const message = { effectKey: 'review-' + review, text: channelText(locale).published, locale };
+      // Historical intents without a known destination used the original BI bot's default topic.
       this.enqueueOutbound({ ...(destination ?? { ...legacyBinding('bi'), conversationKey: topicKey(0) }), ...message });
     }
   }
