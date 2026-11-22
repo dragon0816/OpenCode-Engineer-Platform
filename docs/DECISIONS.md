@@ -312,3 +312,9 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 採 `docs/design/PHASE3B_MULTI_AGENT_DESIGN.md`：單一 OpenCode runtime 加 OEP 授權與受控工具、通用通道介面（Telegram 首個實作）、OEP 內建 MCP 提供交辦工具、首版模型步驟依序派送。交辦額度每則訊息 3 件、每件 5 分鐘，可在設定調整；專職排程結果預設回報主助理；既有本機／私人網路 MCP 在隔離驗證前暫停對助理開放。依設計第 9 節六個切片實作。
 - **理由：** 擁有者核准。共用 runtime 避免多套 profile、單一實例鎖與復原重做；BI 處理長文件需要比 90 秒更長的時間。
 - **捨棄的替代方案：** 每助理一個 runtime（資源與復原成本高）；OpenCode 內建子代理（無法隔離）；交辦每件 90 秒（長文件不夠）。
+
+## 2026-11-22 OpenCode 工具授權只走 SSE
+
+- **決策：** 多助理切片 2 的工具票券與傳輸欄位只實作在 relay 的 SSE 路徑。來自 OpenCode 受管 session 而 `stream` 不為 `true` 且帶工具定義的請求一律拒絕。設計第 3.2 節依第 12 節修訂。
+- **理由：** 固定版 OpenCode 的 OpenAI 相容 provider 只發串流請求並只解析 SSE；relay 已完整緩衝 SSE。JSON completion 只供伺服器端直接呼叫（知識、BI），不經 OpenCode 工具執行。契約測試證實 SSE 路徑可行。
+- **捨棄的替代方案：** 停止切片 2、改換 runtime（不必要）；把 JSON 轉成 SSE 再交給 OpenCode（沒有實際使用情境，增加風險）。

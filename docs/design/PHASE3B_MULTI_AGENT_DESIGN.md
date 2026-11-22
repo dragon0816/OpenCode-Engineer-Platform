@@ -232,3 +232,15 @@ DelegationResult {
 1. 既有外部工具：採建議。擁有者目前沒有自訂 MCP 設定，暫停對助理開放不影響現有使用；隔離驗證完成後再開放。
 2. 交辦額度：每則使用者訊息最多交辦 3 件，**每件最多 5 分鐘實際執行**（取代 90 秒）。模型請求與工具呼叫上限按比例調整（建議每件 10 次模型請求、30 次工具呼叫，每則訊息合計 30／90），排隊最多 10 分鐘。所有預設值須可在「設定」調整，並受既有回合限制約束。
 3. D7：專職助理排程結果預設回報主助理，每筆排程可另行指定。
+
+## 12. 切片 2 契約關卡結論（2026-11-22，技術負責人）
+
+切片 2 的固定版 OpenCode v2.3.2 契約測試結果：SSE 路徑的傳輸欄位注入、nonce 與欄位遮蔽、工具允許清單、權限整份覆蓋全部通過；JSON completion 案例失敗，原因是 OpenCode 的 OpenAI 相容 provider 固定以 `stream: true` 發出請求，只解析 SSE。
+
+查核 `apps/adapter/src/opencode/gateway.ts`：relay 依請求的 `stream` 旗標選解析器，OpenCode 的請求一律是串流，relay 以 `bufferedCompletion()` 完整緩衝上游 SSE 後再以 SSE 回給 OpenCode。JSON 解析器只服務伺服器端直接呼叫者（知識問答、BI 提案，皆 `stream: false`），這些呼叫不經 OpenCode 工具執行，屬第 3.2 節的「受控入口由伺服器 dispatcher 直接建立 scope」。因此第 3.2 節要求「兩種 completion 皆注入傳輸欄位」對 OpenCode 工具路徑而言只需 SSE。
+
+修訂：
+1. OpenCode 工具呼叫的授權只走 SSE 路徑，第 3.2 節的注入、剝除與允許清單檢查在 SSE 完整緩衝後執行。
+2. relay 對來自 OpenCode 受管 session 的請求，若 `stream` 不是 `true` 且帶有工具定義，一律拒絕（fail closed），並有測試。
+3. 上游對串流請求回傳非 SSE 時維持現行錯誤處理（拒絕），不轉換。
+4. 契約測試的 JSON 正例改為上述 fail-closed 斷言；SSE 正例保留。
