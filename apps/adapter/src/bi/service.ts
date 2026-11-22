@@ -161,10 +161,17 @@ export class BiService {
     return this.delegationReceipt(input.id, input.runId);
   }
 
+  delegationSource(delegationId: string, runId: string) {
+    const row = this.storage.db.prepare(`SELECT s.id,s.state,s.bytes IS NOT NULL AS hasFile FROM bi_source_ownership o
+      JOIN bi_sources s ON s.id=o.source_id WHERE o.origin='delegation' AND o.agent_id='bi' AND o.delegation_id=? AND o.source_key=?`)
+      .get(delegationId, 'delegation-' + runId);
+    if (row) return { id: Number(row.id), state: String(row.state), hasFile: Boolean(row.hasFile) };
+  }
+
   delegationReceipt(delegationId: string, runId: string) {
-    const id = this.storage.db.prepare(`SELECT source_id AS id FROM bi_source_ownership
-      WHERE origin='delegation' AND agent_id='bi' AND delegation_id=? AND source_key=?`).get(delegationId, 'delegation-' + runId)?.id;
-    if (typeof id !== 'number') return;
+    const intake = this.delegationSource(delegationId, runId);
+    if (!intake) return;
+    const { id } = intake;
     const source = this.source(id)!;
     const job = String(source.source_key);
     const vault = String(source.target || `intake-${source.domain}-${id}`);

@@ -114,5 +114,9 @@ export class Ledger {
       .map((row) => JSON.parse(String(row.record)) as RunRecord);
   }
 
+  timeline(id: string) {
+    return this.db.prepare('SELECT at,state FROM run_events WHERE run_id=? ORDER BY sequence').all(id);
+  }
+
   close() { this.db.close(); }
 }

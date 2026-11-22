@@ -15,6 +15,7 @@ import { verifyChannelConversations } from './channel-migration.ts';
 import { openBiReviewStore, verifyBiSourceReceipts } from '../bi/source-ownership.ts';
 import { dispatchBi } from '../bi/dispatch.ts';
 import { dispatchTelegram } from './dispatch.ts';
+import { delegationNotices } from './delegation-notices.ts';
 
 export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore, dispatcher: Dispatcher,
   environment?: TelegramEnvironment, delegations?: DelegationService) {
@@ -42,6 +43,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     });
   const inbound = dispatchTelegram(dispatcher, inbox, chat, router, accounts, (id) => ledger.channelLocale(id), runtime.redact);
   const knowledge = runtime.knowledge?.reviewStore;
+  const notices = delegationNotices(inbox, ledger, sessions, runtime.redact);
   const bi = dispatchBi(dispatcher, router.bi, knowledge, runtime.knowledge?.propose);
   const scheduler = knowledge && new BiScheduler(inbox.db, knowledge, bi.occurrence,
     (schedule) => dispatcher.items.scheduleOccupied(schedule));
@@ -60,7 +62,10 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
         WHERE s.state='ready' AND (s.supplement IS NOT NULL OR o.work_id IS NOT NULL) ORDER BY s.id`).all();
       for (const row of ready) bi.recoverSource(Number(row.id), row.work_id);
       bi.recoverJobs();
-      if (accounts.connections.has('telegram-bi')) inbox.notifyReviews(knowledge?.reconciliation().intents ?? [], ledger.channelLocale('bi'));
+      notices.results();
+      const intents = knowledge?.publicationIntents() ?? [];
+      if (accounts.connections.has('telegram-bi')) inbox.notifyReviews(intents, ledger.channelLocale('bi'));
+      notices.publications(intents);
     } catch { /* Persisted work remains available to the next cycle. */ }
     accounts.refresh(launch);
     for (const [id, { poller, stop: connection }] of accounts.connections) {

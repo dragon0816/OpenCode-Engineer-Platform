@@ -658,14 +658,14 @@ export class WebStore extends Ledger {
     });
   }
 
-  sessions(includeHidden = false) {
+  sessions(includeHidden = false, id?: string) {
     return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title,
       COALESCE(p.project, 'default') AS project, k.id IS NOT NULL AS knowledgeDisabled
       FROM web_sessions s LEFT JOIN web_session_display d ON d.id = s.id
       LEFT JOIN web_session_project p ON p.id = s.id
       LEFT JOIN web_session_knowledge_disabled k ON k.id = s.id
-      WHERE ? OR COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
-      .all(Number(includeHidden)) as WebSession[];
+      WHERE (? OR COALESCE(d.removed, 0) = 0) AND (? IS NULL OR s.id=?) ORDER BY created_at, s.id`)
+      .all(Number(includeHidden), id ?? null, id ?? null) as WebSession[];
   }
 
   attachment(sessionID: string, id: string) {

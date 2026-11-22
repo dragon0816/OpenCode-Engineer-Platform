@@ -141,18 +141,24 @@ export class TelegramInbox extends ChannelSpool {
     this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale, text });
   }
 
-  notifyReviews(intents: readonly { review?: unknown; destination?: unknown; sourceKey?: unknown }[], locale: ChannelLocale = 'zh-TW') {
+  notifyReviews(intents: readonly { review?: unknown; destination?: unknown; sourceKey?: unknown; origin?: unknown }[], locale: ChannelLocale = 'zh-TW') {
     const find = this.db.prepare(`SELECT account_id AS accountId, conversation_key AS conversationKey,
       binding_revision AS bindingRevision, agent_id AS agentId FROM bi_source_ownership
       WHERE source_key=? AND origin='telegram' AND agent_id='bi'`);
-    for (const { review, destination: receipt, sourceKey } of intents) {
-      if (typeof review !== 'string') continue;
+    for (const { review, destination: receipt, sourceKey, origin } of intents) {
+      if (typeof review !== 'string' || origin && origin !== 'telegram' && origin !== 'legacy') continue;
       const destination = typeof sourceKey === 'string' ? find.get(sourceKey) as Destination | undefined : undefined;
-      if (receipt && (!destination || receipt !== JSON.stringify(destination))) continue;
+      if ((origin === 'telegram' || receipt) && (!destination || receipt !== JSON.stringify(destination))) continue;
       const message = { effectKey: 'review-' + review, text: channelText(locale).published, locale };
       // Historical intents without a known destination used the original BI bot's default topic.
       this.enqueueOutbound({ ...(destination ?? { ...legacyBinding('bi'), conversationKey: topicKey(0) }), ...message });
     }
+  }
+
+  hasDelivery(destination: Destination, effectKey: string) {
+    return Boolean(this.db.prepare(`SELECT 1 FROM channel_outbound WHERE account_id=? AND conversation_key=?
+      AND binding_revision=? AND agent_id=? AND effect_key=?`).get(destination.accountId, destination.conversationKey,
+      destination.bindingRevision, destination.agentId, effectKey));
   }
 
   resend(bot: unknown, id: unknown) {

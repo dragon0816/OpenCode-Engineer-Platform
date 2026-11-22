@@ -464,10 +464,18 @@ const schema = this.reviewSchema(input.vault.id, base);
     return {
       jobs: this.db.prepare('SELECT id,expires,completed FROM ingest_jobs ORDER BY id').all(),
       effects: this.db.prepare('SELECT * FROM ingest_effects ORDER BY job').all(),
-      intents: this.db.prepare(this.ownsBi ? `SELECT n.*,p.delivery_destination AS destination,p.source_key AS sourceKey
-        FROM notification_intents n LEFT JOIN review_provenance p ON p.review_id=n.review ORDER BY n.review` :
-        'SELECT * FROM notification_intents ORDER BY review').all(),
+      intents: this.publicationIntents(),
     };
+  }
+
+  publicationIntents() {
+    return this.db.prepare(this.ownsBi ? `SELECT n.*,p.delivery_destination AS destination,p.source_key AS sourceKey,p.origin
+      FROM notification_intents n LEFT JOIN review_provenance p ON p.review_id=n.review ORDER BY n.review` :
+      'SELECT * FROM notification_intents ORDER BY review').all();
+  }
+
+  publicationNotice(reviewId: string) {
+    return this.db.prepare('SELECT review FROM notification_intents WHERE review=?').get(reviewId) !== undefined;
   }
 
   private review(id: string) {

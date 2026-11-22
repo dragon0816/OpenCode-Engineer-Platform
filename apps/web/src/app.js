@@ -8,6 +8,7 @@ import { bindMcpSettings } from './mcp-settings.js';
 import { bindJobs, loadJobSummary } from './jobs.js';
 import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
 import { bindChannels, channelName } from './channels.js';
+import { bindDelegationResults } from './delegations.js';
 
 initializeLocale();
 
@@ -263,6 +264,13 @@ function toolCard(tool, previous) {
   return card;
 }
 
+const delegationResults = bindDelegationResults({ node, action, openPreview, openRunTab: openFeaturePreview, toolCard, showError, refresh,
+  openReview: async (id, opener, signal) => {
+    if (!knowledge) throw new LocalizedError(message('review.could-not-open-this-review-item-refresh'));
+    await knowledge.openBiReview(id, opener, signal);
+  },
+});
+
 function render(context) {
   const { state, id } = context;
   if (state.session.alias !== knownSessions.get(id)?.alias) {
@@ -289,6 +297,7 @@ function render(context) {
     };
     const focused = messages.contains(document.activeElement) ? document.activeElement : undefined;
     const fragment = document.createDocumentFragment();
+    const anchors = new Map();
     for (const item of state.messages) {
       appendEvents(item.createdAt ?? 0);
       const entry = node('article', '', `message ${item.role}`);
@@ -312,10 +321,16 @@ function render(context) {
       () => { if (current === context) renderNotes(context); },
       (trigger) => openSection('notes', trigger)));
       fragment.append(entry);
+      if (item.runId) anchors.set(item.runId, entry);
     }
     appendEvents(Infinity);
+    delegationResults.place(context, fragment, anchors);
     messages.replaceChildren(fragment);
-    if (focused?.isConnected) focused.focus({ preventScroll: true });
+    if (focused) {
+      const delegation = focused.closest('[data-delegation]')?.dataset.delegation;
+      const fallback = delegation && messages.querySelector(`[data-feature-focus="delegation-${CSS.escape(delegation)}-run"]`);
+      (visibleOpener(focused) || fallback)?.focus({ preventScroll: true });
+    }
     if (!state.messages.length) messages.append(node('p', message('chat.attach-files-or-enter-a-message-to'), 'empty'));
     messages.scrollTop = follow ? messages.scrollHeight : offset;
     jump.hidden = atBottom();
@@ -462,7 +477,7 @@ async function previewResponse(url, signal) {
   return response;
 }
 
-async function openPreview(file, url, context, opener) {
+async function openPreview(file, url, context, opener, { plainText = false } = {}) {
   if (panelTabs.has(url)) {
     showTab(url, opener);
     return;
@@ -485,7 +500,9 @@ async function openPreview(file, url, context, opener) {
     actions.append(browser);
   }
   actions.append(download);
-  panel.append(title, node('small', message('chat.type-size-date', { type: fileType(file), size: formatFileSize(file.bytes), date: formatDate(file.createdAt) })), actions, body);
+  const metadata = file.createdAt === undefined ? formatFileSize(file.bytes)
+    : message('chat.type-size-date', { type: fileType(file), size: formatFileSize(file.bytes), date: formatDate(file.createdAt) });
+  panel.append(title, node('small', metadata), actions, body);
   addTab(url, file.name, panel, () => {
     abort.abort();
     if (objectURL) URL.revokeObjectURL(objectURL);
@@ -503,7 +520,8 @@ async function openPreview(file, url, context, opener) {
     if (abort.signal.aborted || current !== context) return;
     body.replaceChildren();
     const extension = file.name.split('.').at(-1).toLowerCase();
-    if (data instanceof Blob) {
+    if (plainText && extension !== 'md' && extension !== 'csv') body.append(node('pre', data));
+    else if (data instanceof Blob) {
       if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
       const image = node('img');
       image.alt = file.name;
@@ -868,11 +886,11 @@ function closeTab(key) {
     closePanel();
     return;
   }
-  const { opener, preview } = panelTabs.get(key);
+  const { opener } = panelTabs.get(key);
   removeTab(key);
-  const parent = preview && opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
+  const parent = opener && [...panelTabs].find(([, tab]) => tab.panel.contains(opener));
   showTab(activeTab === key ? parent?.[0] ?? keys[index + 1] ?? keys[index - 1] : activeTab);
-  if (preview && parent?.[0] === activeTab) visibleOpener(opener)?.focus({ preventScroll: true });
+  if (parent?.[0] === activeTab) visibleOpener(opener)?.focus({ preventScroll: true });
 }
 
 function closePanel(restoreFocus = true) {
@@ -999,6 +1017,7 @@ function select(id) {
   events.onopen = () => {
     if (current !== context || stopped) return;
     setText(connection, message('chat.connected'));
+    delegationResults.updateOpen(context);
     refresh(context);
   };
   events.onerror = () => {
@@ -1009,6 +1028,7 @@ function select(id) {
   events.addEventListener('activity', (event) => {
     if (current !== context || stopped) return;
     const detail = JSON.parse(event.data);
+    if (detail.kind === 'delegation') delegationResults.updateOpen(context);
     if (eventLabels[detail.kind]) {
       if (activityList.firstElementChild?.classList.contains('empty')) activityList.replaceChildren();
       activityList.prepend(node('li', joinText([eventLabels[detail.kind], detail.tool])));

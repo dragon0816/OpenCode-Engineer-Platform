@@ -11,6 +11,13 @@ const channelStrings = {
     completed: '對話已完成。',
     deadline: (id: number) => `更新 ${id} 未能在期限內處理。已保留原始收件，請在工作台核對後再試。`,
     published: 'BI 審核已發布。請在工作台查看版本。',
+    delegationAccepted: (name: string, id: string) => `已交辦給${name}（${id}）。`,
+    delegationResult: (name: string, id: string, status: string, summary: string) =>
+      `${name}的交辦（${id}）${status}。${summary ? '\n' + summary : ''}\n請在工作台查看執行紀錄。`,
+    delegationStatuses: {
+      succeeded: '已完成', needs_input: '待補件', failed: '失敗', timed_out: '已逾時', cancelled: '已取消',
+      indeterminate: '待核對', submitted: '已送審',
+    },
     status: (jobs: number, complete: number) => `BI 工作共 ${jobs} 筆，已送審 ${complete} 筆。`,
     review: (id: number) => `收件 ${id} 已送審。`,
     blocked: (id: number) => `收件 ${id} 需要補件，請開啟工作台。`,
@@ -30,6 +37,13 @@ const channelStrings = {
     completed: 'The conversation is complete.',
     deadline: (id: number) => `Update ${id} reached its processing deadline. The original intake was saved. Check the workbench before trying again.`,
     published: 'The BI review was published. Open the workbench to view the version.',
+    delegationAccepted: (name: string, id: string) => `Delegated to ${name} (${id}).`,
+    delegationResult: (name: string, id: string, status: string, summary: string) =>
+      `${name}’s delegation (${id}) ${status}.${summary ? '\n' + summary : ''}\nOpen the workbench to view the run record.`,
+    delegationStatuses: {
+      succeeded: 'succeeded', needs_input: 'needs input', failed: 'failed', timed_out: 'timed out', cancelled: 'was cancelled',
+      indeterminate: 'needs verification', submitted: 'was submitted for review',
+    },
     status: (jobs: number, complete: number) => `BI jobs: ${jobs} total, ${complete} submitted for review.`,
     review: (id: number) => `Intake ${id} was submitted for review.`,
     blocked: (id: number) => `Intake ${id} needs additional information. Open the workbench.`,
