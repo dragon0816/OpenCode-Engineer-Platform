@@ -466,6 +466,13 @@ summary { cursor: pointer; }
 .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-2); }
 .settings-actions [role="status"]:empty { display: none; }
 #default-alias { max-width: 100%; }
+.model-choices { min-width: 0; border: 1px solid var(--line); border-radius: 7px; margin: var(--space-3) 0; }
+#model-health { list-style: none; margin: var(--space-2) 0 0; padding: 0; max-height: 16rem; overflow: auto; }
+#model-health li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
+#model-health label { display: flex; align-items: baseline; gap: var(--space-2); }
+#model-health label input { flex: none; margin-inline-start: 0; }
+#model-health li button { grid-column: 3; }
+#model-health li small:empty, #session-model-fallback:empty { display: none; }
 #limit-fields input { width: min(100%, 12ch); font: inherit; }
 #settings-integrations li { margin-bottom: var(--space-2); }
 

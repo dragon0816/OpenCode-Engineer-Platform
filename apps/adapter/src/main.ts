@@ -17,7 +17,7 @@ import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowle
 import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
-import { gatewayAliases, providerID } from './opencode/gateway.ts';
+import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
@@ -112,19 +112,24 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
   const telegram = startTelegram(root, runtime, telegramEnabled);
   const active = new Set<Promise<void>>();
-  const changingModel = new Set<string>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
     return alias;
   };
-  const defaultAlias = () => {
-    const saved = store.defaultAlias();
-    return saved && runtime.aliases.includes(saved) ? saved : runtime.alias;
+  const modelSelection = () => store.modelSelection(runtime.builtInAliases, runtime.alias);
+  const sameModels = (ids: readonly string[]) => ids.length === runtime.aliases.length && ids.every((id) => runtime.aliases.includes(id));
+  const modelSettings = () => {
+    const selection = modelSelection();
+    return { defaultAlias: runtime.alias, aliases: runtime.aliasHealth(), credentialsConfigured: true,
+      selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices: store.modelChoices(runtime.builtInAliases),
+      discoveredAt: store.modelCatalog()?.discoveredAt ?? null, maxSelected: maxSelectedModels,
+      restartRequired: !sameModels(selection.ids), canRestart: Boolean(requestRestart) };
   };
   let auth: LocalAuth;
 
   let restarting = false;
   let testingMcp = false;
+  let refreshingModels = false;
   const changedCredentials = new Set<string>();
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
@@ -193,18 +198,47 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       response.writeHead(200, { 'Content-Type': appearance.mime }).end(appearance.avatar);
       return;
     }
-    if (path === '/api/settings/model' || (path === '/api/settings/model/recheck' && method === 'POST')) {
+    if (path === '/api/settings/model') {
       if (method === 'POST') {
         const input = await body(request);
-        if (path.endsWith('/recheck')) {
-          if (Object.keys(input).length) throw new HttpError(400, 'recheck-has-input');
-          if (!await runtime.checkAliases()) throw new HttpError(429, 'recheck-too-soon', { seconds: 30 });
+        const selection = modelSelection();
+        if (Object.keys(input).length === 1 && 'alias' in input) {
+          const alias = approvedAlias(input.alias);
+          if (!selection.ids.includes(alias)) throw new HttpError(400, 'unapproved-model');
+          store.saveDefaultAlias(alias);
         } else {
-          if (Object.keys(input).length !== 1) throw new HttpError(400, 'select-model');
-          store.saveDefaultAlias(approvedAlias(input.alias));
+          if (Object.keys(input).length !== 2 || !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases)) {
+            throw new HttpError(400, 'invalid-model-selection', { max: maxSelectedModels });
+          }
         }
+        const saved = modelSelection();
+        if (sameModels(saved.ids)) runtime.setDefaultAlias(saved.defaultAlias);
       }
-      send(response, 200, { defaultAlias: defaultAlias(), aliases: runtime.aliasHealth(), credentialsConfigured: true });
+      send(response, 200, modelSettings());
+      return;
+    }
+    if (path === '/api/settings/model/recheck' && method === 'POST') {
+      if (Object.keys(await body(request)).length) throw new HttpError(400, 'recheck-has-input');
+      if (!await runtime.checkAliases()) throw new HttpError(429, 'recheck-too-soon', { seconds: 30 });
+      send(response, 200, modelSettings());
+      return;
+    }
+    if (path === '/api/settings/model/refresh' && method === 'POST') {
+      if (Object.keys(await body(request)).length) throw new HttpError(400, 'recheck-has-input');
+      if (refreshingModels) throw new HttpError(409, 'model-check-busy');
+      refreshingModels = true;
+      try {
+        const refreshed = await runtime.refreshModels(store);
+        send(response, 200, { ...modelSettings(), refreshed });
+      } finally { refreshingModels = false; }
+      return;
+    }
+    if (path === '/api/settings/model/test' && method === 'POST') {
+      const { alias } = await body(request);
+      if (typeof alias !== 'string' || !store.modelChoices(runtime.builtInAliases).includes(alias)) throw new HttpError(400, 'unapproved-model');
+      const result = await runtime.checkModel(alias);
+      if (!result) throw new HttpError(409, 'model-check-busy');
+      send(response, 200, result);
       return;
     }
     if (path === '/api/settings/limits') {
@@ -260,7 +294,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         tools: runtime.knowledge ? [knowledgeToolName] : [] }]);
       return;
     }
-    if (path === '/api/settings/mcp/restart' && method === 'POST') {
+    if (['/api/settings/mcp/restart', '/api/settings/model/restart'].includes(path) && method === 'POST') {
       const input = await body(request);
       if (Object.keys(input).length) throw new HttpError(400, 'restart-has-input');
       if (!requestRestart) throw new HttpError(503, 'restart-unavailable');
@@ -463,16 +497,16 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       }
       const sets = knowledge.benchmarkSets(vault);
       if (!sets) throw new HttpError(404, 'knowledge-base-not-found');
-      send(response, 200, { aliases: gatewayAliases, sets: [
+      send(response, 200, { aliases: [...runtime.knowledge.benchmarks.keys()], sets: [
         { name: '合成標準題集', questions: goldFixture().questions, builtIn: true }, ...sets,
       ] });
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/benchmark-question' && method === 'POST') {
       const { vault, alias, name, id, revision } = await body(request);
-      const selectedAlias = gatewayAliases.find((item) => item === alias);
+      const benchmark = typeof alias === 'string' && runtime.knowledge.benchmarks.get(alias);
       const knowledge = runtime.knowledge.reviewStore;
-      if (typeof vault !== 'string' || !selectedAlias) throw new HttpError(400, 'select-knowledge-base-and-model');
+      if (typeof vault !== 'string' || !benchmark) throw new HttpError(400, 'select-knowledge-base-and-model');
       const sets = knowledge.benchmarkSets(vault);
       const questions = name === '合成標準題集' && vault === 'oep-synthetic-demo' ? goldFixture().questions :
         sets?.find((set) => set.name === name)?.questions;
@@ -489,7 +523,6 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const available = item.class === 'answerable' ? knowledge.retrieve(vault, item.query)?.passages ?? [] : [];
       const recall = item.class === 'answerable' && item.evidence.length
         ? item.evidence.filter((id) => available.some((passage) => passage.id === id)).length / item.evidence.length : null;
-      const benchmark = runtime.knowledge.benchmarks.get(selectedAlias)!;
       benchmarksInFlight++;
       const result = await benchmark.ask(input, AbortSignal.any([client.signal, AbortSignal.timeout(76_000)]))
         .finally(() => { benchmarksInFlight--; });
@@ -601,7 +634,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     if (path === '/api/sessions' && method === 'POST') {
       const { agent } = await body(request);
       if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'invalid-assistant');
-      const session = await chat.create(agent, project, defaultAlias());
+      const session = await chat.create(agent, project);
       sessions.set(session.id, session);
       upstreamIDs.set(session.upstreamID, session.id);
       send(response, 201, publicSession(session));
@@ -660,7 +693,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         if (latest && latest.state !== 'verified' && latest.state !== 'failed' && latest.state !== 'cancelled') {
           throw new HttpError(409, 'session-delete-busy');
         }
-        if (changingModel.has(id)) throw new HttpError(409, 'model-changing');
+        if (chat.modelSwitchPending(id)) throw new HttpError(409, 'model-changing');
         store.decideSessionRemoval(id, 'accept');
         sessions.delete(id);
         events.forget(id);
@@ -674,18 +707,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       if (Object.keys(input).length !== 1) throw new HttpError(400, 'select-model');
       const alias = approvedAlias(input.alias);
       if (!sessions.has(id)) throw new HttpError(404, 'session-not-found');
-      const latest = store.turns(id).at(-1);
-      if (changingModel.has(id) || latest && !['verified', 'failed', 'cancelled'].includes(latest.state)) {
-        throw new HttpError(409, 'model-change-busy');
-      }
-      changingModel.add(id);
-      try {
-        await runtime.client.session.switchModel({ sessionID: session.upstreamID, model: { id: alias, providerID } }, call());
-        store.saveSessionAlias(id, alias);
-        session.alias = alias;
-        events.notify(id);
-        send(response, 200, publicSession(session));
-      } finally { changingModel.delete(id); }
+      send(response, 200, await chat.switchModel(session, alias));
       return;
     }
     if (method === 'POST' && resource === 'read-project-file') {
@@ -732,8 +754,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
         (await chat.state(session)).messages?.find((message) => message.id === input.replyTo));
       if (input.replyTo && !reference) throw new HttpError(404, 'reply-not-found');
       if (!sessions.has(id)) throw new HttpError(404, 'session-not-found');
-      if (changingModel.has(id)) throw new HttpError(409, 'model-changing');
-      send(response, 202, chat.submit(session, input, reference ? { id: reference.id, text: reference.text.slice(0, 8000) } : undefined));
+      send(response, 202, await chat.submit(session, input, reference ? { id: reference.id, text: reference.text.slice(0, 8000) } : undefined));
     }
     else if (method === 'POST' && resource === 'cancel-turn') {
       const input = await body(request);

@@ -9,7 +9,7 @@ export const knowledgeMcpName = 'oep_knowledge';
 export const knowledgeToolName = 'ask';
 const supportedVersions = ['2025-11-25', '2025-06-18', '2025-03-26'];
 
-export async function startKnowledgeMcp(ask: KnowledgeAsk) {
+export async function startKnowledgeMcp(ask: Pick<KnowledgeAsk, 'ask'>) {
   const key = randomBytes(32).toString('hex');
   const expected = Buffer.from(`Bearer ${key}`);
   const stopped = new AbortController();

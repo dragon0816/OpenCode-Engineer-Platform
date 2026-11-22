@@ -3,10 +3,6 @@ let csrf;
 
 export const sampleKnowledgeID = 'oep-synthetic-demo';
 
-export function modelLabel(alias) {
-  return alias.startsWith('synthetic-') ? message('api.configured-model') : alias;
-}
-
 export function projectLabel(project) {
   const names = { default: message('api.primary-workspace'), secondary: message('api.separate-workspace') };
   return names[project.id] ?? project.title;

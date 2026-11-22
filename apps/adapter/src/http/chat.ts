@@ -6,6 +6,7 @@ import type { RunRecord, RunState } from '../../../../packages/contracts/src/run
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { knowledgeMcpName, knowledgeToolName } from '../opencode/knowledge-mcp.ts';
 import { call } from '../opencode/client.ts';
+import { providerID } from '../opencode/gateway.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
@@ -67,6 +68,7 @@ export class ChatService {
   private readonly notify: (sessionID: string) => void;
   private readonly stop = new AbortController();
   private readonly recovering = new Set<string>();
+  private readonly switching = new Set<string>();
   private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private queue = Promise.resolve();
 
@@ -173,7 +175,30 @@ export class ChatService {
       attachments: this.store.attachments(session.id).map(publicAttachment), annotations: this.store.annotations(session.id) };
   }
 
-  submit(session: WebSession, input: Turn, reply?: { id: string; text: string }) {
+  modelSwitchPending(id: string) { return this.switching.has(id); }
+
+  private async applyModel<T>(session: WebSession, alias: string, complete: () => T) {
+    this.switching.add(session.id);
+    try {
+      await this.runtime.client.session.switchModel({ sessionID: session.upstreamID, model: { id: alias, providerID } }, call());
+      this.store.saveSessionAlias(session.id, alias);
+      session.alias = alias;
+      this.notify(session.id);
+      return complete();
+    } finally { this.switching.delete(session.id); }
+  }
+
+  async switchModel(session: WebSession, alias: string) {
+    if (!this.runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
+    const latest = this.store.turns(session.id).at(-1);
+    if (this.switching.has(session.id) || latest && !['verified', 'failed', 'cancelled'].includes(latest.state)) {
+      throw new HttpError(409, 'model-change-busy');
+    }
+    return this.applyModel(session, alias, () => publicSession(session));
+  }
+
+  async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }) {
+    if (this.switching.has(session.id)) throw new HttpError(409, 'model-changing');
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
@@ -183,11 +208,19 @@ export class ChatService {
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
     const prior = this.store.turns(session.id).at(-1);
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'turn-pending');
-    if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(409, 'session-model-mismatch');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'workbook-assistant-required');
     for (const id of input.attachments) {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'session-attachment-not-found');
     }
+    const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
+    if (modelFallback) return this.applyModel(session, modelFallback, () => {
+      if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
+      return { ...this.acceptTurn(session, input, hash, reply), modelFallback };
+    });
+    return this.acceptTurn(session, input, hash, reply);
+  }
+
+  private acceptTurn(session: WebSession, input: Turn, hash: string, reply?: { id: string; text: string }) {
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
@@ -359,7 +392,7 @@ export class ChatService {
   }
 
   busy() {
-    return Boolean(this.executing.size || this.recovering.size || this.store.sessions().some((session) => {
+    return Boolean(this.switching.size || this.executing.size || this.recovering.size || this.store.sessions().some((session) => {
       const last = this.store.turns(session.id).at(-1);
       return last && active.has(last.state);
     }));
