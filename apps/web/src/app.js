@@ -2201,9 +2201,9 @@ try {
   setText(connection, message('chat.connected'));
   setText(model, bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
-  request('/api/settings/model').then(async (value) => {
+  const modelBootstrap = request('/api/settings/model').then((value) => {
     applyModel(value);
-    if (pairedLaunch) await confirmModelApply(value);
+    return value;
   }).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   request('/api/settings/projects').then((entries) => {
     projectFolders = entries;
@@ -2264,6 +2264,8 @@ try {
   const recent = [...knownSessions.values()].filter((entry) => sessionScopes.get(entry.id)?.workspaceId === 'legacy-' + project).at(-1);
   renderSessions();
   select(knownSessions.has(saved) ? saved : recent?.id);
+  if (pairedLaunch) void modelBootstrap.then((value) => value && confirmModelApply(value))
+    .catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   agent.disabled = stop.disabled = find('new-agent').disabled = false;
   bindJobs(openFeaturePreview);
   if (bootstrap.knowledge) {
