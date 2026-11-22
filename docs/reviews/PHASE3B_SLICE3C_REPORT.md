@@ -21,6 +21,10 @@ The synthetic dispatcher contracts cover direct/delegation/schedule ordering, no
 
 Commands ran sequentially with fresh temporary `OEP_DATA_DIR` roots. Each test process used the existing verification venv. The worktree used its own npm dependencies, Phase 0 assets, source, and hooks.
 
+The first `npm test` attempt passed 92 of 95 tests. It exposed two central schema-version expectations and a missing adapter catalog entry. The next attempt passed 94 of 95 and exposed the remaining v4 expectation in the migration retry assertion. The assertions now require v5, and both catalogs include the two resolution errors.
+
+The first native isolation run passed four of five tests. Its broker case timed out because two standalone ChatService instances each recovered the same central ledger. The services now share a dispatcher for that ledger.
+
 ## Left for reviewer
 
 `test:e2e:web`, `test:e2e:excel`, `test:install`, `test:upgrade`, and `test:backup` remain with the reviewer because their running-process guards can collide with the concurrent GUI slice.
