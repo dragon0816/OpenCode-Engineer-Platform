@@ -147,10 +147,13 @@ function bindRowMenu(menu, trigger, actions) {
       event.preventDefault();
       event.stopPropagation();
       close();
-    } else if (['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+    } else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
       event.preventDefault();
       actions[document.activeElement === actions[0] ? 1 : 0].focus();
     }
+  });
+  menu.addEventListener('focusout', (event) => {
+    if (!menu.contains(event.relatedTarget)) menu.open = false;
   });
 }
 
@@ -282,7 +285,7 @@ function render(context) {
         prompt.focus();
       }, showError, (text) => { find('command-toast').textContent = text; },
       () => { if (current === context) renderNotes(context); },
-      () => openSection('notes', entry)));
+      (trigger) => openSection('notes', trigger)));
       fragment.append(entry);
     }
     appendEvents(Infinity);
@@ -826,7 +829,8 @@ function closePanel(restoreFocus = true) {
   panelToggle.setAttribute('aria-expanded', 'false');
   updatePanelLayout();
   if (restoreFocus) {
-    const replacement = opener?.dataset.id && messages.querySelector(`[data-id="${CSS.escape(opener.dataset.id)}"]`);
+    const messageID = opener?.closest('[data-id]')?.dataset.id;
+    const replacement = messageID && messages.querySelector(`[data-id="${CSS.escape(messageID)}"] .message-actions summary`);
     const page = tab?.preview && find('work-area').querySelector('.knowledge:not([hidden]) h1');
     const target = visibleOpener(opener) || replacement || page || menuTrigger;
     target.focus({ preventScroll: true });
@@ -842,28 +846,33 @@ for (const [key, id] of [['files', 'toggle-files'], ['work', 'open-work'], ['dif
   });
 }
 find('manage-attachments').addEventListener('click', (event) => openSection('files', event.currentTarget));
-topMenu.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || !topMenu.open) return;
-  event.preventDefault();
-  topMenu.open = false;
-  menuTrigger.focus();
-});
 document.addEventListener('click', (event) => {
   if (!topMenu.contains(event.target)) topMenu.open = false;
 });
 closeFiles.addEventListener('click', () => closePanel());
 find('panel-jobs-link').addEventListener('click', () => closePanel(false), { capture: true });
 panelNarrow.addEventListener('change', updatePanelLayout);
+rightPanel.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab' || !panelNarrow.matches) return;
+  const candidates = rightPanel.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]');
+  const stops = [...candidates].filter((element) => element.tabIndex >= 0 && !element.disabled && visibleOpener(element));
+  const first = stops[0];
+  const last = stops.at(-1);
+  if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+});
 document.addEventListener('keydown', (event) => {
-  const disclosure = event.target.closest?.('.feature-more[open]');
+  const disclosure = event.target.closest?.('details:is(#top-menu, .feature-more, #shortcuts)[open]');
   if (event.key === 'Escape' && !event.defaultPrevented && disclosure) {
     event.preventDefault();
     disclosure.open = false;
     disclosure.querySelector('summary').focus();
   }
-}, { capture: true });
+});
 document.addEventListener('keydown', (event) => {
-  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden) return;
+  if (event.defaultPrevented || event.key !== 'Escape' || rightPanel.hidden || event.target.closest?.('dialog[open]')) return;
   event.preventDefault();
   closePanel();
 });
@@ -1002,13 +1011,17 @@ function renderSessions() {
       if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
       const menu = node('details');
-      const summary = node('summary', '⋯');
-      summary.setAttribute('aria-label', `${label}的會話操作`);
+      const summary = node('summary', '⋯', 'menu-trigger');
+      summary.setAttribute('aria-label', `「${label}」的更多選項`);
+      summary.title = '更多';
       const rename = sessionButton('重新命名', () => renameSession(session));
-      const remove = sessionButton('刪除', () => removeSession(session));
+      const remove = sessionButton('刪除', () => removeSession(session, summary));
+      remove.classList.add('button-danger');
       rename.dataset.action = 'rename';
       remove.dataset.action = 'remove';
-      menu.append(summary, rename, remove);
+      const actions = node('div', undefined, 'menu-actions');
+      actions.append(rename, remove);
+      menu.append(summary, actions);
       bindRowMenu(menu, summary, [rename, remove]);
       row.append(link, menu);
       list.append(row);
@@ -1530,8 +1543,8 @@ function setSidebar(open) {
 setSidebar(!narrowNavigation.matches);
 narrowNavigation.addEventListener('change', () => setSidebar(!narrowNavigation.matches));
 sidebarToggle.addEventListener('click', () => setSidebar(find('session-sidebar').hidden));
-find('session-sidebar').addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches) return;
+sidebarToggle.closest('.navigation').addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.defaultPrevented || !narrowNavigation.matches || find('session-sidebar').hidden) return;
   event.preventDefault();
   setSidebar(false);
   sidebarToggle.focus();
@@ -1589,7 +1602,7 @@ async function renameSession(session) {
   } catch (error) { showError(error); }
 }
 
-async function removeSession(session) {
+async function removeSession(session, opener) {
   const card = find('remove-session-card');
   const path = sessionPath(session.id);
   find('remove-session-question').textContent = `確定刪除「${sessionLabel(session)}」？`;
@@ -1598,6 +1611,7 @@ async function removeSession(session) {
     card.addEventListener('close', () => resolve(card.returnValue), { once: true });
     card.showModal();
   });
+  opener.focus({ preventScroll: true });
   try {
     await request(path + '/remove', { data: { decision } });
     if (decision !== 'accept') return;
@@ -1729,7 +1743,8 @@ prompt.addEventListener('keydown', (event) => {
   if (!send.disabled) find('composer').requestSubmit(send);
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !event.defaultPrevented && !find('chat-view').hidden && !prompt.disabled) {
+  if (event.key === 'Escape' && !event.defaultPrevented && !event.target.closest?.('dialog[open]') &&
+      !find('chat-view').hidden && !prompt.disabled) {
     find('shortcuts').open = false;
     prompt.focus();
   }

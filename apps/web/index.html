@@ -55,21 +55,21 @@
       <div class="top-actions">
         <div class="top-identity"><strong>OEP · 本機使用者</strong><span id="connection" role="status">正在連線</span></div>
         <details id="top-menu">
-          <summary id="top-menu-trigger" aria-label="更多工作台選項">⋯</summary>
-          <div class="top-menu-actions">
+          <summary id="top-menu-trigger" class="menu-trigger" aria-label="更多工作台選項" title="更多">⋯</summary>
+          <div class="menu-actions">
             <div class="panel-openers" aria-label="附加資料分頁" role="group">
               <button type="button" id="toggle-files" aria-controls="chat-files" aria-expanded="false">檔案</button>
               <button type="button" id="open-work" aria-controls="chat-files">工作</button>
               <button type="button" id="open-diff" aria-controls="chat-files">變更對照</button>
               <button type="button" id="open-notes" aria-controls="chat-files">筆記</button>
             </div>
-            <button id="stop" type="button" disabled>停止服務</button>
+            <button id="stop" class="button-danger" type="button" disabled>停止服務</button>
           </div>
         </details>
       </div>
     </header>
     <section id="settings-view" aria-labelledby="settings-title" hidden>
-      <header class="settings-heading">
+      <header class="settings-heading page-header">
         <h1 id="settings-title" tabindex="-1">設定</h1>
         <button id="close-settings" type="button">返回對話</button>
       </header>
@@ -311,7 +311,7 @@
       </div>
     </section>
     <section class="conversation" aria-label="對話" id="chat-view">
-      <header class="conversation-header">
+      <header class="page-header">
         <h1 id="session-title" tabindex="-1">對話</h1>
       </header>
       <div id="error" role="alert" hidden></div>
@@ -325,7 +325,7 @@
           <h2 id="remove-session-question"></h2>
           <p>刪除後，會話將從清單移除。</p>
           <button value="reject" autofocus>取消</button>
-          <button value="accept">確認刪除</button>
+          <button value="accept" class="button-danger">確認刪除</button>
         </form>
       </dialog>
       <form id="composer">
@@ -352,7 +352,7 @@
             <label id="workbook-option" hidden><input id="workbook" type="checkbox"> 產生 Excel</label>
           </div>
           <button id="send" type="submit" disabled>送出</button>
-          <button id="cancel-turn" type="button" hidden>停止處理</button>
+          <button id="cancel-turn" class="button-danger" type="button" hidden>停止處理</button>
         </div>
         <div class="composer-status">
           <small id="session-model-help">變更從下一則訊息生效。</small>
@@ -369,7 +369,7 @@
       </form>
     </section>
     <section class="conversation knowledge" aria-labelledby="knowledge-title" id="knowledge-view" hidden>
-      <header class="conversation-header knowledge-header">
+      <header class="page-header knowledge-header">
         <h1 id="knowledge-title" tabindex="-1">知識庫</h1>
         <div class="knowledge-selection">
           <label for="vault">已發布的知識庫</label>
@@ -511,7 +511,7 @@
       </div>
     </section>
     <section class="conversation knowledge" id="jobs-view" aria-labelledby="jobs-title" hidden>
-      <header class="conversation-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
+      <header class="page-header"><h1 id="jobs-title" tabindex="-1">排程與工作</h1></header>
       <div class="knowledge-body">
         <p class="page-help">查看下次執行、已送出的工作與通知。</p>
         <p id="jobs-status" role="status"></p>
@@ -519,7 +519,7 @@
       </div>
     </section>
     <section class="conversation knowledge" id="review-view" aria-labelledby="review-title" hidden>
-      <header class="conversation-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
+      <header class="page-header"><h1 id="review-title" tabindex="-1">審核</h1></header>
       <div class="knowledge-body">
         <p class="page-help">查看草稿的變更與來源。先核准內容，再發布到知識庫。</p>
         <button id="review-refresh" type="button">重新整理清單</button>

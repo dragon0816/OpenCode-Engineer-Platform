@@ -28,6 +28,8 @@ export function bindMcpSettings(projects) {
   const list = find('mcp-servers');
   let current;
   let changed;
+  let opener;
+  let saved;
   let saving = false;
   const results = new Map();
 
@@ -77,12 +79,14 @@ export function bindMcpSettings(projects) {
     find('mcp-credential-title').textContent = remote ? '服務的憑證欄位' : '程式的憑證欄位';
   }
 
-  function open(server) {
+  function open(server, trigger) {
     form.reset();
     form.querySelector('details').open = false;
     formStatus.textContent = '';
     current = server;
     changed = server?.id;
+    opener = trigger;
+    saved = false;
     find('mcp-editor-title').textContent = server ? '編輯伺服器' : '新增伺服器';
     for (const name of ['name', 'transport', 'cwd', 'url', 'dataScope']) {
       field(name).value = server?.[name] ?? (name === 'transport' ? 'stdio' : '');
@@ -161,7 +165,7 @@ export function bindMcpSettings(projects) {
         finally { button.disabled = false; }
       };
       renderResult(panel, results.get(server.id), server, apply);
-      actions.append(control('編輯', () => open(server)),
+      actions.append(control('編輯', (event) => open(server, event.currentTarget)),
         control(server.enabled ? '停用' : '啟用', (event) => apply({ action: 'enable', enabled: !server.enabled }, event.currentTarget)),
         control('測試連線', async (event) => {
           const button = event.currentTarget;
@@ -185,10 +189,14 @@ export function bindMcpSettings(projects) {
     }
   }
 
-  find('mcp-add').addEventListener('click', () => open());
+  find('mcp-add').addEventListener('click', (event) => open(undefined, event.currentTarget));
   find('mcp-cancel').addEventListener('click', () => editor.close());
   editor.addEventListener('cancel', (event) => { if (saving) event.preventDefault(); });
-  editor.addEventListener('close', () => rows.replaceChildren());
+  editor.addEventListener('close', () => {
+    rows.replaceChildren();
+    if (!saved) (opener?.isConnected ? opener : find('mcp-add')).focus({ preventScroll: true });
+    opener = undefined;
+  });
   field('transport').addEventListener('change', transport);
   find('mcp-add-credential').addEventListener('click', () => credential().focus());
   form.addEventListener('submit', async (event) => {
@@ -220,6 +228,7 @@ export function bindMcpSettings(projects) {
         value.value = '';
       }
       render(await request(endpoint + '/custom'));
+      saved = true;
       editor.close();
       (find('mcp-server-' + changed) ?? find('mcp-add')).focus();
     } catch (error) { formStatus.textContent = error.message; }

@@ -210,7 +210,9 @@ try {
         ]);
         await audit('#top-menu-trigger', '#top-menu');
         await assertContrastInThemes(page, [{ selector: '#stop' }, { selector: '#toggle-files' }]);
-        await audit('#top-menu-trigger');
+        await page.evaluate("document.querySelector('#toggle-files').focus()");
+        await escape();
+        await page.ready("!document.querySelector('#top-menu').open && document.activeElement.id === 'top-menu-trigger'");
         await audit('#open-settings', '#settings-view');
         await selectSetting('mcp');
         await audit('#mcp-add', '#mcp-editor');
@@ -221,6 +223,9 @@ try {
         await audit('#mcp-add-credential', '#mcp-editor');
         await audit('#mcp-editor details > summary', '#mcp-editor');
         await audit('#mcp-cancel', '#settings-view');
+        await audit('#mcp-add', '#mcp-editor');
+        await escape();
+        await page.ready("!document.querySelector('#mcp-editor').open && document.activeElement.id === 'mcp-add'");
         // Restore the first settings section for the later navigation and reload checks.
         await selectSetting('assistant');
         await audit('#close-settings', '#chat-view');
@@ -437,6 +442,7 @@ try {
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.ready("document.activeElement.dataset.action === 'rename'");
+        await assertUiTextInThemes(page, '.session-list details[open]');
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await page.ready("document.activeElement.dataset.action === 'remove'");
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
@@ -490,6 +496,13 @@ try {
         await page.ready(`document.querySelector('[aria-current=true]')?.dataset.session === ${JSON.stringify(selected)} &&
           document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.density === 'compact' &&
           document.querySelector('#session-title').textContent === '合成會話'`);
+        await page.evaluate(`
+          document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
+        `);
+        await assertUiTextInThemes(page, '#remove-session-card');
+        await assertContrastInThemes(page, [{ selector: '#remove-session-question' }, { selector: '#remove-session-card [value=accept]' }]);
+        await escape();
+        await page.ready("!document.querySelector('#remove-session-card').open && document.activeElement.matches('.session-list summary')");
         await page.evaluate(`
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
           document.querySelector('#remove-session-card [value=reject]').click();

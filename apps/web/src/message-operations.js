@@ -30,8 +30,8 @@ export function messageActions(context, item, content, reply, report, notify, up
   const details = document.createElement('details');
   details.className = 'message-actions';
   const summary = document.createElement('summary');
-  summary.textContent = '訊息操作';
-  summary.setAttribute('aria-label', '開啟訊息操作');
+  summary.textContent = '更多';
+  summary.setAttribute('aria-label', '更多訊息操作');
   details.append(summary);
   const current = () => context.state.annotations?.find((entry) => entry.messageID === item.id);
   async function save(field, value, reason) {
@@ -66,7 +66,7 @@ export function messageActions(context, item, content, reply, report, notify, up
     if (value !== null) await save('note', value);
   });
   add('刪除筆記', () => save('note', null));
-  add('查看會話筆記', openNotes);
+  add('查看會話筆記', () => openNotes(summary));
   details.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && details.open) {
       event.preventDefault();
