@@ -343,3 +343,9 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 ## 2026-11-23 交辦切片 6 的交付邊界
 
 - BI 收件狀態與補件的直接對話驗收使用既有 Telegram BI 對話。Web 直接對話依會話授權操作 BI 收件的流程列為後續工作。 [切片 6 驗收](reviews/PHASE3B_SLICE6_REPORT.md)
+
+## 2026-11-23 外部 coding 幫手先於 Skill
+
+- **決策：** 擁有者確認 3I（Claude Code、Codex 外部 coding 幫手）屬於「LLM Gateway 導入」，在 3E 之前完成。3I 設計的四項待決採技術負責人建議預設（見 `docs/PHASE3_REQUIREMENTS.md` 10.7）。
+- **理由：** 擁有者決定順序；預設值偏保守，可逆。
+- **捨棄的替代方案：** 先做 Skill（與擁有者順序不符）。
