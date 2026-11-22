@@ -3,7 +3,7 @@ import { ChannelSpool } from '../channels/spool.ts';
 import type { Binding, ChannelLocale, Destination, InboundEnvelope, Lane } from '../channels/transport.ts';
 import { channelText } from '../channels/catalog.ts';
 import { verifyBiSourceOwners } from '../bi/source-ownership.ts';
-import { legacyBinding, migrateTelegramSpool, telegramLane, topicKey } from './channel-migration.ts';
+import { checkTelegramSchema, legacyBinding, migrateTelegramSpool, telegramLane, topicKey } from './channel-migration.ts';
 import type { Bot } from './channel-migration.ts';
 
 export { telegramInboxVersion } from './channel-migration.ts';
@@ -52,6 +52,7 @@ export class TelegramInbox extends ChannelSpool {
     super(db);
     this.db = db;
     try {
+      checkTelegramSchema(db);
       db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
       this.transaction(() => {
         migrateTelegramSpool(db, path);

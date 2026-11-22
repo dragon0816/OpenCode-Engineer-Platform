@@ -105,9 +105,15 @@ export function verifyChannelConversations(db: DatabaseSync, sessions?: Database
   }
 }
 
-export function migrateTelegramSpool(db: DatabaseSync, path: string) {
+export function checkTelegramSchema(db: DatabaseSync) {
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version);
-  if (version > telegramInboxVersion || version < 0) throw new Error('Telegram 資料庫版本不相容。');
+  if (version > telegramInboxVersion) throw new Error('Telegram資料庫版本比程式新。');
+  if (version < 0) throw new Error('Telegram 資料庫版本無效。');
+  return version;
+}
+
+export function migrateTelegramSpool(db: DatabaseSync, path: string) {
+  const version = checkTelegramSchema(db);
   if (version === telegramInboxVersion) return;
   using knowledge = path === ':memory:' ? undefined : openBiReviewStore(dirname(path));
   db.exec(historicalSchema);

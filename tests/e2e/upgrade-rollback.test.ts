@@ -46,6 +46,8 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const profileFile = join(web, 'profile/synthetic.txt');
     const knowledge = join(web, 'knowledge.sqlite');
     const { snapshot } = goldFixture();
+    // The seeded BI vault has review history and requires a reviewed publication.
+    snapshot.vault.id = 'maintenance-extended';
     snapshot.publication.revision = 'maintenance-extended';
     for (let index = 0; index < 300; index++) {
       const id = 'fixture-card-' + index;
@@ -58,10 +60,13 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
     const { KnowledgeStore: HistoricalKnowledgeStore } = await import(oldStore) as
       typeof import('../../packages/knowledge/src/store.ts');
-    const store = new HistoricalKnowledgeStore(knowledge);
-    store.import(snapshot, Buffer.from(canonical(snapshot)));
-    const before = store.retrieve(snapshot.vault.id, 'SYN-48B');
-    store.close();
+    const before = (() => {
+      const store = new HistoricalKnowledgeStore(knowledge);
+      try {
+        store.import(snapshot, Buffer.from(canonical(snapshot)));
+        return store.retrieve(snapshot.vault.id, 'SYN-48B');
+      } finally { store.close(); }
+    })();
     {
       using db = new DatabaseSync(knowledge);
       db.exec(`INSERT INTO reviews(id,vault,original,draft) VALUES ('review','synthetic','{}','{}');
@@ -241,9 +246,11 @@ test('owned SQLite stores refuse future schemas without mutating files', () => {
       db.exec('PRAGMA user_version=99');
       db.close();
       const prior = readFileSync(path);
-      assert.throws(() => new open(path), /資料庫版本比程式新/);
+      assert.throws(() => new open(path), open === TelegramInbox ?
+        { message: 'Telegram資料庫版本比程式新。' } : /資料庫版本比程式新/);
       assert.deepEqual(readFileSync(path), prior);
       assert.ok(!existsSync(path + '-wal'));
+      assert.ok(!existsSync(path + '-shm'));
     }
   } finally { fixture.cleanup(); }
 });
