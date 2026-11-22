@@ -12,7 +12,7 @@
 - BI ownership covers sources, jobs, reviews and published BI versions. Proven legacy Telegram reviews link to their original source and destination. Unproven legacy reviews use the legacy origin with an empty source and destination. The owner review API projects the `BI 資料處理` source for Telegram proposals. Publication keeps the review ID and intent in the same Knowledge transaction. Telegram deduplicates delivery using the existing review effect key and checks the saved destination against source ownership.
 - Offline reconciliation hashes the named additions against the backup, checks the original tables and files, and validates cross-database conversation and BI links. Rollback summaries account for the initial spool projection and report subsequent work changes.
 
-## Scope checkpoint
+## Scope at 6d409fa
 
 - The runtime uses the two built-in account slots. The account and binding revision schema supports the next round of account creation, reassignment, credential rotation and confirmed rebind work.
 - The owner still sees the existing review and job views. The source label is available in the existing review API. Displaying it in the review view is pending.
@@ -31,7 +31,7 @@
 - `tests/e2e/knowledge.test.ts` seeds its synthetic owner-visible source and uncertain send in the tables the application now uses. The browser expectations are unchanged.
 - `tests/e2e/upgrade-rollback.test.ts` updates the expected candidate versions and records new post-upgrade work in the operational spool. It still verifies the same original rollback rows, and it checks that the rollback summary reports the single newly queued effect.
 
-## Remaining
+## Remaining at 6d409fa
 
 - Complete the pairing- and CSRF-protected `GET/POST /api/settings/channels` through account verification, creation, assignment, token rotation, confirmation, and conflict and busy-state reporting.
 - Route additional verified accounts into the selected specialist’s scoped session and workspace. Add the binding admission lock for reconfiguration, drain pending work and sends, and exercise a full third specialist and busy-rebind test through the runtime. Use the planned UUID source keys for newly bound accounts that handle BI intake.
@@ -39,7 +39,7 @@
 - Extend BI acceptance to use the authenticated HTTP review route within the synthetic Telegram scenario and assert the source label in the review view. The present Telegram scenario calls the same server review action and verifies the API projection.
 - Later Web and delegation BI entry points, the settings GUI, and delegation itself retain their existing slice boundaries.
 
-## Sequential verification
+## Sequential verification at 6d409fa
 
 Each command ran with a fresh temporary `OEP_DATA_DIR` and process-local Python settings from `oep-verify-venv/Scripts`. Telegram used loopback synthetic APIs.
 
@@ -64,3 +64,65 @@ Each command ran with a fresh temporary `OEP_DATA_DIR` and process-local Python 
 ## Left for reviewer
 
 `test:e2e:web`, `test:e2e:excel`, `test:install`, `test:upgrade`, and `test:backup`.
+
+## Slice 3b reviewer findings
+
+Follow-up branch `phase-3b/slice-3b-channels` starts at `6d409fa`.
+
+1. `TelegramInbox` changed the SQLite journaling mode before migration checked the version. The migration then threw a string the launcher did not recognize. The opener now checks `user_version` with a read-only SQLite connection before opening the writable handle, and reports exactly `Telegram資料庫版本比程式新。` for a future schema. The preflight uses a private WAL index so a version committed only in the WAL can be checked without updating any of the three SQLite files. The launcher reports a separate error for a negative version. [SQLite WAL](https://www.sqlite.org/wal.html) · [SQLite VFS](https://www.sqlite.org/vfs.html)
+2. The historical upgrade test seeded a managed BI vault with review history and then imported the extended test snapshot into that same vault. The historical store threw `This vault requires a reviewed publication` before it reached `store.close()`. The open SQLite handle prevented Windows from deleting the fixture, masking the import error with `EPERM`. The extended import now uses a separate vault, and the historical store closes in a `finally` block.
+
+| Isolated Windows reproduction | Before | After |
+| --- | --- | --- |
+| Future-schema subtest | 1 failed. The exception used an unrecognized message. A separate version-99 probe confirmed the DB bytes changed. | 1 passed. The exact launcher-compatible message matched, DB bytes were identical, and neither SQLite sidecar existed. |
+| Future schema committed only in a crash-left WAL | A writable open could reject the version but checkpoint it on close, changing the database and removing both sidecars. | 1 passed. The exact message matched, and the database, WAL and SHM were byte-for-byte identical. |
+| Upgrade and rollback scenario | 1 failed after 45.79 s. The diagnostic captured the managed-vault import error, followed by cleanup `EPERM`. | 1 passed after 408.94 s. Both normal cycles and all interrupted-swap, rollback and repair assertions completed, including fixture cleanup. |
+
+The upgrade scenario used the same baseline release package before and after the fixture repair to isolate the cause. It ran from a scratch source copy with synthetic install and data roots under the fresh `OEP_DATA_DIR`. Only that copy replaced the machine-wide running-service checks with assertions on the isolated roots. The production guards and the owner's running service were outside this experiment.
+
+## Delivered in slice 3b
+
+- `GET /api/settings/channels` lists account bindings, reply locales and poll status. `POST` verifies a named User-scope credential with `getMe` and handles confirmed bind, unbind and rebind with a revision check. Both methods require pairing and CSRF. A duplicate provider identity or credential reference returns `CHANNEL_ACCOUNT_IN_USE` with the existing account and assistant.
+- Send `x-oep-csrf` on both methods. A new binding uses `action: 'bind'`, `agentId`, `credentialRef` and `confirmed: true`. Updating an existing binding also uses `accountId` and the listed `bindingRevision`. A rebind may select another reference for the same bot and allowlisted owner.
+- A verified additional bot using the chat handler routes to the assigned assistant's default workspace. The Telegram conversation and session ownership record the account, conversation, assistant and binding revision. The assistant's approved model and reply locale apply to each conversation.
+- Settings commits and received batches share a binding admission lock. A confirmed change returns a busy response while the old revision has active runs, inbound work or pending sends. The old connection drains under its existing binding. On a successful change, polling resumes after identity verification and a stale poll response cannot advance the cursor. Late outbound effects use their stored revision and destination with the same verified bot and owner. Provider HTTP 409 stops polling for that connection and appears in the settings API.
+- Credentials are read from Windows User scope with the same stdin-based helper as custom MCP. Requests, stored settings and backup credential inventories use reference names. Legacy owner seals and cursor keys remain valid for the original two bots.
+- Authenticated `GET /api/knowledge/reviews` returns the Telegram BI source label, and approval and publication are exercised through the authenticated POST route. The known-origin publication returns to the original bot and topic. Unknown-origin historical review intents retain the original BI account's default topic `topic:0` and stable review effect key.
+
+## Slice 3b test changes
+
+- `tests/e2e/upgrade-rollback.test.ts` uses a distinct vault for the extended historical import so it still exercises a large, genuine version-1 index alongside the managed BI fixture. The store closes on every exit path. The future-schema assertion now checks Telegram's exact message and the absence of both sidecars. The added interrupted-WAL fixture verifies that the opener reads the committed future version and leaves all three files byte-identical. The existing checksum and reconciliation assertions are retained.
+- `tests/integration/telegram.test.ts` replaces the direct review-action calls with equivalent HTTP approval and idempotent publication. It adds assertions for pairing, CSRF, pending review provenance and label, publication requiring approval, candidate visibility after publication and default-topic deduplication for unknown-origin intents. Existing known-origin delivery, retry and restart assertions are retained.
+- The new three-bot integration case uses loopback Telegram and a synthetic OpenCode client. It covers both methods' authentication and CSRF requirements, rejection of inline credentials, a concurrent duplicate-bot claim through two credential references, stale and busy rebinds, a late poll response across the admission lock, credential rotation, separate session ownership and workspaces on the same topic, both reply locales, a delayed old-revision outbound effect, backup reference export, poll conflict reporting, unbind and restart without duplicate prompts or sends.
+- The first sequential run reached `npm test` and reported one catalog contract failure. The contract parses literal property names, so the conflict code now uses a quoted key. The gate sequence restarted from lint after that correction and the WAL preflight change.
+
+## Open after slice 3b
+
+- Implement the persistent `agent_work_items` dispatcher for Web direct turns, channel inbound, BI intake and supplement, existing BI scheduler occurrences, and existing BI run and recovery entry points. It still needs direct → delegation → schedule priority, per-agent write leases with `lease_id` completion checks, expiry, stable cross-database handoff and recovery that retains indeterminate leases without replay. Add the dispatcher contract tests and the schema migration and reconciliation fixtures in the same change.
+- Extend BI intake beyond the legacy BI account using UUID public source keys, negative internal IDs and per-account event deduplication. Bindings accept the chat handler for additional accounts. The legacy BI intake handler continues to work on the original account.
+- Extend the existing owner-confirmed resend action to additional account IDs. Their uncertain sends already remain recorded as indeterminate.
+- Slice 4 owns the review-source UI label and settings screens. Web and delegation BI acceptance remain with their entry-point slices.
+
+## Slice 3b sequential verification
+
+The implementation at `645dc44` passed the following sequence on Windows 11 with Node 24.14.1. Each gate received a fresh temporary `OEP_DATA_DIR` and process-local Python from `oep-verify-venv`. Telegram exercised loopback APIs with synthetic credentials.
+
+| Gate | Observed result |
+| --- | --- |
+| `npm run lint` | Exit 0 in 0.92 s. Checked 247 source and configuration files. |
+| `npm run typecheck` | Exit 0 in 4.91 s. |
+| `npm test` | Exit 0 in 11.60 s. 85 passed, 0 failed, 0 skipped. |
+| `npm run build:release` | Exit 0 in 17.48 s. The ZIP scan passed. SHA-256 `2aa708bff2db4ce95de29d53e5ee09f264f4715e9d2f000c046d60fd5855178c`. |
+| `npm run test:e2e:browser`, run 1 | Exit 0 in 69.97 s. Supervisor and child exited 0 with 0 orphans. |
+| `npm run test:e2e:browser`, run 2 | Exit 0 in 73.37 s. Supervisor and child exited 0 with 0 orphans. |
+| `npm run test:e2e:browser`, run 3 | Exit 0 in 73.21 s. Supervisor and child exited 0 with 0 orphans. |
+| `npm run test:e2e:knowledge` | Exit 0 in 26.27 s. 1 passed, 0 failed, 0 skipped. |
+| `npm run test:ingest` | Exit 0 in 4.17 s. 16 passed, 0 failed, 0 skipped. |
+| `npm run test:telegram` | Exit 0 in 36.85 s. 8 passed, 0 failed, 0 skipped. |
+| `npm run test:e2e:mcp` | Exit 0 in 53.63 s. |
+| `npm run test:compliance` | Exit 0 in 0.40 s. 2 passed, 0 failed, 0 skipped. |
+| `npm run test:release:determinism` | Exit 0 in 38.71 s. 1 passed, 0 failed, 0 skipped. Both builds reproduced the release SHA-256 above. |
+| `npm run test:contract:native:isolation` | Exit 0 in 18.60 s. 5 passed, 0 failed, 0 skipped. Both native Jobs reported supervisor and child exit 0 with 0 orphans. |
+| `npm run scan` | Exit 0 in 1.09 s. 570 files, 0 hits. |
+
+Reviewer gates are `test:e2e:web`, `test:e2e:excel`, `test:install`, `test:upgrade`, and `test:backup`.
