@@ -173,7 +173,7 @@ export function bindReview(anchor, onPublish, openPreview) {
     function drawReview(tab, row, id) {
       const { body, signal } = tab;
       body.replaceChildren();
-      if (!row) { body.append(element('p', '這筆審核已無法開啟。')); return; }
+      if (!row) { body.append(element('p', '無法開啟這筆審核。請重新整理審核清單。')); return; }
       const draft = JSON.parse(row.draft);
       const heading = element('p', displayedState(row));
       heading.tabIndex = -1;
@@ -210,7 +210,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       if (row.status === 'pending' || row.status === 'approved') {
         button(controls, '比較版本與證據', compare, feedback);
         comparison.textContent = '正在讀取版本與證據…';
-        compare().catch(() => { comparison.textContent = '無法讀取版本與證據。'; });
+        compare().catch(() => { comparison.textContent = '無法讀取版本與證據。請再按一次「比較版本與證據」。'; });
         if (kind === 'wiki') {
           const trial = inputLabel(controls, '草稿證據搜尋');
           button(controls, '搜尋草稿', async () => {
@@ -418,7 +418,7 @@ export function bindReview(anchor, onPublish, openPreview) {
     }
     button(candidate.parentElement.parentElement, '送交 JSON 審核', async () => {
       const draft = JSON.parse(candidate.value);
-      if (draft.vault.kind !== kind) throw new Error('草稿類型不符。');
+      if (draft.vault.kind !== kind) throw new Error('草稿類型不符。請從對應的卡片或文章區送交審核。');
       const id = crypto.randomUUID();
       await submit({ action: 'parent' in draft ? 'stage-change' : 'stage', id, draft });
       await submitted(id);
@@ -434,7 +434,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       openSubmitted.hidden = !reviewRows.has(id);
     }
     panel.addEventListener('toggle', () => {
-      if (panel.open) refresh().catch(() => { status.textContent = '無法讀取清單。'; });
+      if (panel.open) refresh().catch(() => { status.textContent = '無法讀取清單。請收合後重新開啟。'; });
     });
   }
   async function refreshQueue() {

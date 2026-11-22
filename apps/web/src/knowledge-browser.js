@@ -191,7 +191,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
         (control.disabled ? results : control).focus();
       } else if (focus) results.querySelector(`[data-sort="${focus}"]`)?.focus();
     } catch {
-      if (!current.signal.aborted) status.textContent = '無法讀取卡片。';
+      if (!current.signal.aborted) status.textContent = '無法讀取卡片。請重新套用篩選。';
     }
   }
 
@@ -232,7 +232,7 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
       await refreshVaults();
       result.textContent = `已重建 ${rebuilt} 個發布版本的搜尋索引。`;
     } catch {
-      result.textContent = '無法重建搜尋索引。';
+      result.textContent = '無法重建搜尋索引。請再試一次。';
     } finally { rebuild.disabled = false; }
   });
 

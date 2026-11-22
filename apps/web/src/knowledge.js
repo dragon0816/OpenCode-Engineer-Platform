@@ -13,14 +13,14 @@ const label = (tag, value) => {
   return element;
 };
 const messages = {
-  'vault-unavailable': '找不到可查詢的已發布版本。',
-  'no-evidence': '知識庫沒有能回答這個問題的證據。',
-  'model-disabled': '這個版本尚未授權供模型使用。',
-  unsupported: '已發布的證據不足以支持答案。',
-  'invalid-citation': '模型回覆未通過引用驗證。',
-  unavailable: '目前無法連線到模型。',
+  'vault-unavailable': '找不到可查詢的版本。請選擇已發布的知識庫。',
+  'no-evidence': '知識庫找不到相關資料。請換個問法再試。',
+  'model-disabled': '此版本尚未允許模型使用。請在匯入時勾選同意。',
+  unsupported: '知識庫資料不足。請換個問法再試。',
+  'invalid-citation': '無法核對回答的來源。請換個問法再試。',
+  unavailable: '無法連線到模型。請稍後再試。',
   'gateway-rejected': '模型服務拒絕處理這個問題，系統未再次傳送證據。請換個問法再試。',
-  empty: '模型未回傳內容。',
+  empty: '模型沒有回覆。請重送問題。',
   busy: '知識詢問處理中，請稍後再試。',
   'evidence-changed-or-cancelled': '知識庫版本在查詢期間變更，或本次查詢已取消。',
 };
@@ -118,8 +118,8 @@ export function bindKnowledge(openPreview, closePreviews) {
       ['搜尋索引', selected.ready ? '可用' : '需要檢查'],
     ]) technical.append(label('dt', term), label('dd', value));
     vaultStatus.textContent = selected.ready ? '可搜尋' : '搜尋需要維護';
-    status.textContent = !selected.ready ? '目前無法搜尋此知識庫。' :
-      selected.modelEnabled ? '' : '這個版本尚未授權供模型使用。';
+    status.textContent = !selected.ready ? '目前無法搜尋。請到概覽的進階區重建搜尋索引。' :
+      selected.modelEnabled ? '' : '此版本尚未允許模型使用。請在匯入時勾選同意。';
     controls();
   }
 
@@ -168,7 +168,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       if (!vaults.length) vault.append(new Option('尚無已發布版本', ''));
       describe();
     } catch {
-      if (!active.signal.aborted) status.textContent = vaultStatus.textContent = '無法讀取已發布的知識庫。';
+      if (!active.signal.aborted) status.textContent = vaultStatus.textContent = '無法讀取已發布的知識庫。請重新整理。';
     } finally {
       if (loading === active) { loading = undefined; controls(); }
     }
@@ -213,7 +213,7 @@ export function bindKnowledge(openPreview, closePreviews) {
           errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`).join('\n');
       }
     } catch (error) {
-      repositoryStatus.textContent = error instanceof RequestError ? error.message : '無法處理此資料夾。';
+      repositoryStatus.textContent = error instanceof RequestError ? error.message : '無法讀取資料夾。請確認路徑及讀取權限。';
     } finally {
       importing = false;
       for (const element of [folder, consent, checkFolder, importFolder]) element.disabled = false;
@@ -234,7 +234,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       });
       if (active.signal.aborted) return;
       if (result.state !== 'verified') {
-        status.textContent = messages[result.reason] || '本次詢問無法完成。';
+        status.textContent = messages[result.reason] || '無法完成這次詢問。請稍後再試。';
         return;
       }
       status.textContent = '引用已通過驗證。';
@@ -254,7 +254,7 @@ export function bindKnowledge(openPreview, closePreviews) {
       }
       answer.append(release);
     } catch {
-      if (!active.signal.aborted) status.textContent = '本次詢問無法完成。';
+      if (!active.signal.aborted) status.textContent = '無法完成這次詢問。請稍後再試。';
     } finally {
       if (pending === active) { pending = undefined; controls(); }
     }

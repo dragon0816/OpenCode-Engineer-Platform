@@ -6,10 +6,10 @@ const view = find('jobs-view');
 const open = find('open-jobs');
 const labels = {
   pending: '等待送出', sent: '已送出', failed: '失敗', indeterminate: '送達未確認', sending: '傳送中',
-  draft: '待批准', active: '已啟用', paused: '已暫停', rejected: '已拒絕', removed: '已移除',
+  draft: '待核准', active: '已啟用', paused: '已暫停', rejected: '已拒絕', removed: '已移除',
   queued: '等待執行', missed: '已略過', expired: '超過補跑期限', ready: '待處理',
   awaiting_review: '待審核', blocked: '需要補件',
-  approved: '已批准', published: '已發布', discarded: '已捨棄',
+  approved: '已核准', published: '已發布', discarded: '已捨棄',
 };
 
 function jobState(row) {
@@ -140,7 +140,7 @@ export function bindJobs(openPreview) {
     if (!rows.length) body.append(node('p', '目前沒有執行紀錄。'));
     const list = node('ul');
     for (const row of rows) {
-      const item = node('li', `${row.schedule} · ${localTime(row.utc, row.zone)} · ${labels[row.state] ?? row.state}`);
+      const item = node('li', `${row.schedule} · ${localTime(row.utc, row.zone)} · ${labels[row.state] ?? '狀態未知'}`);
       const details = disclosure('進階', 'feature-advanced');
       details.append(node('p', `${row.wall} ${row.zone} · ${new Date(row.utc).toISOString()}`));
       item.append(details);
@@ -166,7 +166,7 @@ export function bindJobs(openPreview) {
           : { action, id: id.value, candidate: payload });
       } catch {
         advanced.open = true;
-        error.textContent = '工作參數須為有效的 JSON。';
+        error.textContent = '無法讀取工作設定。請檢查 JSON 格式。';
         candidate.focus();
       }
     };
@@ -222,7 +222,7 @@ export function bindJobs(openPreview) {
 
   function delivery(body) {
     if (!status.delivery.length) body.append(node('p', '目前沒有通知紀錄。'));
-    for (const row of status.delivery) body.append(node('p', `${botLabel(row.bot)} · ${labels[row.state] ?? row.state} · ${row.count} 筆`));
+    for (const row of status.delivery) body.append(node('p', `${botLabel(row.bot)} · ${labels[row.state] ?? '狀態未知'} · ${row.count} 筆`));
     if (status.unresolvedDelivery.length) {
       const unresolved = disclosure('需核對的通知', 'feature-more');
       for (const row of status.unresolvedDelivery) {
@@ -327,7 +327,7 @@ export function bindJobs(openPreview) {
 
 export async function loadJobSummary() {
   const summary = find('panel-jobs');
-  summary.textContent = '正在載入工作與排程…';
+  summary.textContent = '正在讀取排程與工作…';
   try {
     const status = await request('/api/jobs');
     const counts = (rows, stateLabel) => {
@@ -338,6 +338,6 @@ export async function loadJobSummary() {
       }
       return [...totals].map(([state, count]) => `${state} ${count} 筆`).join('、') || '無';
     };
-    summary.textContent = `BI 工作：${counts(status.jobs, jobState)}。排程：${counts(status.schedules ?? [], (row) => labels[row.state] ?? '其他狀態')}。`;
-  } catch { summary.textContent = '目前無法讀取 BI 工作與排程。'; }
+    summary.textContent = `知識庫工作：${counts(status.jobs, jobState)}。排程：${counts(status.schedules ?? [], (row) => labels[row.state] ?? '其他狀態')}。`;
+  } catch { summary.textContent = '無法讀取排程與工作。請重新整理。'; }
 }

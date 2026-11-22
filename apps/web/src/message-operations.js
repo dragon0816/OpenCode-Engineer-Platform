@@ -18,7 +18,7 @@ async function copy(text) {
     document.body.append(field);
     field.select();
     try {
-      if (!document.execCommand('copy')) throw new Error('無法複製文字。');
+      if (!document.execCommand('copy')) throw new Error('無法複製文字。請選取文字後手動複製。');
     } finally {
       field.remove();
       focused?.focus();

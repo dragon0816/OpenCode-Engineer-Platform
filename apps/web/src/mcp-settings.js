@@ -239,6 +239,6 @@ export function bindMcpSettings(projects) {
   return async () => {
     status.textContent = '';
     try { render(await request(endpoint + '/custom')); }
-    catch { status.textContent = '無法讀取自訂伺服器。'; }
+    catch { status.textContent = '無法讀取自訂伺服器。請重新整理。'; }
   };
 }

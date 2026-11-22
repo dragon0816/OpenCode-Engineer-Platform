@@ -79,7 +79,7 @@ export function bindCommands(prompt, list, toast, handlers, report) {
     const [, name, argument = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(original.trim()) ?? [];
     const command = commands.find(([key]) => key === name);
     if (!command) { report('無法辨識這個指令。輸入 /help 查看可用指令。'); return; }
-    if (!command[1] && argument) { report('這個指令不接受參數。'); return; }
+    if (!command[1] && argument) { report('此指令不需要其他文字。請刪除指令後的文字。'); return; }
     busy = true;
     close();
     report();

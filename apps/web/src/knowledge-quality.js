@@ -97,7 +97,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       status.textContent = selected.modelEnabled ? '' : '此發布版本尚未授權使用模型。';
       render();
     } catch {
-      if (!active.signal.aborted) status.textContent = '無法讀取題集。';
+      if (!active.signal.aborted) status.textContent = '無法讀取題集。請重新選擇知識庫。';
     }
   }
 
@@ -125,7 +125,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
     const form = event.currentTarget;
     const name = form.elements.name.value.trim();
     if (!name) return;
-    if (catalog.some((set) => set.name === name)) status.textContent = '已有同名題集。';
+    if (catalog.some((set) => set.name === name)) status.textContent = '已有同名題集。請使用其他名稱。';
     else {
       form.reset();
       void save([], name);
@@ -147,14 +147,14 @@ export function bindKnowledgeQuality(openPassage, messages) {
     input.value = '';
     if (!file) return;
     if (file.size > 120 * 1024) {
-      status.textContent = '題集 JSON 檔案太大。';
+      status.textContent = '題集檔案太大。請選擇較小的檔案。';
       return;
     }
     const set = current();
     try {
       const text = await file.text();
       if (current() === set) json.value = text;
-    } catch { status.textContent = '無法讀取題集 JSON。'; }
+    } catch { status.textContent = '無法讀取題集檔案。請重新選擇。'; }
   };
   find('quality-import').onclick = () => {
     try { void save(JSON.parse(json.value)); }
@@ -180,7 +180,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
         }), ' ', button(passage.source + ' · ' + passage.locator, (event) => openPassage(passage, '', event.currentTarget)), node('p', passage.text.slice(0, 200)));
         matches.append(row);
       }
-    } catch { status.textContent = '無法搜尋段落。'; }
+    } catch { status.textContent = '無法搜尋段落。請再試一次。'; }
   };
 
   find('quality-new-question').onclick = () => { openEditor(); editor.elements.query.focus(); };

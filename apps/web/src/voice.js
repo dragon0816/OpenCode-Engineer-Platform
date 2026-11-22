@@ -24,7 +24,7 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
   button.addEventListener('click', () => {
     if (recognition) { cancel(); return; }
     const Speech = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Speech) { report('這個瀏覽器不支援語音轉錄。'); return; }
+    if (!Speech) { report('這個瀏覽器無法使用聽寫。請直接輸入訊息。'); return; }
     const context = getContext();
     try {
       const capture = new Speech();
@@ -34,14 +34,14 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
       capture.onresult = (event) => {
         if (recognition !== capture || context !== getContext() || composer.disabled) return;
         const text = event.results[event.resultIndex]?.[0]?.transcript?.trim();
-        if (!text) { report('沒有收到轉錄文字。'); return; }
+        if (!text) { report('沒有聽到語音。請再試一次，或直接輸入。'); return; }
         composer.value = (composer.value ? composer.value + ' ' + text : text).slice(0, composer.maxLength);
         composer.focus();
         report();
       };
       capture.onerror = (event) => {
         if (recognition !== capture) return;
-        report(['not-allowed', 'service-not-allowed'].includes(event.error) ? '麥克風權限已拒絕。' : '語音轉錄失敗，請再試一次。');
+        report(['not-allowed', 'service-not-allowed'].includes(event.error) ? '無法使用麥克風。請在瀏覽器允許麥克風權限。' : '無法完成聽寫。請再試一次。');
         cancel();
       };
       capture.onend = () => { if (recognition === capture) cancel(); };
@@ -50,7 +50,7 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
       button.textContent = '取消聽寫';
     } catch (error) {
       cancel();
-      report(error.name === 'NotAllowedError' ? '麥克風權限已拒絕。' : '語音轉錄失敗，請再試一次。');
+      report(error.name === 'NotAllowedError' ? '無法使用麥克風。請在瀏覽器允許麥克風權限。' : '無法完成聽寫。請再試一次。');
     }
   });
   update();
