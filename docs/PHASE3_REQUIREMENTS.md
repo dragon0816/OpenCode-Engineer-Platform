@@ -277,3 +277,11 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 缺口（目前沒有現成 Skill）：儀器控制、晶片控制、專門的資料分析、SAP 網頁專用流程、GitLab、Confluence。建議 Confluence、GitLab 以 MCP 外部工具接入；儀器控制、晶片控制、資料分析由擁有者提供作業程序後撰寫公司 Skill。
 
 注意：部分 AEP Skill 只是操作說明，背後依賴 AEP 的能力（例如名片庫與組織圖、Jira 預覽、coding 變更流程），OEP 需重新實作對應能力；名片庫依 D5 寫入前需審核，屬 3D 範圍。
+
+### 10.4 基本功能：由 SOP 產生 Workflow（擁有者 2026-11-22）
+
+- R19：使用者提供 SOP（圖片、PDF 或文字），OEP 產生可重複執行的 Workflow。
+- 流程：讀取 SOP（文字直接讀；PDF 用 pdf Skill 擷取文字與圖；圖片與掃描檔用 OCR，必要時用支援影像的模型）→ 整理成步驟、輸入參數與預期結果 → 依 Workflow 格式產生草稿 → 格式檢查 → 以測試值試跑（會改東西的步驟只做預覽）→ 擁有者核准後安裝。原 SOP 與產生的 Workflow 互相連結，方便日後 SOP 改版時重新產生。
+- 使用的預設 Skill：workflow creator、pdf、OCR、verification-planning（不增加 Skill 數）。
+- 前提：OEP 目前沒有 Workflow 格式與執行引擎（AEP 有）。3E 必須包含 Workflow 定義、檢查、試跑、核准安裝與執行；既有的「SOP 轉 Excel」流程是第一個參考案例。
+- 驗收：三種輸入（純文字、PDF、手機拍攝的流程圖）各至少一份合成 SOP，產生的 Workflow 通過格式檢查並以測試值試跑成功。
