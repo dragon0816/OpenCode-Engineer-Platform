@@ -117,8 +117,7 @@ export function bindChannels(getAgents, refreshAgents) {
     actions.append(verifyRow, change);
     if (state === 'enabled') actions.append(operation('unbind', () => mutate('unbind')));
     const saveLocale = operation('save-language', async () => {
-      const { agent } = await request('/api/agents/' + agentId);
-      await request('/api/agents/' + agentId, { data: { action: 'edit', revision: agent.revision, replyLocale: locale.value } });
+      await request('/api/agents/' + agentId, { data: { action: 'edit', revision: assigned?.revision, replyLocale: locale.value } });
       await refreshAgents();
       await load(accountId);
     });

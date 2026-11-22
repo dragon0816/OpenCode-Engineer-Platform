@@ -240,13 +240,13 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       try {
         const credentialRef = reference.value.trim();
         const result = await request('/api/settings/channels', { data: { action: 'verify', credentialRef } });
-        if (version !== generation) return;
+        if (version !== generation || !select.isConnected) return;
         channel = { key: credentialRef, credentialRef, botName: result.botName };
         connections = connections.filter(({ key }) => key !== credentialRef).concat(channel);
         reference.value = '';
         showChoices();
         setText(status, message('channels.verified'));
-      } catch (error) { if (version === generation) setText(status, errorText(error)); }
+      } catch (error) { if (version === generation && select.isConnected) setText(status, errorText(error)); }
       finally { verify.disabled = false; }
     });
     parent.append(node('p', message('channels.secure-help')), label, reference, verify);
