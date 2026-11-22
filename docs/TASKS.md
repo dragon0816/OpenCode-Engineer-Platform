@@ -213,3 +213,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 以升級前多庫 fixture 驗證逐庫交易、重跑、資料列比對與檔案雜湊。 [多助理設計](design/PHASE3B_MULTI_AGENT_DESIGN.md) · [切片 1 驗收](reviews/PHASE3B_SLICE1_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 - [ ] 後續切片完成執行隔離、通道與 BI 歸屬、助理設定介面，以及交辦、結果與通知流程。
+
+## Phase 3B 切片 2 隔離執行與內建工具
+
+- [x] 在隔離的 Windows Job 驗證固定版 OpenCode v2.3.2。SSE 可將 relay 注入的欄位傳至 MCP，測試也核對權限覆蓋、工具允許清單及工作台遮蔽。
+- [ ] JSON completion 在 OpenCode 端停於 SSE 讀取，未呼叫 MCP。依設計第 3.2 節暫停切片 2，待傳輸契約審閱。 [切片 2 驗收](reviews/PHASE3B_SLICE2_REPORT.md)
