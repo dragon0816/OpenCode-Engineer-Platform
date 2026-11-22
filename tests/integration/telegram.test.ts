@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
-import { maxWorkAttempts, TelegramApi, TelegramPoller, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
+import { maxWorkAttempts, TelegramApi, TelegramPoller, TelegramTransport, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
+import { legacyChannels } from '../../apps/adapter/src/channels/accounts.ts';
 import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { ModelSeat } from '../../apps/adapter/src/opencode/model-seat.ts';
@@ -389,4 +390,81 @@ test('targeted intake stages verified change sets and blocks fabricated quotes o
     store.close();
     rmSync(root, { recursive: true });
   }
+});
+
+test('canonical bot verification rejects a duplicate account and stops polling on a provider conflict', async () => {
+  const inbox = new TelegramInbox(':memory:');
+  const ledger = new WebStore(':memory:');
+  const stop = new AbortController();
+  let polls = 0;
+  let sends = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _chunk of req) { /* Drain the synthetic request. */ }
+    if (req.url?.endsWith('/getMe')) {
+      res.end(JSON.stringify({ ok: true, result: { id: 17, is_bot: true } }));
+    } else if (req.url?.endsWith('/getUpdates')) {
+      polls++;
+      res.statusCode = 409;
+      res.end(JSON.stringify({ ok: false, error_code: 409 }));
+    } else {
+      sends++;
+      res.end(JSON.stringify({ ok: true, result: { message_id: 88 } }));
+    }
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const base = 'http://127.0.0.1:' + address.port;
+    const clients = [new TelegramApi('fake-first', base), new TelegramApi('fake-second', base)];
+    let seals = 0;
+    const results = await Promise.allSettled(legacyChannels.map(async (account, index) => {
+      const identity = await new TelegramTransport(account.bot, '42', clients[index]).verifyAccount(stop.signal);
+      return ledger.verifyLegacyChannel(account, createHash('sha256').update(identity.identity).digest('hex'), () => {
+        seals++;
+        return true;
+      });
+    }));
+    assert.equal(results.filter((result) => result.status === 'fulfilled' && result.value === true).length, 1);
+    const conflict = results.find((result) => result.status === 'rejected');
+    assert.equal(conflict?.reason.message, 'CHANNEL_ACCOUNT_IN_USE');
+    assert.equal(seals, 1);
+
+    inbox.notify('main', 'prior-effect', 7, 'Synthetic queued reply');
+    const poller = new TelegramPoller('main', '42', clients[0], inbox, async () => 'Synthetic');
+    await poller.poll(stop.signal);
+    await poller.poll(stop.signal);
+    await poller.deliver(stop.signal);
+    assert.equal(poller.pollConflict, true);
+    assert.equal(polls, 1);
+    assert.equal(sends, 1);
+    assert.equal(inbox.db.prepare('SELECT provider_receipt FROM channel_outbound').get()?.provider_receipt, '88');
+  } finally {
+    stop.abort();
+    server.closeAllConnections();
+    server.close();
+    ledger.close();
+    inbox.db.close();
+  }
+});
+
+test('channel replies use the agent locale and spool destinations stay pinned across account revisions', async () => {
+  const inbox = new TelegramInbox(':memory:');
+  const router = new TelegramRouter(inbox, {} as Runtime, undefined!, undefined!, undefined,
+    (bot) => bot === 'main' ? 'en' : 'zh-TW');
+  const signal = new AbortController().signal;
+  try {
+    assert.equal(await router.handle({ bot: 'main', id: 1, topic: 7, payload: '{}' }, signal), 'Enter a text message.');
+    assert.match(await router.handle({ bot: 'bi', id: 1, topic: 7, payload: '{"text":"/status"}' }, signal) ?? '', /BI 工作/);
+    const specialist = { accountId: 'synthetic-specialist', agentId: 'first', bindingRevision: 1 };
+    const later = { ...specialist, agentId: 'second', bindingRevision: 2 };
+    const original = { ...specialist, conversationKey: 'topic:7', effectKey: 'update-1', locale: 'en', text: 'Delayed reply' } as const;
+    inbox.enqueueOutbound(original);
+    inbox.enqueueOutbound({ ...original, text: 'Duplicate' });
+    inbox.enqueueOutbound({ ...original, accountId: 'telegram-main', agentId: 'main', text: 'Same topic, other bot' });
+    assert.equal(inbox.claimOutbound(later, 600_000), undefined);
+    assert.deepEqual(inbox.claimOutbound(specialist, 600_000), { ...original, attempts: 1 });
+    assert.equal(inbox.claimOutbound({ accountId: 'telegram-main', agentId: 'main', bindingRevision: 1 }, 600_000)?.text,
+      'Same topic, other bot');
+  } finally { inbox.db.close(); }
 });

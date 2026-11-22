@@ -74,7 +74,8 @@ export function* legacyChannelRows(db: DatabaseSync, table: string): Generator<S
       for (const row of legacyRows(db, 'outbox')) {
         const bot = botOf(row.bot);
         yield [legacyBinding(bot).accountId, row.id, topicKey(integer(row.topic)), 1, bot,
-          JSON.stringify({ text: row.text, locale: 'zh-TW' }), row.state, row.attempts, row.due, null, null];
+          JSON.stringify({ text: row.text, locale: 'zh-TW' }), row.state, row.attempts, row.due, null,
+          row.state === 'pending' && Number(row.due) > 0 ? 'rate-limited' : null];
       }
       break;
     case 'channel_conversations':

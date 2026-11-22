@@ -11,6 +11,9 @@ import type { WebStore } from '../runs/web-store.ts';
 import type { Intake, Message, TelegramInbox } from './inbox.ts';
 import type { TelegramApi } from './poller.ts';
 import { legacyBinding, topicKey } from './channel-migration.ts';
+import { channelText } from '../channels/catalog.ts';
+import type { ChannelLocale } from '../channels/transport.ts';
+import type { Bot } from './inbox.ts';
 
 const extensions = new Set(['.txt', '.md', '.csv', '.png', '.jpg', '.jpeg', '.pdf', '.xlsx']);
 const textExtensions = new Set(['.txt', '.md', '.csv']);
@@ -24,15 +27,18 @@ export class TelegramRouter {
   private readonly runtime: Runtime;
   private readonly chat: ChatService;
   private readonly sessions: WebStore;
-  private readonly biApi?: TelegramApi;
+  private readonly fileApi: (bot: Bot) => TelegramApi | undefined;
+  private readonly locale: (bot: Bot) => ChannelLocale;
   private readonly staging = new Map<number, Promise<void>>();
 
-  constructor(inbox: TelegramInbox, runtime: Runtime, chat: ChatService, sessions: WebStore, biApi?: TelegramApi) {
+  constructor(inbox: TelegramInbox, runtime: Runtime, chat: ChatService, sessions: WebStore, biApi?: TelegramApi,
+    locale: (bot: Bot) => ChannelLocale = () => 'zh-TW', fileApi: (bot: Bot) => TelegramApi | undefined = () => biApi) {
     this.inbox = inbox;
     this.runtime = runtime;
     this.chat = chat;
     this.sessions = sessions;
-    this.biApi = biApi;
+    this.fileApi = fileApi;
+    this.locale = locale;
   }
 
   config(name: string) {
@@ -64,13 +70,14 @@ export class TelegramRouter {
     if (row.bot === 'main') return this.main(row, message.text ?? '', signal);
     if (message.text?.trim() === '/status') {
       const jobs = this.runtime.knowledge?.reviewStore.reconciliation().jobs ?? [];
-      return `BI 工作共 ${jobs.length} 筆，已送審 ${jobs.filter((job) => job.completed).length} 筆。`;
+      return channelText(this.locale(row.bot)).status(jobs.length, jobs.filter((job) => job.completed).length);
     }
     return this.intake(row.id, message, signal);
   }
 
   private async main(row: Intake, text: string, signal: AbortSignal) {
-    if (!text.trim()) return '請輸入文字訊息。';
+    const messages = channelText(this.locale(row.bot));
+    if (!text.trim()) return messages.empty;
     const db = this.inbox.db;
     const owner = legacyBinding('main');
     const binding = this.inbox.conversation(owner, row.topic);
@@ -78,13 +85,13 @@ export class TelegramRouter {
     if (/^\/ask(?:\s|$)/.test(text)) {
       const match = text.match(/^\/ask\s+(\S+)\s+([\s\S]+)$/);
       const input = match && parseAsk({ vault: match[1], question: match[2] });
-      if (!input) return '請輸入 /ask 知識庫ID 問題';
+      if (!input) return messages.askUsage;
       const result = !binding || session
         ? await this.chat.askKnowledge(input, AbortSignal.any([signal, AbortSignal.timeout(76_000)]), session, row.topic)
         : undefined;
-      if (result?.state !== 'verified') return '沒有可核對的知識答案。請確認知識庫及模型授權。';
+      if (result?.state !== 'verified') return messages.askUnavailable;
       return result.citations.map(({ quote, sourceId, sourceVersion, passageID }) =>
-        `「${quote}」\n來源 ${sourceId} · ${sourceVersion} · ${passageID}`).join('\n\n').slice(0, 4000);
+        messages.citation(quote, `${sourceId} · ${sourceVersion} · ${passageID}`)).join('\n\n').slice(0, 4000);
     }
     if (session) {
       const previous = this.sessions.turns(session.id).at(-1);
@@ -104,8 +111,8 @@ export class TelegramRouter {
     const state = await this.chat.state(session);
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);
-    if (run?.state === 'cancelled') return '對話已停止。';
-    if (run?.state === 'failed') return '對話未完成，請在工作台確認服務狀態。';
+    if (run?.state === 'cancelled') return messages.cancelled;
+    if (run?.state === 'failed') return messages.failed;
     if (run?.state !== 'verified') return undefined;
     if (!state.messages) return undefined;
     const index = state.messages.findIndex((message) => message.id === this.sessions.get(id).submissionID);
@@ -115,7 +122,7 @@ export class TelegramRouter {
       if (message.role !== 'assistant') break;
       result.push(message.text);
     }
-    return result.join('\n').slice(0, 4000) || '對話已完成。';
+    return result.join('\n').slice(0, 4000) || messages.completed;
   }
 
   private async intake(id: number, message: Message, signal: AbortSignal) {
@@ -132,10 +139,11 @@ export class TelegramRouter {
       let reason = '';
       try {
         if (file) {
-          if (!this.biApi || !extensions.has(extname(ref).toLowerCase()) || Number(file.file_size) > maxUpload) {
+          const api = this.fileApi('bi');
+          if (!api || !extensions.has(extname(ref).toLowerCase()) || Number(file.file_size) > maxUpload) {
             throw new Error('Unsupported file');
           }
-          bytes = await this.biApi.file(file.file_id, maxUpload, signal);
+          bytes = await api.file(file.file_id, maxUpload, signal);
           if (!textExtensions.has(extname(ref).toLowerCase())) {
             state = 'blocked';
             reason = '原始檔已保存，請補充 UTF-8 文字供審核。';
@@ -158,7 +166,8 @@ export class TelegramRouter {
     signal.throwIfAborted();
     const status = db.prepare('SELECT state FROM bi_sources WHERE id=?').get(id)?.state;
     if (status === 'ready') return undefined;
-    return status === 'awaiting_review' ? `收件 ${id} 已送審。` : `收件 ${id} 需要補件，請開啟工作台。`;
+    const messages = channelText(this.locale('bi'));
+    return status === 'awaiting_review' ? messages.review(id) : messages.blocked(id);
   }
 
   supplement(id: number, text: unknown, signal: AbortSignal) {

@@ -5,7 +5,9 @@ import { maxSelectedModels } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
-import { Ledger } from './ledger.ts';
+import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
+import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
+import type { LegacyChannel } from '../channels/accounts.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
 import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
@@ -109,13 +111,38 @@ export class WebStore extends Ledger {
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
     super(file, {
-      migrate(db) {
-        db.exec(webSchema);
-        migrateAgentLedger(db, file, telegram);
+      version: telegram ? telegramChatLedgerVersion : webLedgerVersion,
+      migrate(db, version) {
+        if (version < telegramChatLedgerVersion) {
+          db.exec(webSchema);
+          migrateAgentLedger(db, file, telegram);
+        }
+        if (!telegram) migrateChannelAccounts(db);
       },
       verify: (db) => verifyAgentLedger(db, file, telegram),
     });
     this.telegram = telegram;
+  }
+
+  verifyLegacyChannel(config: LegacyChannel, fingerprint: string, sealLegacyOwner: () => boolean) {
+    return this.transaction(() => {
+      const existing = this.db.prepare(`SELECT id FROM channel_accounts WHERE provider='telegram' AND account_fingerprint=?`)
+        .get(fingerprint);
+      if (existing && existing.id !== config.accountId) throw new Error('CHANNEL_ACCOUNT_IN_USE');
+      const valid = this.db.prepare(`SELECT 1 FROM channel_accounts c JOIN agents a ON a.id=c.agent_id
+        WHERE c.id=? AND c.agent_id=? AND c.handler=? AND c.provider='telegram' AND c.credential_ref=? AND c.allowlist_ref=?
+        AND c.binding_revision=1 AND (c.account_fingerprint IS NULL OR c.account_fingerprint=?)
+        AND c.state <> 'disabled' AND a.state='active'`).get(config.accountId, config.bot, config.handler,
+        config.credentialRef, legacyAllowlistRef, fingerprint);
+      if (!valid || !sealLegacyOwner()) return false;
+      this.db.prepare(`UPDATE channel_accounts SET account_fingerprint=?,state='enabled',updated_at=?
+        WHERE id=? AND state='unverified'`).run(fingerprint, Date.now(), config.accountId);
+      return true;
+    });
+  }
+
+  channelLocale(agentID: string): 'zh-TW' | 'en' {
+    return this.db.prepare('SELECT reply_locale FROM agents WHERE id=?').get(agentID)?.reply_locale === 'en' ? 'en' : 'zh-TW';
   }
 
   customMcpServers() {
@@ -189,12 +216,12 @@ export class WebStore extends Ledger {
   }
 
   executionProfile(agentID: string, workspaceID: string) {
-    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions,
+    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions, a.reply_locale AS replyLocale,
       a.default_model_id AS defaultModel, w.relative_root AS relativeRoot,
       COALESCE(w.display_name,w.id) AS workspaceName
       FROM agents a JOIN agent_workspaces w ON w.agent_id=a.id
       WHERE a.id=? AND w.id=? AND a.state='active'`).get(agentID, workspaceID) as {
-        revision: number; name: string; introduction: string; instructions: string;
+        revision: number; name: string; introduction: string; instructions: string; replyLocale: 'zh-TW' | 'en';
         defaultModel: string | null; relativeRoot: string; workspaceName: string;
       } | undefined;
   }

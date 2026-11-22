@@ -51,7 +51,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
         .map((row) => row.name);
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'),
-      ...Object.keys(legacyAgentRows(undefined, root, false))]);
+      'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -90,7 +90,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 3], 'telegram-chat': [2, 3], knowledge: [1, 2], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 4], 'telegram-chat': [2, 3], knowledge: [1, 2], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);
@@ -129,6 +129,11 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     assert.deepEqual(query('SELECT * FROM agent_capabilities'), [['main', 'mcp', fixtureMcpId, 0]]);
     assert.deepEqual(query('SELECT * FROM agent_trigger_settings ORDER BY agent_id'), [['bi', 1], ['main', 1]]);
     assert.deepEqual(query('SELECT * FROM file_classifications'), []);
+    assert.deepEqual(query('SELECT id,agent_id,state,binding_revision FROM channel_accounts ORDER BY id'),
+      [['telegram-bi', 'bi', 'unverified', 1], ['telegram-main', 'main', 'unverified', 1]]);
+    sessions.exec("UPDATE channel_accounts SET agent_id='bi' WHERE id='telegram-main'");
+    reconcile(/【web\/web.sqlite】.*channel_accounts/);
+    sessions.exec("UPDATE channel_accounts SET agent_id='main' WHERE id='telegram-main'");
     const attachment = JSON.parse(String(query('SELECT record FROM attachments')[0][0]));
     assert.deepEqual(attachment.original, original);
     assert.deepEqual(attachment.projection, projection);

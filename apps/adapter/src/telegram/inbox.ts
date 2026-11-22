@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { ChannelSpool } from '../channels/spool.ts';
-import type { Binding, InboundEnvelope, Lane } from '../channels/transport.ts';
+import type { Binding, ChannelLocale, InboundEnvelope, Lane } from '../channels/transport.ts';
+import { channelText } from '../channels/catalog.ts';
 import { legacyBinding, migrateTelegramSpool, telegramLane, topicKey } from './channel-migration.ts';
 import type { Bot } from './channel-migration.ts';
 
@@ -82,13 +83,13 @@ export class TelegramInbox extends ChannelSpool {
     this.attemptInbound({ accountId: legacyBinding(row.bot).accountId, eventKey: String(row.id) }, now, due);
   }
 
-  notify(bot: Bot, id: string, topic: number, text: string) {
-    this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale: 'zh-TW', text });
+  notify(bot: Bot, id: string, topic: number, text: string, locale: ChannelLocale = 'zh-TW') {
+    this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale, text });
   }
 
-  notifyReviews(intents: readonly { review?: unknown }[]) {
+  notifyReviews(intents: readonly { review?: unknown }[], locale: ChannelLocale = 'zh-TW') {
     for (const { review } of intents) {
-      this.notify('bi', 'review-' + review, 0, 'BI 審核已發布。請在工作台查看版本。');
+      this.notify('bi', 'review-' + review, 0, channelText(locale).published, locale);
     }
   }
 
@@ -97,9 +98,9 @@ export class TelegramInbox extends ChannelSpool {
     this.retryOutbound(legacyBinding(bot).accountId, id);
   }
 
-  complete(row: Intake, text: string, failed = false) {
+  complete(row: Intake, text: string, failed = false, locale: ChannelLocale = 'zh-TW') {
     this.completeInbound(String(row.id), { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic),
-      effectKey: 'update-' + row.id, locale: 'zh-TW', text }, failed);
+      effectKey: 'update-' + row.id, locale, text }, failed);
   }
 
   conversation(binding: Binding, topic: number) {

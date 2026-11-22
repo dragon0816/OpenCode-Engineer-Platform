@@ -1,7 +1,8 @@
 import type { Bot, Intake, Lane, TelegramInbox, Update } from './inbox.ts';
 import { telegramBatch } from './inbox.ts';
 import { legacyBinding } from './channel-migration.ts';
-import type { ChannelTransport, Delivery, OutboundMessage } from '../channels/transport.ts';
+import type { ChannelLocale, ChannelTransport, Delivery, OutboundMessage } from '../channels/transport.ts';
+import { channelText } from '../channels/catalog.ts';
 
 export const workDeadline = 120_000;
 export const maxWorkAttempts = 20;
@@ -136,21 +137,25 @@ export class TelegramPoller {
   private polling = false;
   private sending = false;
   private readonly lanes = new Set<Lane>();
+  pollConflict = false;
 
   readonly bot: Bot;
-  private readonly transport: TelegramTransport;
+  private readonly transport: ChannelTransport;
   private readonly inbox: TelegramInbox;
   private readonly handle: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
+  private readonly locale: () => ChannelLocale;
 
-  constructor(bot: Bot, owner: string, api: TelegramApi, inbox: TelegramInbox, handle: TelegramPoller['handle']) {
+  constructor(bot: Bot, owner: string, api: TelegramApi, inbox: TelegramInbox, handle: TelegramPoller['handle'],
+    locale: () => ChannelLocale = () => 'zh-TW') {
     this.bot = bot;
     this.transport = new TelegramTransport(bot, owner, api);
     this.inbox = inbox;
     this.handle = handle;
+    this.locale = locale;
   }
 
   async poll(signal: AbortSignal, clock = Date.now) {
-    if (this.polling || signal.aborted || clock() < this.pollDue) return;
+    if (this.polling || this.pollConflict || signal.aborted || clock() < this.pollDue) return;
     this.polling = true;
     try {
       const binding = legacyBinding(this.bot);
@@ -159,7 +164,8 @@ export class TelegramPoller {
       this.inbox.admitBatch(binding, batch.events, batch.nextCheckpoint, clock(), checkpoint);
       this.failures = 0;
     } catch (error) {
-      this.pollDue = clock() + delay(error, ++this.failures);
+      if (error instanceof TelegramError && error.status === 409) this.pollConflict = true;
+      else this.pollDue = clock() + delay(error, ++this.failures);
     } finally {
       this.polling = false;
     }
@@ -170,8 +176,9 @@ export class TelegramPoller {
     const now = clock();
     const row = this.inbox.next(this.bot, lane, now);
     if (!row) return;
+    const locale = this.locale();
     const deadline = (row.started ?? now) + workDeadline;
-    const fail = () => this.inbox.complete(row, `更新 ${row.id} 未能在期限內處理。已保留原始收件，請在工作台核對後再試。`, true);
+    const fail = () => this.inbox.complete(row, channelText(locale).deadline(row.id), true, locale);
     if (now >= deadline || row.attempts >= maxWorkAttempts) { fail(); return; }
     this.lanes.add(lane);
     try {
@@ -187,7 +194,7 @@ export class TelegramPoller {
       finally { attemptSignal.removeEventListener('abort', release); }
       if (signal.aborted) return;
       if (budget.aborted || clock() >= deadline) fail();
-      else if (result !== undefined) this.inbox.complete(row, result);
+      else if (result !== undefined) this.inbox.complete(row, result, false, locale);
       else if (row.attempts + 1 >= maxWorkAttempts) fail();
     } finally {
       this.lanes.delete(lane);

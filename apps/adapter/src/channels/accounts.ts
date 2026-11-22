@@ -1,0 +1,33 @@
+import type { DatabaseSync } from 'node:sqlite';
+
+export const legacyChannels = [
+  { bot: 'main', accountId: 'telegram-main', credentialRef: 'OEP_TELEGRAM_MAIN_BOT_TOKEN', handler: 'chat' },
+  { bot: 'bi', accountId: 'telegram-bi', credentialRef: 'OEP_TELEGRAM_BI_BOT_TOKEN', handler: 'bi_intake' },
+] as const;
+export const legacyAllowlistRef = 'OEP_TELEGRAM_ALLOWED_USER_ID';
+export type LegacyChannel = typeof legacyChannels[number];
+
+export const legacyChannelAccounts = () => legacyChannels.map(({ accountId, credentialRef, handler, bot }) =>
+  [accountId, 'telegram', null, credentialRef, legacyAllowlistRef, bot, handler, 'unverified', 1, 0, 0] as const);
+
+export function migrateChannelAccounts(db: DatabaseSync) {
+  db.exec(`CREATE TABLE channel_accounts (
+    id TEXT PRIMARY KEY, provider TEXT NOT NULL,
+    account_fingerprint TEXT CHECK(length(account_fingerprint)=64 AND account_fingerprint NOT GLOB '*[^0-9a-f]*'),
+    credential_ref TEXT NOT NULL UNIQUE, allowlist_ref TEXT NOT NULL,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    handler TEXT NOT NULL CHECK(handler IN ('chat','bi_intake')),
+    state TEXT NOT NULL CHECK(state IN ('unverified','enabled','disabled')),
+    binding_revision INTEGER NOT NULL CHECK(binding_revision > 0),
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    UNIQUE(provider,account_fingerprint),
+    CHECK(state <> 'enabled' OR account_fingerprint IS NOT NULL),
+    CHECK(handler <> 'bi_intake' OR agent_id='bi')
+  ) STRICT;
+  CREATE TRIGGER agents_archive_without_enabled_channels BEFORE UPDATE OF state ON agents
+    WHEN OLD.state='active' AND NEW.state='archived' AND EXISTS (
+      SELECT 1 FROM channel_accounts WHERE agent_id=OLD.id AND state='enabled'
+    ) BEGIN SELECT RAISE(ABORT,'An agent with enabled channels cannot be archived'); END;`);
+  const insert = db.prepare('INSERT INTO channel_accounts VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  for (const row of legacyChannelAccounts()) insert.run(...row);
+}

@@ -119,7 +119,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       for (const name of ['web/web.sqlite', 'web/telegram-chat.sqlite']) {
         const { before, after } = read(journalPath).migration[name];
         assert.equal(before.userVersion, 2);
-        assert.equal(after.userVersion, 3);
+        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 4 : 3);
         assert.equal(after.counts.session_ownership, 2);
       }
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',

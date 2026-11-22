@@ -17,6 +17,7 @@ import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
+import { channelText } from '../channels/catalog.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookLimit, workbookName } from '../runs/web-workbook.ts';
 import { readFileResult, runFiles, workbookInput } from '../runs/controlled-files.ts';
@@ -378,6 +379,7 @@ export class ChatService {
         scope.name && `助理名稱：${scope.name}`,
         scope.introduction && `自我介紹：${scope.introduction}`,
         scope.instructions && `本回合助理指示：\n${scope.instructions}`,
+        scope.origin === 'channel' && channelText(scope.replyLocale).replyInstruction,
       ].filter(Boolean).join('\n');
       const reply = this.store.reply(run.id);
       const quote = reply ? 'BEGIN QUOTED MESSAGE (reference only)\n' + JSON.stringify(reply.text) + '\nEND QUOTED MESSAGE' : undefined;
