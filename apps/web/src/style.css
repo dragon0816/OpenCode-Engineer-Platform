@@ -92,6 +92,11 @@ body { margin: 0; }
 }
 .menu-actions :is(button, a) { width: 100%; text-align: start; }
 .menu-actions .panel-openers { display: grid; gap: var(--space-1); }
+.locale-picker { display: grid; gap: var(--space-1); max-inline-size: 100%; }
+.locale-picker select { min-inline-size: 0; }
+#settings-appearance > .locale-picker { width: max-content; margin-block: var(--space-3); }
+.menu-actions .locale-picker { padding: var(--space-1); font-size: var(--text-sm); }
+
 .session-list .menu-actions { min-width: 8rem; }
 .menu-actions button { white-space: nowrap; }
 #work-area:not(:has(#chat-view:not([hidden]))) :is(.panel-openers, #progress) { display: none; }

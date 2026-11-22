@@ -63,6 +63,13 @@
               <button type="button" id="open-diff" aria-controls="chat-files" data-i18n="ui.change-comparison"></button>
               <button type="button" id="open-notes" aria-controls="chat-files" data-i18n="ui.notes"></button>
             </div>
+            <label class="locale-picker" for="menu-locale">
+              <span data-i18n="ui.language"></span>
+              <select id="menu-locale">
+                <option value="zh-TW" data-i18n="ui.traditional-chinese"></option>
+                <option value="en" data-i18n="ui.english"></option>
+              </select>
+            </label>
             <button id="stop" class="button-danger" type="button" disabled data-i18n="ui.stop-service"></button>
           </div>
         </details>
@@ -117,6 +124,13 @@
           <section id="settings-appearance" aria-labelledby="settings-appearance-title" hidden>
             <h2 id="settings-appearance-title" data-i18n="ui.appearance"></h2>
             <p class="settings-help" data-i18n="ui.change-the-theme-spacing-and-assistant-avatar"></p>
+            <label class="locale-picker" for="settings-locale">
+              <span data-i18n="ui.language"></span>
+              <select id="settings-locale">
+                <option value="zh-TW" data-i18n="ui.traditional-chinese"></option>
+                <option value="en" data-i18n="ui.english"></option>
+              </select>
+            </label>
             <form id="appearance-settings">
               <label for="theme" data-i18n="ui.theme"></label>
               <select id="theme">

@@ -1,4 +1,4 @@
-import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
+import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
 import { connect, errorText, modelLabel, projectLabel, request, RequestError } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
@@ -694,6 +694,24 @@ const rightPanel = find('chat-files');
 const panelToggle = find('toggle-files');
 const topMenu = find('top-menu');
 const menuTrigger = find('top-menu-trigger');
+const menuLocale = find('menu-locale');
+const localePickers = [menuLocale, find('settings-locale')];
+let focusBeforeTopMenu;
+topMenu.addEventListener('focusin', ({ relatedTarget }) => {
+  if (relatedTarget && !topMenu.contains(relatedTarget)) focusBeforeTopMenu = relatedTarget;
+});
+for (const picker of localePickers) {
+  picker.value = getLocale();
+  picker.addEventListener('change', () => {
+    setLocale(picker.value);
+    for (const entry of localePickers) entry.value = getLocale();
+    if (picker !== menuLocale) return;
+    const restore = topMenu.contains(document.activeElement);
+    topMenu.open = false;
+    if (restore) (visibleOpener(focusBeforeTopMenu) || menuTrigger).focus({ preventScroll: true });
+  });
+}
+
 const panelNarrow = matchMedia('(max-width: 900px)');
 const panelTabs = new Map();
 const panelSections = { files: message('ui.files'), work: message('ui.work'), diff: message('ui.change-comparison'), notes: message('ui.notes') };
