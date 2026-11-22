@@ -1,9 +1,30 @@
 import type { Bot, Intake, Lane, TelegramInbox, Update } from './inbox.ts';
+import { telegramBatch } from './inbox.ts';
+import { legacyBinding } from './channel-migration.ts';
+import type { Binding, ChannelLocale, ChannelTransport, Delivery, OutboundMessage } from '../channels/transport.ts';
+import { channelText } from '../channels/catalog.ts';
 
 export const workDeadline = 120_000;
 export const maxWorkAttempts = 20;
 const retryInterval = 6000;
 const pollSeconds = 25;
+const maxResponseBytes = 8 * 1024 * 1024;
+
+async function boundedBody(response: Response, limit: number) {
+  if (!response.body || Number(response.headers.get('content-length')) > limit) throw new Error('Telegram response exceeds limit');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return Buffer.concat(chunks);
+      size += value.length;
+      if (size > limit) throw new Error('Telegram response exceeds limit');
+      chunks.push(value);
+    }
+  } finally { await reader.cancel().catch(() => {}); }
+}
 
 class TelegramError extends Error {
   readonly status: number;
@@ -33,7 +54,7 @@ export class TelegramApi {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
         redirect: 'error', signal: AbortSignal.any([stop, AbortSignal.timeout(method === 'getUpdates' ? 35_000 : this.timeout)]),
       });
-      const data = await response.json();
+      const data = JSON.parse((await boundedBody(response, maxResponseBytes)).toString('utf8'));
       if (!response.ok || data.ok !== true) {
         const retry = data.parameters?.retry_after;
         throw new TelegramError(response.ok ? Number(data.error_code) : response.status,
@@ -54,22 +75,72 @@ export class TelegramApi {
       const response = await fetch(this.base + '/file/bot' + this.token + '/' + file.file_path, {
         redirect: 'error', signal: AbortSignal.any([stop, AbortSignal.timeout(12_000)]),
       });
-      if (!response.ok || !response.body) throw new Error('File unavailable');
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      try {
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) return Buffer.concat(chunks);
-          size += value.length;
-          if (size > limit) throw new Error('File exceeds limit');
-          chunks.push(value);
-        }
-      } finally { await reader.cancel().catch(() => {}); }
+      if (!response.ok) throw new Error('File unavailable');
+      return await boundedBody(response, limit);
     } catch { throw new Error('Telegram file unavailable'); }
   }
 }
+
+export class TelegramTransport implements ChannelTransport {
+  private readonly bot: Bot;
+  private readonly owner: string;
+  private readonly api: TelegramApi;
+  private readonly legacy: boolean;
+
+  constructor(bot: Bot, owner: string, api: TelegramApi, legacy = true) {
+    this.bot = bot;
+    this.owner = owner;
+    this.api = api;
+    this.legacy = legacy;
+  }
+
+  async verifyAccount(signal: AbortSignal) {
+    const user = await this.api.call<{ id: number; is_bot: boolean }>('getMe', {}, signal);
+    if (!Number.isSafeInteger(user?.id) || user.id < 1 || user.is_bot !== true) throw new Error('Telegram account is invalid');
+    return { identity: String(user.id), capabilities: ['receive', 'text', 'attachment'] as const };
+  }
+
+  async receive(checkpoint: string, signal: AbortSignal, clock: () => number) {
+    const updates = await this.api.call<Update[]>('getUpdates', {
+      offset: Number(checkpoint || 0), timeout: pollSeconds, allowed_updates: ['message'],
+    }, signal);
+    signal.throwIfAborted();
+    return telegramBatch(this.bot, this.owner, updates, checkpoint, clock(), this.legacy);
+  }
+
+  fetchAttachment(reference: string, limit: number, signal: AbortSignal) {
+    return this.api.file(reference, limit, signal);
+  }
+
+  async deliver(message: OutboundMessage, signal: AbortSignal, attempts: number, clock: () => number): Promise<Delivery> {
+    const key = this.legacy ? message.conversationKey :
+      message.conversationKey.startsWith(`chat:${this.owner}:`) ? message.conversationKey.slice(`chat:${this.owner}:`.length) : '';
+    if (!/^topic:(0|[1-9]\d*)$/.test(key)) {
+      return { state: 'failed', reasonCode: 'invalid-destination' };
+    }
+    const topic = Number(key.slice('topic:'.length));
+    if (!Number.isSafeInteger(topic)) return { state: 'failed', reasonCode: 'invalid-destination' };
+    try {
+      const result = await this.api.call<{ message_id?: number }>('sendMessage', {
+        chat_id: this.owner, text: message.text.slice(0, 4000), ...(topic ? { message_thread_id: topic } : {}),
+      }, signal);
+      return { state: 'sent', receipt: Number.isSafeInteger(result?.message_id) ? String(result.message_id) : undefined };
+    } catch (error) {
+      if (!(error instanceof TelegramError) || error.status === 0 || error.status >= 500) {
+        return { state: 'indeterminate', reasonCode: 'unknown-delivery' };
+      }
+      if (error.status === 429) return { state: 'pending', retryAt: clock() + delay(error, attempts) };
+      return { state: 'failed', reasonCode: 'delivery-rejected' };
+    }
+  }
+}
+
+type ReceiveBatch = Awaited<ReturnType<ChannelTransport['receive']>>;
+type PollBinding = {
+  binding: Binding;
+  legacy: boolean;
+  admit(batch: ReceiveBatch, checkpoint: string, now: number): void;
+};
 
 export class TelegramPoller {
   private pollDue = 0;
@@ -77,32 +148,41 @@ export class TelegramPoller {
   private polling = false;
   private sending = false;
   private readonly lanes = new Set<Lane>();
+  private readonly handlers = new Set<Promise<string | undefined>>();
+  pollConflict = false;
 
   readonly bot: Bot;
-  private readonly owner: string;
-  private readonly api: TelegramApi;
+  private readonly transport: ChannelTransport;
   private readonly inbox: TelegramInbox;
   private readonly handle: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
+  private readonly locale: () => ChannelLocale;
+  private readonly account?: PollBinding;
 
-  constructor(bot: Bot, owner: string, api: TelegramApi, inbox: TelegramInbox, handle: TelegramPoller['handle']) {
+  constructor(bot: Bot, owner: string, api: TelegramApi, inbox: TelegramInbox, handle: TelegramPoller['handle'],
+    locale: () => ChannelLocale = () => 'zh-TW', account?: PollBinding) {
     this.bot = bot;
-    this.owner = owner;
-    this.api = api;
+    this.transport = new TelegramTransport(bot, owner, api, account?.legacy);
     this.inbox = inbox;
     this.handle = handle;
+    this.locale = locale;
+    this.account = account;
   }
 
+  busy() { return this.sending || this.lanes.size > 0 || this.handlers.size > 0; }
+
   async poll(signal: AbortSignal, clock = Date.now) {
-    if (this.polling || signal.aborted || clock() < this.pollDue) return;
+    if (this.polling || this.pollConflict || signal.aborted || clock() < this.pollDue) return;
     this.polling = true;
     try {
-      const updates = await this.api.call<Update[]>('getUpdates', {
-        offset: this.inbox.offset(this.bot), timeout: pollSeconds, allowed_updates: ['message'],
-      }, signal);
-      this.inbox.admit(this.bot, this.owner, updates, clock());
+      const binding = this.account?.binding ?? legacyBinding(this.bot);
+      const checkpoint = this.inbox.checkpoint(binding.accountId);
+      const batch = await this.transport.receive(checkpoint, signal, clock);
+      if (this.account) this.account.admit(batch, checkpoint, clock());
+      else this.inbox.admitBatch(binding, batch.events, batch.nextCheckpoint, clock(), checkpoint);
       this.failures = 0;
     } catch (error) {
-      this.pollDue = clock() + delay(error, ++this.failures);
+      if (error instanceof TelegramError && error.status === 409) this.pollConflict = true;
+      else this.pollDue = clock() + delay(error, ++this.failures);
     } finally {
       this.polling = false;
     }
@@ -111,10 +191,13 @@ export class TelegramPoller {
   async process(lane: Lane, signal: AbortSignal, clock = Date.now) {
     if (this.lanes.has(lane) || signal.aborted) return;
     const now = clock();
-    const row = this.inbox.next(this.bot, lane, now);
+    const row = this.account
+      ? this.inbox.nextBound(this.bot, this.account.binding, lane, now)
+      : this.inbox.next(this.bot, lane, now);
     if (!row) return;
+    const locale = this.locale();
     const deadline = (row.started ?? now) + workDeadline;
-    const fail = () => this.inbox.complete(row, `更新 ${row.id} 未能在期限內處理。已保留原始收件，請在工作台核對後再試。`, true);
+    const fail = () => this.inbox.complete(row, channelText(locale).deadline(row.id), true, locale);
     if (now >= deadline || row.attempts >= maxWorkAttempts) { fail(); return; }
     this.lanes.add(lane);
     try {
@@ -125,12 +208,17 @@ export class TelegramPoller {
       let release!: () => void;
       const interrupted = new Promise<undefined>((resolve) => { release = () => resolve(undefined); });
       attemptSignal.addEventListener('abort', release, { once: true });
-      try { result = await Promise.race([this.handle(row, attemptSignal), interrupted]); }
+      try {
+        const handling = Promise.resolve(this.handle(row, attemptSignal));
+        this.handlers.add(handling);
+        void handling.then(() => this.handlers.delete(handling), () => this.handlers.delete(handling));
+        result = await Promise.race([handling, interrupted]);
+      }
       catch { /* The persisted attempt and retry time cover handler failures and restarts. */ }
       finally { attemptSignal.removeEventListener('abort', release); }
       if (signal.aborted) return;
       if (budget.aborted || clock() >= deadline) fail();
-      else if (result !== undefined) this.inbox.complete(row, result);
+      else if (result !== undefined) this.inbox.complete(row, result, false, locale);
       else if (row.attempts + 1 >= maxWorkAttempts) fail();
     } finally {
       this.lanes.delete(lane);
@@ -145,27 +233,8 @@ export class TelegramPoller {
   }
 
   private async send(signal: AbortSignal, clock: () => number) {
-    const db = this.inbox.db;
-    const row = db.prepare(`UPDATE outbox SET state='sending', attempts=attempts+1 WHERE bot=? AND id=(
-      SELECT id FROM outbox WHERE bot=? AND state='pending' ORDER BY rowid LIMIT 1)
-      AND due<=? RETURNING id, topic, text, attempts`).get(this.bot, this.bot, clock());
-    if (!row) return;
-    let state = 'sent';
-    let due = 0;
-    try {
-      await this.api.call('sendMessage', {
-        chat_id: this.owner, text: row.text, ...(row.topic ? { message_thread_id: row.topic } : {}),
-      }, signal);
-    } catch (error) {
-      // An uncertain response can follow successful delivery. Keep it visible for reconciliation.
-      if (!(error instanceof TelegramError) || error.status === 0 || error.status >= 500) state = 'indeterminate';
-      else if (error.status === 429) {
-        state = 'pending';
-        due = clock() + delay(error, Number(row.attempts));
-      } else state = 'failed';
-    }
-    db.prepare("UPDATE outbox SET state=?,due=? WHERE bot=? AND id=? AND state='sending'")
-      .run(state, due, this.bot, row.id);
+    const message = this.inbox.claimOutbound(this.account ? { accountId: this.account.binding.accountId } : legacyBinding(this.bot), clock());
+    if (message) this.inbox.finishOutbound(message, await this.transport.deliver(message, signal, message.attempts, clock));
   }
 }
 

@@ -1,6 +1,16 @@
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { pathToFileURL } from 'node:url';
+import { ChannelSpool } from '../channels/spool.ts';
+import type { Binding, ChannelLocale, Destination, InboundEnvelope, Lane } from '../channels/transport.ts';
+import { channelText } from '../channels/catalog.ts';
+import { verifyBiSourceOwners } from '../bi/source-ownership.ts';
+import { checkTelegramSchema, legacyBinding, migrateTelegramSpool, telegramLane, topicKey } from './channel-migration.ts';
+import type { Bot } from './channel-migration.ts';
 
-export type Bot = 'main' | 'bi';
+export { telegramInboxVersion } from './channel-migration.ts';
+export type { Bot } from './channel-migration.ts';
+export type { Lane } from '../channels/transport.ts';
 export type Message = {
   from?: { id: number; is_bot?: boolean };
   chat: { id: number; type: string };
@@ -10,126 +20,136 @@ export type Message = {
   photo?: { file_id: string; file_size?: number }[];
 };
 export type Update = { update_id: number; message?: Message };
-export type Intake = { bot: Bot; id: number; topic: number; payload: string };
-export type Lane = 'work' | 'command';
-export const telegramInboxVersion = 1;
-const laneOf = (bot: Bot, text: unknown): Lane => typeof text === 'string' &&
-  (bot === 'main' ? /^\/ask(?:\s|$)/.test(text) : text.trim() === '/status') ? 'command' : 'work';
+export type Intake = { bot: Bot; id: number; topic: number; payload: string; destination?: Destination };
 
-export class TelegramInbox {
+function preflightSchema(path: string) {
+  if (path === ':memory:' || !existsSync(path)) return;
+  // The launcher and maintenance serialize access to the data root. Inspect any committed WAL
+  // frames with a private index so rejecting a schema cannot checkpoint the WAL or update its SHM.
+  const uri = pathToFileURL(path);
+  uri.searchParams.set('vfs', process.platform === 'win32' ? 'win32-longpath-none' : 'unix-none');
+  using db = new DatabaseSync(uri.href, { readOnly: true });
+  db.exec('PRAGMA locking_mode=EXCLUSIVE');
+  checkTelegramSchema(db);
+}
+
+export function telegramBatch(bot: Bot, owner: string, updates: Update[], checkpoint: string, now: number, legacy = true) {
+  let next = Number(checkpoint || 0);
+  const events: InboundEnvelope[] = [];
+  for (const update of [...updates].sort((a, b) => a.update_id - b.update_id)) {
+    if (!Number.isSafeInteger(update.update_id) || update.update_id < 0 || update.update_id === Number.MAX_SAFE_INTEGER) {
+      throw new Error('Invalid Telegram update');
+    }
+    next = Math.max(next, update.update_id + 1);
+    const eventKey = String(update.update_id);
+    const message = update.message;
+    const topic = message?.message_thread_id ?? 0;
+    const authorized = message?.chat?.type === 'private' && String(message.chat.id) === owner &&
+      String(message.from?.id) === owner && !message.from?.is_bot && Number.isSafeInteger(topic) && topic >= 0;
+    if (!authorized) {
+      events.push({ eventKey, receivedAt: now, conversationKey: '', lane: 'work', reasonCode: 'unauthorized-update' });
+      continue;
+    }
+    const { text, document, photo } = message;
+    const conversationKey = legacy ? topicKey(topic) : `chat:${owner}:${topicKey(topic)}`;
+    events.push({ eventKey, receivedAt: now, conversationKey, lane: telegramLane(bot, text),
+      payload: { text, document, photo } });
+  }
+  return { events, nextCheckpoint: String(next) };
+}
+
+export class TelegramInbox extends ChannelSpool {
   readonly db: DatabaseSync;
 
   constructor(path: string, recoverSending = true) {
-    this.db = new DatabaseSync(path);
+    preflightSchema(path);
+    const db = new DatabaseSync(path, { timeout: 5000 });
+    super(db);
+    this.db = db;
     try {
-      this.migrate();
+      checkTelegramSchema(db);
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
+      this.transaction(() => {
+        migrateTelegramSpool(db, path);
+        verifyBiSourceOwners(db);
+      });
       // A process can die after Telegram accepts a send and before SQLite records the reply.
-      if (recoverSending) this.db.exec("UPDATE outbox SET state='indeterminate' WHERE state='sending'");
+      if (recoverSending) this.recoverSending();
     } catch (error) {
-      this.db.close();
+      db.close();
       throw error;
     }
   }
 
-  private migrate() {
-    const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
-    if (version > telegramInboxVersion) throw new Error('Telegram 資料庫版本比程式新。請使用新版程式或先回退資料。');
-    if (version < 0) throw new Error('Telegram 資料庫版本無效。');
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
-    if (version === telegramInboxVersion) return;
-    this.transaction(() => {
-      this.db.exec(`CREATE TABLE IF NOT EXISTS cursor(bot TEXT PRIMARY KEY, next INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS inbox(bot TEXT, id INTEGER, topic INTEGER NOT NULL,
-        payload TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(bot,id));
-      CREATE TABLE IF NOT EXISTS outbox(bot TEXT, id TEXT, topic INTEGER NOT NULL, text TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
-        due INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(bot,id));`);
-      const columns = this.db.prepare('PRAGMA table_info(inbox)').all();
-      if (!columns.some((column) => column.name === 'firstSeen')) this.addInboxColumns();
-      this.db.exec(`CREATE INDEX IF NOT EXISTS inbox_open ON inbox(bot,lane,topic,id) WHERE done=0; PRAGMA user_version=${telegramInboxVersion}`);
-    });
-  }
-
-  private addInboxColumns() {
-    this.db.exec(`ALTER TABLE inbox ADD COLUMN firstSeen INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE inbox ADD COLUMN started INTEGER;
-      ALTER TABLE inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE inbox ADD COLUMN due INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE inbox ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE inbox ADD COLUMN lane TEXT NOT NULL DEFAULT 'work';`);
-    const save = this.db.prepare('UPDATE inbox SET firstSeen=?,lane=? WHERE bot=? AND id=?');
-    const now = Date.now();
-    for (const row of this.db.prepare('SELECT bot,id,payload FROM inbox WHERE done=0').all()) {
-      const { text } = JSON.parse(String(row.payload));
-      save.run(now, laneOf(row.bot as Bot, text), row.bot, row.id);
-    }
-
-  }
-
-  transaction(work: () => void) {
-    this.db.exec('BEGIN IMMEDIATE');
-    try { work(); this.db.exec('COMMIT'); }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
-  }
-
   offset(bot: Bot) {
-    return Number(this.db.prepare('SELECT next FROM cursor WHERE bot=?').get(bot)?.next ?? 0);
+    return Number(this.checkpoint(legacyBinding(bot).accountId));
   }
 
   admit(bot: Bot, owner: string, updates: Update[], now = Date.now()) {
-    this.transaction(() => {
-      let next = this.offset(bot);
-      for (const update of updates) {
-        if (!Number.isSafeInteger(update.update_id) || update.update_id < 0) throw new Error('Invalid Telegram update');
-        const message = update.message;
-        if (message?.chat?.type === 'private' && String(message.chat.id) === owner &&
-            String(message.from?.id) === owner && !message.from?.is_bot) {
-          const { text, document, photo } = message;
-          const topic = message.message_thread_id ?? 0;
-          if (Number.isSafeInteger(topic) && topic >= 0) {
-            this.db.prepare('INSERT OR IGNORE INTO inbox(bot,id,topic,payload,firstSeen,lane) VALUES (?,?,?,?,?,?)')
-              .run(bot, update.update_id, topic, JSON.stringify({ text, document, photo }), now, laneOf(bot, text));
-          }
-        }
-        next = Math.max(next, update.update_id + 1);
-      }
-      this.db.prepare('INSERT INTO cursor VALUES (?,?) ON CONFLICT(bot) DO UPDATE SET next=excluded.next').run(bot, next);
-    });
+    const binding = legacyBinding(bot);
+    const checkpoint = this.checkpoint(binding.accountId);
+    const { events, nextCheckpoint } = telegramBatch(bot, owner, updates, checkpoint, now);
+    this.admitBatch(binding, events, nextCheckpoint, now, checkpoint);
   }
 
   next(bot: Bot, lane: Lane, now: number) {
-    return this.db.prepare(`SELECT bot,id,topic,payload,started,attempts FROM inbox AS item
-      WHERE bot=? AND lane=? AND done=0 AND due<=? AND NOT EXISTS (
-        SELECT 1 FROM inbox prior WHERE prior.bot=item.bot AND prior.lane=item.lane
-          AND prior.topic=item.topic AND prior.done=0 AND prior.id<item.id)
-      ORDER BY id LIMIT 1`).get(bot, lane, now) as (Intake & { started: number | null; attempts: number }) | undefined;
+    const row = this.nextInbound(legacyBinding(bot), lane, now);
+    if (!row) return;
+    return { bot, id: Number(row.eventKey), topic: Number(row.conversationKey.slice('topic:'.length)),
+      payload: row.payload, started: row.started, attempts: row.attempts };
+  }
+
+  nextBound(bot: Bot, binding: Binding, lane: Lane, now: number) {
+    const row = this.nextInbound(binding, lane, now);
+    if (!row) return;
+    const { conversationKey } = row;
+    return { bot, id: Number(row.eventKey), topic: Number(conversationKey.split(':').at(-1)), payload: row.payload,
+      started: row.started, attempts: row.attempts, destination: { ...binding, conversationKey } };
   }
 
   attempt(row: Intake, now: number, due: number) {
-    this.db.prepare('UPDATE inbox SET attempts=attempts+1,started=COALESCE(started,?),due=? WHERE bot=? AND id=? AND done=0')
-      .run(now, due, row.bot, row.id);
+    this.attemptInbound({ accountId: row.destination?.accountId ?? legacyBinding(row.bot).accountId, eventKey: String(row.id) }, now, due);
   }
 
-  notify(bot: Bot, id: string, topic: number, text: string) {
-    this.db.prepare('INSERT OR IGNORE INTO outbox(bot,id,topic,text) VALUES (?,?,?,?)').run(bot, id, topic, text);
+  notify(bot: Bot, id: string, topic: number, text: string, locale: ChannelLocale = 'zh-TW') {
+    this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale, text });
   }
 
-  notifyReviews(intents: readonly { review?: unknown }[]) {
-    for (const { review } of intents) {
-      this.notify('bi', 'review-' + review, 0, 'BI 審核已發布。請在工作台查看版本。');
+  notifyReviews(intents: readonly { review?: unknown; destination?: unknown; sourceKey?: unknown }[], locale: ChannelLocale = 'zh-TW') {
+    const find = this.db.prepare(`SELECT account_id AS accountId, conversation_key AS conversationKey,
+      binding_revision AS bindingRevision, agent_id AS agentId FROM bi_source_ownership
+      WHERE source_key=? AND origin='telegram' AND agent_id='bi'`);
+    for (const { review, destination: receipt, sourceKey } of intents) {
+      if (typeof review !== 'string') continue;
+      const destination = typeof sourceKey === 'string' ? find.get(sourceKey) as Destination | undefined : undefined;
+      if (receipt && (!destination || receipt !== JSON.stringify(destination))) continue;
+      const message = { effectKey: 'review-' + review, text: channelText(locale).published, locale };
+      // Historical intents without a known destination used the original BI bot's default topic.
+      this.enqueueOutbound({ ...(destination ?? { ...legacyBinding('bi'), conversationKey: topicKey(0) }), ...message });
     }
   }
 
   resend(bot: unknown, id: unknown) {
-    if ((bot !== 'main' && bot !== 'bi') || typeof id !== 'string' || !this.db.prepare(
-      "UPDATE outbox SET state='pending',due=0 WHERE bot=? AND id=? AND state='indeterminate'",
-    ).run(bot, id).changes) throw new Error('Delivery is unavailable for resend');
+    if ((bot !== 'main' && bot !== 'bi') || typeof id !== 'string') throw new Error('Delivery is unavailable for resend');
+    this.retryOutbound(legacyBinding(bot).accountId, id);
   }
 
-  complete(row: Intake, text: string, failed = false) {
-    this.transaction(() => {
-      this.notify(row.bot, 'update-' + row.id, row.topic, text);
-      this.db.prepare('UPDATE inbox SET done=1,failed=? WHERE bot=? AND id=? AND done=0').run(Number(failed), row.bot, row.id);
-    });
+  complete(row: Intake, text: string, failed = false, locale: ChannelLocale = 'zh-TW') {
+    const destination = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
+    this.completeInbound(String(row.id), { ...destination,
+      effectKey: 'update-' + row.id, locale, text }, failed);
+  }
+
+  conversation(binding: Binding, conversationKey: string) {
+    return this.db.prepare(`SELECT session_id AS session FROM channel_conversations
+      WHERE account_id=? AND conversation_key=? AND binding_revision=? AND agent_id=?`)
+      .get(binding.accountId, conversationKey, binding.bindingRevision, binding.agentId);
+  }
+
+  rememberConversation(binding: Binding, conversationKey: string, session: string) {
+    this.db.prepare(`INSERT INTO channel_conversations VALUES (?,?,?,?,?)
+      ON CONFLICT(account_id,conversation_key,binding_revision) DO UPDATE SET session_id=excluded.session_id
+      WHERE channel_conversations.agent_id=excluded.agent_id`)
+      .run(binding.accountId, conversationKey, binding.bindingRevision, binding.agentId, session);
   }
 }

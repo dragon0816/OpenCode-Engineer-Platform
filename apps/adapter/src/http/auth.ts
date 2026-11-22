@@ -65,10 +65,10 @@ export class LocalAuth {
     return { csrf };
   }
 
-  authorize(request: IncomingMessage) {
+  authorize(request: IncomingMessage, requireCsrf = false) {
     const session = this.browser(request);
     if (!session) throw new HttpError(401, 'launch-required');
-    if (request.method === 'POST') {
+    if (request.method === 'POST' || requireCsrf) {
       const submitted = header(request, 'x-oep-csrf');
       if (!tokenFormat.test(submitted) || !equal(submitted, session.csrf)) throw new HttpError(403, 'pairing-expired');
     }

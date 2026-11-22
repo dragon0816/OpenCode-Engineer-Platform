@@ -9,6 +9,7 @@ import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { legacyAgentRows } from '../../apps/adapter/src/runs/agent-ledger.ts';
 import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
+import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 
 // Tables present before any upgrade-tracked addition; everything else must be allow-listed.
 const original = new Set(['runs', 'run_events']);
@@ -50,7 +51,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
         .map((row) => row.name);
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'),
-      ...Object.keys(legacyAgentRows(undefined, root, false))]);
+      'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -89,7 +90,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 3], 'telegram-chat': [2, 3], knowledge: [1, 2], telegram: [1, 1] };
+    const expectedVersions = { web: [2, 4], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);
@@ -100,7 +101,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
       db.exec('PRAGMA user_version=1');
       reconcile(/【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/);
-      db.exec('PRAGMA user_version=2');
+      db.exec('PRAGMA user_version=3');
     }
     const repeat = JSON.parse(migrate(data));
     for (const { before, after } of Object.values(repeat) as { before: unknown; after: unknown }[]) {
@@ -128,6 +129,11 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     assert.deepEqual(query('SELECT * FROM agent_capabilities'), [['main', 'mcp', fixtureMcpId, 0]]);
     assert.deepEqual(query('SELECT * FROM agent_trigger_settings ORDER BY agent_id'), [['bi', 1], ['main', 1]]);
     assert.deepEqual(query('SELECT * FROM file_classifications'), []);
+    assert.deepEqual(query('SELECT id,agent_id,state,binding_revision FROM channel_accounts ORDER BY id'),
+      [['telegram-bi', 'bi', 'unverified', 1], ['telegram-main', 'main', 'unverified', 1]]);
+    sessions.exec("UPDATE channel_accounts SET agent_id='bi' WHERE id='telegram-main'");
+    reconcile(/【web\/web.sqlite】.*channel_accounts/);
+    sessions.exec("UPDATE channel_accounts SET agent_id='main' WHERE id='telegram-main'");
     const attachment = JSON.parse(String(query('SELECT record FROM attachments')[0][0]));
     assert.deepEqual(attachment.original, original);
     assert.deepEqual(attachment.projection, projection);
@@ -140,9 +146,44 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       ]);
     }
     {
-      using db = new DatabaseSync(join(web, 'knowledge.sqlite'), { readOnly: true });
+      using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
       assert.equal(db.prepare("SELECT status FROM reviews WHERE id='pending-bi'").get()?.status, 'pending');
       assert.equal(db.prepare('SELECT revision FROM publications').get()?.revision, 'gold.v2');
+      assert.deepEqual(db.prepare('SELECT review_id,origin,source_key FROM review_provenance ORDER BY review_id').all()
+        .map((row) => Object.values(row)), [['manual-bi', 'legacy', null], ['pending-bi', 'telegram', 'telegram-bi-10']]);
+      assert.equal(db.prepare('SELECT review_id FROM bi_publication_ownership').get()?.review_id, 'manual-bi');
+      assert.equal(db.prepare("SELECT origin FROM bi_job_ownership WHERE job_id='telegram-bi-10'").get()?.origin, 'telegram');
+      db.exec("UPDATE review_provenance SET source_key='telegram-bi-11' WHERE review_id='pending-bi'");
+      reconcile(/【web\/knowledge.sqlite】.*review_provenance/);
+      migrate(data, /【web\/telegram.sqlite】.*BI 來源及審核歸屬檢查失敗/);
+      db.exec("UPDATE review_provenance SET source_key='telegram-bi-10' WHERE review_id='pending-bi'");
+    }
+    {
+      using spool = new DatabaseSync(join(web, 'telegram.sqlite'));
+      const rows = (sql: string) => spool.prepare(sql).all().map((row) => Object.values(row));
+      assert.deepEqual(rows('SELECT account_id,checkpoint FROM channel_cursors ORDER BY account_id'),
+        [['telegram-bi', '11'], ['telegram-main', '8']]);
+      assert.deepEqual(rows(`SELECT event_key,conversation_key,status,received_at,first_attempt_at,attempts,due_at
+        FROM channel_inbound WHERE account_id='telegram-bi' ORDER BY rowid`),
+      [['9', 'topic:2', 'failed', 100, 200, 20, 120200], ['10', 'topic:3', 'handled', 100, 200, 2, 6000],
+        ['11', 'topic:3', 'pending', 300, 400, 3, 6400]]);
+      assert.deepEqual(rows('SELECT effect_key,state FROM channel_outbound ORDER BY rowid'), [
+        ['original', 'pending'], ['previous-bi', 'indeterminate'], ['interrupted-bi', 'sending'], ['already-sent-bi', 'sent'],
+      ]);
+      assert.deepEqual(rows('SELECT source_id,origin,conversation_key,review_id FROM bi_source_ownership ORDER BY source_id'),
+        [[10, 'telegram', 'topic:3', 'pending-bi'], [11, 'telegram', 'topic:3', null]]);
+      spool.exec("UPDATE bi_source_ownership SET agent_id='main' WHERE source_id=11");
+      reconcile(/【web\/telegram.sqlite】.*bi_source_ownership/);
+      spool.exec("UPDATE bi_source_ownership SET agent_id='bi' WHERE source_id=11");
+      spool.exec("UPDATE channel_inbound SET agent_id='main' WHERE account_id='telegram-bi' AND event_key='11'");
+      reconcile(/【web\/telegram.sqlite】.*channel_inbound/);
+      spool.exec("UPDATE channel_inbound SET agent_id='bi' WHERE account_id='telegram-bi' AND event_key='11'");
+      spool.exec('DELETE FROM channel_conversations');
+      reconcile(/【web\/telegram.sqlite】.*channel_conversations/);
+      spool.exec("INSERT INTO channel_conversations VALUES ('telegram-main','topic:17',1,'bi','telegram-session')");
+      reconcile(/【web\/telegram.sqlite】.*channel_conversations/);
+      migrate(data, /【web\/telegram.sqlite】.*通道會話歸屬檢查失敗/);
+      spool.exec("UPDATE channel_conversations SET agent_id='main'");
     }
     sessions.exec("DELETE FROM session_ownership WHERE session_id='hidden'");
     reconcile(/【web\/web.sqlite】.*session_ownership/);
@@ -167,6 +208,40 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     writeFileSync(path, bytes);
     assert.deepEqual(readFileSync(join(data, artifactPath)), readFileSync(join(copy, artifactPath)));
     reconcile();
+    const difference = join(root, 'intent-diff.json');
+    run(snapshot, ['intent-diff', data, copy, difference]);
+    assert.deepEqual(JSON.parse(readFileSync(difference, 'utf8')).changes, []);
+    const inbox = new TelegramInbox(join(web, 'telegram.sqlite'));
+    try {
+      assert.equal(inbox.db.prepare("SELECT state FROM channel_outbound WHERE effect_key='interrupted-bi'").get()?.state, 'indeterminate');
+      assert.equal(inbox.db.prepare("SELECT state FROM outbox WHERE id='interrupted-bi'").get()?.state, 'sending');
+      run(snapshot, ['intent-diff', data, copy, difference]);
+      const { changes } = JSON.parse(readFileSync(difference, 'utf8'));
+      assert.equal(changes.length, 1);
+      assert.equal(changes[0].table, 'channel_outbound');
+      assert.equal(changes[0].addedOrChanged.length, 1);
+    } finally { inbox.db.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Telegram spool migration rolls back all additions on a bad row and resumes on retry', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-channel-rollback-'));
+  try {
+    const { web } = seedPhase3bFixture(root);
+    using db = new DatabaseSync(join(web, 'telegram.sqlite'));
+    db.exec("UPDATE inbox SET payload='invalid JSON' WHERE bot='bi' AND id=9");
+    migrate(root, /【web\/telegram.sqlite】.*套用 SQLite 結構遷移失敗/);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 1);
+    assert.deepEqual(db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'channel_%'").all(), []);
+    assert.equal(db.prepare("SELECT payload FROM inbox WHERE bot='bi' AND id=9").get()?.payload, 'invalid JSON');
+    {
+      using sessions = new DatabaseSync(join(web, 'telegram-chat.sqlite'), { readOnly: true });
+      assert.equal(sessions.prepare('PRAGMA user_version').get()?.user_version, 3);
+    }
+    db.exec("UPDATE inbox SET payload='{}' WHERE bot='bi' AND id=9");
+    migrate(root);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 2);
+    assert.equal(db.prepare('SELECT count(*) AS total FROM channel_inbound').get()?.total, 4);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

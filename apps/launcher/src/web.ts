@@ -86,7 +86,8 @@ if (import.meta.main) {
   catch (error) {
     if (error instanceof Error && /^(?:執行紀錄|知識|Telegram)資料庫版本比程式新。$/.test(error.message.split('請')[0])) {
       console.error('資料庫版本比程式新。請使用新版程式或先回退資料。');
-    } else if (error instanceof Error && error.message === 'OEP 升級或回退尚未完成。請先執行回退。') {
+    } else if (error instanceof Error && (error.message === 'OEP 升級或回退尚未完成。請先執行回退。' ||
+      error.message === 'Telegram 資料庫版本無效。')) {
       console.error(error.message);
     } else console.error('OEP could not start or stop. Check the local OEP data directory and the setup instructions.');
     process.exitCode = 1;

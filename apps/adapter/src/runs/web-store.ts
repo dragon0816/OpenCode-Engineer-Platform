@@ -5,7 +5,10 @@ import { maxSelectedModels } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
-import { Ledger } from './ledger.ts';
+import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
+import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
+import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
+import type { Destination } from '../channels/transport.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
 import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
@@ -109,13 +112,83 @@ export class WebStore extends Ledger {
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
     super(file, {
-      migrate(db) {
-        db.exec(webSchema);
-        migrateAgentLedger(db, file, telegram);
+      version: telegram ? telegramChatLedgerVersion : webLedgerVersion,
+      migrate(db, version) {
+        if (version < telegramChatLedgerVersion) {
+          db.exec(webSchema);
+          migrateAgentLedger(db, file, telegram);
+        }
+        if (!telegram) migrateChannelAccounts(db);
       },
       verify: (db) => verifyAgentLedger(db, file, telegram),
     });
     this.telegram = telegram;
+  }
+
+  verifyLegacyChannel(config: LegacyChannel, fingerprint: string, sealLegacyOwner: () => boolean) {
+    return this.transaction(() => {
+      const existing = this.db.prepare(`SELECT id FROM channel_accounts WHERE provider='telegram' AND account_fingerprint=?`)
+        .get(fingerprint);
+      if (existing && existing.id !== config.accountId) throw new Error('CHANNEL_ACCOUNT_IN_USE');
+      const valid = this.db.prepare(`SELECT 1 FROM channel_accounts c JOIN agents a ON a.id=c.agent_id
+        WHERE c.id=? AND c.agent_id=? AND c.handler=? AND c.provider='telegram' AND c.credential_ref=? AND c.allowlist_ref=?
+        AND c.binding_revision=1 AND (c.account_fingerprint IS NULL OR c.account_fingerprint=?)
+        AND c.state <> 'disabled' AND a.state='active'`).get(config.accountId, config.bot, config.handler,
+        config.credentialRef, legacyAllowlistRef, fingerprint);
+      if (!valid || !sealLegacyOwner()) return false;
+      this.db.prepare(`UPDATE channel_accounts SET account_fingerprint=?,state='enabled',updated_at=?
+        WHERE id=? AND state='unverified'`).run(fingerprint, Date.now(), config.accountId);
+      return true;
+    });
+  }
+
+  telegramAccounts() {
+    return this.db.prepare(`SELECT id AS accountId, account_fingerprint AS fingerprint, credential_ref AS credentialRef,
+      allowlist_ref AS allowlistRef, agent_id AS agentId, handler, state, binding_revision AS bindingRevision
+      FROM channel_accounts WHERE provider='telegram' ORDER BY created_at,id`).all() as ChannelAccount[];
+  }
+
+  telegramAccountConflict(fingerprint: string, credentialRef: string, accountId?: string) {
+    return this.db.prepare(`SELECT id AS accountId,agent_id AS agentId FROM channel_accounts
+      WHERE id IS NOT ? AND (credential_ref=? OR (provider='telegram' AND account_fingerprint=?)) LIMIT 1`)
+      .get(accountId ?? null, credentialRef, fingerprint) as { accountId: string; agentId: string } | undefined;
+  }
+
+  saveTelegramAccount(account: ChannelAccount, previous: ChannelAccount | undefined, sealOwner: () => void) {
+    return this.transaction(() => {
+      const conflict = this.telegramAccountConflict(account.fingerprint!, account.credentialRef, account.accountId);
+      if (conflict) return conflict;
+      if (!this.defaultWorkspace(account.agentId)) throw new Error('Invalid Telegram agent workspace');
+      sealOwner();
+      const now = Date.now();
+      if (!previous) {
+        this.db.prepare(`INSERT INTO channel_accounts VALUES (?,'telegram',?,?,?,?,?,'enabled',?,?,?)`).run(account.accountId,
+          account.fingerprint, account.credentialRef, account.allowlistRef, account.agentId, account.handler, account.bindingRevision, now, now);
+      } else {
+        const { changes } = this.db.prepare(`UPDATE channel_accounts SET account_fingerprint=?,credential_ref=?,agent_id=?,
+          handler=?,state=?,binding_revision=?,updated_at=? WHERE id=? AND binding_revision=?`)
+          .run(account.fingerprint, account.credentialRef, account.agentId, account.handler, account.state,
+            account.bindingRevision, now, account.accountId, previous.bindingRevision);
+        if (!changes) throw new Error('Stale Telegram binding');
+      }
+    });
+  }
+
+  channelLocale(agentID: string): 'zh-TW' | 'en' {
+    return this.db.prepare('SELECT reply_locale FROM agents WHERE id=?').get(agentID)?.reply_locale === 'en' ? 'en' : 'zh-TW';
+  }
+
+  defaultWorkspace(agentID: string) {
+    if (!/^[a-z\d][a-z\d_-]{0,79}$/.test(agentID)) return;
+    return this.db.prepare(`SELECT w.id FROM agent_workspaces w JOIN agents a ON a.id=w.agent_id
+      WHERE a.id=? AND w.is_default=1 AND a.state='active' AND
+        ((a.id='main' AND w.id='legacy-default' AND w.relative_root='web') OR
+         (a.id<>'main' AND w.layout='managed' AND w.relative_root='web/agents/'||a.id))`).get(agentID)?.id as string | undefined;
+  }
+
+  openChannelRuns(accountId: string) {
+    return Boolean(this.db.prepare(`SELECT 1 FROM session_ownership o JOIN web_turns t ON o.session_id=t.session_id
+      JOIN runs r ON r.id=t.run_id WHERE o.channel_account_id=? AND r.state NOT IN ('verified','failed','cancelled') LIMIT 1`).get(accountId));
   }
 
   customMcpServers() {
@@ -189,12 +262,12 @@ export class WebStore extends Ledger {
   }
 
   executionProfile(agentID: string, workspaceID: string) {
-    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions,
+    return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions, a.reply_locale AS replyLocale,
       a.default_model_id AS defaultModel, w.relative_root AS relativeRoot,
       COALESCE(w.display_name,w.id) AS workspaceName
       FROM agents a JOIN agent_workspaces w ON w.agent_id=a.id
       WHERE a.id=? AND w.id=? AND a.state='active'`).get(agentID, workspaceID) as {
-        revision: number; name: string; introduction: string; instructions: string;
+        revision: number; name: string; introduction: string; instructions: string; replyLocale: 'zh-TW' | 'en';
         defaultModel: string | null; relativeRoot: string; workspaceName: string;
       } | undefined;
   }
@@ -401,14 +474,18 @@ export class WebStore extends Ledger {
       ON CONFLICT(id) DO UPDATE SET removed = 1`).run(id);
   }
 
-  createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>, telegramTopic?: number) {
+  createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>,
+    channel?: number | (Destination & { workspaceID: string })) {
     this.transaction(() => {
       const project = session.project ?? 'default';
       this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
         .run(session.id, session.upstreamID, session.agent, session.alias, session.createdAt);
       if (session.knowledgeDisabled) this.db.prepare('INSERT INTO web_session_knowledge_disabled VALUES (?)').run(session.id);
       this.db.prepare('INSERT INTO web_session_project VALUES (?, ?)').run(session.id, project);
-      insertLegacySessionOwner(this.db, session.id, project, this.telegram || telegramTopic !== undefined, telegramTopic);
+      if (typeof channel === 'object') {
+        this.db.prepare("INSERT INTO session_ownership VALUES (?,?,?,'channel',?,?,?)").run(session.id,
+          channel.agentId, channel.workspaceID, channel.accountId, channel.conversationKey, channel.bindingRevision);
+      } else insertLegacySessionOwner(this.db, session.id, project, this.telegram || channel !== undefined, channel);
     });
   }
 

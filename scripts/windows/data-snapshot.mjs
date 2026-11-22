@@ -3,6 +3,11 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lsta
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { legacyAllowlistRef, legacyChannelAccounts, legacyChannels, telegramCredentialRef } from '../../apps/adapter/src/channels/accounts.ts';
+import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
+  from '../../apps/adapter/src/telegram/channel-migration.ts';
+import { openBiReviewStore, verifyBiSourceOwners, verifyBiSourceReceipts } from '../../apps/adapter/src/bi/source-ownership.ts';
+import { biOwnershipTables, legacyBiOwnership, openBiChannelStore, verifyBiOwnership } from '../../packages/knowledge/src/bi/ownership.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 
@@ -33,9 +38,19 @@ async function credentials() {
   if (!file) return [];
   if (!file.isFile()) throw new Error('Invalid web database');
   return useDatabase(path, (db) => {
-    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='mcp_servers'").get()) return [];
     const names = new Set();
-    for (const { id, definition } of db.prepare('SELECT id, definition FROM mcp_servers').iterate()) {
+    const hasTable = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
+    const legacyRefs = new Set(legacyChannels.map(({ credentialRef }) => credentialRef));
+    if (hasTable.get('channel_accounts')) {
+      for (const { credential_ref, allowlist_ref } of db.prepare("SELECT credential_ref, allowlist_ref FROM channel_accounts WHERE provider='telegram'").iterate()) {
+        if (!telegramCredentialRef.test(credential_ref) || allowlist_ref !== legacyAllowlistRef) {
+          throw new Error('Invalid Telegram credential reference');
+        }
+        if (!legacyRefs.has(credential_ref)) names.add(credential_ref);
+      }
+    }
+    const mcp = hasTable.get('mcp_servers') ? db.prepare('SELECT id, definition FROM mcp_servers').iterate() : [];
+    for (const { id, definition } of mcp) {
       if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid MCP identifier');
       const { transport, environment } = JSON.parse(definition);
       const remote = transport === 'remote';
@@ -145,10 +160,11 @@ function digestRow(values) {
       value instanceof Uint8Array ? ['blob', Buffer.from(value).toString('base64')] : value))).digest('hex');
 }
 
-function rowDigests(db, table, columns) {
-  const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table));
+function rowDigests(db, table, columns, ordered = false) {
+  const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table) + (ordered ? ' ORDER BY rowid' : ''));
   statement.setReadBigInts(true);
-  return [...statement.iterate()].map((row) => digestRow(Object.values(row))).sort();
+  const hashes = [...statement.iterate()].map((row) => digestRow(Object.values(row)));
+  return ordered ? hashes : hashes.sort();
 }
 
 const columnsOf = (db, table) => db.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid')
@@ -195,13 +211,7 @@ async function reconcileRestore() {
 
 function verifyAgentSeeds(name, oldDb, newDb, counts, channel) {
   const expected = legacyAgentRows(oldDb, dirname(join(destination, name)), channel);
-  for (const [table, rows] of Object.entries(expected)) {
-    const columns = columnsOf(newDb, table);
-    const digests = rows.map((row) => digestRow(row.map((value) => typeof value === 'number' ? BigInt(value) : value))).sort();
-    if (counts[table] !== rows.length || !same(rowDigests(newDb, table, columns), digests)) {
-      throw new SnapshotError(name, `升級比對失敗。${table} 初始資料、歸屬或來源不符。`);
-    }
-  }
+  for (const [table, rows] of Object.entries(expected)) verifySeedRows(name, newDb, counts, table, rows);
   return expected;
 }
 
@@ -209,6 +219,32 @@ function verifyEmptyAdditions(name, counts, tables) {
   for (const table of tables) {
     if (counts[table] !== 0) throw new SnapshotError(name, `升級比對失敗。${table} 必須存在且初始為空。`);
   }
+}
+
+function verifyChannelSeeds(name, oldDb, newDb, counts) {
+  using knowledge = openBiReviewStore(dirname(join(destination, name)));
+  for (const table of migratedChannelTables) {
+    const ordered = table === 'channel_inbound' || table === 'channel_outbound';
+    verifySeedRows(name, newDb, counts, table, legacyChannelRows(oldDb, table, knowledge), ordered);
+  }
+}
+
+const migratedRowDigest = (row) => digestRow(row.map((value) => typeof value === 'number' ? BigInt(value) : value));
+
+function verifySeedRows(name, db, counts, table, rows, ordered = false) {
+  const expected = Array.from(rows, migratedRowDigest);
+  if (!ordered) expected.sort();
+  if (counts[table] !== expected.length || !same(rowDigests(db, table, columnsOf(db, table), ordered), expected)) {
+    throw new SnapshotError(name, `升級比對失敗。${table} 初始資料、歸屬或來源不符。`);
+  }
+}
+
+function verifyChannelOwners(name, db) {
+  const sessionsPath = join(root, dirname(name), 'telegram-chat.sqlite');
+  using sessions = lstatSync(sessionsPath, { throwIfNoEntry: false })
+    ? new DatabaseSync(sessionsPath, { readOnly: true }) : undefined;
+  try { verifyChannelConversations(db, sessions); }
+  catch { throw new SnapshotError(name, '升級比對失敗。channel_conversations 歸屬不符。'); }
 }
 
 async function verifyNewCentralStore(name, next, before) {
@@ -219,9 +255,10 @@ async function verifyNewCentralStore(name, next, before) {
   }
   await check(name, '升級比對失敗。無法驗證新建的中央工作台資料庫。', () => useDatabase(join(root, name), (db) => {
     const seeds = verifyAgentSeeds(name, undefined, db, next.counts, false);
+    verifySeedRows(name, db, next.counts, 'channel_accounts', legacyChannelAccounts());
     const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty]);
     verifyEmptyAdditions(name, next.counts, empty);
-    if (Object.keys(next.counts).some((table) => !empty.has(table) && !Object.hasOwn(seeds, table))) {
+    if (Object.keys(next.counts).some((table) => table !== 'channel_accounts' && !empty.has(table) && !Object.hasOwn(seeds, table))) {
       throw new SnapshotError(name, '升級比對失敗。新建的中央工作台資料庫包含未知資料表。');
     }
     verifyAgentLedger(db, join(root, name), false);
@@ -253,20 +290,34 @@ async function reconcileUpgrade() {
     const channel = file === 'telegram-chat.sqlite';
     const web = channel || file === 'web.sqlite';
     const knowledge = file === 'knowledge.sqlite';
+    const telegram = file === 'telegram.sqlite';
     const migration = dataMigrations[file];
     if (migration && next.userVersion !== migration.version) {
       throw new SnapshotError(name, '升級比對失敗。SQLite user_version 與新版不符。');
     }
-    const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
-    const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
-    const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty : emptyTables;
+    const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion >= 3;
+    const seedAccounts = file === 'web.sqlite' && [0, 1, 2, 3].includes(prior.userVersion) && next.userVersion === 4;
+    const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion >= 2;
+    const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
+    const seedTelegram = telegram && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
+    const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty :
+      seedTelegram ? new Set(legacyTelegramTables.filter((table) => !Object.hasOwn(prior.counts, table))) : emptyTables;
     const allowed = web ? webAdditions : knowledge ? knowledgeAdditions : emptyTables;
     await check(name, '升級比對失敗。無法讀取 SQLite 欄位或工作狀態。', () => useDatabase(join(destination, name), (oldDb) =>
       useDatabase(join(root, name), (newDb) => {
         const seeded = seedWeb ? verifyAgentSeeds(name, oldDb, newDb, next.counts, channel) : {};
+        if (seedAccounts) verifySeedRows(name, newDb, next.counts, 'channel_accounts', legacyChannelAccounts());
+        if (seedTelegram) verifyChannelSeeds(name, oldDb, newDb, next.counts);
+        if (seedBi) {
+          using spool = openBiChannelStore(dirname(join(destination, name)));
+          for (const table of biOwnershipTables) verifySeedRows(name, newDb, next.counts, table, legacyBiOwnership(oldDb, spool, table));
+        }
         verifyEmptyAdditions(name, next.counts, expectedEmpty);
         for (const [table, count] of Object.entries(next.counts)) {
-          if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table)) continue;
+          if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
+              seedAccounts && table === 'channel_accounts' ||
+              seedBi && biOwnershipTables.includes(table) ||
+              seedTelegram && migratedChannelTables.includes(table)) continue;
           if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table)) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
           }
@@ -280,10 +331,17 @@ async function reconcileUpgrade() {
             throw new SnapshotError(name, '升級比對失敗。既有欄位、資料列或工作狀態不符。');
           }
         }
-        if ((web || knowledge) && newDb.prepare('PRAGMA foreign_key_check').get()) {
+        if ((web || knowledge || telegram) && newDb.prepare('PRAGMA foreign_key_check').get()) {
           throw new SnapshotError(name, '升級比對失敗。SQLite foreign_key_check 外鍵檢查失敗。');
         }
         if (web) verifyAgentLedger(newDb, join(root, name), channel);
+        if (knowledge && next.userVersion === 3) verifyBiOwnership(newDb);
+        if (telegram && next.userVersion === telegramInboxVersion) {
+          verifyChannelOwners(name, newDb);
+          verifyBiSourceOwners(newDb);
+          using reviews = openBiReviewStore(dirname(join(root, name)));
+          verifyBiSourceReceipts(newDb, reviews);
+        }
       })));
   }
 }
@@ -294,13 +352,22 @@ async function intentDiff(report) {
   const changes = [];
   for (const [database, metadata] of Object.entries(live.databases)) {
     await check(database, '回退時讀取待處理工作或計算雜湊失敗。', () => useDatabase(join(root, database), async (db) => {
-      for (const table of ['notification_intents', 'outbox', 'inbox', 'bi_jobs', 'ingest_jobs']) {
+      for (const table of ['notification_intents', 'outbox', 'inbox', 'channel_outbound', 'channel_inbound', 'bi_jobs', 'ingest_jobs']) {
         if (!(table in metadata.counts)) continue;
-        const previous = before.databases[database]?.counts[table] !== undefined
+        const metadataBefore = before.databases[database];
+        const columns = columnsOf(db, table);
+        const previous = metadataBefore?.counts[table] !== undefined
           ? await useDatabase(join(destination, database), (old) => {
             const columns = columnsOf(old, table);
             return { columns, digests: new Set(rowDigests(old, table, columns)) };
-          }) : { columns: columnsOf(db, table), digests: new Set() };
+          }) : { columns, digests: new Set() };
+        if (metadataBefore && metadataBefore.userVersion < 2 && migratedChannelTables.includes(table)) {
+          await useDatabase(join(destination, database), (old) => {
+            for (const row of legacyChannelRows(old, table)) {
+              previous.digests.add(migratedRowDigest(row));
+            }
+          });
+        }
         const addedOrChanged = rowDigests(db, table, previous.columns).filter((hash) => !previous.digests.has(hash));
         if (addedOrChanged.length) changes.push({ database, table, columns: previous.columns, addedOrChanged });
       }

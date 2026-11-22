@@ -1,5 +1,14 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'CHANNEL_ACCOUNT_IN_USE': "此 Telegram 帳號已綁定至助理 {agentId}。",
+  'channel-settings-invalid': "請提供有效的通道帳號設定。",
+  'channel-binding-stale': "通道綁定已變更。請重新載入並確認。",
+  'channel-binding-busy': "此帳號仍有工作或訊息等待處理。",
+  'channel-confirmation-required': "請明確確認通道綁定變更。",
+  'channel-account-not-found': "找不到此通道帳號。",
+  'channel-identity-changed': "憑證的 bot 或允許使用者與此帳號不符。",
+  'channel-credential-unavailable': "找不到有效的 Telegram 使用者憑證。",
+  'channel-verification-failed': "無法驗證 Telegram 帳號。",
   'credential-access': "無法存取 Windows 使用者憑證。",
   'credential-name': "憑證名稱無效。",
   'credential-value': "請輸入有效的憑證值。",

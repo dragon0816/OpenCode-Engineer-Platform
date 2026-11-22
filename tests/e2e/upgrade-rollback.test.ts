@@ -46,6 +46,8 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const profileFile = join(web, 'profile/synthetic.txt');
     const knowledge = join(web, 'knowledge.sqlite');
     const { snapshot } = goldFixture();
+    // The seeded BI vault has review history and requires a reviewed publication.
+    snapshot.vault.id = 'maintenance-extended';
     snapshot.publication.revision = 'maintenance-extended';
     for (let index = 0; index < 300; index++) {
       const id = 'fixture-card-' + index;
@@ -58,10 +60,13 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
     const { KnowledgeStore: HistoricalKnowledgeStore } = await import(oldStore) as
       typeof import('../../packages/knowledge/src/store.ts');
-    const store = new HistoricalKnowledgeStore(knowledge);
-    store.import(snapshot, Buffer.from(canonical(snapshot)));
-    const before = store.retrieve(snapshot.vault.id, 'SYN-48B');
-    store.close();
+    const before = (() => {
+      const store = new HistoricalKnowledgeStore(knowledge);
+      try {
+        store.import(snapshot, Buffer.from(canonical(snapshot)));
+        return store.retrieve(snapshot.vault.id, 'SYN-48B');
+      } finally { store.close(); }
+    })();
     {
       using db = new DatabaseSync(knowledge);
       db.exec(`INSERT INTO reviews(id,vault,original,draft) VALUES ('review','synthetic','{}','{}');
@@ -75,8 +80,9 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     }
     const telegram = join(web, 'telegram.sqlite');
     const pending = (id: string) => {
-      using db = new DatabaseSync(telegram);
-      db.prepare("INSERT INTO outbox(bot,id,topic,text,state) VALUES('main', ?, 0, 'synthetic', 'pending')").run(id);
+      const inbox = new TelegramInbox(telegram, false);
+      try { inbox.notify('main', id, 0, 'synthetic'); }
+      finally { inbox.db.close(); }
     };
     const pointer = join(fixture.install, 'current.json');
     const journalPath = join(fixture.install, 'upgrade.journal.json');
@@ -109,7 +115,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       t.diagnostic('本機升級時間 ' + Math.round(performance.now() - start) + ' ms');
       assert.equal(read(pointer).version, version);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].before.userVersion, 1);
-      assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+      assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 3);
       const webMigration = read(journalPath).migration['web.sqlite'];
       for (const table of ['web_model_catalog', 'web_model_selection']) {
         assert.equal(Object.hasOwn(webMigration.before.counts, table), false);
@@ -118,7 +124,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       for (const name of ['web/web.sqlite', 'web/telegram-chat.sqlite']) {
         const { before, after } = read(journalPath).migration[name];
         assert.equal(before.userVersion, 2);
-        assert.equal(after.userVersion, 3);
+        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 4 : 3);
         assert.equal(after.counts.session_ownership, 2);
       }
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',
@@ -150,8 +156,11 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       const safetyCopy = read(journalPath).safetyCopy;
       assert.equal(readFileSync(join(safetyCopy, 'web/profile/synthetic.txt'), 'utf8'), 'upgraded profile');
       using originalDb = new DatabaseSync(join(safetyCopy, 'web/telegram.sqlite'), { readOnly: true });
-      assert.ok(originalDb.prepare("SELECT 1 FROM outbox WHERE id='after-upgrade' AND state='pending'").get());
-      assert.equal(read(join(fixture.install, 'rollback-' + journal.id + '.json')).changes[0].addedOrChanged.length, 1);
+      assert.ok(originalDb.prepare("SELECT 1 FROM channel_outbound WHERE effect_key='after-upgrade' AND state='pending'").get());
+      const { changes } = read(join(fixture.install, 'rollback-' + journal.id + '.json'));
+      assert.equal(changes.length, 1);
+      assert.equal(changes[0].table, 'channel_outbound');
+      assert.equal(changes[0].addedOrChanged.length, 1);
       assert.match(fixture.run('Rollback-OEP', []), /無需再回退/);
     }
 
@@ -211,7 +220,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     assert.match(fixture.run('Upgrade-OEP', ['-Source', wrongSchema.path],
       /【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/), /已回退至/);
     restored();
-    assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+    assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 3);
     assert.ok(!existsSync(join(fixture.install, wrongSchemaVersion)));
 
     const damaged = currentLicense;
@@ -237,9 +246,31 @@ test('owned SQLite stores refuse future schemas without mutating files', () => {
       db.exec('PRAGMA user_version=99');
       db.close();
       const prior = readFileSync(path);
-      assert.throws(() => new open(path), /資料庫版本比程式新/);
+      assert.throws(() => new open(path), open === TelegramInbox ?
+        { message: 'Telegram資料庫版本比程式新。' } : /資料庫版本比程式新/);
       assert.deepEqual(readFileSync(path), prior);
       assert.ok(!existsSync(path + '-wal'));
+      assert.ok(!existsSync(path + '-shm'));
     }
+  } finally { fixture.cleanup(); }
+});
+
+test('Telegram refuses a future schema committed only in a crash-left WAL without mutating files', () => {
+  const fixture = maintenanceFixture();
+  try {
+    const path = join(fixture.data, 'telegram.sqlite');
+    const child = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `
+      import { DatabaseSync } from 'node:sqlite';
+      const db = new DatabaseSync(process.argv[1]);
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; PRAGMA user_version=99');
+      process.exit(79);
+    `, path], { encoding: 'utf8', timeout: 30_000 });
+    assert.ifError(child.error);
+    assert.equal(child.status, 79, child.stderr);
+    const files = [path, path + '-wal', path + '-shm'];
+    const prior = files.map((file) => readFileSync(file));
+    assert.equal(prior[0].readInt32BE(60), 0);
+    assert.throws(() => new TelegramInbox(path), { message: 'Telegram資料庫版本比程式新。' });
+    assert.deepEqual(files.map((file) => readFileSync(file)), prior);
   } finally { fixture.cleanup(); }
 });

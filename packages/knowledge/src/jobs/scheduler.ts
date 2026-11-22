@@ -102,7 +102,7 @@ export class BiScheduler {
     for (const row of rows) {
       const job = String(row.job);
       try {
-        this.store.enqueueBi(job, JSON.parse(String(row.payload)));
+        this.store.enqueueBi(job, JSON.parse(String(row.payload)), 'schedule');
         this.store.runBi(job);
         if (this.store.biCompleted(job)) update.run('awaiting_review', job);
       } catch {

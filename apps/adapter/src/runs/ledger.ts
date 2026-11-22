@@ -15,8 +15,9 @@ const transitions: Record<RunState, RunState[]> = {
 };
 
 export const runLedgerVersion = 1;
-export const webLedgerVersion = 3;
-type WebMigration = { migrate: (db: DatabaseSync) => void; verify: (db: DatabaseSync) => void };
+export const telegramChatLedgerVersion = 3;
+export const webLedgerVersion = 4;
+type WebMigration = { version: number; migrate: (db: DatabaseSync, version: number) => void; verify: (db: DatabaseSync) => void };
 
 export class Ledger {
   protected readonly db: DatabaseSync;
@@ -32,7 +33,7 @@ export class Ledger {
   }
 
   private migrate(file: string, web?: WebMigration) {
-    const expectedVersion = web ? webLedgerVersion : runLedgerVersion;
+    const expectedVersion = web?.version ?? runLedgerVersion;
     const current = () => {
       const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
       if (version > expectedVersion) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
@@ -55,10 +56,10 @@ export class Ledger {
       if (web && version < 2) {
         this.db.exec(readFileSync(atRepo('apps/adapter/migrations/002_attachments.sql'), 'utf8'));
       }
-      if (web && version < webLedgerVersion) {
-        web.migrate(this.db);
+      if (web && version < expectedVersion) {
+        web.migrate(this.db, version);
         web.verify(this.db);
-        this.db.exec(`PRAGMA user_version = ${webLedgerVersion}`);
+        this.db.exec(`PRAGMA user_version = ${expectedVersion}`);
       }
     });
   }

@@ -5,6 +5,7 @@ import { HttpError } from './errors.ts';
 import { key, sourceUploadLimit } from '../../../../packages/knowledge/src/ingest.ts';
 import type { Candidate, ChangeSet } from '../../../../packages/knowledge/src/ingest.ts';
 import type { KnowledgeStore } from '../../../../packages/knowledge/src/store.ts';
+import type { BiProvenance } from '../../../../packages/knowledge/src/bi/ownership.ts';
 
 export function reviewAction(store: KnowledgeStore, input: Record<string, unknown>) {
   if (input.action === 'schema') return store.installReviewSchema(key(input.vault), input.schema, input.version, input.fields);
@@ -62,8 +63,9 @@ const proposalInstructions = 'Propose one engineering card from the supplied sou
   'Return only JSON: {"title":"short title","fields":{"fieldName":{"value":"field value","quote":"verbatim contiguous source quote"}}}. ' +
   'Supply every requested field. Preserve exact spacing and punctuation in each quote. If a field lacks evidence, return {}.';
 
-export async function proposeReview(store: KnowledgeStore, input: Record<string, unknown>,
-  complete: (prompt: string, input: unknown, signal: AbortSignal) => ReturnType<typeof knowledgeCompletion>, signal: AbortSignal) {
+export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | 'reviewSource' | 'stage'>, input: Record<string, unknown>,
+  complete: (prompt: string, input: unknown, signal: AbortSignal) => ReturnType<typeof knowledgeCompletion>, signal: AbortSignal,
+  provenance?: BiProvenance) {
   const id = key(input.id);
   const vault = key(input.vault);
   const base = store.reviewBase(vault);
@@ -102,6 +104,6 @@ export async function proposeReview(store: KnowledgeStore, input: Record<string,
     addCards: [{ id: cardId, type: 'record', key: cardId, title: response.title, version: '1', fields: Object.fromEntries(values) }],
     updateCards: [], removeCards: [], sources: [{ id: sourceId, ref: String(input.ref), sha256: hash }],
     evidence, relationships: [],
-  });
+  }, provenance);
   return { id };
 }

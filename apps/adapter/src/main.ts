@@ -35,6 +35,7 @@ import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
+import type { TelegramEnvironment } from './telegram/accounts.ts';
 import { prepareBiWorkspace } from './runs/agent-ledger.ts';
 
 const assets = new Map([
@@ -95,7 +96,8 @@ function secureHeaders(response: ServerResponse) {
   ].join('; '));
 }
 
-export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false, requestRestart?: () => void) {
+export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment) {
   checkDirectory(root);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -109,11 +111,14 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const telegram = (() => {
+    try { return startTelegram(root, runtime, telegramEnabled, store, channelEnvironment); }
+    catch (error) { store.close(); throw error; }
+  })();
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
-  const telegram = startTelegram(root, runtime, telegramEnabled, store);
   const active = new Set<Promise<void>>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
@@ -153,11 +158,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, auth.pair(request, response, ticket));
       return;
     }
-    const { csrf } = auth.authorize(request);
+    const { csrf } = auth.authorize(request, path === '/api/settings/channels');
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
         projects, sessions: [...sessions.values()].filter((session) => session.project === projects[0].id).map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+      return;
+    }
+    if (path === '/api/settings/channels') {
+      send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request)));
       return;
     }
     if (path === '/api/settings') {

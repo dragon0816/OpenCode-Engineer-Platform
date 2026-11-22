@@ -220,3 +220,15 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 2a 依設計第 12 節驗證 SSE 契約，拒絕受管會話的非串流工具請求。建立會話權限、內建工具一次性票券，以及 Web 與 Telegram 共用的模型派送順位。 [2a 驗收](reviews/PHASE3B_SLICE2A_REPORT.md)
 - [x] 2b 在正式 launcher 啟用內建 broker，遷移工作簿至受控檔案寫入，統一 Web、Telegram 與 MCP 的知識查詢授權。自訂 MCP 僅代理符合授權的遠端 HTTPS 工具，暫停本機與私人網路工具提供給助理，保留設定連線測試。完成隔離效能煙霧測試。 [2b 驗收](reviews/PHASE3B_SLICE2B_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## Phase 3B 切片 3 通用通道及 BI 領域歸屬
+
+- [x] 遷移兩個內建 Telegram 帳號、通道收寄件、游標與會話歸屬。啟動核對原 bot 與擁有者指紋，依助理語言回覆。 [切片 3 進度](reviews/PHASE3B_SLICE3_REPORT.md)
+- [x] 抽出 BI 送審服務，保留原始收件、補件、審核與發布歸屬。依收件會話核對狀態、補件及發布通知。
+- [x] 修正 Telegram 未來版本拒絕與升級測試的 SQLite 清理問題。已用隔離的 Windows fixture 驗證修正前後。
+- [x] 通道設定 API 支援驗證、確認綁定、解除與改綁。合成第三個 bot 驗證專職會話、語言、忙碌時拒絕改綁、舊版通知目的地及輪詢衝突。
+- [x] 合成 Telegram 經已配對且有 CSRF 保護的審核 HTTP API 驗證來源、核准、發布和原 topic 通知。來源不明的舊審核維持 BI 預設 topic。
+- [ ] 完成共用工作台帳、優先派送、租約、逾期及復原契約，並以 UUID 來源鍵支援新增帳號的 BI 收件。
+- [ ] 開放新增帳號經擁有者確認後重送不確定的通知。
+- [ ] 切片 4 加入通道設定畫面與審核助理來源標籤。
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

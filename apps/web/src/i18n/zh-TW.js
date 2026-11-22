@@ -1,4 +1,13 @@
 export default {
+  'server.CHANNEL_ACCOUNT_IN_USE': "此 Telegram 帳號已綁定至助理 {agentId}。",
+  'server.channel-settings-invalid': "請提供有效的通道帳號設定。",
+  'server.channel-binding-stale': "通道綁定已變更。請重新載入並確認。",
+  'server.channel-binding-busy': "此帳號仍有工作或訊息等待處理。",
+  'server.channel-confirmation-required': "請明確確認通道綁定變更。",
+  'server.channel-account-not-found': "找不到此通道帳號。",
+  'server.channel-identity-changed': "憑證的 bot 或允許使用者與此帳號不符。",
+  'server.channel-credential-unavailable': "找不到有效的 Telegram 使用者憑證。",
+  'server.channel-verification-failed': "無法驗證 Telegram 帳號。",
   'server.credential-access': "無法存取 Windows 使用者憑證。",
   'server.credential-name': "憑證名稱無效。",
   'server.credential-value': "請輸入有效的憑證值。",
