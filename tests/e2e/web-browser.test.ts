@@ -20,9 +20,10 @@ import type { WireRequest } from './synthetic-completion.ts';
 
 const real = process.argv.includes('--real');
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
-assert.ok(!(real && captureGallery), 'The GUI gallery requires synthetic data');
+const captureEnglish = process.env.OEP_CAPTURE_GUI_EN === '1';
+assert.ok(!(real && (captureGallery || captureEnglish)), 'The GUI gallery requires synthetic data');
 const screenshotViewports = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
-const capturePanels = captureGallery || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
+const capturePanels = captureGallery || captureEnglish || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
 const root = join(dataDirectory(), 'OEP 瀏覽器驗收');
 mkdirSync(root);
 const audit = mkdtempSync(join(root, 'launch-'));
@@ -196,7 +197,8 @@ try {
         document.querySelector(${JSON.stringify('#' + id)}).click();
       })()`);
       const capture = async (name: string) => {
-        if (captureGallery) await page.evaluate(`document.querySelectorAll('#messages .message :is(p, .message-quote)').forEach(paragraph => {
+        const englishShot = captureEnglish && /^(conversation(?:-artifact)?|settings-appearance)-(?:light|dark)-(?:wide|narrow)$/.test(name);
+        if (captureGallery || englishShot) await page.evaluate(`document.querySelectorAll('#messages .message :is(p, .message-quote)').forEach(paragraph => {
           if (!paragraph.hidden && paragraph.textContent.includes('window.injected=1')) {
             paragraph.dataset.galleryText = paragraph.textContent;
             paragraph.textContent = paragraph.textContent.split('\\n').filter(line => !line.includes('window.injected=1')).join('\\n');
@@ -209,8 +211,28 @@ try {
           const png = Buffer.from(image.data, 'base64');
           writeFileSync(join(audit, name + '.png'), png);
           if (captureGallery) writeFileSync(join('docs', 'validation', 'gui', name + '.png'), png);
+          if (englishShot) {
+            await selectLocale(page, 'en');
+            const scroll = await page.evaluate<number>(`(() => {
+              const messages = document.querySelector('#messages');
+              const lastReply = [...messages.querySelectorAll('.message.assistant')].at(-1);
+              const original = messages.scrollTop;
+              if (${name.startsWith('conversation-') && name.endsWith('-narrow') && !name.includes('-artifact-')} && lastReply) {
+                messages.scrollTop += lastReply.getBoundingClientRect().top - messages.getBoundingClientRect().top;
+              }
+              return original;
+            })()`);
+            try {
+              await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+              const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+              writeFileSync(join('docs', 'validation', 'gui', name + '-en.png'), Buffer.from(data, 'base64'));
+            } finally {
+              await page.evaluate(`document.querySelector('#messages').scrollTop = ${scroll}`);
+            }
+          }
         } finally {
-          if (captureGallery) await page.evaluate(`document.querySelectorAll('[data-gallery-text]').forEach(paragraph => {
+          if (englishShot) await selectLocale(page, 'zh-TW');
+          if (captureGallery || englishShot) await page.evaluate(`document.querySelectorAll('[data-gallery-text]').forEach(paragraph => {
             paragraph.textContent = paragraph.dataset.galleryText;
             paragraph.hidden = false;
             delete paragraph.dataset.galleryText;

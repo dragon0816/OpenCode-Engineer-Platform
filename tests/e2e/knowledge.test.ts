@@ -19,7 +19,7 @@ import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
 import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
-import { inLocales, labelInLocale } from './gui-locales.ts';
+import { inLocales, labelInLocale, selectLocale } from './gui-locales.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -171,6 +171,9 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const clickLabel = (scope: string, label: string) => browser.evaluate(
         `[...document.querySelector(${JSON.stringify(scope)}).querySelectorAll('button, summary')]
           .find(element => element.textContent.trim() === ${JSON.stringify(label)}).click()`);
+      const captureTraditional = process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1';
+      const captureEnglish = process.env.OEP_CAPTURE_GUI_EN === '1';
+      const englishScreens = new Set(['slice3a-overview', 'jobs-list', 'review-list']);
       const captureGallery = async (screens: [string, () => Promise<unknown>][]) => {
         try {
           for (const theme of ['light', 'dark']) {
@@ -179,6 +182,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
               await ready(`innerWidth === ${width}`);
               await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'`);
               for (const [name, show] of screens) {
+                const english = captureEnglish && englishScreens.has(name);
+                if (!captureTraditional && !english) continue;
                 if (await browser.evaluate<boolean>(panelIsOpen)) await closePreview();
                 await show();
                 await browser.evaluate(`new Promise(resolve => requestAnimationFrame(() => {
@@ -186,8 +191,20 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
                   document.querySelector('#chat-files').scrollTop = 0;
                   requestAnimationFrame(() => resolve(true));
                 }))`);
-                const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
-                writeFileSync(join('docs', 'validation', 'gui', `${name}-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));
+                const capture = async (suffix: string) => {
+                  const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+                  writeFileSync(join('docs', 'validation', 'gui', `${name}-${theme}-${size}${suffix}.png`), Buffer.from(image.data, 'base64'));
+                };
+                if (captureTraditional) await capture('');
+                if (english) {
+                  await selectLocale(browser, 'en');
+                  try {
+                    await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+                    await capture('-en');
+                  } finally {
+                    await selectLocale(browser, 'zh-TW');
+                  }
+                }
               }
             }
           }
@@ -350,7 +367,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await mapping.check('feature-knowledge-card', preview, {
           selectors: ['dl dd', 'blockquote', 'details p'], labels: ['欄位變更紀錄', '知識庫發布紀錄'],
         });
-        if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
+        if (captureTraditional || captureEnglish) {
           await captureGallery(['overview', 'ask', 'quality', 'build', 'drawer'].map((screen) =>
             ['slice3a-' + screen, async () => {
               await browser.evaluate(`{
@@ -651,7 +668,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await featureText('#review-view');
         await browser.evaluate("document.querySelectorAll('#review-view > .knowledge-body > details').forEach(detail => { detail.open = false; })");
 
-        if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
+        if (captureTraditional || captureEnglish) {
           const showJobs = async () => {
             await browser.evaluate("if (document.querySelector('#jobs-view').hidden) document.querySelector('#open-jobs').click()");
             await ready("!document.querySelector('#jobs-view').hidden && document.querySelector('#jobs-content').textContent.includes('下次執行 ')");
