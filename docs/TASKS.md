@@ -74,6 +74,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 設定頁的完整回歸通過。Chromium 連續三次通過，真模型 Excel 五次連續通過，發行及維護驗收通過，敏感資料掃描 0 hits。 [驗收結果](reviews/PHASE2B_SETTINGS_PAGE_REPORT.md#驗收結果)
 - [x] GUI 重做藍圖分步 3 已交付知識庫、排程與工作、獨立審核、共用附加資料分頁、控制項對照與 36 張合成樣張。 [驗收報告](reviews/PHASE2B_KNOWLEDGE_JOBS_REPORT.md)
 - [x] 分步 3 的完整回歸已通過，包含 Chromium 三輪、真模型 Excel 五次連續驗證、發行、維護與 0 hits 掃描。擁有者逐頁驗收待完成。 [驗收結果](reviews/PHASE2B_KNOWLEDGE_JOBS_REPORT.md#驗收結果)
+- [x] GUI 重做分步 4 已交付繁中用語、淺色與深色、窄版、鍵盤操作、定稿控制項對照及合成樣張。 [驗收報告](reviews/PHASE2B_GUI_POLISH_REPORT.md)
+- [ ] 完成分步 4 的擁有者逐頁驗收，並補跑受執行中 OEP 保護限制的 Web HTTP、真模型 Excel、安裝、升級及備份還原。 [驗收輸出](reviews/PHASE2B_GUI_POLISH_REPORT.md#驗收輸出)
 - [ ] 通用工作台與設定分批交付。知識、審核、Telegram、排程功能隨 3a、3b、4 交付。
 - [ ] Phase 5 打包前完成 2b gate，逐項留驗收或省略理由。
 
