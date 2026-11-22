@@ -3,8 +3,9 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { knowledgeMcpName, knowledgeToolName } from '../../adapter/src/opencode/knowledge-mcp.ts';
+import { knowledgeMcpName } from '../../adapter/src/opencode/knowledge-mcp.ts';
 import type { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
+import { statusMcpName } from '../../adapter/src/opencode/status-mcp.ts';
 import { delimiter, dirname, join } from 'node:path';
 import { openCodeEndpoint } from '../../adapter/src/opencode/client.ts';
 import { providerID } from '../../adapter/src/opencode/gateway.ts';
@@ -28,7 +29,8 @@ async function freePort() {
 
 type KnowledgeMcp = Awaited<ReturnType<typeof startKnowledgeMcp>>['config'];
 
-function config(relay: { baseURL: string; key: string }, aliases: readonly string[], web: boolean, knowledge: KnowledgeMcp | undefined, custom: readonly CustomMcp[], definitions: string) {
+function config(relay: { baseURL: string; key: string }, aliases: readonly string[], web: boolean, knowledge: KnowledgeMcp | undefined,
+  custom: readonly CustomMcp[], definitions: string, status?: KnowledgeMcp) {
   const template = JSON.parse(readFileSync(atRepo('config/opencode.example.jsonc'), 'utf8'));
   const provider = template.providers[providerID];
   provider.settings = { baseURL: relay.baseURL, apiKey: relay.key };
@@ -42,7 +44,10 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
   }
   if (knowledge) {
     template.mcp = { servers: { [knowledgeMcpName]: knowledge } };
-    template.permissions.push({ action: `${knowledgeMcpName}_${knowledgeToolName}`, resource: '*', effect: 'allow' });
+  }
+  if (status) {
+    template.mcp ??= { servers: {} };
+    template.mcp.servers[statusMcpName] = status;
   }
   for (const server of custom) {
     if (!server.enabled) continue;
@@ -60,7 +65,7 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
 }
 
 export async function supervise(root: string, relay: { baseURL: string; key: string }, aliases: readonly string[], profile?: string,
-  knowledge?: KnowledgeMcp, isolatedJob = false, custom: readonly CustomMcp[] = []) {
+  knowledge?: KnowledgeMcp, isolatedJob = false, custom: readonly CustomMcp[] = [], status?: KnowledgeMcp) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || process.versions.node.split('.')[0] !== '24') {
     throw new Error('OEP runtime requires Windows x64 and Node.js 24');
   }
@@ -103,7 +108,7 @@ export async function supervise(root: string, relay: { baseURL: string; key: str
       ...baseEnv, HOME: profile ?? control, USERPROFILE: profile ?? control, APPDATA: persistent('roaming'), LOCALAPPDATA: persistent('local'), TEMP: temp, TMP: temp,
       XDG_CONFIG_HOME: persistent('config'), XDG_DATA_HOME: persistent('data'), XDG_CACHE_HOME: persistent('cache'), XDG_STATE_HOME: persistent('state'),
       OPENCODE_TEST_HOME: profile ?? control, OPENCODE_PASSWORD: password,
-      OPENCODE_CONFIG_CONTENT: config(relay, aliases, Boolean(profile), knowledge, custom, definitions),
+      OPENCODE_CONFIG_CONTENT: config(relay, aliases, Boolean(profile), knowledge, custom, definitions, status),
       OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_CONFIG_PROJECT_DISABLE: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_FLAGS: '-automations',
       OEP_JOB_EXE: exe, OEP_JOB_PORT: String(port), ...(testScope && { OEP_JOB_TEST_SCOPE: testScope }),

@@ -7,6 +7,7 @@ import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../../packages/knowledge/src/repository.ts';
 import { KnowledgeStore } from '../../../packages/knowledge/src/store.ts';
 import { checkDirectory } from '../../adapter/src/runs/workspace.ts';
+import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
 
 export const knowledgeFile = 'knowledge.sqlite';
 
@@ -54,7 +55,7 @@ export function importKnowledgeRepository(path: string, folder: string, allowMod
 
 export async function startKnowledgeRuntime(profile: string, audit: string,
   options: Pick<Parameters<typeof startGateway>[0], 'url' | 'key' | 'alias' | 'fetch'> & { aliases: readonly string[] },
-  defaultAlias: () => string) {
+  defaultAlias: () => string, modelSeat: ModelSeat) {
   const databaseRoot = dirname(profile);
   const path = join(databaseRoot, knowledgeFile);
   verifyKnowledgePath(path);
@@ -72,13 +73,19 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     relay = await startGateway({ ...options, web: true,
       trace: (row) => appendFileSync(join(audit, 'knowledge-gateway.jsonl'), JSON.stringify(row) + '\n') });
     const queryStore = reader = new KnowledgeStore(path, true);
-    const benchmarks = new Map(options.aliases.map((alias) => [alias, new KnowledgeAsk(queryStore, knowledgeModel(relay!, alias))]));
+    const models = new Map(options.aliases.map((alias) => [alias, knowledgeModel(relay!, alias)]));
+    const benchmarks = new Map([...models].map(([alias, model]) => [alias,
+      new KnowledgeAsk(queryStore, (question, evidence, signal) => modelSeat.run(() => model(question, evidence, signal)))]));
     const ask = () => benchmarks.get(defaultAlias())!;
-    mcp = await startKnowledgeMcp({ ask: (input, signal) => ask().ask(input, signal) });
+    // Legacy MCP calls use the parent OpenCode turn's lease and serialize their model requests within it.
+    const nested = new ModelSeat();
+    const legacy = new Map([...models].map(([alias, model]) => [alias,
+      new KnowledgeAsk(queryStore, (question, evidence, signal) => nested.run(() => model(question, evidence, signal)))]));
+    mcp = await startKnowledgeMcp({ ask: (input, signal) => legacy.get(defaultAlias())!.ask(input, signal) });
     return { get ask() { return ask(); }, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
       propose: (prompt: string, input: unknown, signal: AbortSignal) =>
-        knowledgeCompletion(relay!, defaultAlias(), prompt, input, signal),
+        modelSeat.run(() => knowledgeCompletion(relay!, defaultAlias(), prompt, input, signal)),
       config: mcp.config, close };
   } catch (error) {
     try { await close(); }

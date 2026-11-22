@@ -3,13 +3,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord } from '../../../../packages/contracts/src/run.ts';
 import { HttpError } from '../http/errors.ts';
+import { workbookInput } from '../opencode/permissions.ts';
 import { convertWorkbook } from './attachments.ts';
 import { workbook } from './workbook.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
 
 export const workbookName = 'output.xlsx';
 export const workbookLimit = 256 * 1024;
-export const workbookInput = (runID: string) => `generated/${runID}.json`;
+export { workbookInput };
 
 export async function publishWorkbook(root: string, workspace: string, run: RunRecord, signal?: AbortSignal) {
   const startedAt = Date.now();

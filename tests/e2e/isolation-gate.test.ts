@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,11 +11,15 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { startGateway } from '../../apps/adapter/src/opencode/gateway.ts';
 import { knowledgeMcpName, knowledgeToolName } from '../../apps/adapter/src/opencode/knowledge-mcp.ts';
 import { waitForOutcome } from '../../apps/adapter/src/opencode/reconcile.ts';
+import { statusTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { createSession, promptID, submitOnce } from '../../apps/adapter/src/opencode/sessions.ts';
 import { turnMarker } from '../../apps/adapter/src/opencode/turn-limits.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { supervise } from '../../apps/launcher/src/supervisor.ts';
-import { jsonInput, send } from '../../scripts/phase0/probe-http.ts';
+import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
+import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
+import { jsonInput, send, until } from '../../scripts/phase0/probe-http.ts';
 import { bufferedCompletion } from '../../scripts/phase0/probe-redaction.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
@@ -241,4 +245,96 @@ test('the production OpenCode relay serves SSE and fails closed on non-streaming
     await rejected.body?.cancel();
   }
   assert.equal(requests, 2, 'Rejected tool requests reached the upstream gateway');
+});
+
+test('the built-in broker completes a native status call and shares the model seat across origins', { timeout: 120_000 }, async (context) => {
+  const root = mkdtempSync(join(dataDirectory(), 'broker-'));
+  const profile = join(root, 'profile');
+  const audit = join(root, 'launch');
+  for (const dir of [profile, audit, join(root, 'sessions'), join(root, 'model-work')]) mkdirSync(dir);
+  const enteredWeb = Promise.withResolvers<void>();
+  const releaseWeb = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  let receipt: string | undefined;
+  let leaked = false;
+  let modelStatusSchema: unknown;
+  const runtime = await startRuntime(audit, { url: 'http://example.invalid', key: randomUUID(), alias, isolatedJob: true,
+    fetch: async (_target, init) => {
+      if (!init?.body) return Response.json({ object: 'list', data: [{ id: alias }] });
+      const wire = String(init.body);
+      leaked ||= /policy_nonce|_oep_transport_token|oep-ticket-[a-f0-9]{64}/.test(wire);
+      const request = JSON.parse(wire) as ModelBody;
+      if (!request.stream) {
+        calls.push('BI');
+        return Response.json({ choices: [{ message: { content: 'Synthetic BI proposal' }, finish_reason: 'stop' }] });
+      }
+      if (request.messages.some(({ role }) => role === 'tool')) {
+        calls.push('Web tool result');
+        receipt = JSON.stringify(request.messages.find(({ role }) => role === 'tool')?.content);
+      } else if (wire.includes('Synthetic Web status')) {
+        calls.push('Web');
+        modelStatusSchema = request.tools?.find(({ function: fn }) => fn?.name === statusTool)?.function?.parameters;
+        enteredWeb.resolve();
+        await releaseWeb.promise;
+        return completion(alias, toolCall(0, 'call_native_status', statusTool, {}), 'tool_calls');
+      } else if (wire.includes('Synthetic model transport forgery')) {
+        calls.push('forgery');
+        return completion(alias, toolCall(0, 'call_forged_status', statusTool, { [transport]: 'synthetic-forgery' }), 'tool_calls');
+      } else calls.push('Telegram Main');
+      return completion(alias, [{ role: 'assistant', content: 'Synthetic verified reply' }], 'stop');
+    },
+  }, profile);
+  const store = new WebStore(join(root, 'web.sqlite'));
+  const telegram = new WebStore(join(root, 'telegram-chat.sqlite'));
+  const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
+  const web = new ChatService(store, runtime, root, join(audit, 'web-turns.jsonl'), () => {});
+  const chat = new ChatService(telegram, runtime, root, join(audit, 'telegram-turns.jsonl'), () => {}, store);
+  const router = new TelegramRouter(inbox, runtime, chat, telegram);
+  const signal = AbortSignal.timeout(35_000);
+  try {
+    store.savePreferences('Synthetic agent display', '', 'Synthetic agent instructions');
+    const session = await web.create('inspector');
+    const id = randomUUID();
+    await web.submit(session, { id, text: 'Synthetic Web status', attachments: [], workbook: false });
+    await until(() => Promise.resolve(calls.includes('Web') || undefined), 10_000);
+    await enteredWeb.promise;
+    const row = { id: 42, topic: 3, bot: 'main' as const, payload: JSON.stringify({ text: 'Synthetic Telegram Main' }) };
+    const main = router.handle(row, signal);
+    await until(() => Promise.resolve(telegram.sessions().some((item) => telegram.turns(item.id).length > 0) || undefined), 10_000);
+    const bi = runtime.knowledge!.propose('Synthetic BI proposal', { fixture: 'Synthetic input' }, signal);
+    assert.deepEqual(calls, ['Web']);
+    releaseWeb.resolve();
+    await main;
+    assert.deepEqual(await bi, { content: 'Synthetic BI proposal' });
+    assert.equal(await until(() => router.handle(row, signal), 15_000), 'Synthetic verified reply');
+    assert.deepEqual(calls, ['Web', 'Web tool result', 'Telegram Main', 'BI']);
+    assert.equal(store.get(id).state, 'verified');
+    assert.deepEqual(modelStatusSchema, { type: 'object', properties: {}, required: [], additionalProperties: false });
+    assert.match(receipt ?? '', /Synthetic agent display/);
+    assert.match(receipt ?? '', /主要工作區/);
+    assert.equal(leaked, false, 'Broker metadata entered the gateway request');
+    const state = await web.state(session);
+    assert.ok(state.messages?.some(({ tools }) => tools?.some(({ name, status }) => name === statusTool && status === 'done')));
+    const raw = await runtime.client.message.list({ sessionID: session.upstreamID }, call());
+    assert.ok(/oep-ticket-[a-f0-9]{64}/.test(JSON.stringify(raw)), 'Expected native transport token was absent');
+    for (const value of [JSON.stringify(state), readFileSync(join(audit, 'gateway.jsonl'), 'utf8'),
+      readFileSync(join(audit, 'web-turns.jsonl'), 'utf8'), readFileSync(join(audit, 'telegram-turns.jsonl'), 'utf8')]) {
+      assert.ok(!/policy_nonce|_oep_transport_token|oep-ticket-[a-f0-9]{64}/.test(value), 'Broker metadata leaked to a projection or diagnostic');
+    }
+    const forged = await web.create('inspector');
+    const forgedID = randomUUID();
+    await web.submit(forged, { id: forgedID, text: 'Synthetic model transport forgery', attachments: [], workbook: false });
+    await until(() => Promise.resolve(store.get(forgedID).state === 'failed' || undefined), 20_000);
+    const denied = await web.state(forged);
+    assert.ok(!denied.messages?.some(({ tools }) => tools?.some(({ name }) => name === statusTool)));
+  } finally {
+    releaseWeb.resolve();
+    try { await Promise.all([web.close(), chat.close()]); }
+    finally {
+      store.close(); telegram.close(); inbox.db.close();
+      const stopped = await runtime.stop();
+      assert.deepEqual([stopped.supervisorExit, stopped.childExit, stopped.orphans], [0, 0, 0]);
+      context.diagnostic(`OpenCode ${runtime.version}, supervisorExit=${stopped.supervisorExit}, childExit=${stopped.childExit}, orphans=${stopped.orphans}`);
+    }
+  }
 });

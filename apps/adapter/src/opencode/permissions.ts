@@ -1,20 +1,21 @@
 import { customMcpName } from '../runs/custom-mcp.ts';
 import type { CustomMcp } from '../runs/custom-mcp.ts';
-import { workbookInput } from '../runs/web-workbook.ts';
 import { knowledgeMcpName, knowledgeToolName } from './knowledge-mcp.ts';
 
 export type SessionOrigin = 'web' | 'channel' | 'delegation' | 'schedule';
 export type Permission = { action: string; resource: string; effect: 'allow' | 'deny' };
 export const statusTool = 'oep_status';
 export const knowledgeTool = `${knowledgeMcpName}_${knowledgeToolName}`;
+export const workbookInput = (runID: string) => `generated/${runID}.json`;
 
 type Access = { knowledge?: boolean; status?: boolean; custom?: readonly Pick<CustomMcp, 'id' | 'deniedTools'>[] };
 type PermissionScope =
   | { origin: 'synthetic'; workbook?: boolean }
   | ({ origin: SessionOrigin; agentID: string; workbookRun?: string } & Access);
 
-export function sessionPermissions(scope: PermissionScope): Permission[] {
+export function sessionPermissions(scope?: PermissionScope): Permission[] {
   const rules: Permission[] = [{ action: '*', resource: '*', effect: 'deny' }];
+  if (!scope) return rules;
   const allow = (action: string, resource = '*') => rules.push({ action, resource, effect: 'allow' });
   if (scope.origin === 'synthetic') {
     allow('read', 'sop.md');
@@ -42,4 +43,10 @@ export function allowedModelTool(permissions: readonly Permission[], name: strin
   const rule = permissions.findLast(({ action: pattern }) => pattern === '*' || pattern === action ||
     pattern.endsWith('*') && action.startsWith(pattern.slice(0, -1)));
   return rule?.effect === 'allow';
+}
+
+export function retainsPermissions(admitted: readonly Permission[], current: readonly Permission[]) {
+  return admitted.every((rule) => rule.effect === 'deny' || current.some((next) => next.effect === 'allow' &&
+    next.action === rule.action && next.resource === rule.resource)) &&
+    current.every((rule) => rule.effect === 'allow' || rule.action === '*' || !allowedModelTool(admitted, rule.action));
 }

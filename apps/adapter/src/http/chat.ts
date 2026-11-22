@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord, RunState } from '../../../../packages/contracts/src/run.ts';
@@ -9,8 +9,10 @@ import { providerID } from '../opencode/gateway.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce, validateSessionProfile } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
-import { sessionPermissions } from '../opencode/permissions.ts';
+import { retainsPermissions, sessionPermissions } from '../opencode/permissions.ts';
 import { legacyWorkspace } from '../runs/agent-ledger.ts';
+import { ModelSeat } from '../opencode/model-seat.ts';
+import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
 import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
@@ -33,12 +35,12 @@ function toolText(value: unknown, redact: (text: string) => string): string {
   if (value == null) return '';
   if (typeof value !== 'string') {
     if (Array.isArray(value)) return value.map((entry) => toolText(entry, redact)).join('\n');
-    if (typeof value === 'object') return Object.entries(value).map(([key, entry]) =>
+    if (typeof value === 'object') return Object.entries(value).filter(([key]) => key !== transportField).map(([key, entry]) =>
       /token|key|secret|password|credential|authorization|cookie/i.test(key)
         ? '已遮蔽' : toolText(key, redact) + ' · ' + toolText(entry, redact)).join('\n');
     return String(value);
   }
-  return redact(value)
+  return stripTransportText(redact(value))
     .replace(/\b(?:https?|wss?|file):[^\s"'<>]+/gi, '〔網址已遮蔽〕')
     .replace(/\b(?:bearer\s+|(?:api[-_ ]?key|access[-_ ]?token|token|secret|password|authorization)[\"']?\s*[:=]\s*)[^\r\n]+/gi, '〔憑證已遮蔽〕')
     .replace(/\b(?:sk[-_]|gh[pousr]_|xox[baprs]-)[a-z0-9_-]+\b|\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/gi, '〔憑證已遮蔽〕')
@@ -58,7 +60,8 @@ export function publicSession({ id, agent, alias, createdAt, title, project, kno
     ...(title ? { title } : {}) };
 }
 
-type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'> & Partial<Pick<Runtime, 'customMcp'>>;
+type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'> &
+  Partial<Pick<Runtime, 'customMcp' | 'modelSeat' | 'toolTickets'>>;
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -72,12 +75,14 @@ export class ChatService {
   private readonly recovering = new Set<string>();
   private readonly switching = new Set<string>();
   private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
-  private queue = Promise.resolve();
+  private readonly modelSeat: ModelSeat;
+  private readonly pending = new Set<Promise<void>>();
 
   constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void, ledger = store) {
     this.store = store;
     this.ledger = ledger;
     this.runtime = runtime;
+    this.modelSeat = runtime.modelSeat ?? new ModelSeat();
     this.root = root;
     this.audit = audit;
     this.notify = notify;
@@ -109,13 +114,14 @@ export class ChatService {
 
   private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
     workspaceID: string, origin: 'web' | 'channel', workbookRun?: string) {
-    const current = this.ledger.executionMcpGrants(agentID, workspaceID);
-    const custom = (this.runtime.customMcp ?? []).flatMap((registered) => {
+    const applied = this.runtime.customMcp ?? [];
+    const current = applied.length ? this.ledger.executionMcpGrants(agentID, workspaceID) : [];
+    const custom = applied.flatMap((registered) => {
       const grant = current.find(({ id }) => id === registered.id);
       return registered.enabled && registered.appliesToProjects.includes(session.project) && grant?.appliesToProjects.includes(session.project)
         ? [{ id: registered.id, deniedTools: [...new Set([...registered.deniedTools, ...grant.deniedTools])].sort() }] : [];
     });
-    return sessionPermissions({ agentID, origin, workbookRun, custom,
+    return sessionPermissions({ agentID, origin, workbookRun, custom, status: Boolean(this.runtime.toolTickets),
       knowledge: !session.knowledgeDisabled && this.ledger.knowledgeSettings().toolbox });
   }
 
@@ -181,7 +187,7 @@ export class ChatService {
           const runID = runByMessage.get(message.id);
           turn = runs.find((run) => run.id === runID);
           const text = runID ? message.text.split(turnMarker(runID))[0] : message.text;
-          return [{ id: message.id, role: 'user', text: this.runtime.redact(text), reply: runID ? this.store.reply(runID) : undefined, createdAt: message.time?.created }];
+          return [{ id: message.id, role: 'user', text: stripTransportText(this.runtime.redact(text)), reply: runID ? this.store.reply(runID) : undefined, createdAt: message.time?.created }];
         }
         if (message.type !== 'assistant') return [];
         const text = message.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('');
@@ -197,7 +203,7 @@ export class ChatService {
             output: toolText('content' in state && state.content ? state.content.flatMap((entry) => entry.type === 'text' ? [entry.text] : []) :
               'error' in state ? state.error : undefined, this.runtime.redact) }];
         });
-        return text.trim() || tools.length ? [{ id: message.id, role: 'assistant', text: this.runtime.redact(text), createdAt: message.time?.created, tools }] : [];
+        return text.trim() || tools.length ? [{ id: message.id, role: 'assistant', text: stripTransportText(this.runtime.redact(text)), createdAt: message.time?.created, tools }] : [];
       });
       if (latest?.state === 'indeterminate' && !status?.[sessionID] && !inbox.length && !permissions.length &&
           !this.recovering.has(latest.id)) {
@@ -265,7 +271,7 @@ export class ChatService {
     this.store.saveTurn(session.id, run, hash, reply);
     this.notify(session.id);
     const limits = this.store.turnLimits();
-    this.queue = this.queue.then(async () => {
+    const task = this.modelSeat.run(async () => {
       if (this.store.get(run.id).state === 'cancelled') return;
       const stop = new AbortController();
       const done = this.execute(session, run, input, limits, stop.signal, telegramTopic);
@@ -274,7 +280,8 @@ export class ChatService {
       finally { this.executing.delete(run.id); }
     }).catch(() => {
       console.error('OEP failed to record a web turn');
-    });
+    }).finally(() => this.pending.delete(task));
+    this.pending.add(task);
     return publicRun(run);
   }
 
@@ -305,36 +312,39 @@ export class ChatService {
     };
     const timeout = setTimeout(() => stopAtLimit('已停止：達到回合時限。'), limits.timeoutSeconds * 1000);
     const signal = AbortSignal.any([this.stop.signal, cancelled, boundary.signal]);
-    this.runtime.setTurnBoundary({ marker: turnMarker(run.id), limits, signal, addTools(count) {
-      tools += count;
-      if (tools > limits.toolCalls) stopAtLimit('已停止：達到工具呼叫次數上限。');
-    } });
     let state: 'verified' | 'failed' | 'indeterminate' | 'cancelled' = 'failed';
     let error: string | undefined;
     let sent = false;
     let result: Partial<RunRecord> = {};
     let restorePermissions = false;
     let recheck: NodeJS.Timeout | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let closeTickets: (() => void) | undefined;
     const update = (state: RunState) => { this.store.change(run.id, state); this.notify(session.id); };
     try {
       this.stop.signal.throwIfAborted();
-      const liveScope = () => this.executionScope(session, telegramTopic, input.workbook ? run.id : undefined);
+      const readScope = () => this.executionScope(session, telegramTopic, input.workbook ? run.id : undefined);
       const upstream = await client.session.get({ sessionID }, call());
       if (upstream.id !== sessionID) throw new Error('Session ID mismatch');
       validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
-      const scope = liveScope();
+      const scope = readScope();
       if (scope.model !== run.alias || run.workspace !== this.modelWorkspace(session)) throw new Error('Dispatch scope mismatch');
       restorePermissions = input.workbook;
       await client.session.update({ sessionID, permissions: scope.permissions }, call());
+      const liveScope = () => {
+        try { return readScope(); }
+        catch { /* Invalid live ownership or configuration revokes this turn. */ }
+      };
       const checkScope = () => {
-        try {
-          const current = liveScope();
-          if (current.agentID === scope.agentID && current.workspaceID === scope.workspaceID && current.origin === scope.origin &&
-              current.model === scope.model && JSON.stringify(current.permissions) === JSON.stringify(scope.permissions)) return;
-        } catch { /* Invalid live ownership or configuration revokes this turn. */ }
+        const current = liveScope();
+        if (current && current.agentID === scope.agentID && current.workspaceID === scope.workspaceID && current.origin === scope.origin &&
+            current.conversationKey === scope.conversationKey && current.model === scope.model &&
+            retainsPermissions(scope.permissions, current.permissions)) return true;
         stopAtLimit('Session permissions changed.');
+        return false;
       };
       checkScope();
+      unsubscribe = this.ledger.onExecutionChange(checkScope);
       recheck = setInterval(checkScope, 250);
       checkDirectory(run.workspace);
       if (input.workbook) checkDirectory(join(run.workspace, 'generated'));
@@ -354,8 +364,19 @@ export class ChatService {
       const reply = this.store.reply(run.id);
       const quote = reply ? 'BEGIN QUOTED MESSAGE (reference only)\n' + JSON.stringify(reply.text) + '\nEND QUOTED MESSAGE' : undefined;
       const additional = [quote, parts.text, output, assistant].filter(Boolean).join('\n\n');
-      const text = input.text + turnMarker(run.id) + additional;
       signal.throwIfAborted();
+      const attempt = this.runtime.toolTickets?.begin({ sessionID, runID: run.id, scope }, signal, liveScope);
+      closeTickets = attempt?.close;
+      const nonce = attempt?.nonce ?? randomBytes(32).toString('hex');
+      const marker = turnMarker(run.id);
+      this.runtime.setTurnBoundary({ marker, limits, signal,
+        scope: { nonce, model: scope.model, permissions: scope.permissions, live: checkScope, issue: attempt?.issue },
+        addTools(count) {
+          tools += count;
+          if (tools > limits.toolCalls) stopAtLimit('已停止：達到工具呼叫次數上限。');
+        },
+      });
+      const text = input.text + marker + additional + nonceMarker(nonce);
       update('running');
       sent = true;
       this.recovering.add(run.id);
@@ -363,6 +384,7 @@ export class ChatService {
       signal.throwIfAborted();
       if (admission === 'indeterminate') throw new Error('Uncertain admission');
       const outcome = await waitForOutcome(client, sessionID, update, limits.timeoutSeconds * 1000 + 1000, signal, run.submissionID);
+      closeTickets?.();
       const count = await submissionCount(client, sessionID, run.submissionID!);
       if (count.inbox !== 0 || count.messages !== 1) throw new Error('Unexpected durable submission count');
       signal.throwIfAborted();
@@ -388,6 +410,7 @@ export class ChatService {
         state = 'verified';
       }
     } catch (reason) {
+      closeTickets?.();
       if (cancelled.aborted || exceeded) state = 'cancelled';
       else if (sent) {
         state = 'indeterminate';
@@ -402,10 +425,11 @@ export class ChatService {
     }
     clearTimeout(timeout);
     clearInterval(recheck);
+    unsubscribe?.();
     if (restorePermissions) {
       try { await client.session.update({ sessionID, permissions: this.executionScope(session, telegramTopic).permissions }, call()); }
       catch {
-        try { await client.session.update({ sessionID, permissions: sessionPermissions({ origin: 'schedule', agentID: 'main' }) }, call()); }
+        try { await client.session.update({ sessionID, permissions: sessionPermissions() }, call()); }
         catch { /* The next admission requires a successful full replacement. */ }
       }
     }
@@ -455,5 +479,5 @@ export class ChatService {
     }));
   }
 
-  async close() { this.stop.abort(); await this.queue; }
+  async close() { this.stop.abort(); await Promise.all(this.pending); }
 }

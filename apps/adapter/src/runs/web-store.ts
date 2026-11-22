@@ -104,6 +104,7 @@ const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
 
 export class WebStore extends Ledger {
   private readonly telegram: boolean;
+  private readonly executionChanges = new Set<() => void>();
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -133,7 +134,7 @@ export class WebStore extends Ledger {
 
   saveCustomMcp<T extends CustomMcp>(definition: T) {
     const { id } = definition;
-    return this.transaction(() => {
+    const saved = this.transaction(() => {
       const existing = this.db.prepare('SELECT created_at, updated_at FROM mcp_servers WHERE id = ?').get(id);
       const now = Math.max(Date.now(), Number(existing?.updated_at ?? 0) + 1);
       const createdAt = Number(existing?.created_at ?? now);
@@ -147,16 +148,25 @@ export class WebStore extends Ledger {
       if (!this.telegram) replaceLegacyMcpGrants(this.db, definition);
       return { ...definition, createdAt, updatedAt: now };
     });
+    this.executionChanges.forEach((check) => check());
+    return saved;
   }
 
   removeCustomMcp(id: string) {
-    return this.transaction(() => {
+    const removed = this.transaction(() => {
       if (!this.telegram) {
         this.db.prepare('DELETE FROM workspace_mcp_grants WHERE server_id = ?').run(id);
         this.db.prepare("DELETE FROM agent_capabilities WHERE kind='mcp' AND capability_id = ?").run(id);
       }
       return Boolean(this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes);
     });
+    if (removed) this.executionChanges.forEach((check) => check());
+    return removed;
+  }
+
+  onExecutionChange(check: () => void) {
+    this.executionChanges.add(check);
+    return () => { this.executionChanges.delete(check); };
   }
 
   knowledgeSettings() {
@@ -197,6 +207,7 @@ export class WebStore extends Ledger {
 
   saveKnowledgeSettings(atlasUrl: string, toolbox: boolean) {
     this.db.prepare('INSERT OR REPLACE INTO web_knowledge_settings VALUES (1, ?, ?)').run(atlasUrl, Number(toolbox));
+    this.executionChanges.forEach((check) => check());
   }
 
   projectFolders() {

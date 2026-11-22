@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { discoverGatewayModels, gatewayAliases, gatewayPing, gatewaySettings, startGateway } from '../../adapter/src/opencode/gateway.ts';
@@ -8,12 +8,16 @@ import { waitForOutcome } from '../../adapter/src/opencode/reconcile.ts';
 import { supervise } from './supervisor.ts';
 import { startKnowledgeRuntime } from './knowledge.ts';
 import { WebStore } from '../../adapter/src/runs/web-store.ts';
+import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
+import { startStatusMcp } from '../../adapter/src/opencode/status-mcp.ts';
+import { ToolTickets } from '../../adapter/src/opencode/tool-tickets.ts';
+import { atRepo } from './paths.ts';
 
 import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
 
 export type Runtime = Awaited<ReturnType<typeof startRuntime>>;
 
-type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web'> & { isolatedJob?: boolean };
+type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web' | 'managed' | 'scoped'> & { isolatedJob?: boolean };
 
 export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string, customMcp: readonly CustomMcp[] = []) {
   const settings = synthetic ?? gatewaySettings();
@@ -41,23 +45,29 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   const audit = (name: string, record: object) => appendFileSync(join(root, name), `${JSON.stringify(record)}\n`);
   const requests: GatewayTrace[] = [];
   const relay = await startGateway({
-    ...settings, alias, aliases, web: Boolean(profile), managed: true, trace: (value) => {
+    ...settings, alias, aliases, web: Boolean(profile), managed: true, scoped: Boolean(profile), trace: (value) => {
       requests.push(value);
       audit('gateway.jsonl', value);
     },
   });
   const gatewaySince = (cursor: number) => requests.filter((request) => request.request > cursor);
+  const modelSeat = new ModelSeat();
   const startupFailed = () => writeFileSync(join(root, 'startup-failed'),
     'OpenCode startup or model health failed. Inspect status-only audit records.\n');
   let supervisor: Awaited<ReturnType<typeof supervise>>;
   let knowledge: Awaited<ReturnType<typeof startKnowledgeRuntime>> | undefined;
+  const toolTickets = profile && synthetic?.isolatedJob && synthetic.fetch && !existsSync(atRepo('config/release.manifest.json')) &&
+    process.env.OEP_SYNTHETIC_STATUS_TOOL !== '0' ? new ToolTickets() : undefined;
+  let statusMcp: Awaited<ReturnType<typeof startStatusMcp>> | undefined;
   async function closeRelays() {
-    try { await knowledge?.close(); }
-    finally { await relay.close(); }
+    toolTickets?.close();
+    const results = await Promise.allSettled([statusMcp?.close(), knowledge?.close(), relay.close()]);
+    if (results.some((result) => result.status === 'rejected')) throw new Error('Runtime relays could not close');
   }
   try {
-    if (profile) knowledge = await startKnowledgeRuntime(profile, root, { ...settings, alias, aliases }, () => alias);
-    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob, customMcp);
+    if (profile) knowledge = await startKnowledgeRuntime(profile, root, { ...settings, alias, aliases }, () => alias, modelSeat);
+    if (toolTickets) statusMcp = await startStatusMcp(toolTickets);
+    supervisor = await supervise(root, relay, aliases, profile, knowledge?.config, synthetic?.isolatedJob, customMcp, statusMcp?.config);
   } catch (error) {
     try { await closeRelays(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Supervisor and relay cleanup failed'); }
@@ -66,6 +76,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   }
   let stopped: ReturnType<typeof supervisor.stop> | undefined;
   const stop = () => stopped ??= (async () => {
+    toolTickets?.close();
     try {
       const result = await supervisor.stop();
       audit('lifecycle.jsonl', { event: 'stop', ...result });
@@ -144,7 +155,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
         alias = name;
       },
       endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge, customMcp,
-      gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince };
+      gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince, modelSeat, toolTickets };
   } catch (error) {
     try { await stop(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Health check and runtime cleanup failed'); }
