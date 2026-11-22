@@ -11,6 +11,10 @@ export function getLocale() {
   return locale;
 }
 
+export function hasMessage(key) {
+  return Object.hasOwn(catalogs[locale], key);
+}
+
 export function t(key, params = {}) {
   return catalogs[locale][key].replace(/\{(\w+)\}/g, (match, name) =>
     Object.hasOwn(params, name) ? resolveText(params[name]) : match);
@@ -60,7 +64,11 @@ export function formatDate(value, options, timestamp = true) {
   return () => new Intl.DateTimeFormat(locale, options ?? {
     dateStyle: 'short',
     ...(timestamp ? { timeStyle: 'medium' } : {}),
-  }).format(value);
+  }).format(new Date(value));
+}
+
+export function formatList(values) {
+  return () => values.map(resolveText).join(t('ui.list-separator'));
 }
 
 export function formatNumber(value, options) {

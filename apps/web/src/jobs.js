@@ -1,5 +1,5 @@
-import { formatDate, joinText, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
-import { errorText, request } from './api.js';
+import { formatDate, formatList, joinText, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
+import { errorText, request, serverText } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const panel = find('jobs-content');
@@ -212,7 +212,7 @@ export function bindJobs(openPreview) {
     body.append(node('p', joinText([source.domain, labels[source.state]])));
     const details = disclosure(message('ui.advanced'), 'feature-advanced');
     details.append(node('p', source.ref), node('p', source.target ? message('jobs.target-knowledge-base-target', { target: source.target }) : message('jobs.standalone-intake')));
-    if (source.reason) details.append(node('p', source.reason));
+    if (source.reason) details.append(node('p', serverText(source.reasonDetail, errorText(source.reason))));
     body.append(details);
     if (source.hasFile) {
       const download = node('a', message('jobs.download-source'));
@@ -341,7 +341,7 @@ export async function loadJobSummary() {
         const state = stateLabel(row);
         totals.set(state, (totals.get(state) ?? 0) + 1);
       }
-      return totals.size ? joinText([...totals].map(([state, count]) => message('jobs.status-count', { status: state, count })), ', ') : message('jobs.none');
+      return totals.size ? formatList([...totals].map(([state, count]) => message('jobs.status-count', { status: state, count }))) : message('jobs.none');
     };
     setText(summary, message('jobs.knowledge-base-jobs-jobs-schedules-schedules', { jobs: counts(status.jobs, jobState), schedules: counts(status.schedules ?? [], (row) => labels[row.state] ?? message('jobs.other-status')) }));
   } catch { setText(summary, message('jobs.could-not-load-schedules-and-jobs-refresh')); }

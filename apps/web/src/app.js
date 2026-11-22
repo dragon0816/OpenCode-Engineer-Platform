@@ -1,5 +1,5 @@
 import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
-import { connect, errorText, modelLabel, projectLabel, request, RequestError } from './api.js';
+import { connect, errorText, modelLabel, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -75,13 +75,13 @@ let stopped = false;
 let knowledge;
 const voice = bindVoice(find('enable-microphone'), find('microphone'), find('microphone-settings-status'), prompt, () => current, showError);
 
-const limitErrors = new Map([
-  ['已停止：達到回合時限。', message('chat.the-turn-reached-its-time-limit-shorten')],
-  ['已停止：達到工具呼叫次數上限。', message('chat.the-turn-reached-its-tool-call-limit')],
-]);
+const limitErrors = {
+  'turn-time-limit': message('chat.the-turn-reached-its-time-limit-shorten'),
+  'turn-tool-limit': message('chat.the-turn-reached-its-tool-call-limit'),
+};
 
 function showError(error) {
-  setText(notice, error ? limitErrors.get(error) ?? errorText(error) : '');
+  setText(notice, error ? errorText(error) : '');
   notice.hidden = !error;
 }
 
@@ -315,7 +315,9 @@ function render(context) {
     context.pendingAt = undefined;
   }
   updateProgress();
-  if (state.stateError || latest?.error) showError(state.stateError || latest.error);
+  const detail = state.stateErrorDetail ?? latest?.errorDetail;
+  if (detail) showError(limitErrors[detail.code] ?? serverText(detail));
+  else if (state.stateError || latest?.error) showError(state.stateError || latest.error);
   else if (!context.requestError) showError();
   renderPanel(context);
   renderNotes(context);

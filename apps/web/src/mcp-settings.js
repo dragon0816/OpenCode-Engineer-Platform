@@ -1,5 +1,5 @@
 import { joinText, message, setAttribute, setText, textNode, t } from './i18n.js';
-import { errorText, projectLabel, request } from './api.js';
+import { errorText, projectLabel, request, serverText } from './api.js';
 
 const endpoint = '/api/settings/mcp';
 const find = (id) => document.getElementById(id);
@@ -125,9 +125,9 @@ export function bindMcpSettings(projects) {
     if (result.ok) panel.append(element('p', message('tools.connection-test-passed-tool-settings-apply-to')));
     else if (connectionDetails.test(result.reason)) {
       const diagnostic = element('details', '', 'settings-advanced');
-      diagnostic.append(element('summary', message('ui.advanced')), element('p', result.reason));
+      diagnostic.append(element('summary', message('ui.advanced')), element('p', serverText(result.reasonDetail, errorText(result.reason))));
       panel.append(element('p', message('tools.connection-test-failed-check-the-service-url')), diagnostic);
-    } else panel.append(element('p', result.reason));
+    } else panel.append(element('p', serverText(result.reasonDetail, errorText(result.reason))));
     if (!result.ok || !result.tools.length) return;
     const tools = element('ul');
     for (const { name, description } of result.tools) {

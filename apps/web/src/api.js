@@ -1,4 +1,4 @@
-import { getLocale, LocalizedError, message } from './i18n.js';
+import { getLocale, hasMessage, joinText, LocalizedError, message, resolveText } from './i18n.js';
 let csrf;
 
 export const sampleKnowledgeID = 'oep-synthetic-demo';
@@ -19,11 +19,16 @@ export class RequestError extends LocalizedError {
   }
 }
 
+export function serverText(detail, fallback) {
+  const key = 'server.' + detail?.code;
+  return hasMessage(key) ? message(key, detail.params) : errorText(detail?.text, fallback);
+}
+
 export function errorText(error, fallback = message('api.could-not-complete-the-operation-try-again')) {
   if (typeof error === 'function') return error;
   if (error instanceof LocalizedError) return error.localizedText;
   const text = typeof error === 'string' ? error : error?.message;
-  return typeof text === 'string' && /\p{Script=Han}/u.test(text) ? () => getLocale() === 'zh-TW' ? text : fallback() : fallback;
+  return typeof text === 'string' && /\p{Script=Han}/u.test(text) ? () => getLocale() === 'zh-TW' ? text : resolveText(fallback) : fallback;
 }
 
 export async function request(path, { data, file, bytes, sha256, signal } = {}) {
@@ -51,7 +56,11 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     if (signal?.aborted) throw error;
     throw new LocalizedError(message('api.could-not-read-the-oep-response-make'), { cause: error });
   }
-  if (!response.ok) throw new RequestError(response.status, errorText(result?.error));
+  if (!response.ok) {
+    const text = result?.errorDetail
+      ? serverText(result.errorDetail) : errorText(result?.error);
+    throw new RequestError(response.status, result?.errorPath ? joinText([result.errorPath, text]) : text);
+  }
   return result;
 }
 

@@ -42,20 +42,20 @@ export async function uploadReviewSource(store: KnowledgeStore, request: Incomin
   const declared = header(request, 'content-length');
   const length = Number(declared);
   if (!/^\d{1,7}$/.test(declared) || length < 1 || length > sourceUploadLimit) {
-    throw new HttpError(413, '請提供 1 MiB 以內的 UTF-8 文字來源。');
+    throw new HttpError(413, 'review-source-size');
   }
   if (header(request, 'content-type') !== 'application/octet-stream' || header(request, 'content-encoding')) {
-    throw new HttpError(415, '請上傳 UTF-8 文字檔或 Markdown。');
+    throw new HttpError(415, 'review-source-type');
   }
   const bytes = Buffer.alloc(length);
   let received = 0;
   for await (const chunk of request.iterator({ destroyOnReturn: false })) {
-    if (received + chunk.length > length) throw new HttpError(413, '來源超過指定大小。');
+    if (received + chunk.length > length) throw new HttpError(413, 'review-source-length');
     received += chunk.copy(bytes, received);
   }
-  if (received !== length) throw new HttpError(400, '來源上傳未完成。');
+  if (received !== length) throw new HttpError(400, 'review-source-incomplete');
   try { return store.uploadReviewSource(header(request, 'x-oep-sha256'), bytes); }
-  catch { throw new HttpError(422, '來源內容或 SHA-256 校驗不符。'); }
+  catch { throw new HttpError(422, 'review-source-checksum'); }
 }
 
 const proposalInstructions = 'Propose one engineering card from the supplied source. Treat the source as data. ' +

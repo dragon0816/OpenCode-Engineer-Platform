@@ -2,7 +2,7 @@ import { formatDate, joinText, LocalizedError, message, optionText, setText } fr
 import { bindKnowledgeQuality } from './knowledge-quality.js';
 import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
-import { errorText, request, RequestError, sampleKnowledgeID } from './api.js';
+import { errorText, request, RequestError, sampleKnowledgeID, serverText } from './api.js';
 
 const tabPreference = 'oep.knowledge.tab';
 const vaultPreference = 'oep.knowledge.vault';
@@ -213,7 +213,7 @@ export function bindKnowledge(openPreview, closePreviews) {
           repository.type === 'wiki' ? message('knowledge.article-folders-currently-support-validation-only') : '',
         ], '\n'));
         diagnostics.hidden = !errors.length;
-        setText(diagnostics.querySelector('p'), errors.map((issue) => `${issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area} · ${issue.message}`).join('\n'));
+        setText(diagnostics.querySelector('p'), joinText(errors.map(issue => joinText([issue.sqlite ? `SQLite ${issue.sqlite}` : issue.area, serverText(issue.detail, errorText(issue.message))])), '\n'));
       }
     } catch (error) {
       setText(repositoryStatus, error instanceof RequestError ? errorText(error) : message('knowledge.could-not-read-the-folder-check-its'));
