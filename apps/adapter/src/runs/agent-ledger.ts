@@ -90,11 +90,14 @@ function mcpGrants(server: string, projects: readonly string[]) {
   return projects.map((project) => [legacyWorkspace(project), server]);
 }
 
-export function replaceLegacyMcpGrants(db: DatabaseSync, definition: Pick<CustomMcp, 'id' | 'enabled' | 'appliesToProjects'>) {
-  db.prepare(`INSERT INTO agent_capabilities VALUES ('main', 'mcp', ?, ?)
-    ON CONFLICT(agent_id, kind, capability_id) DO UPDATE SET enabled=excluded.enabled`)
-    .run(definition.id, Number(definition.enabled));
-  db.prepare('DELETE FROM workspace_mcp_grants WHERE server_id = ?').run(definition.id);
+export function replaceLegacyMcpGrants(db: DatabaseSync, definition: Pick<CustomMcp, 'id' | 'enabled' | 'appliesToProjects'>,
+  explicit = false) {
+  if (!explicit) db.prepare(`INSERT INTO agent_capabilities VALUES ('main', 'mcp', ?, ?)
+    ON CONFLICT(agent_id, kind, capability_id) DO UPDATE SET enabled=excluded.enabled`).run(definition.id, Number(definition.enabled));
+  db.prepare("DELETE FROM workspace_mcp_grants WHERE server_id = ? AND workspace_id IN ('legacy-default','legacy-secondary')")
+    .run(definition.id);
+  if (explicit && !db.prepare("SELECT 1 FROM agent_capabilities WHERE agent_id='main' AND kind='mcp' AND capability_id=? AND enabled=1")
+    .get(definition.id)) return;
   const insert = db.prepare('INSERT INTO workspace_mcp_grants VALUES (?, ?)');
   for (const grant of mcpGrants(definition.id, definition.appliesToProjects)) insert.run(...grant);
 }

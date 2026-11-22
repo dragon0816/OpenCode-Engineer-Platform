@@ -73,7 +73,15 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     },
     configured: () => accounts.connections.size > 0,
     channels: () => accounts.list(),
-    configureChannel: (input: Record<string, unknown>) => accounts.configure(input),
+    configureChannel: (input: Record<string, unknown>, createAgent?: () => void) => accounts.configure(input, createAgent),
+    agentStatus(id: string) {
+      const status = sessions.agentStatus(id);
+      if (status === 'busy' || inbox.db.prepare("SELECT 1 FROM channel_inbound WHERE agent_id=? AND status='handed_off' LIMIT 1").get(id)) {
+        return 'busy';
+      }
+      return status === 'queued' || inbox.db.prepare("SELECT 1 FROM channel_inbound WHERE agent_id=? AND status='pending' LIMIT 1").get(id)
+        ? 'queued' : 'available';
+    },
     status() {
       return {
         main: accounts.connections.has('telegram-main'), bi: accounts.connections.has('telegram-bi'),

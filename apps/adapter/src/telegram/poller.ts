@@ -95,9 +95,10 @@ export class TelegramTransport implements ChannelTransport {
   }
 
   async verifyAccount(signal: AbortSignal) {
-    const user = await this.api.call<{ id: number; is_bot: boolean }>('getMe', {}, signal);
+    const user = await this.api.call<{ id: number; is_bot: boolean; username?: string }>('getMe', {}, signal);
     if (!Number.isSafeInteger(user?.id) || user.id < 1 || user.is_bot !== true) throw new Error('Telegram account is invalid');
-    return { identity: String(user.id), capabilities: ['receive', 'text', 'attachment'] as const };
+    const botName = typeof user.username === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(user.username) ? '@' + user.username : undefined;
+    return { identity: String(user.id), botName, capabilities: ['receive', 'text', 'attachment'] as const };
   }
 
   async receive(checkpoint: string, signal: AbortSignal, clock: () => number) {
