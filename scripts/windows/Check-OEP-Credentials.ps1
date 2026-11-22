@@ -11,3 +11,4 @@ try {
     Report-OEPFailure '憑證狀態檢查失敗'
     exit 1
 }
+if ($script:cleanupFailed) { exit 1 }

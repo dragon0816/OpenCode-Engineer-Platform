@@ -8,7 +8,7 @@ function CredentialNames-OEP($Path) {
     try {
         Invoke-Snapshot 'credentials' $Path $report
         Read-OEP $report
-    } finally { [IO.File]::Delete($report) }
+    } finally { Clear-OEPArtifact $report }
 }
 function CredentialStatus-OEP($Names) {
     Check-OEP '讀取使用者環境變數狀態失敗。' 'web/web.sqlite'
@@ -42,7 +42,7 @@ function Describe-Snapshot($Path) {
     try {
         Invoke-Snapshot 'describe' $Path $report
         Read-OEP $report
-    } finally { [IO.File]::Delete($report) }
+    } finally { Clear-OEPArtifact $report }
 }
 function Read-Backup($Path) {
     [void]@(Tree-OEP $Path)
@@ -85,7 +85,7 @@ function New-Backup($Source, $Destination, $Version) {
         Check-OEP '發布已完成的備份目錄失敗。' $target $Destination
         [IO.Directory]::Move($stage, $target)
         $target
-    } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) } }
+    } finally { Clear-OEPArtifact $stage -Directory }
 }
 function Installed-Version($Root) {
     $pointer = Root-OEP (Join-Path $Root 'current.json')

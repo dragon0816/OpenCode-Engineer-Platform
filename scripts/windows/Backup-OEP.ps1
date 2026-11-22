@@ -46,4 +46,5 @@ try {
     exit 1
 } finally {
     Unlock-OEP $mutex
+    if ($script:cleanupFailed) { exit 1 }
 }

@@ -23,6 +23,7 @@ try {
     if ($journal.state -eq 'rolledBack' -and !$Backup) {
         $stale = Root-OEP (Join-Path $InstallRoot 'upgrade.active')
         if ([IO.File]::Exists($stale) -and $PSCmdlet.ShouldProcess($stale, '清除中斷的維護標記')) {
+            Check-OEP '移除升級執行標記失敗。' $stale
             [IO.File]::Delete($stale)
         }
         Write-Output '已完成回退，無需再回退。'
@@ -57,6 +58,7 @@ try {
     if ($journal) { Record-UpgradeFailure $journalPath $DataRoot '回退失敗' }
     exit 1
 } finally {
-    if ($marker) { [IO.File]::Delete($marker) }
+    Clear-OEPArtifact $marker
     Unlock-OEP $mutex
+    if ($script:cleanupFailed) { exit 1 }
 }

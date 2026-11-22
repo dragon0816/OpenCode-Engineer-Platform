@@ -13,6 +13,7 @@ function Select-OEPVersion($InstallRoot, $DataRoot, $Pointer) {
     $DesktopShortcut = $false
     $AutoStart = $false
     if ($env:OEP_MAINTENANCE_TEST -ne '1') {
+        Check-OEP '檢查 OEP 捷徑或登入排程失敗。' 'current.json'
         $DesktopShortcut = [IO.File]::Exists((@(Links-OEP))[1])
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         $AutoStart = $null -ne (Get-ScheduledTask -TaskName "OEP-Logon-$sid" -ErrorAction SilentlyContinue)
@@ -139,6 +140,7 @@ function Restore-Upgrade($InstallRoot, $DataRoot, $JournalPath, $Journal) {
     if (![IO.Directory]::Exists($original) -or ![IO.Directory]::Exists($DataRoot)) {
         if ([IO.Directory]::Exists($stage)) {
             [void]@(Tree-OEP $stage)
+            Check-OEP '移除前次回退的暫存目錄失敗。' $stage
             [IO.Directory]::Delete($stage, $true)
         }
         Copy-RestoreStage $backup $manifest $stage
@@ -150,6 +152,7 @@ function Restore-Upgrade($InstallRoot, $DataRoot, $JournalPath, $Journal) {
                 $Journal.failures = @($Journal.failures | Where-Object { $_ }) + @{
                     time = [DateTime]::UtcNow.ToString('o'); operation = '待處理工作比對失敗'; message = $script:failure
                 }
+                Write-OEP $JournalPath $Journal
                 Write-OEP $report @{ status = 'unavailable'; changes = @(); reason = $Journal.failures[-1].message }
             }
         }
@@ -210,7 +213,7 @@ function Stop-UpgradeLauncher($InstallRoot, $Pointer) {
             [IO.File]::WriteAllText($request, '')
             Check-OEP '等候 OEP 停止失敗。' $request
             if (!$launcherProcess.WaitForExit(30000)) { Fail-OEP 'OEP 未在 30 秒內停止。請從網頁停止服務後重試。' $request }
-        } finally { [IO.File]::Delete($request); $launcherProcess.Dispose() }
+        } finally { Clear-OEPArtifact $request; $launcherProcess.Dispose() }
     }
     Stopped-OEP $InstallRoot
 }

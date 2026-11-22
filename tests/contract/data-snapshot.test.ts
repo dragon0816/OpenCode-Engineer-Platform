@@ -50,6 +50,11 @@ test('snapshot copies and hashes unknown SQLite files and sidecars without openi
     result = snapshot('reconcile-restore', copied, manifest);
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
+    writeFileSync(manifest, '{}');
+    const invalid = snapshot('reconcile-restore', copied, manifest);
+    assert.ifError(invalid.error);
+    assert.equal(invalid.status, 1);
+    assert.equal(invalid.stderr.trim(), '【backup.manifest.json】備份清單讀取或 JSON 結構檢查失敗。');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -84,6 +89,10 @@ test('snapshot diagnostics name a broken OEP database in the console and journal
       "try { Invoke-Snapshot 'describe' $DataRoot $env:OEP_TEST_REPORT } catch {",
       "    Report-OEPFailure '升級失敗'",
       "    Record-UpgradeFailure (Join-Path $InstallRoot 'upgrade.journal.json') $DataRoot '升級失敗'",
+      "    $pending = Join-Path $DataRoot 'locked.tmp'",
+      '    $held = [IO.File]::Open($pending, "Create", "ReadWrite", "None")',
+      '    try { Clear-OEPArtifact $pending } finally { $held.Dispose() }',
+      '    if (!$script:cleanupFailed) { throw "Expected locked file cleanup to fail" }',
       '    exit 1',
       '}',
     ].join('\n')], { encoding: 'utf8', timeout: 15_000, env: {
@@ -92,7 +101,11 @@ test('snapshot diagnostics name a broken OEP database in the console and journal
     assert.ifError(result.error);
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.stderr.trim(), diagnostic);
-    assert.ok(readFileSync(join(install, 'maintenance.log'), 'utf8').includes(diagnostic));
+    const cleanupDiagnostic = '【locked.tmp】清除維護暫存項目失敗。';
+    assert.ok(result.stdout.includes(cleanupDiagnostic));
+    const log = readFileSync(join(install, 'maintenance.log'), 'utf8');
+    assert.ok(log.includes(diagnostic));
+    assert.ok(log.includes(cleanupDiagnostic));
     const record = JSON.parse(readFileSync(journal, 'utf8'));
     assert.equal(record.failures[0].message, diagnostic);
     assert.equal(record.state, 'prepared');

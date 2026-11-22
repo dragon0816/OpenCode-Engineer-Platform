@@ -164,8 +164,14 @@ const knowledgeAdditions = new Set([
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function backupManifest(path) {
-  return check('backup.manifest.json', '備份清單讀取或 JSON 解析失敗。', () =>
-    JSON.parse(readFileSync(path, 'utf8')));
+  return check('backup.manifest.json', '備份清單讀取或 JSON 結構檢查失敗。', () => {
+    const manifest = JSON.parse(readFileSync(path, 'utf8'));
+    if (!Array.isArray(manifest?.inventory) || !manifest.databases ||
+        typeof manifest.databases !== 'object' || Array.isArray(manifest.databases)) {
+      throw new Error('Invalid backup manifest');
+    }
+    return manifest;
+  });
 }
 
 async function reconcileRestore() {

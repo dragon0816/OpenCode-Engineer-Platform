@@ -57,7 +57,8 @@ try {
     exit 1
 } finally {
     foreach ($temp in @($scratch, $stage)) {
-        if ($temp -and [IO.Directory]::Exists($temp)) { [IO.Directory]::Delete($temp, $true) }
+        Clear-OEPArtifact $temp -Directory
     }
     Unlock-OEP $mutex
+    if ($script:cleanupFailed) { exit 1 }
 }

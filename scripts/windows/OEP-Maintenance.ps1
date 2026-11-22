@@ -26,6 +26,22 @@ function Report-OEPFailure($Operation, [switch]$Warning) {
         finally { $script:failure = $message }
     }
 }
+function Clear-OEPArtifact($Path, [switch]$Directory) {
+    if (!$Path) { return }
+    $message = $script:failure
+    try {
+        if ($Directory -and ![IO.Directory]::Exists($Path)) { return }
+        if (!$Directory -and ![IO.File]::Exists($Path)) { return }
+        $target = Root-OEP $Path
+        Check-OEP '清除維護暫存項目失敗。' $target
+        if ($Directory) { [IO.Directory]::Delete($target, $true) }
+        else { [IO.File]::Delete($target) }
+    } catch {
+        $script:cleanupFailed = $true
+        Report-OEPFailure '清除維護暫存失敗' -Warning
+    }
+    finally { $script:failure = $message }
+}
 function Root-OEP([string]$Path) {
     if (![IO.Path]::IsPathFullyQualified($Path)) { Fail-OEP '請指定完整路徑。' }
     $full = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
@@ -85,7 +101,7 @@ function Write-OEP($Path, $Value) {
     try {
         [IO.File]::WriteAllText($scratch, (ConvertTo-Json -InputObject $Value -Depth 30))
         [IO.File]::Move($scratch, $Path, $true)
-    } finally { [IO.File]::Delete($scratch) }
+    } finally { Clear-OEPArtifact $scratch }
 }
 function Log-OEP($Root, $Operation) {
     $path = Root-OEP (Join-Path $Root 'maintenance.log')

@@ -45,7 +45,10 @@ try {
     if ([IO.Directory]::Exists($original)) { $old = $original }
     Reconcile-Snapshot $DataRoot $Backup
     Log-OEP $DataRoot 'RESTORE OK'
-    if ($old -and !$nonempty) { [IO.Directory]::Delete($old) }
+    if ($old -and !$nonempty) {
+        Check-OEP '移除原空白資料目錄失敗。' '.'
+        [IO.Directory]::Delete($old)
+    }
     Write-Output '回復比對通過。資料筆數、SQLite 版本與發布修訂雜湊相符。'
     if ($nonempty) { Write-Output '原有資料已保留在旁邊的 oep-restore-original 目錄，另有 oep-safety-backups 備份。' }
     Write-Output '請依需要重新設定下列使用者環境變數，再執行 Check-OEP-Credentials.ps1。'
@@ -54,6 +57,7 @@ try {
     Report-OEPFailure '回復失敗'
     exit 1
 } finally {
-    if ($stage -and [IO.Directory]::Exists($stage) -and !$old) { [IO.Directory]::Delete($stage, $true) }
+    if (!$old) { Clear-OEPArtifact $stage -Directory }
     Unlock-OEP $mutex
+    if ($script:cleanupFailed) { exit 1 }
 }
