@@ -35,7 +35,7 @@ import { projects, WebStore } from './runs/web-store.ts';
 import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
-import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
+import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 import type { TelegramEnvironment } from './telegram/accounts.ts';
 import { Dispatcher } from './runs/dispatcher.ts';
@@ -104,9 +104,9 @@ function secureHeaders(response: ServerResponse) {
   ].join('; '));
 }
 
-export async function startAdapter(root: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
+export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
   requestRestart?: () => void, channelEnvironment?: TelegramEnvironment) {
-  checkDirectory(root);
+  const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
     mkdirSync(projectRoot, { recursive: true });
