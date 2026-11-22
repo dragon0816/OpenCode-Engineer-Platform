@@ -294,3 +294,10 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 - 與 R11 自我成長共用同一條「草稿 → 檢查 → 試用 → 核准」流程；自我成長只是由系統主動提出草稿。
 - 預設 Skill 調整：加入 skill creator（AEP aep-skill-creator 為基礎），移除 searxng-search（網頁搜尋由 agent-browser 涵蓋），維持 20 個。
 - 驗收：用一份合成作業說明產生 Skill，通過檢查，試用時被正確觸發，且結果優於未安裝時。
+
+### 10.6 每個助理自選 Skill、模型、MCP 與知識庫（擁有者 2026-11-22）
+
+- 建立或編輯助理時，使用者可為該助理指定：Skill（從已安裝的 Skill 庫勾選）、LLM 模型（從 3A 已選清單）、MCP 外部工具（從已設定且通過隔離檢查的工具）、引用的知識庫（已發布）。資料模型已在 3B 切片 1 的 `agents.default_model_id`、`agent_capabilities`（skill／workflow／mcp／plugin）、`agent_knowledge_reads` 預留。
+- 10.3 的 20 個基本 Skill 為**主助理的預設組合**；其他助理從 Skill 庫自由挑選，不受這 20 個限制。新建助理預設不帶 Skill，精靈依助理用途推薦。
+- 每助理同時啟用上限維持 15～20（主助理預設 20，剛好在上限）；超過時警告但允許擁有者確認後儲存。
+- 時程：模型、MCP、知識庫的選擇在 3B 切片 4（精靈與助理詳情）提供；Skill 選擇在 3E 有 Skill 庫後開放，切片 4 先在「能力」頁籤顯示預留位置。
