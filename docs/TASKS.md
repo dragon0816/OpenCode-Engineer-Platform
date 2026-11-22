@@ -216,5 +216,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 ## Phase 3B 切片 2 隔離執行與內建工具
 
-- [x] 在隔離的 Windows Job 驗證固定版 OpenCode v2.3.2。SSE 可將 relay 注入的欄位傳至 MCP，測試也核對權限覆蓋、工具允許清單及工作台遮蔽。
-- [ ] JSON completion 在 OpenCode 端停於 SSE 讀取，未呼叫 MCP。依設計第 3.2 節暫停切片 2，待傳輸契約審閱。 [切片 2 驗收](reviews/PHASE3B_SLICE2_REPORT.md)
+- [x] 在隔離的 Windows Job 驗證固定版 OpenCode v2.3.2。SSE 可將 relay 注入的欄位傳至 MCP，測試也核對權限覆蓋、工具允許清單及工作台遮蔽。 [原始切片 2 探針](reviews/PHASE3B_SLICE2_REPORT.md)
+- [x] 2a 依設計第 12 節驗證 SSE 契約，拒絕受管會話的非串流工具請求。建立會話權限、內建工具一次性票券，以及 Web 與 Telegram 共用的模型派送順位。`oep_status` 僅在隔離合成測試啟用。 [2a 驗收](reviews/PHASE3B_SLICE2A_REPORT.md)
+- [ ] 2b 實作受控檔案工具並遷移工作簿，套用知識庫授權，完成自訂 MCP 隔離和效能量測。
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
