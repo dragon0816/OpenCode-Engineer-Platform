@@ -6,7 +6,7 @@ import { channelText } from '../channels/catalog.ts';
 
 export const workDeadline = 120_000;
 export const maxWorkAttempts = 20;
-const retryInterval = 6000;
+export const retryInterval = 6000;
 const pollSeconds = 25;
 const maxResponseBytes = 8 * 1024 * 1024;
 
@@ -95,9 +95,10 @@ export class TelegramTransport implements ChannelTransport {
   }
 
   async verifyAccount(signal: AbortSignal) {
-    const user = await this.api.call<{ id: number; is_bot: boolean }>('getMe', {}, signal);
+    const user = await this.api.call<{ id: number; is_bot: boolean; username?: string }>('getMe', {}, signal);
     if (!Number.isSafeInteger(user?.id) || user.id < 1 || user.is_bot !== true) throw new Error('Telegram account is invalid');
-    return { identity: String(user.id), capabilities: ['receive', 'text', 'attachment'] as const };
+    const botName = typeof user.username === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(user.username) ? '@' + user.username : undefined;
+    return { identity: String(user.id), botName, capabilities: ['receive', 'text', 'attachment'] as const };
   }
 
   async receive(checkpoint: string, signal: AbortSignal, clock: () => number) {
@@ -140,6 +141,7 @@ type PollBinding = {
   binding: Binding;
   legacy: boolean;
   admit(batch: ReceiveBatch, checkpoint: string, now: number): void;
+  handoff?(row: Intake, now: number, deadline: number): void;
 };
 
 export class TelegramPoller {
@@ -154,7 +156,7 @@ export class TelegramPoller {
   readonly bot: Bot;
   private readonly transport: ChannelTransport;
   private readonly inbox: TelegramInbox;
-  private readonly handle: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
+  private readonly handle?: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
   private readonly locale: () => ChannelLocale;
   private readonly account?: PollBinding;
 
@@ -192,13 +194,17 @@ export class TelegramPoller {
     if (this.lanes.has(lane) || signal.aborted) return;
     const now = clock();
     const row = this.account
-      ? this.inbox.nextBound(this.bot, this.account.binding, lane, now)
+      ? this.inbox.nextBound(this.bot, this.account.binding, lane, now, Boolean(this.account.handoff))
       : this.inbox.next(this.bot, lane, now);
     if (!row) return;
     const locale = this.locale();
     const deadline = (row.started ?? now) + workDeadline;
     const fail = () => this.inbox.complete(row, channelText(locale).deadline(row.id), true, locale);
     if (now >= deadline || row.attempts >= maxWorkAttempts) { fail(); return; }
+    if (this.account?.handoff) {
+      this.account.handoff(row, now, deadline);
+      return;
+    }
     this.lanes.add(lane);
     try {
       this.inbox.attempt(row, now, Math.min(deadline, now + retryInterval));
@@ -209,7 +215,7 @@ export class TelegramPoller {
       const interrupted = new Promise<undefined>((resolve) => { release = () => resolve(undefined); });
       attemptSignal.addEventListener('abort', release, { once: true });
       try {
-        const handling = Promise.resolve(this.handle(row, attemptSignal));
+        const handling = Promise.resolve(this.handle!(row, attemptSignal));
         this.handlers.add(handling);
         void handling.then(() => this.handlers.delete(handling), () => this.handlers.delete(handling));
         result = await Promise.race([handling, interrupted]);

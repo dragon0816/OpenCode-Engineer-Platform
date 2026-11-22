@@ -23,7 +23,7 @@ import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
-import { proposeReview, reviewAction, uploadReviewSource } from './http/review.ts';
+import { reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError, WebMessageError } from './http/errors.ts';
 import { codeForFallback, describeRepositoryIssue, webMessage } from './http/messages.ts';
 import { WebEvents } from './http/events.ts';
@@ -36,7 +36,10 @@ import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 import type { TelegramEnvironment } from './telegram/accounts.ts';
-import { prepareBiWorkspace } from './runs/agent-ledger.ts';
+import { Dispatcher } from './runs/dispatcher.ts';
+import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
+import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
+import { agentManagement } from './http/agents.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -44,6 +47,8 @@ const assets = new Map([
   ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
   ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
+  ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
+  ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
@@ -59,14 +64,14 @@ const assets = new Map([
 
 const agents = ['inspector', 'workbook'] as const;
 
-async function body(request: IncomingMessage) {
+async function body(request: IncomingMessage, limit = 128 * 1024) {
   if (header(request, 'content-type').split(';')[0].trim() !== 'application/json' ||
       header(request, 'content-encoding')) throw new HttpError(415, 'json-required');
-  if (!/^\d{1,6}$/.test(header(request, 'content-length')) || Number(header(request, 'content-length')) > 128 * 1024) {
+  if (!/^\d{1,6}$/.test(header(request, 'content-length')) || Number(header(request, 'content-length')) > limit) {
     throw new HttpError(413, 'json-too-large');
   }
   try {
-    const value = await jsonInput<unknown>(request, 128 * 1024);
+    const value = await jsonInput<unknown>(request, limit);
     if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
   } catch { /* Respond with a fixed error and omit untrusted details. */ }
   throw new HttpError(400, 'invalid-json');
@@ -111,14 +116,20 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const dispatcher = new Dispatcher(store.workItems);
   const telegram = (() => {
-    try { return startTelegram(root, runtime, telegramEnabled, store, channelEnvironment); }
+    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment); }
     catch (error) { store.close(); throw error; }
   })();
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
-  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
+  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher);
+  const management = agentManagement(root, store, runtime, telegram);
+  const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
+    const owner = store.sessionOwner(session);
+    return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
+  };
   const active = new Set<Promise<void>>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
@@ -158,15 +169,49 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       send(response, 200, auth.pair(request, response, ticket));
       return;
     }
-    const { csrf } = auth.authorize(request, path === '/api/settings/channels');
+    const agentPath = /^\/api\/agents(?:\/|$)/.test(path);
+    const avatarRoute = /^\/api\/agents\/([a-z\d_-]{1,80})\/avatar$/.exec(path);
+    const agentControl = /^\/api\/agents(?:\/[a-z\d_-]{1,80}(?:\/workspaces\/[a-z\d_-]{1,80}\/sessions)?)?$/.test(path);
+    const { csrf } = auth.authorize(request, path === '/api/settings/channels' || agentControl);
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
-        projects, sessions: [...sessions.values()].filter((session) => session.project === projects[0].id).map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+        projects, sessions: [...sessions.values()].filter((session) => sessionOwner(session, 'main', legacyWorkspace('default')))
+          .map(publicSession), job: { name: 'BI review demo', state: 'awaiting_review', demo: true } });
+      return;
+    }
+    if (path === '/api/agents') {
+      send(response, method === 'GET' ? 200 : 201, method === 'GET' ? management.list() : await management.create(await body(request, 160 * 1024)));
+      return;
+    }
+    const detailRoute = /^\/api\/agents\/([a-z\d_-]{1,80})$/.exec(path);
+    if (detailRoute) {
+      const id = detailRoute[1];
+      send(response, 200, method === 'GET' ? management.detail(id) : management.update(id, await body(request, 160 * 1024)));
+      return;
+    }
+    if (avatarRoute && method === 'GET') {
+      const image = store.agentAvatar(avatarRoute[1]);
+      if (!image) throw new HttpError(404, 'default-avatar');
+      response.writeHead(200, { 'Content-Type': image.mime }).end(image.avatar);
       return;
     }
     if (path === '/api/settings/channels') {
       send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request)));
+      return;
+    }
+    if (path === '/api/work-items') {
+      if (method === 'POST') {
+        const { id, leaseId, outcome } = await body(request);
+        if (typeof id !== 'string' || typeof leaseId !== 'string' ||
+            (outcome !== 'succeeded' && outcome !== 'failed' && outcome !== 'cancelled')) {
+          throw new HttpError(400, 'work-resolution-invalid');
+        }
+        if (!await dispatcher.resolve(id, leaseId, outcome)) throw new HttpError(409, 'work-resolution-unavailable');
+      }
+      send(response, 200, { indeterminate: store.workItems.withLease().filter(({ state }) => state === 'indeterminate')
+        .map(({ id, agentId, source, enqueuedAt, leaseId, runStore, runId, scheduleRef, reasonCode }) =>
+          ({ id, agentId, source, enqueuedAt, leaseId, runStore, runId, scheduleRef, reasonCode })) });
       return;
     }
     if (path === '/api/settings') {
@@ -310,7 +355,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const input = await body(request);
       if (Object.keys(input).length) throw new HttpError(400, 'restart-has-input');
       if (!requestRestart) throw new HttpError(503, 'restart-unavailable');
-      if (restarting || active.size > 1 || chat.busy() || !telegram.pauseForRestart()) {
+      if (restarting || active.size > 1 || chat.busy() || dispatcher.busy() || !telegram.pauseForRestart()) {
         throw new HttpError(409, 'restart-busy');
       }
       restarting = true;
@@ -484,11 +529,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       } else {
         const input = await body(request);
         try {
-          if (input.action === 'propose') {
+          if (input.action === 'propose' || input.action === 'stage-change' && (input.draft as Candidate)?.vault?.kind === 'bi') {
             const client = new AbortController();
             response.once('close', () => client.abort());
-            const result = await proposeReview(reviewStore, input, runtime.knowledge.propose, client.signal);
+            const result = await telegram.reviewBi(input, client.signal);
             if (!response.destroyed) send(response, 200, result);
+          } else if (input.action === 'run' || input.action === 'stage' && (input.draft as Candidate)?.vault?.kind === 'bi') {
+            const id = typeof input.id === 'string' ? input.id : '';
+            await telegram.runBi(id, input.action === 'stage' ? input.draft as Candidate : undefined);
+            send(response, 200, { id });
           } else send(response, 200, reviewAction(reviewStore, input));
         }
         catch { throw new HttpError(422, 'review-failed'); }
@@ -631,21 +680,36 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       return;
     }
     let project = projects[0].id as typeof projects[number]['id'];
-    if (path.startsWith('/api/projects/')) {
+    let agentID = 'main';
+    let workspaceID: string;
+    let agentScoped = false;
+    if (agentPath) {
+      const scope = /^\/api\/agents\/([a-z\d_-]{1,80})\/workspaces\/([a-z\d_-]{1,80})\/(sessions(?:\/.*)?)$/.exec(path);
+      if (!scope) throw new HttpError(404, 'agent-not-found');
+      [, agentID, workspaceID] = scope;
+      const workspace = store.agentWorkspaces(agentID).find(({ id }) => id === workspaceID);
+      if (!workspace) throw new HttpError(404, 'agent-workspace-not-found');
+      if (workspace.layout === 'legacy_secondary') project = 'secondary';
+      path = '/api/' + scope[3];
+      agentScoped = true;
+    } else if (path.startsWith('/api/projects/')) {
       const [, , , projectID, ...rest] = path.split('/');
       const match = projects.find(({ id }) => id === projectID);
       if (!match || rest[0] !== 'sessions') throw new HttpError(404, 'project-not-found');
       project = match.id;
       path = '/api/' + rest.join('/');
     }
+    workspaceID ??= legacyWorkspace(project);
     if (path === '/api/sessions' && method === 'GET') {
-      send(response, 200, [...sessions.values()].filter((session) => session.project === project).map(publicSession));
+      send(response, 200, [...sessions.values()].filter((session) => sessionOwner(session, agentID, workspaceID)).map(publicSession));
       return;
     }
     if (path === '/api/sessions' && method === 'POST') {
-      const { agent } = await body(request);
+      const input = await body(request);
+      const agent = input.agent ?? (agentScoped ? 'inspector' : undefined);
       if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'invalid-assistant');
-      const session = await chat.create(agent, project);
+      if (!store.executionProfile(agentID, workspaceID)) throw new HttpError(409, 'agent-inactive');
+      const session = await chat.create(agent, project, undefined, undefined, agentScoped ? { agentId: agentID, workspaceID } : undefined);
       sessions.set(session.id, session);
       upstreamIDs.set(session.upstreamID, session.id);
       send(response, 201, publicSession(session));
@@ -653,7 +717,12 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     const [, key, group, id, resource, item, extra] = path.split('/');
     const session = key === 'api' && group === 'sessions' && uuid.test(id ?? '') ? sessions.get(id) : undefined;
-    if (!session || session.project !== project || (extra !== undefined && extra !== 'preview')) throw new HttpError(404, 'session-route-not-found');
+    if (!session || !sessionOwner(session, agentID, workspaceID) || (extra !== undefined && extra !== 'preview')) {
+      throw new HttpError(404, 'session-route-not-found');
+    }
+    if (method === 'POST' && !['rename', 'remove', 'annotation'].includes(resource) && !store.executionProfile(agentID, workspaceID)) {
+      throw new HttpError(409, 'agent-inactive');
+    }
     if (method === 'GET' && resource === 'artifacts' && item && uuid.test(item)) {
       if (extra === 'preview') {
         const output = chat.download(session, item);
@@ -732,9 +801,9 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (method === 'POST' && resource === 'read-project-file') {
       const input = await body(request);
-      const folder = store.projectFolders().find((entry) => entry.project === project && entry.folder === input.folder);
+      const folder = store.agentWorkspaces(agentID).find(({ id }) => id === workspaceID)?.folders.find((path) => path === input.folder);
       if (!folder || typeof input.file !== 'string' || !sessions.has(id)) throw new HttpError(404, 'file-not-found');
-      const safeRoot = validateProjectFolder(folder.folder, root);
+      const safeRoot = validateProjectFolder(folder, root);
       const name = basename(input.file);
       const mime = uploadType(name, 'application/octet-stream');
       let data: Buffer;
@@ -798,6 +867,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     void operation.finally(() => active.delete(operation));
   });
   try {
+    await dispatcher.start();
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', () => {
@@ -807,6 +877,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       });
     });
   } catch (error) {
+    await dispatcher.close();
     await telegram.close();
     await events.close();
     store.close();
@@ -820,6 +891,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       await events.close();
       server.closeAllConnections();
       await closed;
+      await dispatcher.close();
       await Promise.all([stopped, telegram.close(), ...active]);
       store.close();
     },

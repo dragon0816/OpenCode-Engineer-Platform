@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lsta
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { verifyWorkItems } from '../../apps/adapter/src/runs/work-items.ts';
 import { legacyAllowlistRef, legacyChannelAccounts, legacyChannels, telegramCredentialRef } from '../../apps/adapter/src/channels/accounts.ts';
 import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
   from '../../apps/adapter/src/telegram/channel-migration.ts';
@@ -183,6 +184,7 @@ const knowledgeAdditions = new Set([
   'reviews', 'review_edits', 'notification_intents', 'ingest_jobs', 'ingest_effects',
 ]);
 const webV3Empty = new Set(['file_classifications']);
+const webV5Empty = new Set(['agent_work_items']);
 const knowledgeV2Empty = new Set(['vault_classifications']);
 const emptyTables = new Set();
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -256,12 +258,13 @@ async function verifyNewCentralStore(name, next, before) {
   await check(name, '升級比對失敗。無法驗證新建的中央工作台資料庫。', () => useDatabase(join(root, name), (db) => {
     const seeds = verifyAgentSeeds(name, undefined, db, next.counts, false);
     verifySeedRows(name, db, next.counts, 'channel_accounts', legacyChannelAccounts());
-    const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty]);
+    const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty, ...webV5Empty]);
     verifyEmptyAdditions(name, next.counts, empty);
     if (Object.keys(next.counts).some((table) => table !== 'channel_accounts' && !empty.has(table) && !Object.hasOwn(seeds, table))) {
       throw new SnapshotError(name, '升級比對失敗。新建的中央工作台資料庫包含未知資料表。');
     }
     verifyAgentLedger(db, join(root, name), false);
+    verifyWorkItems(db);
   }));
 }
 
@@ -296,7 +299,8 @@ async function reconcileUpgrade() {
       throw new SnapshotError(name, '升級比對失敗。SQLite user_version 與新版不符。');
     }
     const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion >= 3;
-    const seedAccounts = file === 'web.sqlite' && [0, 1, 2, 3].includes(prior.userVersion) && next.userVersion === 4;
+    const seedAccounts = file === 'web.sqlite' && [0, 1, 2, 3].includes(prior.userVersion) && next.userVersion >= 4;
+    const addWorkItems = file === 'web.sqlite' && [0, 1, 2, 3, 4].includes(prior.userVersion) && next.userVersion === 5;
     const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion >= 2;
     const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
     const seedTelegram = telegram && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
@@ -313,12 +317,13 @@ async function reconcileUpgrade() {
           for (const table of biOwnershipTables) verifySeedRows(name, newDb, next.counts, table, legacyBiOwnership(oldDb, spool, table));
         }
         verifyEmptyAdditions(name, next.counts, expectedEmpty);
+        if (addWorkItems) verifyEmptyAdditions(name, next.counts, webV5Empty);
         for (const [table, count] of Object.entries(next.counts)) {
           if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
               seedAccounts && table === 'channel_accounts' ||
               seedBi && biOwnershipTables.includes(table) ||
               seedTelegram && migratedChannelTables.includes(table)) continue;
-          if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table)) {
+          if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table) && !(addWorkItems && webV5Empty.has(table))) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
           }
         }
@@ -335,6 +340,7 @@ async function reconcileUpgrade() {
           throw new SnapshotError(name, '升級比對失敗。SQLite foreign_key_check 外鍵檢查失敗。');
         }
         if (web) verifyAgentLedger(newDb, join(root, name), channel);
+        if (file === 'web.sqlite') verifyWorkItems(newDb);
         if (knowledge && next.userVersion === 3) verifyBiOwnership(newDb);
         if (telegram && next.userVersion === telegramInboxVersion) {
           verifyChannelOwners(name, newDb);
@@ -352,7 +358,7 @@ async function intentDiff(report) {
   const changes = [];
   for (const [database, metadata] of Object.entries(live.databases)) {
     await check(database, '回退時讀取待處理工作或計算雜湊失敗。', () => useDatabase(join(root, database), async (db) => {
-      for (const table of ['notification_intents', 'outbox', 'inbox', 'channel_outbound', 'channel_inbound', 'bi_jobs', 'ingest_jobs']) {
+      for (const table of ['notification_intents', 'outbox', 'inbox', 'channel_outbound', 'channel_inbound', 'agent_work_items', 'bi_jobs', 'ingest_jobs']) {
         if (!(table in metadata.counts)) continue;
         const metadataBefore = before.databases[database];
         const columns = columnsOf(db, table);

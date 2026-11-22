@@ -18,15 +18,11 @@ export function reviewAction(store: KnowledgeStore, input: Record<string, unknow
   switch (input.action) {
     case 'stage': {
       const candidate = input.draft as Candidate;
-      if (candidate.vault.kind === 'bi') {
-        store.enqueueBi(id, candidate);
-        store.runBi(id);
-      } else store.stage(id, candidate);
+      store.stage(id, candidate);
       break;
     }
     case 'stage-change': store.stage(id, input.draft as ChangeSet); break;
     case 'compare': return store.compareReview(id);
-    case 'run': store.runBi(id); break;
     case 'edit': store.editReview(id, Number(input.edit), input.draft as Candidate | ChangeSet); break;
     case 'approve': store.decideReview(id, Number(input.edit), 'approved'); break;
     case 'reject': store.decideReview(id, Number(input.edit), 'rejected'); break;

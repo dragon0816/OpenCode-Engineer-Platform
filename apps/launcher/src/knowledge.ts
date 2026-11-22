@@ -75,7 +75,7 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     const queryStore = reader = new KnowledgeStore(path, true);
     const models = new Map(options.aliases.map((alias) => [alias, knowledgeModel(relay!, alias)]));
     const benchmarks = new Map([...models].map(([alias, model]) => [alias,
-      new KnowledgeAsk(queryStore, (question, evidence, signal) => modelSeat.run(() => model(question, evidence, signal)))]));
+      new KnowledgeAsk(queryStore, (question, evidence, signal) => modelSeat.run(() => model(question, evidence, signal), signal))]));
     const ask = () => benchmarks.get(defaultAlias())!;
     // MCP asks already hold the OpenCode turn's model seat.
     const nested = new ModelSeat();

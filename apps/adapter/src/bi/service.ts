@@ -84,7 +84,7 @@ export class BiService {
     return { total: Number(row?.total), complete: Number(row?.complete) };
   }
 
-  async intake(id: number, origin: Destination, text: string, file: IntakeFile | undefined, signal: AbortSignal) {
+  async intake(id: number, origin: Destination, text: string, file: IntakeFile | undefined, signal: AbortSignal, workId?: string) {
     if (origin.agentId !== 'bi' || origin.accountId !== 'telegram-bi') {
       throw new Error('Invalid BI intake owner');
     }
@@ -120,52 +120,93 @@ export class BiService {
       this.storage.transaction(() => {
         const inserted = db.prepare('INSERT OR IGNORE INTO bi_sources(id,ref,state,reason,bytes,domain,target) VALUES (?,?,?,?,?,?,?)')
           .run(id, ref, state!, reason, bytes, this.config('domain') || 'telegram', target);
-        if (inserted.changes) db.prepare(`INSERT INTO bi_source_ownership VALUES (?,?,?,'telegram',?,?,?,NULL,NULL,NULL)`)
-          .run(id, legacyBiReviewKey(id), origin.agentId, origin.accountId, origin.conversationKey, origin.bindingRevision);
+        if (inserted.changes) db.prepare(`INSERT INTO bi_source_ownership VALUES (?,?,?,'telegram',?,?,?,NULL,?,NULL)`)
+          .run(id, legacyBiReviewKey(id), origin.agentId, origin.accountId, origin.conversationKey, origin.bindingRevision, workId ?? null);
       });
     }
-    if (this.sourceState(id, origin) === 'ready') await this.stage(id, signal);
+    if (this.sourceState(id, origin) === 'ready') await this.stage(id, signal, workId);
     signal.throwIfAborted();
     return this.sourceState(id, origin);
   }
 
-  supplement(id: number, text: unknown, signal: AbortSignal, origin?: Destination) {
+  validateSupplement(id: number, text: unknown) {
     if (typeof text !== 'string' || !text.trim() || text.length > 100_000 || !Number.isSafeInteger(id)) {
       throw new Error('Invalid supplement');
     }
-    this.storage.transaction(() => {
-      if (this.sourceState(id, origin) !== 'blocked') throw new Error('Source unavailable');
-      this.storage.db.prepare("UPDATE bi_sources SET supplement=?,state='ready',reason='' WHERE id=?").run(Buffer.from(text), id);
-    });
-    return this.stage(id, signal);
+    return text;
   }
 
-  stage(id: number, signal: AbortSignal) {
+  canSupplement(id: number) { return this.sourceState(id) === 'blocked'; }
+
+  supplement(id: number, text: unknown, signal: AbortSignal, origin?: Destination, workId?: string) {
+    const supplement = this.validateSupplement(id, text);
+    this.storage.transaction(() => {
+      if (this.sourceState(id, origin) !== 'blocked') throw new Error('Source unavailable');
+      this.storage.db.prepare("UPDATE bi_sources SET supplement=?,state='ready',reason='' WHERE id=?").run(Buffer.from(supplement), id);
+      if (workId) this.recordWork(id, workId);
+    });
+    return this.stage(id, signal, workId);
+  }
+
+  private recordWork(id: number, workId: string) {
+    this.storage.db.prepare("UPDATE bi_source_ownership SET work_id=? WHERE source_id=? AND agent_id='bi'").run(workId, id);
+  }
+
+  stage(id: number, signal: AbortSignal, workId?: string) {
     const pending = this.staging.get(id);
     if (pending) return pending;
-    const task = this.stageSource(id, signal).finally(() => this.staging.delete(id));
+    if (workId) this.recordWork(id, workId);
+    const task = this.stageSource(id, signal, workId).finally(() => this.staging.delete(id));
     this.staging.set(id, task);
     return task;
   }
 
-  private async stageSource(id: number, signal: AbortSignal) {
-    const db = this.storage.db;
-    const source = db.prepare(`SELECT s.*,o.source_key,o.origin,o.account_id,o.conversation_key,o.binding_revision
+  private source(id: number) {
+    return this.storage.db.prepare(`SELECT s.*,o.source_key,o.origin,o.account_id,o.conversation_key,o.binding_revision,o.work_id
       FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
-      WHERE s.id=? AND s.state='ready' AND o.agent_id='bi'`).get(id);
-    const proposal = this.proposal;
-    if (!source || !proposal) return;
-    const { store } = proposal;
-    const job = String(source.source_key);
-    const vault = `intake-${source.domain}-${id}`;
-    const provenance: BiProvenance = source.origin === 'telegram' ? { origin: 'telegram', sourceKey: job, destination: {
+      WHERE s.id=? AND o.agent_id='bi'`).get(id);
+  }
+
+  private provenance(source: NonNullable<ReturnType<BiService['source']>>): BiProvenance {
+    return source.origin === 'telegram' ? { origin: 'telegram', sourceKey: String(source.source_key), destination: {
       accountId: String(source.account_id), conversationKey: String(source.conversation_key),
       bindingRevision: Number(source.binding_revision), agentId: 'bi',
     } } : { origin: 'legacy' };
-    const received = () => this.storage.transaction(() => {
-      db.prepare("UPDATE bi_sources SET state='awaiting_review' WHERE id=?").run(id);
-      db.prepare('UPDATE bi_source_ownership SET review_id=? WHERE source_id=?').run(job, id);
+  }
+
+  private received(id: number, job: string) {
+    this.storage.transaction(() => {
+      this.storage.db.prepare("UPDATE bi_sources SET state='awaiting_review' WHERE id=?").run(id);
+      this.storage.db.prepare('UPDATE bi_source_ownership SET review_id=? WHERE source_id=?').run(job, id);
     });
+  }
+
+  recover(id: number, workId: string) {
+    const source = this.source(id);
+    if (source?.work_id !== workId) return;
+    if (source.state === 'blocked' || source.state === 'awaiting_review') return source.state;
+    const store = this.proposal?.store;
+    const job = String(source.source_key);
+    if (source.target ? store?.hasReview(job, String(source.target), this.provenance(source)) : store?.biCompleted(job)) {
+      this.received(id, job);
+      return 'awaiting_review';
+    }
+  }
+
+  stopUnverified(id: number, workId: string) {
+    this.storage.db.prepare(`UPDATE bi_sources SET state='blocked',reason='工作結果已由擁有者處理。'
+      WHERE id=? AND state='ready' AND EXISTS (SELECT 1 FROM bi_source_ownership WHERE source_id=? AND work_id=?)`).run(id, id, workId);
+  }
+
+  private async stageSource(id: number, signal: AbortSignal, workId?: string) {
+    const db = this.storage.db;
+    const source = this.source(id);
+    const proposal = this.proposal;
+    if (source?.state !== 'ready' || !proposal) return;
+    const { store } = proposal;
+    const job = String(source.source_key);
+    const vault = `intake-${source.domain}-${id}`;
+    const provenance = this.provenance(source);
     try {
       signal.throwIfAborted();
       const text = new TextDecoder('utf-8', { fatal: true }).decode((source.supplement ?? source.bytes) as Uint8Array);
@@ -185,7 +226,7 @@ export class BiService {
             return;
           }
         }
-        received();
+        this.received(id, job);
         return;
       }
       const schema = store.installReviewSchema(vault, 'telegram-intake', '1', ['content']);
@@ -196,9 +237,9 @@ export class BiService {
           fields: { content: text.slice(0, 4000) } }],
         evidence: [{ sourceId: 'source', cardId: 'record', field: 'content', start: 0, end: Math.min(text.length, 4000) }],
         relationships: [],
-      }, provenance.origin);
+      }, provenance.origin, workId);
       store.runBi(job, provenance);
-      if (store.biCompleted(job)) received();
+      if (store.biCompleted(job)) this.received(id, job);
     } catch {
       if (signal.aborted) return;
       db.prepare("UPDATE bi_sources SET state='blocked',reason=? WHERE id=?")

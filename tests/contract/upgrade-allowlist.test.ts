@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
-import { legacyAgentRows } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { legacyAgentRows, migrateAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { migrateChannelAccounts } from '../../apps/adapter/src/channels/accounts.ts';
 import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
@@ -50,7 +51,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
       tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[])
         .map((row) => row.name);
     } finally { db.close(); }
-    const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'),
+    const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
       'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
@@ -81,6 +82,33 @@ test('pre-model WebStore schema migrates from an actual old snapshot and reconci
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('the slice 3b central fixture upgrades from v4 without changing accounts or admitting work', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-dispatcher-upgrade-'));
+  try {
+    const data = join(root, 'data');
+    const copy = join(root, 'backup');
+    const { web } = seedPhase3bFixture(data);
+    const file = join(web, 'web.sqlite');
+    {
+      using db = new DatabaseSync(file);
+      db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
+      migrateAgentLedger(db, file, false);
+      migrateChannelAccounts(db);
+      db.exec(`UPDATE channel_accounts SET state='disabled' WHERE id='telegram-main';
+        PRAGMA user_version=4; COMMIT`);
+    }
+    backup(data, copy);
+    const result = JSON.parse(migrate(data))['web/web.sqlite'];
+    assert.equal(result.before.userVersion, 4);
+    assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
+    assert.equal(result.after.userVersion, 5);
+    assert.equal(result.after.counts.agent_work_items, 0);
+    run(snapshot, ['reconcile-upgrade', data, copy]);
+    using db = new DatabaseSync(file);
+    assert.equal(db.prepare("SELECT state FROM channel_accounts WHERE id='telegram-main'").get()?.state, 'disabled');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data', () => {
   const root = mkdtempSync(join(tmpdir(), 'oep-phase3b-upgrade-'));
   try {
@@ -90,7 +118,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 4], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 5], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);
@@ -129,6 +157,11 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     assert.deepEqual(query('SELECT * FROM agent_capabilities'), [['main', 'mcp', fixtureMcpId, 0]]);
     assert.deepEqual(query('SELECT * FROM agent_trigger_settings ORDER BY agent_id'), [['bi', 1], ['main', 1]]);
     assert.deepEqual(query('SELECT * FROM file_classifications'), []);
+    assert.deepEqual(query('SELECT * FROM agent_work_items'), []);
+    sessions.exec('DROP INDEX agent_work_items_write_lease');
+    reconcile(/【web\/web.sqlite】.*無法讀取 SQLite/);
+    sessions.exec(`CREATE UNIQUE INDEX agent_work_items_write_lease ON agent_work_items(agent_id)
+      WHERE effect_class = 'write' AND lease_id IS NOT NULL`);
     assert.deepEqual(query('SELECT id,agent_id,state,binding_revision FROM channel_accounts ORDER BY id'),
       [['telegram-bi', 'bi', 'unverified', 1], ['telegram-main', 'main', 'unverified', 1]]);
     sessions.exec("UPDATE channel_accounts SET agent_id='bi' WHERE id='telegram-main'");
