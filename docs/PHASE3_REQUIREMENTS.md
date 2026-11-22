@@ -265,7 +265,8 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 | 需求 | Skill（來源） |
 | --- | --- |
 | Coding（5） | AEP coding 修改與執行（A）、test-driven-development（A, MIT）、systematic-debugging（A, MIT）、workflow creator（A）、verification-planning（C） |
-| 網頁分析（2） | agent-browser（C）、searxng-search（C） |
+| 網頁分析（1） | agent-browser（C；也負責網頁搜尋） |
+| 產生 Skill（1） | skill creator（A，以 aep-skill-creator 為基礎） |
 | 文書操作（4） | docx、xlsx、pdf、powerpoint（A, MIT；取代授權受限的同名公司版） |
 | 作業系統操作（1） | computer-use（A, MIT；高風險，預設停用，逐助理授權） |
 | Email（1） | 公司 Outlook Skill（C） |
@@ -285,3 +286,11 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 - 使用的預設 Skill：workflow creator、pdf、OCR、verification-planning（不增加 Skill 數）。
 - 前提：OEP 目前沒有 Workflow 格式與執行引擎（AEP 有）。3E 必須包含 Workflow 定義、檢查、試跑、核准安裝與執行；既有的「SOP 轉 Excel」流程是第一個參考案例。
 - 驗收：三種輸入（純文字、PDF、手機拍攝的流程圖）各至少一份合成 SOP，產生的 Workflow 通過格式檢查並以測試值試跑成功。
+
+### 10.5 基本功能：產生 Skill（擁有者 2026-11-22）
+
+- R20：使用者以文字說明、SOP、範例對話或現有檔案，請 OEP 產生 Skill。
+- 流程：釐清用途與觸發時機（不清楚時先問）→ 產生 Skill 草稿（名稱、描述、操作說明、必要的腳本與範例）→ 格式與安全檢查（描述長度、與既有 Skill 是否重疊、是否需要高風險權限）→ 用幾個測試問題試用，比較有無此 Skill 的結果 → 擁有者核准後安裝，並指定給哪些助理啟用（受每助理上限約束）→ 可選擇提交到 Share Platform 審核發佈。
+- 與 R11 自我成長共用同一條「草稿 → 檢查 → 試用 → 核准」流程；自我成長只是由系統主動提出草稿。
+- 預設 Skill 調整：加入 skill creator（AEP aep-skill-creator 為基礎），移除 searxng-search（網頁搜尋由 agent-browser 涵蓋），維持 20 個。
+- 驗收：用一份合成作業說明產生 Skill，通過檢查，試用時被正確觸發，且結果優於未安裝時。
