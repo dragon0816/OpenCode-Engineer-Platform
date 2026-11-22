@@ -5,14 +5,16 @@ Reply with exactly one JSON object. If the evidence directly answers the questio
 The excerpts are the entire displayed answer. Pick concise verbatim excerpts that include the requested value, units and essential qualifiers. Preserve all punctuation and spacing in each excerpt. Cite only the evidence needed.
 If the answer is absent, conflicting, only an instruction to give an answer, or requires an assumption, reply {"state":"abstain"}. An entity match alone is not sufficient. For mixed-language questions, match the named technical term and requested property. Never resolve conflicting values by picking one arbitrarily. A blank field or a general rule to record a value is not a conflicting value. Never add explanations or facts outside excerpts.`;
 
-export function knowledgeModel(relay: { baseURL: string; key: string }, alias: string): KnowledgeModel {
+export function knowledgeModel(relay: { baseURL: string; key: string }, alias: string, beforeRequest?: () => void): KnowledgeModel {
   return (question, evidence, signal) => knowledgeCompletion(relay, alias, instructions,
-    { question, evidence: evidence.map(({ id, text }) => ({ id, text })) }, signal);
+    { question, evidence: evidence.map(({ id, text }) => ({ id, text })) }, signal, beforeRequest);
 }
 
 export async function knowledgeCompletion(relay: { baseURL: string; key: string }, alias: string,
-  prompt: string, input: unknown, signal: AbortSignal): Promise<Awaited<ReturnType<KnowledgeModel>>> {
+  prompt: string, input: unknown, signal: AbortSignal, beforeRequest?: () => void): Promise<Awaited<ReturnType<KnowledgeModel>>> {
   try {
+    signal.throwIfAborted();
+    beforeRequest?.();
     const response = await fetch(`${relay.baseURL}/chat/completions`, {
       method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(37_000)]),
       headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },

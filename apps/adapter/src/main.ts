@@ -18,6 +18,8 @@ import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
+import { budgetFields, parseDelegationBudgets } from './runs/delegation-ledger.ts';
+import { DelegationService } from './runs/delegation.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
@@ -117,14 +119,19 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
   const dispatcher = new Dispatcher(store.workItems);
+  const delegations = (() => {
+    try { return new DelegationService(store, root, dispatcher); }
+    catch (error) { store.close(); throw error; }
+  })();
   const telegram = (() => {
-    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment); }
+    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations); }
     catch (error) { store.close(); throw error; }
   })();
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
-  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher);
+  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher, delegations);
+  delegations.registerWorker(store, chat, telegram.delegationBi);
   const management = agentManagement(root, store, runtime, telegram);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
@@ -172,7 +179,8 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     const agentPath = /^\/api\/agents(?:\/|$)/.test(path);
     const avatarRoute = /^\/api\/agents\/([a-z\d_-]{1,80})\/avatar$/.exec(path);
     const agentControl = /^\/api\/agents(?:\/[a-z\d_-]{1,80}(?:\/workspaces\/[a-z\d_-]{1,80}\/sessions)?)?$/.test(path);
-    const { csrf } = auth.authorize(request, path === '/api/settings/channels' || agentControl);
+    const { csrf } = auth.authorize(request,
+      path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl);
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
@@ -198,6 +206,33 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (path === '/api/settings/channels') {
       send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request)));
+      return;
+    }
+    if (path === '/api/settings/delegation-budgets') {
+      if (method === 'POST') {
+        const budgets = parseDelegationBudgets(await body(request));
+        if (!budgets) throw new HttpError(400, 'invalid-delegation-budgets');
+        store.delegations.saveBudgets(budgets);
+      }
+      const fields = Object.fromEntries(Object.entries(budgetFields).map(([key, { min, max }]) => [key, { min, max }]));
+      send(response, 200, { values: store.delegations.budgets(), fields });
+      return;
+    }
+    const delegation = /^\/api\/delegations\/([a-f\d-]{36})(?:\/(cancel|files\/([a-f\d-]{36})))?$/.exec(path);
+    if (delegation) {
+      const [, id, action, fileId] = delegation;
+      if (method === 'GET' && fileId) {
+        let file;
+        try { file = delegations.exportFile(id, fileId); }
+        catch { throw new HttpError(409, 'delegation-export-changed'); }
+        if (!file) throw new HttpError(404, 'delegation-not-found');
+        response.writeHead(200, { 'Content-Type': file.mime, 'Content-Length': file.data.length,
+          'Content-Disposition': `attachment; filename="${file.name}"`, 'X-OEP-SHA256': file.sha256 }).end(file.data);
+      } else if (method === 'GET' && !action || method === 'POST' && action === 'cancel') {
+        const detail = action ? await delegations.cancel(id) : store.delegations.inspect(id);
+        if (!detail) throw new HttpError(404, 'delegation-not-found');
+        send(response, 200, detail);
+      } else throw new HttpError(405, 'method-not-allowed');
       return;
     }
     if (path === '/api/work-items') {
@@ -510,7 +545,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       })) });
       return;
     }
-    const source = path.match(/^\/api\/jobs\/source\/(\d+)$/);
+    const source = path.match(/^\/api\/jobs\/source\/(-?\d+)$/);
     if (source && method === 'GET') {
       const bytes = telegram.source(Number(source[1]));
       if (!bytes) throw new HttpError(404, 'source-not-found');

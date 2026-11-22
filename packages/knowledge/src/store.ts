@@ -429,8 +429,8 @@ const schema = this.reviewSchema(input.vault.id, base);
       return existing?.source_key === expected[3] && existing?.delivery_destination === expected[5];
     }
     if (this.ownsBi && provenance?.sourceKey) {
-      const owner = this.db.prepare('SELECT origin,source_key FROM review_provenance WHERE review_id=?').get(id);
-      return owner?.origin === provenance.origin && owner.source_key === provenance.sourceKey;
+      const owner = this.db.prepare('SELECT origin,source_key,run_id FROM review_provenance WHERE review_id=?').get(id);
+      return owner?.origin === provenance.origin && owner.source_key === provenance.sourceKey && owner.run_id === (provenance.runId ?? null);
     }
     return true;
   }
@@ -452,7 +452,7 @@ const schema = this.reviewSchema(input.vault.id, base);
   reviews() {
     const provenance = this.ownsBi ? `LEFT JOIN review_provenance AS owner ON owner.review_id=r.id` : '';
     const source = this.ownsBi ? `,owner.agent_id AS agentId,owner.origin AS origin,
-      CASE WHEN owner.origin='telegram' THEN 'BI 資料處理' END AS agentSource` : '';
+      CASE WHEN owner.origin='telegram' OR owner.run_id IS NOT NULL THEN 'BI 資料處理' END AS agentSource` : '';
     return this.db.prepare(`SELECT r.id,r.vault,r.parent,r.edit,r.status,r.publication,r.draft,
       p.revision=r.publication AND i.vault IS NULL AS active,
       p.revision=r.publication AND i.vault IS NOT NULL AS inactive ${source}

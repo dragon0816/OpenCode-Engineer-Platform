@@ -56,6 +56,12 @@ export class ControlledFiles {
     openWorkspaceFile(root, `manifest-${name}.json`, fileWriteLimit, record.manifestFile);
     return openWorkspaceFile(root, name, fileWriteLimit, record.file);
   }
+
+  outputs() {
+    return [...this.manifest.keys()].map((name) => ({ name, ...this.read(name) }));
+  }
+
+  get size() { return this.manifest.size; }
 }
 
 export function readFileResult(name: string, data: Buffer, sha256: string, text: boolean) {

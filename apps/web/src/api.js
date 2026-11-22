@@ -43,7 +43,8 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     headers['X-OEP-Filename'] = encodeURIComponent(file.name);
     body = file;
   }
-  if (csrf && (body !== undefined || /^\/api\/agents(?:\/|$)/.test(path) || path === '/api/settings/channels')) headers['X-OEP-CSRF'] = csrf;
+  if (csrf && (body !== undefined || /^\/api\/agents(?:\/|$)/.test(path) ||
+      ['/api/settings/channels', '/api/settings/delegation-budgets'].includes(path))) headers['X-OEP-CSRF'] = csrf;
   let response;
   let result;
   try {

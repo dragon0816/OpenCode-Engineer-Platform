@@ -30,6 +30,54 @@ function cell(label) {
   return value;
 }
 
+function bindDelegationBudgets() {
+  const path = '/api/settings/delegation-budgets';
+  const form = document.getElementById('delegation-budgets');
+  const fields = document.getElementById('delegation-budget-fields');
+  const save = document.getElementById('save-delegation-budgets');
+  const status = document.getElementById('delegation-budget-status');
+  const labels = {
+    delegationsPerMessage: message('delegations.delegationsPerMessage'),
+    executionMsPerDelegation: message('delegations.executionMsPerDelegation'),
+    modelRequestsPerDelegation: message('delegations.modelRequestsPerDelegation'),
+    toolCallsPerDelegation: message('delegations.toolCallsPerDelegation'),
+    modelRequestsPerMessage: message('delegations.modelRequestsPerMessage'),
+    toolCallsPerMessage: message('delegations.toolCallsPerMessage'),
+    queueMs: message('delegations.queueMs'),
+  };
+  function render({ values, fields: limits }) {
+    fields.replaceChildren(...Object.entries(limits).map(([key, { min, max }]) => {
+      const input = node('input');
+      Object.assign(input, { type: 'number', required: true, name: key, id: `budget-${key}`, min, max, value: values[key] });
+      const label = node('label', labels[key]);
+      label.htmlFor = input.id;
+      const row = node('div');
+      row.append(label, input);
+      return row;
+    }));
+    save.disabled = false;
+  }
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    const data = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, Number(value)]));
+    try {
+      const { values } = await request(path, { data });
+      for (const [key, value] of Object.entries(values)) form.elements.namedItem(key).value = value;
+      setText(status, message('chat.saved'));
+    } catch (error) { setText(status, errorText(error)); }
+    finally { save.disabled = false; }
+  });
+  let loading;
+  return async () => {
+    if (fields.childElementCount || loading) return;
+    loading = true;
+    try { render(await request(path)); }
+    catch (error) { setText(status, errorText(error)); }
+    finally { loading = false; }
+  };
+}
+
 export function bindChannels(getAgents, refreshAgents) {
   const table = document.getElementById('channel-accounts');
   const form = document.getElementById('channel-new');
@@ -38,6 +86,7 @@ export function bindChannels(getAgents, refreshAgents) {
   const reference = document.getElementById('channel-reference');
   const verify = document.getElementById('channel-verify');
   const bind = document.getElementById('channel-bind');
+  const loadBudgets = bindDelegationBudgets();
   let verifiedRef;
 
   function feedback(element, error) {
@@ -167,5 +216,5 @@ export function bindChannels(getAgents, refreshAgents) {
     finally { bind.disabled = !verifiedRef; verify.disabled = false; }
   });
   document.getElementById('channel-refresh').addEventListener('click', () => { void load(); });
-  return load;
+  return async () => { await Promise.all([load(), loadBudgets()]); };
 }

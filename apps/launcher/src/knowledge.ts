@@ -80,7 +80,8 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     // MCP asks already hold the OpenCode turn's model seat.
     const nested = new ModelSeat();
     const scoped = new Map([...models].map(([alias, model]) => [alias, new KnowledgeAsk(queryStore, model)]));
-    const scopedAsk = async (input: AskRequest, signal: AbortSignal, resolve: () => AskScope | undefined, inTurn = false) => {
+    const scopedAsk = async (input: AskRequest, signal: AbortSignal, resolve: () => AskScope | undefined, inTurn = false,
+      beforeRequest?: () => void) => {
       const model = resolve()?.model;
       const service = model && scoped.get(model);
       const authorized = () => {
@@ -88,12 +89,13 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
         return Boolean(scope && scope.model === model && scope.vaults.includes(input.vault));
       };
       if (!service || !authorized()) return { state: 'abstain', reason: 'vault-unavailable' } as const;
-      return (inTurn ? nested : modelSeat).run(() => service.ask(input, signal, undefined, authorized), signal);
+      const limited = beforeRequest && model ? new KnowledgeAsk(queryStore, knowledgeModel(relay!, model, beforeRequest)) : service;
+      return (inTurn ? nested : modelSeat).run(() => limited.ask(input, signal, undefined, authorized), signal);
     };
     return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
-      propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias()) =>
-        modelSeat.run(() => knowledgeCompletion(relay!, models.has(model) ? model : defaultAlias(), prompt, input, signal), signal),
+      propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias(), beforeRequest?: () => void) =>
+        modelSeat.run(() => knowledgeCompletion(relay!, models.has(model) ? model : defaultAlias(), prompt, input, signal, beforeRequest), signal),
       close };
   } catch (error) {
     try { await close(); }

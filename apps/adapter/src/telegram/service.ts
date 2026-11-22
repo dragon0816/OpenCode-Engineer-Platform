@@ -6,6 +6,7 @@ import type { Candidate } from '../../../../packages/knowledge/src/ingest.ts';
 import { ChatService } from '../http/chat.ts';
 import { WebStore } from '../runs/web-store.ts';
 import type { Dispatcher } from '../runs/dispatcher.ts';
+import type { DelegationService } from '../runs/delegation.ts';
 import { TelegramInbox } from './inbox.ts';
 import { TelegramAccounts } from './accounts.ts';
 import type { TelegramEnvironment } from './accounts.ts';
@@ -16,7 +17,7 @@ import { dispatchBi } from '../bi/dispatch.ts';
 import { dispatchTelegram } from './dispatch.ts';
 
 export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore, dispatcher: Dispatcher,
-  environment?: TelegramEnvironment) {
+  environment?: TelegramEnvironment, delegations?: DelegationService) {
   const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
   let sessions: WebStore | undefined;
   try {
@@ -30,7 +31,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     inbox.db.close();
     throw error;
   }
-  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger, dispatcher);
+  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger, dispatcher, delegations);
   const stop = new AbortController();
   const accounts: TelegramAccounts = new TelegramAccounts(ledger, inbox, sessions, enabledForLaunch, stop.signal,
     (row, now, deadline) => inbound.handoff(row, now, deadline), environment);
@@ -75,6 +76,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   timer.unref();
   tick();
   return {
+    delegationBi: router.bi,
     pauseForRestart() {
       if (chat.busy() || [...active.keys()].some((id) => !id.endsWith('-poll'))) return false;
       clearInterval(timer);

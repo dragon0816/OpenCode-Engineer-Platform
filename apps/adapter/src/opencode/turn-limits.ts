@@ -66,5 +66,6 @@ export type TurnBoundary = {
   limits: TurnLimits;
   signal: AbortSignal;
   addTools: (count: number) => void;
+  beforeRequest?: () => void;
   scope?: RelayScope;
 };

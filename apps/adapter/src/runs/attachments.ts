@@ -7,11 +7,12 @@ import { atRepo } from '../../../launcher/src/paths.ts';
 import { HttpError } from '../http/errors.ts';
 import type { Attachment, WebStore } from './web-store.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
+import { writeWorkspaceFile } from './workspace-write.ts';
 
 export const MiB = 1024 * 1024;
 export const maxUpload = 20 * MiB;
 const quota = 200 * MiB;
-const maxProjection = MiB;
+export const maxProjection = MiB;
 const workbookType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
 const jpeg = Buffer.from('ffd8ff', 'hex');
@@ -75,7 +76,7 @@ export function convertWorkbook(data: Buffer): Promise<Buffer> {
   });
 }
 
-function validate(data: Buffer, mime: string) {
+export function validateAttachment(data: Buffer, mime: string) {
   if (mime === 'text/plain' || mime === 'text/html') decodeText(data);
   else if (mime === 'image/png' && (!startsWith(data, png) || data.subarray(12, 16).toString() !== 'IHDR') ||
     mime === 'image/jpeg' && !startsWith(data, jpeg) ||
@@ -96,13 +97,23 @@ export class AttachmentService {
 
   constructor(store: WebStore) { this.store = store; }
 
+  importVerified(sessionID: string, workspace: string, record: Pick<Attachment, 'name' | 'mime'>, data: Buffer, projection?: Buffer) {
+    const id = randomUUID();
+    const root = scopedPath(workspace, 'attachments');
+    const folder = { root, inode: String(checkDirectory(root).ino) };
+    const original = writeWorkspaceFile(folder, `${id}.source`, data, maxUpload, 'copy');
+    const converted = projection && writeWorkspaceFile(folder, `${id}.csv`, projection, maxProjection, 'copy');
+    this.store.saveAttachment(sessionID, { id, ...record, original, projection: converted });
+    return id;
+  }
+
   async upload(sessionID: string, workspace: string, name: string, mime: string, bytes: number, body: () => Promise<Buffer>) {
     if (this.pending >= 3) throw new HttpError(429, 'upload-busy');
     if (this.store.attachmentBytes(sessionID) + bytes > quota) throw new HttpError(413, 'session-storage-full');
     this.pending++;
     try {
       const data = await body();
-      validate(data, mime);
+      validateAttachment(data, mime);
       const projection = mime === workbookType ? await convertWorkbook(data) : undefined;
       if (this.store.attachmentBytes(sessionID) + data.length + (projection?.length ?? 0) > quota) {
         throw new HttpError(413, 'session-storage-full');
@@ -167,6 +178,14 @@ export class AttachmentService {
   prompt(sessionID: string, workspace: string, references: string[]) {
     const parts: NonNullable<SessionPromptInput['files']>[number][] = [];
     const text: string[] = [];
+    for (const { record, data, projection, decoded } of this.verifiedSelection(sessionID, workspace, references)) {
+      if (decoded === undefined) parts.push({ uri: `data:${record.mime};base64,${data.toString('base64')}`, name: record.name });
+      else text.push(`Attachment ${JSON.stringify(record.name)} (${projection ? 'sheet/row CSV' : 'UTF-8 text'}):\n${decoded}`);
+    }
+    return { files: parts, text: text.join('\n\n') };
+  }
+
+  *verifiedSelection(sessionID: string, workspace: string, references: readonly string[]) {
     let mediaBytes = 0;
     let textBytes = 0;
     for (const id of references) {
@@ -174,22 +193,23 @@ export class AttachmentService {
       if (!record) throw new HttpError(404, 'session-attachment-not-found');
       try {
         const { data } = openWorkspaceFile(workspace, sourceName(id), maxUpload, record.original);
+        let projection: Buffer | undefined;
+        let decoded: string | undefined;
         if (media(record.mime)) {
           mediaBytes += data.length;
           if (mediaBytes > 40 * MiB) throw new HttpError(413, 'message-media-limit');
-          parts.push({ uri: `data:${record.mime};base64,${data.toString('base64')}`, name: record.name });
         } else {
-          const bytes = record.projection ?
-            openWorkspaceFile(workspace, projectionName(id), maxProjection, record.projection).data : data;
+          projection = record.projection && openWorkspaceFile(workspace, projectionName(id), maxProjection, record.projection).data;
+          const bytes = projection ?? data;
           textBytes += bytes.length;
           if (textBytes > maxProjection) throw new HttpError(413, 'message-text-limit');
-          text.push(`Attachment ${JSON.stringify(record.name)} (${record.projection ? 'sheet/row CSV' : 'UTF-8 text'}):\n${decodeText(bytes)}`);
+          decoded = decodeText(bytes);
         }
+        yield { record, data, projection, decoded };
       } catch (error) {
         if (error instanceof HttpError) throw error;
         throw new HttpError(409, 'attachment-changed');
       }
     }
-    return { files: parts, text: text.join('\n\n') };
   }
 }

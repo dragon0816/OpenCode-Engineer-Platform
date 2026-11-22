@@ -11,6 +11,7 @@ export type RunTools = (name: string, args: Args, signal: AbortSignal) => unknow
 export type ToolValidator = (args: Args) => boolean;
 type Ticket = { launch: string; sessionID: string; runID: string; tool: string; callID: string; argsHash: string; expires: number };
 type Active = { identity: Identity; signal: AbortSignal; current: () => ToolScope | undefined; fingerprint: string; invoke?: RunTools;
+  beforeInvoke?: () => void;
   onAbort: () => void; calls: Set<string>; tickets: Map<string, Ticket> };
 
 function canonical(value: unknown): unknown {
@@ -58,12 +59,12 @@ export class ToolTickets {
     return scope;
   }
 
-  begin(identity: Identity, signal: AbortSignal, current: () => ToolScope | undefined, invoke?: RunTools) {
+  begin(identity: Identity, signal: AbortSignal, current: () => ToolScope | undefined, invoke?: RunTools, beforeInvoke?: () => void) {
     if (this.closed || this.active || signal.aborted) throw new Error('Tool authorization unavailable');
     const close = () => {
       if (this.active === attempt) this.revoke();
     };
-    const attempt: Active = { identity, signal, current, invoke, onAbort: close, fingerprint: JSON.stringify(identity.scope),
+    const attempt: Active = { identity, signal, current, invoke, beforeInvoke, onAbort: close, fingerprint: JSON.stringify(identity.scope),
       calls: new Set(), tickets: new Map() };
     this.active = attempt;
     signal.addEventListener('abort', close, { once: true });
@@ -102,6 +103,7 @@ export class ToolTickets {
     const { [transportField]: _token, ...params } = args;
     if (ticket.argsHash !== this.hash(tool, params)) throw new Error('Invalid tool arguments');
     attempt.tickets.delete(token);
+    attempt.beforeInvoke?.();
     return { args: params, scope, signal: attempt.signal, invoke: attempt.invoke,
       assertCurrent: () => { this.current(attempt); } };
   }

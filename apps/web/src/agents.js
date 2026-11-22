@@ -150,9 +150,10 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       delegation.id = 'assistant-delegation';
       delegation.type = 'checkbox';
       delegation.disabled = true;
+      delegation.checked = true;
       const label = node('label');
       label.append(delegation, ' ', node('span', message('ui.multi-assistant-delegation')));
-      advanced.append(node('summary', message('ui.advanced')), label, node('small', message('agents.delegation-later')));
+      advanced.append(node('summary', message('ui.advanced')), label, node('small', message('agents.delegation-settings')));
       parent.append(advanced);
     }
   }
