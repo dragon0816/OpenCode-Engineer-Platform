@@ -20,6 +20,7 @@
     "knowledge:benchmark": "node --disable-warning=ExperimentalWarning scripts/knowledge/benchmark.ts",
     "test:contract:native": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/native-contract.ts",
     "test:contract:native:isolation": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/isolation-gate.test.ts",
+    "benchmark:isolation": "node --disable-warning=ExperimentalWarning scripts/phase0/isolation-benchmark.ts",
     "test:e2e:excel": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts",
     "test:e2e:excel:faults": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts --faults",
     "test:e2e:excel:synthetic": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/sop-to-xlsx.test.ts --synthetic",
