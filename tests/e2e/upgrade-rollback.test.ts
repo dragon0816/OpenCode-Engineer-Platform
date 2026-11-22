@@ -26,9 +26,14 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const [major, minor, patch] = manifest.version.split('.').map(Number);
     const version = [major, minor, patch + 1].join('.');
     const storeFile = 'packages/knowledge/src/store.ts';
-    const historical = spawnSync('git', ['show', '6c511e6:' + storeFile]);
-    assert.ifError(historical.error);
-    assert.equal(historical.status, 0, historical.stderr.toString('utf8'));
+    const storeCode = strFromU8(files[storeFile]);
+    const versionGuard = 'if (version > 2)';
+    const sliceMigration = /^          if \(version < 2\) \{[\s\S]*?^          }$/m;
+    assert.ok(storeCode.includes(versionGuard));
+    assert.match(storeCode, sliceMigration);
+    // The old test package has the v1 reader and writer and opens the pinned historical DDL.
+    const oldStoreCode = storeCode.replace(versionGuard, 'if (version > 1)')
+      .replace(sliceMigration, "          if (version === 0) this.db.exec('PRAGMA user_version=1');");
     function fixtureZip(release: string, changed: string, files: Record<string, Uint8Array>) {
       const metadata = { ...manifest, version: release, files: manifest.files.map((file: { path: string }) =>
         (file.path === changed || file.path === storeFile) ? { ...file, sha256: sha256(files[file.path]), size: files[file.path].length } : file) };
@@ -41,7 +46,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     }
     const { path: v2, zip } = fixtureZip(version, storeFile, files);
     const oldVersion = manifest.version;
-    const { path: v1 } = fixtureZip(oldVersion, storeFile, { ...files, [storeFile]: historical.stdout });
+    const { path: v1 } = fixtureZip(oldVersion, storeFile, { ...files, [storeFile]: strToU8(oldStoreCode) });
 
     fixture.run('Install-OEP', ['-Source', v1]);
     const { web } = seedPhase3bFixture(fixture.data);
