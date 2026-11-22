@@ -144,7 +144,7 @@ function bindRowMenu(menu, trigger, actions) {
     for (const other of sessions.querySelectorAll('details[open]')) {
       if (other !== menu) other.open = false;
     }
-    actions[0].focus();
+    if (document.activeElement === trigger) actions[0].focus();
   });
   for (const action of actions) action.addEventListener('click', close);
   menu.addEventListener('keydown', (event) => {
