@@ -1,6 +1,6 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
-  CHANNEL_ACCOUNT_IN_USE: "此 Telegram 帳號已綁定至助理 {agentId}。",
+  'CHANNEL_ACCOUNT_IN_USE': "此 Telegram 帳號已綁定至助理 {agentId}。",
   'channel-settings-invalid': "請提供有效的通道帳號設定。",
   'channel-binding-stale': "通道綁定已變更。請重新載入並確認。",
   'channel-binding-busy': "此帳號仍有工作或訊息等待處理。",
