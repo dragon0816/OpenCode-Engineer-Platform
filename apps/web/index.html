@@ -39,6 +39,10 @@
         <summary><span data-i18n="ui.assistant"></span> <span class="rail-count" id="assistant-count"></span></summary>
         <button id="new-agent" type="button" disabled data-i18n-aria-label="agents.create" data-i18n-title="agents.create">+</button>
         <div id="agent-list"></div>
+        <details id="archived-agents" hidden>
+          <summary data-i18n="agents.status-disabled"></summary>
+          <div id="archived-agent-list"></div>
+        </details>
         <label for="agent" data-i18n="agents.main-mode"></label>
         <select id="agent" disabled>
           <option value="inspector" data-i18n="ui.data-analysis"></option>

@@ -154,7 +154,7 @@ function bindRowMenu(menu, trigger, actions) {
   });
   menu.addEventListener('toggle', () => {
     if (!menu.open) return;
-    for (const other of document.querySelectorAll('#sessions details[open], #agent-list details[open]')) {
+    for (const other of document.querySelectorAll('#sessions details[open], .agent-row > details[open]')) {
       if (other !== menu) other.open = false;
     }
     if (document.activeElement === trigger) actions[0].focus();
@@ -1286,10 +1286,12 @@ agentView.addEventListener('keydown', (event) => {
 });
 
 function renderAgents() {
-  const list = find('agent-list');
-  const states = { available: message('agents.status-available'), busy: message('agents.status-busy'), queued: message('agents.status-queued') };
-  setText(find('assistant-count'), assistantEntries.filter(({ state }) => state === 'active').length);
-  list.replaceChildren(...assistantEntries.filter(({ state }) => state === 'active').map((entry) => {
+  const states = { available: message('agents.status-available'), busy: message('agents.status-busy'), queued: message('agents.status-queued'),
+    disabled: message('agents.status-disabled') };
+  const active = assistantEntries.filter(({ state }) => state === 'active');
+  const archived = assistantEntries.filter(({ state }) => state === 'archived');
+  setText(find('assistant-count'), active.length);
+  const rowFor = (entry) => {
     const row = node('article', undefined, 'agent-row');
     row.dataset.agent = entry.id;
     const open = sessionButton(undefined, () => openAgent(entry.id, false, open));
@@ -1307,12 +1309,13 @@ function renderAgents() {
     const start = sessionButton(message('agents.start'), () => createAgentSession(entry.id,
       entry.id === 'main' ? 'legacy-' + project : entry.workspaces.find(({ isDefault }) => isDefault)?.id));
     start.className = 'agent-row-start';
+    start.hidden = entry.state === 'archived';
     const menu = node('details');
     const trigger = node('summary', '⋯', 'menu-trigger');
     setAttribute(trigger, 'aria-label', message('agents.more-named', { name: agentName(entry) }));
     const copy = sessionButton(message('agents.copy'), () => openAgent(entry.id, true, open));
     const actions = [copy];
-    if (!entry.builtin) actions.push(sessionButton(message('agents.archive'), async () => {
+    if (!entry.builtin && entry.state === 'active') actions.push(sessionButton(message('agents.archive'), async () => {
       if (!window.confirm(t('agents.confirm-archive', { name: resolveText(agentName(entry)) }))) return;
       try {
         await request('/api/agents/' + entry.id, { data: { action: 'archive', revision: entry.revision } });
@@ -1326,19 +1329,22 @@ function renderAgents() {
     bindRowMenu(menu, trigger, actions);
     row.append(open, start, menu);
     return row;
-  }));
+  };
+  find('agent-list').replaceChildren(...active.map(rowFor));
+  find('archived-agent-list').replaceChildren(...archived.map(rowFor));
+  find('archived-agents').hidden = !archived.length;
 }
 
 async function refreshAgents() {
   const { agents: entries } = await request('/api/agents');
   if (JSON.stringify(entries) === JSON.stringify(assistantEntries)) return;
-  const focused = document.activeElement.closest?.('#agent-list [data-agent]');
+  const focused = document.activeElement.closest?.('.agent-row[data-agent]');
   assistantEntries = entries;
   renderAgents();
   updateAgentBranding();
   renderSessions();
   setControls();
-  if (focused) find('agent-list').querySelector(`[data-agent="${CSS.escape(focused.dataset.agent)}"] .agent-row-open`)?.focus();
+  if (focused) find('rail-assistants').querySelector(`[data-agent="${CSS.escape(focused.dataset.agent)}"] .agent-row-open`)?.focus();
 }
 
 const theme = find('theme');
@@ -1921,7 +1927,7 @@ find('clear-session-search').addEventListener('click', () => {
   find('session-search').focus();
 });
 document.addEventListener('click', (event) => {
-  for (const menu of document.querySelectorAll('#sessions details[open], #agent-list details[open]')) {
+  for (const menu of document.querySelectorAll('#sessions details[open], .agent-row > details[open]')) {
     if (!menu.contains(event.target)) menu.open = false;
   }
 });

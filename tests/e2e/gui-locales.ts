@@ -61,7 +61,7 @@ export const contentAttributes = [
   '[data-session][title]', '.session-list [aria-label]', '#chat-resources button', '#attachments [aria-label]',
   '#artifacts [aria-label]', '#file-preview img', '#file-preview iframe', '#panel-tabs .close-tab',
   '.mcp-result li button',
-  '#agent-list summary[aria-label], #sessions [data-agent-start][aria-label]',
+  '.agent-row summary[aria-label], #sessions [data-agent-start][aria-label]',
 ].join(', ');
 
 const names = /\b(?:OEP|AEP|Atlas|OpenCode|Windows|Telegram|Excel|Python|Markdown|JSON|CSV|PNG|JPEG|JPG|PDF|HTML|HTM|TXT|MD|XLSX|ZIP|KiB|MiB|MB|URL|MCP|HTTPS?|TLS|SSH|stdio|SQLite|Schema|WAL|UTF|SHA|BI|IANA|D03|UTC|GMT|Ctrl|Shift|Enter|Esc|End|Home|Tab|ms|soul\.md|light|dark)\b|\bSkill(?= 即將開放)/gi;

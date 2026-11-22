@@ -119,6 +119,11 @@ const synthetic: typeof fetch = async (target, init) => {
     assert.match(user, /END QUOTED MESSAGE/);
     return completion(model, [{ role: 'assistant', content: '已核對合成引用' }], 'stop');
   }
+  if (user.includes('SYNTHETIC_SPECIALIST_CHAT')) {
+    assert.match(user, /資料查核/);
+    assert.match(user, /保留來源引用/);
+    return completion(model, [{ role: 'assistant', content: '已核對合成資料' }], 'stop');
+  }
   if (user.includes('SYNTHETIC_TOOL_LIMIT')) {
     assert.equal(model, gatewayAliases[1]);
     return completion(model, toolCall(0, 'call_limit', 'write', { path: 'synthetic.txt', content: 'sample' }), 'tool_calls');

@@ -27,6 +27,7 @@ export function agentIntroduction(agent) {
 }
 
 export function agentAvatar(element, agent) {
+  element.toggleAttribute('data-ui-content', typeof agentName(agent) === 'string');
   if (!agent?.hasAvatar) {
     element.textContent = agent?.builtin === 'main' ? 'O' : Array.from(resolveText(agentName(agent)))[0] || 'O';
     return;
@@ -364,7 +365,9 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
     submit.type = 'submit';
     submit.id = wizard ? 'agent-next' : 'save-assistant';
     submit.disabled = entry?.state === 'archived';
-    if (submit.disabled) for (const input of panes.querySelectorAll('input, textarea, select')) input.disabled = true;
+    if (submit.disabled) for (const input of panes.querySelectorAll('input, textarea, select, .file-picker button, #avatar-reset')) {
+      input.disabled = true;
+    }
     actions.append(submit);
     if (wizard) {
       const cancel = agentButton(message('agents.cancel'), close);

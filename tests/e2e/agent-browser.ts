@@ -118,16 +118,19 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await page.ready("document.querySelector('#assistant-instructions')?.value === '保留來源引用'");
   await click('#close-agent');
 
+  const priorSession = await sessionID();
   await click('[data-agent=main] .agent-row-start');
-  await page.ready("document.querySelector('#sessions [aria-current=true]') && !document.querySelector('#prompt').disabled");
+  await page.ready(`document.querySelector('#sessions [aria-current=true]')?.dataset.session &&
+    document.querySelector('#sessions [aria-current=true]').dataset.session !== ${JSON.stringify(priorSession)} &&
+    !document.querySelector('#prompt').disabled`);
   const mainSession = await sessionID();
   await click(`${specialistRow} .agent-row-start`);
   await page.ready(`document.querySelector('#top-agent').textContent === ${JSON.stringify(name)} &&
     document.querySelector('#sessions [aria-current=true]').dataset.session !== ${JSON.stringify(mainSession)}`);
   const specialistSession = await sessionID();
-  await setValue('#prompt', '請核對這筆合成資料。');
+  await setValue('#prompt', 'SYNTHETIC_SPECIALIST_CHAT');
   await click('#send');
-  await page.ready("document.querySelector('#messages .message.assistant') && !document.querySelector('#send').disabled", 30_000);
+  await page.ready("document.querySelector('#messages .message.assistant')?.textContent.includes('已核對合成資料') && !document.querySelector('#send').disabled", 30_000);
   await reload();
   await page.ready(`document.querySelector('#sessions [aria-current=true]')?.dataset.session === ${JSON.stringify(specialistSession)}`);
   await click(`[data-session="${mainSession}"]`);
@@ -185,7 +188,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   const matrix = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
   for (const [width, height, viewport] of matrix) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
-    await page.ready(`innerWidth === ${width}`);
+    await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${width < 800}`);
     for (const locale of captures ? ['zh-TW', 'en'] as const : ['zh-TW'] as const) {
       await selectLocale(page, locale);
       for (const theme of captures ? ['light', 'dark'] : ['light']) {
@@ -226,6 +229,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     }
   }
   await page.command('Emulation.clearDeviceMetricsOverride');
+  await page.ready("!matchMedia('(max-width: 800px)').matches && !document.querySelector('#session-sidebar').hidden");
   await selectLocale(page, 'zh-TW');
   await openChannels();
   const binding = await page.evaluate<string>(`[...document.querySelectorAll('#channel-accounts tr')]
@@ -243,7 +247,10 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await rail();
   await page.evaluate(`document.querySelector('${specialistRow} summary').click()`);
   await click(`${specialistRow} .menu-actions button:nth-child(2)`);
-  await page.ready(`!document.querySelector('${specialistRow}') && document.querySelector('[data-session="${specialistSession}"]')`);
+  await page.ready(`!document.querySelector('#agent-list ${specialistRow}') && document.querySelector('[data-session="${specialistSession}"]')`);
+  await activate('#archived-agents > summary');
+  await page.ready(`document.querySelector('#archived-agent-list ${specialistRow} .agent-row-open')?.textContent.includes('已封存') &&
+    document.querySelector('#archived-agent-list ${specialistRow} .agent-row-start').hidden`);
   await click(`[data-session="${specialistSession}"]`);
   await page.ready("document.querySelector('#prompt').disabled && document.querySelector('#messages .message.assistant')");
   mapping.finish();
