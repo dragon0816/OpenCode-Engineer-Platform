@@ -318,3 +318,9 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 多助理切片 2 的工具票券與傳輸欄位只實作在 relay 的 SSE 路徑。來自 OpenCode 受管 session 而 `stream` 不為 `true` 且帶工具定義的請求一律拒絕。設計第 3.2 節依第 12 節修訂。
 - **理由：** 固定版 OpenCode 的 OpenAI 相容 provider 只發串流請求並只解析 SSE；relay 已完整緩衝 SSE。JSON completion 只供伺服器端直接呼叫（知識、BI），不經 OpenCode 工具執行。契約測試證實 SSE 路徑可行。
 - **捨棄的替代方案：** 停止切片 2、改換 runtime（不必要）；把 JSON 轉成 SSE 再交給 OpenCode（沒有實際使用情境，增加風險）。
+
+## 2026-11-22 公司 Skill 納入範圍與每助理數量上限
+
+- **決策：** 經 Share Platform（過渡期為本機套件）安裝公司 Skill 目錄中除排程與 Redmine 外的全部 Skill。Skill 庫不設上限，每助理同時啟用 15～20 個為預設上限（可調、超過警告）。高風險類（瀏覽器、GUI 自動化、網路與系統設定）預設停用，須逐助理授權並經受控執行器。細節見 `docs/PHASE3_REQUIREMENTS.md` 10.1。
+- **理由：** 擁有者決定範圍。數量上限依 OpenAI 指南（每回合工具少於 20 個）與 RAG-MCP 研究（工具數增加使選擇準確度下降）。
+- **捨棄的替代方案：** 全部啟用給同一助理（選擇準確度與上下文成本惡化）；把 Skill 放進公開 repo（授權與公司資訊外洩）。
