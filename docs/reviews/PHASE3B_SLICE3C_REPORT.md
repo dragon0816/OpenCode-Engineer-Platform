@@ -21,9 +21,37 @@ The synthetic dispatcher contracts cover direct/delegation/schedule ordering, no
 
 Commands ran sequentially with fresh temporary `OEP_DATA_DIR` roots. Each test process used the existing verification venv. The worktree used its own npm dependencies, Phase 0 assets, source, and hooks.
 
+Worktree setup passed with `npm ci` and `node scripts/phase0/install-hooks.mjs`. The hook installer initially rejected the inherited snapshot path. I set this worktree's hook path to the checked-in `.githooks` and reran the installer successfully.
+
 The first `npm test` attempt passed 92 of 95 tests. It exposed two central schema-version expectations and a missing adapter catalog entry. The next attempt passed 94 of 95 and exposed the remaining v4 expectation in the migration retry assertion. The assertions now require v5, and both catalogs include the two resolution errors.
 
-The first native isolation run passed four of five tests. Its broker case timed out because two standalone ChatService instances each recovered the same central ledger. The services now share a dispatcher for that ledger.
+The first native isolation run passed four of five tests. Its broker case timed out because two standalone ChatService instances each recovered the same central ledger. The services now share a dispatcher for that ledger. The focused rerun passed five of five with zero OpenCode orphans.
+
+Final sequential run at `97a85b1`
+
+| Command | Exit | Observed result | Seconds |
+| --- | ---: | --- | ---: |
+| `npm run lint` | 0 | 253 source and configuration files checked | 0.93 |
+| `npm run typecheck` | 0 | TypeScript completed | 5.30 |
+| `npm test` | 0 | 95 passed | 13.06 |
+| `npm run build:release` | 0 | Windows x64 release ZIP built and scanned | 18.98 |
+| `npm run test:e2e:browser`, run 1 | 0 | Supervisor and child exited cleanly with 0 orphans | 74.74 |
+| `npm run test:e2e:browser`, run 2 | 0 | Supervisor and child exited cleanly with 0 orphans | 75.86 |
+| `npm run test:e2e:browser`, run 3 | 0 | Supervisor and child exited cleanly with 0 orphans | 75.34 |
+| `npm run test:e2e:knowledge` | 0 | 1 passed | 27.54 |
+| `npm run test:ingest` | 0 | 16 passed | 4.49 |
+| `npm run test:telegram` | 0 | 8 passed | 23.95 |
+| `npm run test:e2e:mcp` | 0 | MCP, probe, remote, and browser commands passed | 57.57 |
+| `npm run test:compliance` | 0 | 2 passed | 0.43 |
+| `npm run test:release:determinism` | 0 | 1 passed | 39.69 |
+| `npm run test:contract:native:isolation` | 0 | 5 passed | 21.83 |
+| `npm run scan` | 0 | 577 files scanned, 0 hits | 1.27 |
+
+The release ZIP SHA-256 was `025c8faed506a59b7490a168a77a48d557c9c46340767877c5d72033797d9062`.
+
+## Design decisions
+
+The existing channel deadline starts at the first intake attempt. A failed attempt can return to the dispatcher only before the durable execution marker. An indeterminate write remains leased until owner resolution. For OpenCode turns, the resolution API also requires an idle upstream session. The API keeps its payload and upstream messages private.
 
 ## Left for reviewer
 
