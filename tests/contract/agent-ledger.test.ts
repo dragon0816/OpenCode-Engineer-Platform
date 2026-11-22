@@ -46,7 +46,7 @@ test('fresh stores seed built-ins and enforce identity, default workspace, class
   using db = new DatabaseSync(file);
   using telegram = new DatabaseSync(chatPath);
   using knowledge = new DatabaseSync(knowledgePath);
-  assert.deepEqual([version(db), version(telegram), version(knowledge)], [4, 3, 3]);
+  assert.deepEqual([version(db), version(telegram), version(knowledge)], [5, 3, 3]);
   assert.deepEqual(values(db, 'SELECT id, role, state, name, default_model_id, reply_locale FROM agents ORDER BY id'), [
     ['bi', 'specialist', 'active', 'BI 資料處理', null, 'zh-TW'],
     ['main', 'orchestrator', 'active', '', null, 'zh-TW'],
@@ -170,7 +170,7 @@ test('a failed slice migration rolls back each owned DB and resumes earlier comm
     assert.equal(version(db), 2);
     assert.equal(table(db, 'session_ownership'), undefined);
     using central = open('web');
-    assert.equal(version(central), 4);
+    assert.equal(version(central), 5);
     assert.deepEqual(values(central, 'SELECT id FROM agents ORDER BY id'), [['bi'], ['main']]);
     db.exec("DELETE FROM web_session_project WHERE id='telegram-session'");
   }
@@ -204,7 +204,7 @@ test('a failed slice migration rolls back each owned DB and resumes earlier comm
   assert.deepEqual(paths.map((name) => {
     using db = open(name);
     return version(db);
-  }), [4, 3, 3, 2]);
+  }), [5, 3, 3, 2]);
 });
 
 test('opening a current session ledger rejects absent owners and invalid central references', (t) => {

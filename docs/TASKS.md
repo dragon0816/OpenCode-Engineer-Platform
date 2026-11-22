@@ -228,7 +228,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 修正 Telegram 未來版本拒絕與升級測試的 SQLite 清理問題。已用隔離的 Windows fixture 驗證修正前後。
 - [x] 通道設定 API 支援驗證、確認綁定、解除與改綁。合成第三個 bot 驗證專職會話、語言、忙碌時拒絕改綁、舊版通知目的地及輪詢衝突。
 - [x] 合成 Telegram 經已配對且有 CSRF 保護的審核 HTTP API 驗證來源、核准、發布和原 topic 通知。來源不明的舊審核維持 BI 預設 topic。
-- [ ] 完成共用工作台帳、優先派送、租約、逾期及復原契約，並以 UUID 來源鍵支援新增帳號的 BI 收件。
+- [x] 以共用工作台帳派送 Web 回合、Telegram 收件、BI 補件與送審、排程及立即執行。完成優先順序、租約、逾期、復原及擁有者處理 API。 [切片 3c 驗收](reviews/PHASE3B_SLICE3C_REPORT.md)
+- [ ] 以 UUID 來源鍵支援新增帳號的 BI 收件。
 - [ ] 開放新增帳號經擁有者確認後重送不確定的通知。
 - [ ] 切片 4 加入通道設定畫面與審核助理來源標籤。
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

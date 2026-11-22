@@ -25,7 +25,7 @@ const invalid = () => new HttpError(400, 'channel-settings-invalid');
 const stale = () => new HttpError(409, 'channel-binding-stale');
 
 type Verified = { client: TelegramApi; owner: string; value: string; identity: string; fingerprint: string };
-type Connection = { poller: TelegramPoller; client: TelegramApi; stop: AbortController; account: ChannelAccount };
+type Connection = { poller: TelegramPoller; client: TelegramApi; stop: AbortController; account: ChannelAccount; redact(text: string): string };
 type PollState = 'credential-unavailable' | 'verification-failed' | 'identity-changed' | 'account-in-use';
 
 export class TelegramAccounts {
@@ -38,17 +38,17 @@ export class TelegramAccounts {
   private readonly sessions: WebStore;
   private readonly enabled: boolean;
   private readonly signal: AbortSignal;
-  private readonly handle: (row: Intake, signal: AbortSignal) => Promise<string | undefined>;
+  private readonly handoff: (row: Intake, now: number, deadline: number) => void;
   private readonly credentials: TelegramEnvironment;
 
   constructor(ledger: WebStore, inbox: TelegramInbox, sessions: WebStore, enabled: boolean, signal: AbortSignal,
-    handle: TelegramAccounts['handle'], credentials = environment) {
+    handoff: TelegramAccounts['handoff'], credentials = environment) {
     this.ledger = ledger;
     this.inbox = inbox;
     this.sessions = sessions;
     this.enabled = enabled;
     this.signal = signal;
-    this.handle = handle;
+    this.handoff = handoff;
     this.credentials = credentials;
   }
 
@@ -111,18 +111,16 @@ export class TelegramAccounts {
     const { accountId, agentId } = account;
     const { client, owner, value } = verified;
     const stop = new AbortController();
-    const poller = new TelegramPoller(bot(account.handler), owner, client, this.inbox, async (row, signal) => {
-      const reply = await this.handle(row, signal);
-      return reply?.replaceAll(value, '[已遮蔽]');
-    }, () => this.ledger.channelLocale(agentId), {
+    const poller = new TelegramPoller(bot(account.handler), owner, client, this.inbox, undefined, () => this.ledger.channelLocale(agentId), {
       binding: { accountId, agentId, bindingRevision: account.bindingRevision }, legacy: Boolean(legacy(accountId)),
+      handoff: this.handoff,
       admit: (batch, checkpoint, now) => this.admission(() => {
         if (stop.signal.aborted || this.connections.get(accountId)?.poller !== poller) return;
         this.inbox.admitBatch(account, batch.events, batch.nextCheckpoint, now, checkpoint);
       }),
     });
     this.connections.get(accountId)?.stop.abort();
-    this.connections.set(accountId, { poller, client, stop, account });
+    this.connections.set(accountId, { poller, client, stop, account, redact: (text) => text.replaceAll(value, '[已遮蔽]') });
     this.states.delete(accountId);
   }
 

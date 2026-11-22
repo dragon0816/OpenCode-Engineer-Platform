@@ -10,10 +10,12 @@ import { channelText, intakeStatus } from '../channels/catalog.ts';
 import type { ChannelLocale, Destination } from '../channels/transport.ts';
 import { BiService, biProposalServices } from '../bi/service.ts';
 
-function turnId(accountId: string, update: number) {
+export function turnId(accountId: string, update: number) {
   const hex = createHash('sha256').update(accountId + '-' + update).digest('hex').slice(0, 32);
   return hex.replace(/^(........)(....)(....)(....)(............)$/, '$1-$2-$3-$4-$5');
 }
+
+type Lease = { id: string; start: () => void; signal: AbortSignal };
 
 export class TelegramRouter {
   private readonly inbox: TelegramInbox;
@@ -34,10 +36,10 @@ export class TelegramRouter {
     this.bi = new BiService(inbox, biProposalServices(runtime.knowledge, biModel));
   }
 
-  async handle(row: Intake, signal: AbortSignal) {
+  async handle(row: Intake, signal: AbortSignal, lease?: Lease) {
     const message = JSON.parse(row.payload) as Message;
     const origin = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
-    if (row.bot === 'main') return this.chatMessage(row, origin, message.text ?? '', signal);
+    if (row.bot === 'main') return this.chatMessage(row, origin, message.text ?? '', signal, lease);
     const locale = this.locale(origin.agentId);
     const messages = channelText(locale);
     const text = message.text?.trim() ?? '';
@@ -53,7 +55,7 @@ export class TelegramRouter {
       const supplement = text.match(/^\/supplement\s+(\d+)\s+([\s\S]+)$/);
       if (!supplement) return messages.supplementUsage;
       const id = Number(supplement[1]);
-      try { await this.bi.supplement(id, supplement[2], signal, origin); }
+      try { await this.bi.supplement(id, supplement[2], signal, origin, lease?.id); }
       catch { return messages.sourceUnavailable; }
       return intakeStatus(locale, id, this.bi.status(origin, id));
     }
@@ -67,12 +69,12 @@ export class TelegramRouter {
         return client.file(file.file_id, limit, stop);
       },
     };
-    const state = await this.bi.intake(row.id, origin, text, attachment, signal);
+    const state = await this.bi.intake(row.id, origin, text, attachment, signal, lease?.id);
     if (state === 'ready' || signal.aborted) return;
     return intakeStatus(locale, row.id, state);
   }
 
-  private async chatMessage(row: Intake, owner: Destination, text: string, signal: AbortSignal) {
+  private async chatMessage(row: Intake, owner: Destination, text: string, signal: AbortSignal, lease?: Lease) {
     const messages = channelText(this.locale(owner.agentId));
     if (!text.trim()) return messages.empty;
     const db = this.inbox.db;
@@ -103,7 +105,19 @@ export class TelegramRouter {
       this.inbox.rememberConversation(owner, owner.conversationKey, session.id);
     }
     const id = turnId(owner.accountId, row.id);
-    await this.chat.submit(session, { id, text, attachments: [], workbook: false }, undefined, owner);
+    await this.chat.submit(session, { id, text, attachments: [], workbook: false }, undefined, owner, lease);
+    return this.turnReply(session, id, owner, signal);
+  }
+
+  async recoveredReply(row: Intake, signal: AbortSignal) {
+    const owner = row.destination!;
+    const mapping = this.inbox.conversation(owner, owner.conversationKey);
+    const session = this.sessions.sessions(true).find(({ id }) => id === mapping?.session);
+    if (session) return this.turnReply(session, turnId(owner.accountId, row.id), owner, signal);
+  }
+
+  private async turnReply(session: ReturnType<WebStore['sessions']>[number], id: string, owner: Destination, signal: AbortSignal) {
+    const messages = channelText(this.locale(owner.agentId));
     const state = await this.chat.state(session);
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);

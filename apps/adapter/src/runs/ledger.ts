@@ -8,7 +8,7 @@ const transitions: Record<RunState, RunState[]> = {
   running: ['running', 'awaiting_permission', 'background', 'failed', 'cancelled', 'indeterminate', 'verified'],
   awaiting_permission: ['running', 'failed', 'cancelled', 'indeterminate'],
   background: ['running', 'failed', 'cancelled', 'indeterminate', 'verified'],
-  indeterminate: ['running', 'failed'],
+  indeterminate: ['running', 'failed', 'cancelled', 'verified'],
   cancelled: [],
   failed: [],
   verified: [],
@@ -16,7 +16,7 @@ const transitions: Record<RunState, RunState[]> = {
 
 export const runLedgerVersion = 1;
 export const telegramChatLedgerVersion = 3;
-export const webLedgerVersion = 4;
+export const webLedgerVersion = 5;
 type WebMigration = { version: number; migrate: (db: DatabaseSync, version: number) => void; verify: (db: DatabaseSync) => void };
 
 export class Ledger {
