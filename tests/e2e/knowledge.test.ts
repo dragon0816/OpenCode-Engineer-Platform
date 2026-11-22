@@ -19,6 +19,7 @@ import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
 import { assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
+import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
@@ -156,6 +157,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         return ${JSON.stringify(expected)}.filter(label => !actions.includes(label));
       })()`).then((missing) => assert.deepEqual(missing, [], scope));
       const preview = '#file-preview .feature-preview:not([hidden])';
+      const mapping = mappingChecks(browser, 'feature');
       const previewBody = preview + ' .preview-body';
       const panelIsOpen = "!document.querySelector('#chat-files').hidden";
       const closePreview = () => browser.evaluate("document.querySelector('#close-files').click()");
@@ -199,10 +201,12 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), false);
         await featureText('#jobs-view');
         await labels('#jobs-content', ['新增排程', '執行紀錄', '重新整理', '更多', 'Telegram 收件', '通知紀錄']);
+        await mapping.check('feature-jobs-toolbar', '#jobs-view', { selectors: ['#jobs-status[role=status]'] });
         await clickLabel('#jobs-content', '更多');
         await clickLabel('#jobs-content', 'Telegram 收件');
         await selectors(preview, ['select[aria-label="收件狀態篩選"]', 'details textarea', 'details input:first-of-type']);
         await labels(preview, ['儲存收件設定']);
+        await mapping.check('feature-jobs-inbox', preview, { selectors: ['select option', 'details input:nth-child(1)', 'details textarea'] });
         await featureText(preview);
         await closePreview();
         await browser.evaluate("document.querySelector('#jobs-content .feature-more button').focus()");
@@ -211,6 +215,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
         assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), true);
         await ready("document.querySelector('#knowledge-status').textContent.includes('沒有已發布')");
+        await selectors('#knowledge-overview', ['#knowledge-overview-empty']);
         await assertUiTextInThemes(browser);
         await browser.evaluate("document.querySelector('#open-review').focus()");
         await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
@@ -238,6 +243,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           await key('ArrowRight', 39);
         }
         assert.equal(await browser.evaluate("document.querySelector('#knowledge-ask').disabled"), true);
+        mapping.seen('feature-knowledge-header');
         context.diagnostic('Knowledge page displayed the empty published store');
         await browser.evaluate("document.querySelector('#open-chat').click()");
         await browser.evaluate("document.querySelector('#open-knowledge').focus()");
@@ -267,6 +273,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           '#knowledge-prev', '#knowledge-next', '#knowledge-browser-status', '#knowledge-fts input', '#knowledge-fts button']);
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-repository-status').textContent"), /tag-a/);
         assert.match(await browser.evaluate<string>("document.querySelector('#vault-technical').textContent"), /tag-a@/);
+        await mapping.check('feature-knowledge-overview', '#knowledge-overview', { selectors: ['#vault-details dt:nth-of-type(3)', '#vault-details dd:nth-of-type(3)', '#knowledge-overview-empty'] });
+        await mapping.check('feature-knowledge-advanced', '#knowledge-overview', { selectors: ['details #vault-technical dd:nth-of-type(4)'] });
+        await mapping.check('feature-build-repository', '#knowledge-repository', { selectors: ['#knowledge-repository-status', '#knowledge-repository-diagnostics p'] });
+        mapping.seen('feature-knowledge-cards');
         assert.equal((await (await api.get('/api/knowledge/vaults')).json()).vaults[0]?.id, vault);
         context.diagnostic('Chromium checked and imported the repository, and the authenticated API exposed its active generation');
         await browser.evaluate(`{
@@ -276,6 +286,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#knowledge-answer')?.textContent.includes('±0.8 dB')");
         assert.match(await browser.evaluate<string>("document.querySelector('#knowledge-answer button.knowledge-reference').textContent"), /合成量測手冊#row=1/);
+        await mapping.check('feature-knowledge-ask', '#knowledge-ask-panel', { selectors: ['#knowledge-question', '#knowledge-ask', '#knowledge-status', '#knowledge-answer h2', '#knowledge-answer details p', 'button.knowledge-reference'] });
         await featureText('#knowledge-view');
         await mouse('#knowledge-answer .knowledge-reference');
         await ready(`${panelIsOpen} && document.querySelector('${previewBody}').textContent.includes('±0.8 dB')`);
@@ -297,6 +308,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           modal: 'true', workAreaInert: true, railInert: true, back: '返回頁面' });
         await closePreview();
         await ready("document.querySelector('#chat-files').hidden && !document.querySelector('#work-area').inert && document.activeElement.matches('#knowledge-answer .knowledge-reference')");
+        mapping.seen('feature-preview-close');
         await browser.command('Emulation.clearDeviceMetricsOverride');
         await browser.evaluate(`{
           document.querySelector('#knowledge-tab-overview').click();
@@ -312,8 +324,13 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelectorAll('#knowledge-cards th [data-sort]').length"), 6);
         await browser.evaluate("document.querySelector('#knowledge-matches button').click()");
         await ready(panelIsOpen);
+        await mapping.check('feature-knowledge-search', '#knowledge-overview', { selectors: ['#knowledge-fts input', '#knowledge-fts button', '#knowledge-matches mark', '#knowledge-matches button'] });
+        await mapping.check('feature-knowledge-source', preview, { selectors: ['mark', 'blockquote', '.preview-body > p', 'details p'], labels: ['開啟卡片'] });
         await clickLabel(preview, '開啟卡片');
         await ready(`document.querySelector('${previewBody} blockquote')?.textContent.includes('±0.8 dB')`);
+        await mapping.check('feature-knowledge-card', preview, {
+          selectors: ['dl dd', 'blockquote', 'details p'], labels: ['欄位出處', '欄位狀態', '欄位變更紀錄', '知識庫發布紀錄'],
+        });
         if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
           await captureGallery(['overview', 'ask', 'quality', 'build', 'drawer'].map((screen) =>
             ['slice3a-' + screen, async () => {
@@ -354,6 +371,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           '#quality-add-set button', '#quality-remove-set', '#quality-json-file', '#quality-json', '#quality-import', '#quality-export',
           '#quality-editor [name=query]', '#quality-editor [name=answer]', '#quality-editor [name=kind]', '#quality-editor [name=passages]',
           '#quality-find', '#quality-evidence', '#quality-matches', '#quality-editor [type=submit]', '#quality-new-question']);
+        mapping.seen('feature-quality-sets');
         await featureText('#knowledge-quality');
         await browser.evaluate(`{
           const form = document.querySelector('#quality-editor');
@@ -369,6 +387,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#quality-questions li')?.textContent.includes('Benchmark')");
         await labels('#quality-questions', ['編輯', '刪除']);
+        mapping.seen('feature-quality-editor');
         await browser.evaluate(`{
           document.querySelector('#quality-question-list').open = true;
           document.querySelector('#quality-questions button').click();
@@ -418,6 +437,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await until(() => Promise.resolve(benchmarkStarted || undefined), 5000);
         await browser.evaluate("document.querySelector('#quality-stop').click()");
         await ready("document.querySelector('#quality-results').textContent.includes('已取消')");
+        await mapping.check('feature-quality-results', '#knowledge-quality', { selectors: ['#quality-builtin-note', '#quality-run', '#quality-stop', '#quality-results tr', '#quality-results details'] });
 
         await browser.evaluate(`{
           document.querySelector('#knowledge-tab-build').click();
@@ -443,6 +463,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await clickReview('載入來源至草稿');
         await ready(`document.querySelector('${preview} textarea[readonly]').value.includes('Synthetic Wiki')`);
+        mapping.seen('feature-build-source', 'feature-build-format');
         await closePreview();
         await clickReview('送交審核');
         await ready("!Array.from(document.querySelectorAll('#wiki-review button')).find(item => item.textContent === '查看已送審草稿').hidden");
@@ -453,12 +474,15 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await ready(`${panelIsOpen} && document.querySelector('${previewBody} blockquote')?.textContent.includes('Synthetic Wiki')`);
         await featureText(preview);
         await labels(preview, ['比較版本與證據', '搜尋草稿', '儲存修訂', '核准', '拒絕', '捨棄草稿']);
+        await mapping.check('feature-review-comparison', preview, { selectors: ['.review-actions input', '.preview-body blockquote'], labels: ['比較版本與證據', '搜尋草稿'] });
+        await mapping.check('feature-review-editor', preview, { selectors: ['details textarea:not([readonly])', 'details p'], labels: ['儲存修訂'] });
         assert.equal(await browser.evaluate(`![...document.querySelectorAll('${preview} button')].some(item => item.textContent === '發布')`), true);
         const reviewList = await (await api.get(reviewsPath)).json();
         const id = reviewList.reviews[0].id;
         assert.equal((await api.post(reviewsPath, { action: 'publish', id })).status, 422);
         await clickLabel(preview, '核准');
         await ready(`document.querySelector('${preview}').textContent.includes('已核准')`);
+        await selectors(preview, ['details textarea[readonly]']);
         const approved = await (await api.get(reviewsPath)).json();
         assert.equal(approved.reviews.find((row: { id: string }) => row.id === id).status, 'approved');
         assert.equal(approved.intents.length, 0);
@@ -471,6 +495,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await until(async () => !(await (await api.get('/api/knowledge/vaults')).json()).vaults
           .some(({ id }: { id: string }) => id === 'synthetic-wiki'), 5000);
         await ready(`document.querySelector('${preview}')?.textContent.includes('重新啟用')`);
+        mapping.seen('feature-review-actions');
         await closePreview();
         await browser.evaluate("document.querySelector('#open-knowledge').click(); document.querySelector('#knowledge-tab-build').click()");
         const bi = (label: string) => browser.evaluate(
@@ -489,6 +514,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await bi('載入來源至草稿');
         await bi('新增卡片');
         await selectors('#ingest-review', ['fieldset select', 'fieldset input', 'fieldset textarea', 'fieldset button']);
+        mapping.seen('feature-build-card');
         await browser.evaluate(`{
           const card = [...document.querySelectorAll('#ingest-review fieldset')].at(-1);
           const [title, setting] = card.querySelectorAll('input');
@@ -522,6 +548,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await bi('產生模型提案');
         await ready(`document.querySelector('${preview} h2')?.textContent === '模型提案' &&
           document.querySelector('${previewBody} blockquote')?.textContent.includes('7.2 mm')`);
+        mapping.seen('feature-build-submit');
         await featureText(preview);
         await closePreview();
 
@@ -554,9 +581,13 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await labels('#jobs-content', ['schedule-active', 'schedule-paused', 'schedule-draft', '編輯', '核准', '拒絕', '暫停', '恢復', '移除', '立即執行']);
         await selectors('#jobs-content', ['[data-feature-focus="job-manual-fixture"]',
           '[data-feature-focus="job-more-manual-fixture"]:is(button)']);
+        await mouse('[data-feature-focus="job-manual-fixture"]');
+        await mapping.check('feature-jobs-work', preview, { selectors: ['details p', '.preview-body > p'] });
+        await closePreview();
         await mouse('[data-feature-focus="schedule-schedule-active"]');
         await ready(`${panelIsOpen} && document.querySelector('${preview} h2')?.textContent === 'schedule-active'`);
         assert.equal(await browser.evaluate(`document.querySelector('${preview}').closest('#chat-files')?.id`), 'chat-files');
+        mapping.seen('feature-jobs-schedule');
         await clickLabel(preview, '執行紀錄');
         await ready(`document.querySelector('${preview} h2')?.textContent === '執行紀錄 · schedule-active'`);
         await key('Escape', 27);
@@ -564,24 +595,29 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await clickLabel('#jobs-content', '執行紀錄');
         await ready(`document.querySelector('${previewBody}').textContent.includes('schedule-paused')`);
         await featureText(preview);
+        await mapping.check('feature-jobs-history', preview, { selectors: ['li', 'details p'] });
         await closePreview();
         await clickLabel('#jobs-content', '新增排程');
         await selectors(preview, ['input[type=time]', 'input:not([type])', 'details textarea']);
         await labels(preview, ['儲存待核准排程', '立即送出工作']);
+        mapping.seen('feature-jobs-editor');
         await closePreview();
         await browser.evaluate("document.querySelector('#jobs-content .knowledge-pager details').open = true");
         await clickLabel('#jobs-content', '通知紀錄');
         await labels(preview, ['需核對的通知', '手動重送']);
+        await mapping.check('feature-jobs-delivery', preview, { selectors: ['summary', 'details p'], labels: ['手動重送'] });
         await featureText(preview);
         await closePreview();
         await clickLabel('#jobs-content', 'Telegram 收件');
         await clickLabel(preview, '收件 1 · 需要補件');
         await selectors(preview, ['a[href="/api/jobs/source/1"]', 'textarea']);
         await labels(preview, ['下載來源', '送審']);
+        await mapping.check('feature-jobs-source', preview, { selectors: ['details p', 'textarea', 'a[download]'] });
         await closePreview();
         await browser.evaluate("document.querySelector('#open-review').click()");
         await ready("document.querySelector('#review-import-jobs').textContent.includes('已送審')");
         await labels('#review-import-jobs', ['立即執行']);
+        await mapping.check('feature-review-list', '#review-view', { selectors: ['#review-bi-pending', '#review-wiki-pending', '#review-bi-history', '#review-wiki-history', '#review-import-jobs details'] });
         await featureText('#review-view');
 
         if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
@@ -693,6 +729,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           document.querySelector('#knowledge-rebuild').click();
         }`);
         await ready("document.querySelector('#knowledge-rebuild-status').textContent.includes('已重建')");
+        mapping.seen('feature-knowledge-index');
         await browser.evaluate(`{
           const vault = document.querySelector('#vault');
           vault.value = 'synthetic-large';
@@ -715,6 +752,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#quality-editor').hidden"), true);
         await browser.evaluate("document.querySelector('#knowledge-demo-remove').click()");
         await ready("!document.querySelector('#vault option[value=oep-synthetic-demo]')");
+        mapping.seen('feature-knowledge-sample');
+        mapping.finish();
 
         assert.equal((await api.post('/api/settings/knowledge', { atlasUrl: 'http://atlas.example.invalid', toolbox: true })).status, 400);
         await browser.evaluate(`{

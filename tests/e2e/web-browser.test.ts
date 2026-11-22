@@ -13,6 +13,7 @@ import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
 import { assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
+import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -54,6 +55,35 @@ const settingsPages = [
   ['runtime', '執行環境', ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent', '#runtime-fingerprints dd:nth-of-type(4)']],
   ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
 ] as const;
+const settingsRows: Record<string, Record<string, string[]>> = {
+  assistant: {
+    assistant: ['#assistant-name', '#assistant-introduction', '#assistant-instructions', '#save-assistant', '#settings-status'],
+    'assistant-advanced': ['details #assistant-delegation:disabled', 'details small'],
+  },
+  appearance: {
+    'appearance-theme': ['#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
+    'appearance-avatar': ['#avatar-file', '#avatar-reset', '#save-appearance', '#appearance-status'],
+  },
+  model: {
+    'model-controls': ['#default-alias option', '#save-model', '#recheck-model', '#model-settings-status'],
+    'model-status': ['#model-credentials', '#model-health li'],
+    'model-advanced': ['details summary', 'details p'],
+  },
+  limits: { limits: ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status'] },
+  projects: { projects: ['#folder-project option', '#project-working-root', '#project-folder-list'] },
+  integrations: {
+    integration: ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status'],
+    'integration-advanced': ['details summary', 'details li:nth-of-type(4)'],
+    'integration-status': ['#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', 'details #telegram-configured'],
+  },
+  input: { input: ['#enable-microphone', '#microphone-settings-status'] },
+  mcp: { 'mcp-knowledge': ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings'] },
+  runtime: {
+    runtime: ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent'],
+    'runtime-advanced': ['details #runtime-fingerprints dd:nth-of-type(4)'],
+  },
+  about: { about: ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a'] },
+};
 const syntheticKey = randomUUID();
 const syntheticURL = 'http://example.invalid/v1';
 const synthetic: typeof fetch = async (_target, init) => {
@@ -654,6 +684,7 @@ try {
             .map(entry => entry.dataset.section ?? entry.value)`), [section, section]);
         };
         await assertUiTextInThemes(page, '#settings-view');
+        const mapping = mappingChecks(page, 'settings');
         for (const [section, title, controls] of settingsPages) {
           await click(`#settings-nav [data-section="${section}"]`);
           await expectSetting(section, title);
@@ -670,6 +701,9 @@ try {
           const disclosures = `#settings-${section} > details.settings-advanced`;
           await page.evaluate(`document.querySelectorAll('${disclosures}').forEach(details => { details.open = true; })`);
           await assertUiTextInThemes(page, `#settings-${section}`);
+          for (const [row, selectors] of Object.entries(settingsRows[section])) {
+            await mapping.check('settings-' + row, `#settings-${section}`, { selectors });
+          }
           await page.evaluate(`document.querySelectorAll('${disclosures}').forEach(details => { details.open = false; })`);
           for (const control of controls) {
             assert.equal(await page.evaluate(`Boolean(document.querySelector(${JSON.stringify(`#settings-${section} ${control}`)}))`), true, control);
@@ -692,6 +726,9 @@ try {
         await click('#project-folder-form button[type=submit]');
         await page.ready("document.querySelector('#project-folder-status').textContent === '已加入唯讀資料夾。'");
         await page.ready("document.querySelector('#project-folder-list li button')?.textContent === '移除'");
+        await mapping.check('settings-project-folders', '#settings-projects', {
+          selectors: ['#project-folder', '#project-folder-status'], labels: ['加入唯讀資料夾', '移除'],
+        });
         await reload();
         await page.ready("document.querySelector('#connection').textContent === '已連線'");
         await click('#open-settings');
@@ -701,6 +738,7 @@ try {
         await click('#project-folder-list li button');
         await page.ready("document.querySelector('#project-folder-status').textContent === '已移除唯讀資料夾。'");
         await page.ready("!document.querySelector('#project-read-folder option')");
+        mapping.finish();
 
         await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 960, deviceScaleFactor: 1, mobile: false });
         assert.deepEqual(await page.evaluate(`[...document.querySelector('#settings-section').options]
