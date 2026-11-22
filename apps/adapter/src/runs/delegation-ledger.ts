@@ -3,6 +3,7 @@ import type { Destination } from '../channels/transport.ts';
 import type { FileIdentity } from '../../../../packages/contracts/src/run.ts';
 import type { DelegationInput } from '../opencode/delegation-tools.ts';
 import type { WorkItems } from './work-items.ts';
+import type { WorkItem, WorkLease, WorkOutcome } from './work-items.ts';
 
 export type Classification = 'public' | 'unclassified' | 'confidential';
 export type DelegationParent = { store: 'web' | 'channel'; sessionId: string; runId: string; channel?: Destination };
@@ -135,7 +136,112 @@ export class DelegationLedger {
     const events = (this.db.prepare(`SELECT sequence,at,state,reason_code AS reasonCode,metrics FROM delegation_events
       WHERE delegation_id=? ORDER BY sequence`).all(id) as EventRow[]).map(({ metrics, ...event }) =>
       ({ ...event, ...(typeof metrics === 'string' && { metrics: JSON.parse(metrics) as Metrics }) }));
-    return { receipt: this.receipt(row), events, childSessionId: row.childSessionId, childRunId: row.childRunId };
+    return { receipt: { delegationId: row.id, status: row.status, noticeCode: 'DELEGATION_ACCEPTED' },
+      result: row.result && JSON.parse(row.result) as DelegationResult, events,
+      childSessionId: row.childSessionId, childRunId: row.childRunId };
+  }
+
+  claim(item: WorkLease) {
+    this.atomic(() => {
+      const { sourceKey: id } = item;
+      if (!this.db.prepare("UPDATE delegations SET status='running' WHERE id=? AND work_id=? AND status='queued'")
+        .run(id, item.id).changes) throw new DelegationError('DELEGATION_LEASE_UNAVAILABLE');
+      this.event(id, 'running', 'claimed');
+    });
+  }
+
+  bindChild(id: string, sessionId: string, runId?: string) {
+    if (!this.db.prepare(`UPDATE delegations SET child_session_id=?,child_run_id=? WHERE id=? AND status='running'
+      AND (child_session_id IS NULL OR child_session_id=?) AND child_run_id IS NULL
+      AND EXISTS (SELECT 1 FROM session_ownership o WHERE o.session_id=? AND o.origin='delegation' AND o.agent_id=target_agent_id)
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM agent_work_items w WHERE w.id=work_id AND w.run_id=? AND w.run_store='web'))`)
+      .run(sessionId, runId ?? null, id, sessionId, sessionId, runId ?? null, runId ?? null).changes) {
+      throw new DelegationError('DELEGATION_CHILD_UNAVAILABLE');
+    }
+  }
+
+  prepareExports(id: string, files: FileManifest[]) {
+    this.atomic(() => this.addFiles(id, 'outbound', files));
+  }
+
+  classifyImport(workspaceId: string, id: string, hash: string, classification: Classification) {
+    this.db.prepare(`INSERT INTO file_classifications VALUES ('attachment',?,?,?,?,?)`)
+      .run(id, workspaceId, hash, classification, Date.now());
+  }
+
+  workspaceClassification(workspaceId: string) {
+    return this.db.prepare('SELECT classification FROM agent_workspaces WHERE id=?').get(workspaceId)?.classification as Classification;
+  }
+
+  meter(id: string, kind: 'requests' | 'tools', cap: number) {
+    return this.atomic(() => {
+      const used = kind === 'requests' ? 'used_requests' : 'used_tools';
+      const reserved = kind === 'requests' ? 'reserved_requests' : 'reserved_tools';
+      const result = this.db.prepare(`UPDATE delegations SET ${used}=${used}+1
+        WHERE id=? AND status='running' AND ${used}<MIN(${reserved},?) RETURNING ${used} AS count`).get(id, cap);
+      if (!result) return false;
+      this.event(id, 'running', kind, { [kind]: Number(result.count) });
+      return true;
+    });
+  }
+
+  elapsed(id: string) {
+    const start = this.db.prepare("SELECT at FROM delegation_events WHERE delegation_id=? AND state='running' AND reason_code='claimed'")
+      .get(id)?.at;
+    return typeof start === 'number' ? Math.max(0, Date.now() - start) : 0;
+  }
+
+  finish(item: WorkLease, state: WorkOutcome, reason?: string, landed?: Omit<DelegationResult, 'delegationId'>) {
+    return this.atomic(() => {
+      if (!this.work.finish(item, state, reason)) return false;
+      if (landed && this.db.prepare("SELECT 1 FROM delegation_events WHERE delegation_id=? AND reason_code='cancellation-requested'")
+        .get(item.sourceKey)) this.event(item.sourceKey, 'running', 'completed-during-cancellation');
+      this.settle(item.sourceKey, landed ?? { status: state, reasonCode: reason });
+      return true;
+    });
+  }
+
+  resolve(item: WorkLease, state: 'succeeded' | 'failed' | 'cancelled', landed?: Omit<DelegationResult, 'delegationId'>) {
+    return this.atomic(() => {
+      if (!this.work.resolve(item.id, item.leaseId, state)) return false;
+      this.settle(item.sourceKey, landed ?? { status: state, reasonCode: 'owner-resolved' }, true);
+      return true;
+    });
+  }
+
+  expire(item: WorkItem) {
+    this.settle(item.sourceKey, { status: 'timed_out', reasonCode: 'queue-expired' });
+  }
+
+  cancel(id: string) {
+    return this.atomic(() => {
+      const row = this.get(id);
+      if (!row) return;
+      if (row.status === 'queued' && this.work.cancel(row.workId)) {
+        this.settle(id, { status: 'cancelled', reasonCode: 'cancelled-before-dispatch' });
+      } else {
+        const reason = row.status === 'running' || row.status === 'queued' ? 'cancellation-requested' : 'outcome-already-recorded';
+        this.event(id, row.status, reason);
+      }
+      return this.get(id);
+    });
+  }
+
+  private settle(id: string, result: Omit<DelegationResult, 'delegationId'>, resolving = false) {
+    const row = this.get(id);
+    if (!row || !(resolving ? row.status === 'indeterminate' : row.status === 'queued' || row.status === 'running')) {
+      throw new DelegationError('DELEGATION_LEASE_UNAVAILABLE');
+    }
+    const elapsedMs = resolving ? row.elapsedMs : Math.min(row.reservedMs, this.elapsed(id));
+    const { status, reasonCode } = result;
+    const response = { ...result, delegationId: id };
+    this.db.prepare('UPDATE delegations SET status=?,elapsed_ms=?,finished_at=?,result=? WHERE id=?')
+      .run(status, elapsedMs, Date.now(), JSON.stringify(response), id);
+    this.event(id, status, reasonCode, { requests: row.usedRequests, tools: row.usedTools, elapsedMs });
+    const kind = resolving ? 'correction' : 'completion';
+    this.db.prepare("INSERT INTO delegation_notices (delegation_id,kind,state,effect_key,created_at) VALUES (?,?,'pending',?,?)")
+      .run(id, kind, `delegation:${id}:${kind}`, Date.now());
+    this.event(id, status, 'notice-pending');
   }
 
   event(id: string, state: string, reason?: string, metrics?: Metrics) {
@@ -168,9 +274,9 @@ export class DelegationLedger {
   checkBudget(parent: DelegationParent) {
     const budget = this.budgets();
     const totals = this.db.prepare(`SELECT COUNT(*) AS count,
-      COALESCE(SUM(CASE WHEN status IN ('queued','running','indeterminate') THEN reserved_requests ELSE used_requests END),0) AS requests,
-      COALESCE(SUM(CASE WHEN status IN ('queued','running','indeterminate') THEN reserved_tools ELSE used_tools END),0) AS tools,
-      COALESCE(SUM(CASE WHEN status IN ('queued','running','indeterminate') THEN reserved_ms ELSE elapsed_ms END),0) AS ms
+      COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN reserved_requests ELSE used_requests END),0) AS requests,
+      COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN reserved_tools ELSE used_tools END),0) AS tools,
+      COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN reserved_ms ELSE elapsed_ms END),0) AS ms
       FROM delegations WHERE parent_store=? AND parent_run_id=?`).get(parent.store, parent.runId)!;
     if (Number(totals.count) >= budget.delegationsPerMessage ||
         Number(totals.requests) + budget.modelRequestsPerDelegation > budget.modelRequestsPerMessage ||

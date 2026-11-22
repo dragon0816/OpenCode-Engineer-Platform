@@ -19,11 +19,14 @@ type IntakeFile = { name: string; size?: number; read(limit: number, signal: Abo
 type ProposalStore = Pick<KnowledgeStore, 'reviewBase' | 'hasReview' | 'uploadReviewSource' | 'reviewSource' | 'stage' |
   'installReviewSchema' | 'enqueueBi' | 'runBi' | 'biCompleted'>;
 type ProposalServices = { store: ProposalStore; complete: NonNullable<Runtime['knowledge']>['propose'] };
+type DelegatedSource = { id: string; runId: string; workId: string; model: string; task: string;
+  files: { name: string; data: Buffer }[] };
 
 export function biProposalServices(knowledge: Runtime['knowledge'], model: () => string | undefined): ProposalServices | undefined {
   if (!knowledge) return;
   const store = knowledge.reviewStore;
-  return { complete: (prompt, input, signal) => knowledge.propose(prompt, input, signal, model()), store: {
+  return { complete: (prompt, input, signal, selected = model(), beforeRequest) =>
+    knowledge.propose(prompt, input, signal, selected, beforeRequest), store: {
     reviewBase: store.reviewBase.bind(store), hasReview: store.hasReview.bind(store),
     uploadReviewSource: store.uploadReviewSource.bind(store), reviewSource: store.reviewSource.bind(store),
     stage: store.stage.bind(store), installReviewSchema: store.installReviewSchema.bind(store),
@@ -129,6 +132,49 @@ export class BiService {
     return this.sourceState(id, origin);
   }
 
+  async delegate(input: DelegatedSource, signal: AbortSignal, beforeRequest: () => void) {
+    const db = this.storage.db;
+    if (!this.proposal) throw new Error('BI proposal unavailable');
+    const file = input.files.length === 1 ? input.files[0] : undefined;
+    const link = !input.files.length && /^https:\/\/\S+$/i.test(input.task.trim()) ? input.task.trim() : undefined;
+    let bytes = file?.data ?? null;
+    let ready = Boolean(file && textExtensions.has(extname(file.name).toLowerCase()));
+    if (link) {
+      try {
+        bytes = Buffer.from(await readApprovedLink(link, new Set(JSON.parse(this.config('origins') || '[]')), signal));
+        ready = true;
+      } catch { signal.throwIfAborted(); }
+    }
+    signal.throwIfAborted();
+    const id = this.storage.transaction(() => {
+      // Telegram source IDs use positive update IDs. Allocate delegation IDs separately in this DB.
+      const id = Number(db.prepare('SELECT MIN(0,COALESCE(MIN(id),0))-1 AS id FROM bi_sources').get()?.id);
+      db.prepare('INSERT INTO bi_sources(id,ref,state,reason,bytes,domain,target) VALUES (?,?,?,?,?,?,?)')
+        .run(id, file?.name ?? link ?? '交辦來源', ready ? 'ready' : 'blocked', ready ? '' : '請提供可審核的 UTF-8 文字。',
+          bytes, this.config('domain') || 'delegation', this.config('target'));
+      db.prepare("INSERT INTO bi_source_ownership VALUES (?,?, 'bi','delegation',NULL,NULL,NULL,?,?,NULL)")
+        .run(id, 'delegation-' + input.runId, input.id, input.workId);
+      return id;
+    });
+    if (ready) await this.stageSource(id, signal, input.workId, (prompt, body, stop) =>
+      this.proposal!.complete(prompt, body, stop, input.model, beforeRequest));
+    return this.delegationReceipt(input.id, input.runId);
+  }
+
+  delegationReceipt(delegationId: string, runId: string) {
+    const id = this.storage.db.prepare(`SELECT source_id AS id FROM bi_source_ownership
+      WHERE origin='delegation' AND agent_id='bi' AND delegation_id=? AND source_key=?`).get(delegationId, 'delegation-' + runId)?.id;
+    if (typeof id !== 'number') return;
+    const source = this.source(id)!;
+    const job = String(source.source_key);
+    const vault = String(source.target || `intake-${source.domain}-${id}`);
+    if (this.proposal?.store.hasReview(job, vault, this.provenance(source))) {
+      this.received(id, job);
+      return { reviewId: job, sourceId: id };
+    }
+    if (source.state === 'blocked') return { sourceId: id };
+  }
+
   validateSupplement(id: number, text: unknown) {
     if (typeof text !== 'string' || !text.trim() || text.length > 100_000 || !Number.isSafeInteger(id)) {
       throw new Error('Invalid supplement');
@@ -168,6 +214,10 @@ export class BiService {
   }
 
   private provenance(source: NonNullable<ReturnType<BiService['source']>>): BiProvenance {
+    if (source.origin === 'delegation') {
+      const sourceKey = String(source.source_key);
+      return { origin: 'owner', sourceKey, runId: sourceKey.slice('delegation-'.length) };
+    }
     return source.origin === 'telegram' ? { origin: 'telegram', sourceKey: String(source.source_key), destination: {
       accountId: String(source.account_id), conversationKey: String(source.conversation_key),
       bindingRevision: Number(source.binding_revision), agentId: 'bi',
@@ -198,11 +248,11 @@ export class BiService {
       WHERE id=? AND state='ready' AND EXISTS (SELECT 1 FROM bi_source_ownership WHERE source_id=? AND work_id=?)`).run(id, id, workId);
   }
 
-  private async stageSource(id: number, signal: AbortSignal, workId?: string) {
+  private async stageSource(id: number, signal: AbortSignal, workId?: string, complete = this.proposal?.complete) {
     const db = this.storage.db;
     const source = this.source(id);
     const proposal = this.proposal;
-    if (source?.state !== 'ready' || !proposal) return;
+    if (source?.state !== 'ready' || !proposal || !complete) return;
     const { store } = proposal;
     const job = String(source.source_key);
     const vault = `intake-${source.domain}-${id}`;
@@ -219,7 +269,7 @@ export class BiService {
           const hash = createHash('sha256').update(bytes).digest('hex');
           store.uploadReviewSource(hash, bytes);
           const result = await proposeReview(store, { id: job, vault: target, parent: base.parent,
-            schema: base.schema.sha256, sha256: hash, ref: source.ref }, proposal.complete, signal, provenance);
+            schema: base.schema.sha256, sha256: hash, ref: source.ref }, complete, signal, provenance);
           if ('rejected' in result) {
             db.prepare("UPDATE bi_sources SET state='blocked',reason=? WHERE id=?")
               .run('提案缺少可核對的原文引文，請補件後再試。', id);

@@ -97,9 +97,18 @@ export class WorkItems {
       WHERE source='schedule' AND schedule_ref=? AND lease_id IS NOT NULL LIMIT 1`).get(scheduleRef));
   }
 
-  expire(now = Date.now()) {
-    return (this.db.prepare(`UPDATE agent_work_items SET state='timed_out',reason_code='queue-expired'
-      WHERE state='queued' AND expires_at<=? RETURNING ${columns}`).all(now) as WorkRow[]).map(decode);
+  expire(now = Date.now(), expired?: (item: WorkItem) => void) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const items = (this.db.prepare(`UPDATE agent_work_items SET state='timed_out',reason_code='queue-expired'
+        WHERE state='queued' AND expires_at<=? RETURNING ${columns}`).all(now) as WorkRow[]).map(decode);
+      for (const item of items) expired?.(item);
+      this.db.exec('COMMIT');
+      return items;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   claim(available: (item: WorkItem) => boolean, now = Date.now()) {

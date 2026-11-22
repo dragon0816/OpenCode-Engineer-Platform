@@ -165,6 +165,7 @@ export async function startGateway(options: GatewayConnection & {
           if (filtered) body.messages = filtered;
           const definitions = scope && allowedToolDefinitions(body.tools, scope);
           if (definitions) body.tools = definitions.tools;
+          policy?.beforeRequest?.();
           const upstream = await (options.fetch ?? fetch)(target, {
             method: 'POST', redirect: 'manual', signal,
             headers: { 'content-type': 'application/json', authorization: `Bearer ${options.key}` },

@@ -28,7 +28,7 @@ export type AgentSettings = {
   name?: string; introduction?: string; instructions?: string; defaultModel?: string | null; replyLocale?: 'zh-TW' | 'en';
   avatar?: { bytes: Buffer; mime: string } | null; knowledgeReads?: string[]; mcpGrants?: string[];
 };
-type WebOwner = { agentId: string; workspaceID: string };
+type WebOwner = { agentId: string; workspaceID: string; origin?: 'delegation' };
 type ModelCatalog = { ids: string[]; discoveredAt: number };
 
 const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
@@ -652,8 +652,8 @@ export class WebStore extends Ledger {
           channel.agentId, channel.workspaceID, channel.accountId, channel.conversationKey, channel.bindingRevision);
       } else if (owner) {
         if (!this.executionProfile(owner.agentId, owner.workspaceID)) throw new HttpError(409, 'agent-inactive');
-        this.db.prepare("INSERT INTO session_ownership VALUES (?,?,?,'web',NULL,NULL,NULL)")
-          .run(session.id, owner.agentId, owner.workspaceID);
+        this.db.prepare('INSERT INTO session_ownership VALUES (?,?,?,?,NULL,NULL,NULL)')
+          .run(session.id, owner.agentId, owner.workspaceID, owner.origin ?? 'web');
       } else insertLegacySessionOwner(this.db, session.id, project, this.telegram || channel !== undefined, channel);
     });
   }
@@ -702,12 +702,14 @@ export class WebStore extends Ledger {
     return Boolean(this.db.prepare('SELECT 1 FROM web_turns WHERE run_id = ?').get(id));
   }
 
-  saveTurn(sessionID: string, run: RunRecord, hash: string, reply?: { id: string; text: string }, work?: WorkRequest) {
+  saveTurn(sessionID: string, run: RunRecord, hash: string, reply?: { id: string; text: string }, work?: WorkRequest,
+    delegationId?: string) {
     this.transaction(() => {
       this.insert(run);
       this.db.prepare('INSERT INTO web_turns VALUES (?, ?, ?)').run(sessionID, run.id, hash);
       if (reply) this.db.prepare('INSERT INTO web_turn_replies VALUES (?, ?, ?)').run(run.id, reply.id, reply.text);
       if (work) this.workItems.enqueue(work, run.createdAt);
+      if (delegationId) this.delegations.bindChild(delegationId, sessionID, run.id);
     });
   }
 

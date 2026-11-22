@@ -4,13 +4,18 @@ export class ModelSeat {
   private released?: PromiseWithResolvers<void>;
 
   run<T>(work: () => Promise<T>, signal?: AbortSignal) {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    const waiting = signal && Promise.withResolvers<never>();
+    const abort = () => waiting?.reject(signal?.reason);
+    signal?.addEventListener('abort', abort, { once: true });
     const result = this.tail.then(async () => {
       while (this.released) await this.wait(this.released.promise, signal);
       signal?.throwIfAborted();
+      signal?.removeEventListener('abort', abort);
       return work();
     });
     this.tail = result.then(() => {}, () => {});
-    return result;
+    return waiting ? Promise.race([result, waiting.promise]).finally(() => signal?.removeEventListener('abort', abort)) : result;
   }
 
   hold(id: string) {

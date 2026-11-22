@@ -7,6 +7,7 @@ import { atRepo } from '../../../launcher/src/paths.ts';
 import { HttpError } from '../http/errors.ts';
 import type { Attachment, WebStore } from './web-store.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
+import { writeWorkspaceFile } from './workspace-write.ts';
 
 export const MiB = 1024 * 1024;
 export const maxUpload = 20 * MiB;
@@ -95,6 +96,16 @@ export class AttachmentService {
   private readonly store: WebStore;
 
   constructor(store: WebStore) { this.store = store; }
+
+  importVerified(sessionID: string, workspace: string, record: Pick<Attachment, 'name' | 'mime'>, data: Buffer, projection?: Buffer) {
+    const id = randomUUID();
+    const root = scopedPath(workspace, 'attachments');
+    const folder = { root, inode: String(checkDirectory(root).ino) };
+    const original = writeWorkspaceFile(folder, `${id}.source`, data, maxUpload, 'copy');
+    const converted = projection && writeWorkspaceFile(folder, `${id}.csv`, projection, maxProjection, 'copy');
+    this.store.saveAttachment(sessionID, { id, ...record, original, projection: converted });
+    return id;
+  }
 
   async upload(sessionID: string, workspace: string, name: string, mime: string, bytes: number, body: () => Promise<Buffer>) {
     if (this.pending >= 3) throw new HttpError(429, 'upload-busy');

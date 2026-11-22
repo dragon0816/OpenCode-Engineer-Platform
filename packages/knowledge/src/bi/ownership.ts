@@ -7,6 +7,7 @@ export type BiDeliveryDestination = { accountId: string; conversationKey: string
 export type BiProvenance = {
   origin: 'telegram' | 'owner' | 'schedule' | 'legacy';
   sourceKey?: string;
+  runId?: string;
   destination?: BiDeliveryDestination;
 };
 
@@ -63,7 +64,7 @@ export function recoverBiTelegramSource(path: string, sourceKey: string) {
 }
 
 export const reviewProvenanceRow = (id: string, provenance: BiProvenance): SQLInputValue[] =>
-  [id, 'bi', provenance.origin, provenance.sourceKey ?? null, null,
+  [id, 'bi', provenance.origin, provenance.sourceKey ?? null, provenance.runId ?? null,
     provenance.destination ? JSON.stringify(provenance.destination) : null];
 
 function legacyKind(body: unknown) {

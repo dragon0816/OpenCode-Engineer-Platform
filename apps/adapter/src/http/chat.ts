@@ -31,8 +31,16 @@ import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Dispatcher } from '../runs/dispatcher.ts';
 import type { ResolvedOutcome, WorkItem, WorkLease, WorkOutcome, WorkRequest } from '../runs/work-items.ts';
 import type { DelegationService } from '../runs/delegation.ts';
+import type { OpenFile } from '../runs/workspace.ts';
 
 export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string };
+type DelegatedTurn = {
+  id: string; toolCap: number;
+  beforeRequest: () => void; beforeTool: () => void;
+  result: (files: (OpenFile & { name: string })[]) => void;
+};
+type TurnLease = { id: string; start: () => void; signal: AbortSignal; delegation?: DelegatedTurn };
+export type DelegatedTurnLease = TurnLease & { delegation: DelegatedTurn };
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
 
 type ToolCard = {
@@ -176,9 +184,9 @@ export class ChatService {
     return !disabled && this.ledger.knowledgeSettings().toolbox ? this.ledger.executionKnowledgeReads(agentID, workspaceID) : [];
   }
 
-  private executionScope(session: WebSession, channel?: Destination, turnId?: string) {
+  private executionScope(session: WebSession, channel?: Destination, turnId?: string, delegated = false) {
     const owner = this.store.sessionOwner(session);
-    const origin = channel ? 'channel' : 'web';
+    const origin = delegated ? 'delegation' : channel ? 'channel' : 'web';
     if (!owner || owner.origin !== origin || channel && (owner.channelAccount !== channel.accountId ||
         owner.agentID !== channel.agentId || owner.bindingRevision !== channel.bindingRevision ||
         owner.conversationKey !== channel.conversationKey)) {
@@ -206,12 +214,12 @@ export class ChatService {
   }
 
   async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, channel?: Destination,
-    owner?: { agentId: string; workspaceID: string }) {
+    owner?: { agentId: string; workspaceID: string; origin?: 'delegation' }) {
     if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'invalid-assistant');
     const agentID = channel?.agentId ?? owner?.agentId ?? 'main';
     const workspaceID = channel ? this.ledger.defaultWorkspace(agentID) : owner?.workspaceID ?? legacyWorkspace(project);
     if (!workspaceID) throw new HttpError(409, 'session-unavailable');
-    const origin = channel ? 'channel' : 'web';
+    const origin = channel ? 'channel' : owner?.origin ?? 'web';
     const profile = this.profile(agentID, workspaceID, project);
     const agentAlias = profile.defaultModel && this.runtime.aliases.includes(profile.defaultModel) ? profile.defaultModel : undefined;
     const alias = requestedAlias ?? agentAlias ?? this.runtime.alias;
@@ -324,14 +332,14 @@ export class ChatService {
   }
 
   async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }, channel?: Destination,
-    lease?: { id: string; start: () => void; signal: AbortSignal }) {
+    lease?: TurnLease) {
     if (this.switching.has(session.id)) throw new HttpError(409, 'model-changing');
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
       if (existing.hash !== hash) throw new HttpError(409, 'message-id-in-use');
       if (lease && existing.run.state === 'accepted') {
-        await this.runTurn(session, existing.run, input, lease.id, lease.start, lease.signal, channel);
+        await this.runTurn(session, existing.run, input, lease.id, lease.start, lease.signal, channel, lease.delegation);
         return publicRun(this.store.get(input.id));
       }
       return publicRun(existing.run);
@@ -346,45 +354,50 @@ export class ChatService {
     const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
     const accept = () => {
       if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
-      return this.acceptTurn(session, input, hash, reply, channel, Boolean(lease));
+      return this.acceptTurn(session, input, hash, reply, channel, lease);
     };
     const run = modelFallback ? await this.applyModel(session, modelFallback, accept) : accept();
     if (lease) {
-      await this.runTurn(session, run, input, lease.id, lease.start, lease.signal, channel);
+      await this.runTurn(session, run, input, lease.id, lease.start, lease.signal, channel, lease.delegation);
       return { ...publicRun(this.store.get(run.id)), ...(modelFallback && { modelFallback }) };
     }
     return { ...publicRun(run), ...(modelFallback && { modelFallback }) };
   }
 
   private acceptTurn(session: WebSession, input: Turn, hash: string, reply: { id: string; text: string } | undefined,
-    channel: Destination | undefined, leased: boolean) {
-    const scope = this.executionScope(session, channel);
+    channel: Destination | undefined, lease?: TurnLease) {
+    const scope = this.executionScope(session, channel, undefined, Boolean(lease?.delegation));
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
-    const work: WorkRequest | undefined = leased ? undefined : {
+    const work: WorkRequest | undefined = lease ? undefined : {
       agentId: scope.agentID, source: 'direct', sourceKey: this.store.runStore + ':' + run.id, effectClass: 'write',
       run: { store: this.store.runStore, id: run.id },
       payload: { kind: this.workKind, serialKey: this.store.runStore + ':' + session.id, sessionId: session.id, input, channel },
     };
     if (work && this.store.runStore === 'channel') this.dispatcher.items.enqueue(work, run.createdAt);
-    this.store.saveTurn(session.id, run, hash, reply, this.store.runStore === 'web' ? work : undefined);
+    this.store.saveTurn(session.id, run, hash, reply, this.store.runStore === 'web' ? work : undefined, lease?.delegation?.id);
     if (this.standalone) void this.dispatcher.start();
     this.dispatcher.kick();
     this.notify(session.id);
     return run;
   }
 
+  acceptDelegatedDomainRun(session: WebSession, input: Turn, context: DelegatedTurnLease) {
+    return this.acceptTurn(session, input, createHash('sha256').update(JSON.stringify(input)).digest('hex'), undefined, undefined, context);
+  }
+
   private async runTurn(session: WebSession, run: RunRecord, input: Turn, workId: string, start: () => void,
-    signal: AbortSignal, channel?: Destination): Promise<WorkOutcome> {
+    signal: AbortSignal, channel?: Destination, delegation?: DelegatedTurn): Promise<WorkOutcome> {
     if (run.state === 'verified') return 'succeeded';
     if (run.state === 'failed' || run.state === 'cancelled' || run.state === 'indeterminate') return run.state;
-    const limits = this.store.turnLimits();
+    const savedLimits = this.store.turnLimits();
+    const limits = delegation ? { ...savedLimits, toolCalls: Math.min(savedLimits.toolCalls, delegation.toolCap) } : savedLimits;
     const stop = new AbortController();
     const waiting = AbortSignal.any([this.stop.signal, signal, stop.signal]);
     let timedOut = false;
     const done = this.modelSeat.run(async () => {
-      timedOut = await this.execute(session, run, input, limits, waiting, start, channel);
+      timedOut = await this.execute(session, run, input, limits, waiting, start, channel, delegation);
       if (this.store.get(run.id).state === 'indeterminate') await this.inspectRuntime(workId, run);
     }, waiting);
     this.executing.set(run.id, { stop, done });
@@ -443,7 +456,7 @@ export class ChatService {
     if (run.state !== 'indeterminate') this.store.change(run.id, 'indeterminate', {
       errors: ['OEP restarted before this turn could be verified. The message was not resent'],
     });
-    if (item.state === 'running' && evidence?.succeeded && run.mode === 'web-chat') {
+    if (item.state === 'running' && item.source !== 'delegation' && evidence?.succeeded && run.mode === 'web-chat') {
       this.resolveTurn(item, 'succeeded');
       return { state: 'succeeded' } as const;
     }
@@ -489,7 +502,7 @@ export class ChatService {
   }
 
   private async execute(session: WebSession, run: RunRecord, input: Turn, limits: TurnLimits, cancelled: AbortSignal,
-    start: () => void, channel?: Destination) {
+    start: () => void, channel?: Destination, delegation?: DelegatedTurn) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
@@ -516,7 +529,7 @@ export class ChatService {
     const update = (state: RunState) => { this.store.change(run.id, state); this.notify(session.id); };
     try {
       this.stop.signal.throwIfAborted();
-      const readScope = () => this.executionScope(session, channel, run.id);
+      const readScope = () => this.executionScope(session, channel, run.id, Boolean(delegation));
       const upstream = await client.session.get({ sessionID }, call());
       if (upstream.id !== sessionID) throw new Error('Session ID mismatch');
       validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
@@ -547,7 +560,7 @@ export class ChatService {
         '[{"name":"Example","rows":[["Label","Value"],["Sample",1]]}]',
         'Replace the example with the requested sheets. Check that each row and each sheet’s rows array are closed before writing.',
         'Use up to four sheets, 20 rows per sheet and 12 columns per row. Then reply with a brief summary.',
-      ].join(' ') : '';
+      ].join(' ') : delegation ? `Use ${writeFileTool} for files intended for the delegation result. Up to four tool-created UTF-8 files will be exported. Reply with a brief summary.` : '';
       const assistant = [
         scope.name && `助理名稱：${scope.name}`,
         scope.introduction && `自我介紹：${scope.introduction}`,
@@ -563,10 +576,11 @@ export class ChatService {
         if (name === knowledgeTool) {
           const query = parseAsk(args);
           if (!query) throw new Error('Invalid knowledge request');
-          return this.runtime.knowledge?.scopedAsk(query, toolSignal, liveScope, true);
+          return this.runtime.knowledge?.scopedAsk(query, toolSignal, liveScope, true, delegation?.beforeRequest);
         }
         if (name === writeFileTool) {
           if (input.workbook && args.name !== workbookInput) throw new Error('Workbook output name required');
+          if (delegation && files.size >= 4) throw new Error('Delegation export limit');
           return files.write(args.name as string, args.content as string);
         }
         if (name !== readFileTool) return this.delegations?.invoke(name, args, {
@@ -582,11 +596,12 @@ export class ChatService {
         }
         const { data, identity } = files.read(args.name as string);
         return readFileResult(args.name as string, data, identity.sha256, true);
-      });
+      }, delegation?.beforeTool);
       closeTickets = attempt?.close;
       const nonce = attempt?.nonce ?? randomBytes(32).toString('hex');
       const marker = turnMarker(run.id);
       this.runtime.setTurnBoundary({ marker, limits, signal,
+        beforeRequest: delegation?.beforeRequest,
         scope: { nonce, model: scope.model, permissions: scope.permissions, live: checkScope, issue: attempt?.issue,
           brokered: this.runtime.toolTickets?.brokered },
         addTools(count) {
@@ -612,11 +627,15 @@ export class ChatService {
       const replied = async () => {
         const { data } = await client.message.list({ sessionID, order: 'desc', limit: 40 }, call());
         const index = data.findIndex((message) => message.id === run.submissionID);
-        return index >= 0 && data.slice(0, index).some((message) => message.type === 'assistant' &&
-          message.content.some((part) => part.type === 'text' && part.text.trim()));
+        if (index < 0) return;
+        return data.slice(0, index).filter((message) => message.type === 'assistant')
+          .flatMap((message) => message.content.flatMap((part) => part.type === 'text' ? [part.text] : []))
+          .find((text) => text.trim());
       };
-      if (outcome !== 'succeeded' || !calls.some((call) => call.status === 200 && call.output !== 'empty') ||
-          !input.workbook && !await replied()) {
+      const verified = outcome === 'succeeded' && calls.some((call) => call.status === 200 && call.output !== 'empty');
+      const answer = verified && !input.workbook && await replied();
+      if (!verified ||
+          !input.workbook && !answer) {
         if (calls.some((call) => call.error === 'timeout')) error = 'The model gateway timed out. Try again when the service is available';
         else if (calls.length && calls.every((call) => call.output === 'empty')) error = 'The model returned an empty response. Try again';
         else error = 'The model request failed. Try again when the service is available';
@@ -625,6 +644,11 @@ export class ChatService {
         if (input.workbook) {
           update('background');
           result = await publishWorkbook(join(this.sessionRoot(session), 'artifacts'), files, run, signal);
+        }
+        if (delegation && answer) {
+          const summary = toolText(answer.trim(), this.runtime.redact).slice(0, 2000).toWellFormed();
+          delegation.result(files.outputs());
+          result = { delegationSummary: summary };
         }
         state = 'verified';
       }

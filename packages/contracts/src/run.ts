@@ -43,6 +43,7 @@ export type RunRecord = {
   finishedAt?: number;
   modelRequestRange?: { after: number; through: number };
   modelCalls?: ModelCall[];
+  delegationSummary?: string;
   retries: number;
   errors: string[];
 };

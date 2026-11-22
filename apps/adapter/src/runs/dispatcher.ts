@@ -10,6 +10,9 @@ type Handler = {
   canResolve?: (item: WorkLease, outcome: ResolvedOutcome) => Promise<boolean>;
   resolved?: (item: WorkLease, outcome: ResolvedOutcome) => void;
   expired?: (item: WorkItem) => void;
+  expireInTransaction?: (item: WorkItem) => void;
+  finish?: (item: WorkLease, result: Result) => boolean;
+  resolve?: (item: WorkLease, outcome: ResolvedOutcome) => boolean;
 };
 const pending = (item: WorkItem) => item.state === 'queued' || item.state === 'running';
 
@@ -93,7 +96,7 @@ export class Dispatcher {
     if (item?.state !== 'indeterminate' || item.leaseId !== leaseId) return false;
     const handler = this.handlers.get(item.payload.kind);
     if (handler?.canResolve && !await handler.canResolve({ ...item, leaseId }, outcome)) return false;
-    if (!this.items.resolve(id, leaseId, outcome)) return false;
+    if (!(handler?.resolve?.({ ...item, leaseId }, outcome) ?? this.items.resolve(id, leaseId, outcome))) return false;
     handler?.resolved?.({ ...item, leaseId }, outcome);
     this.notify(id);
     this.kick();
@@ -113,7 +116,7 @@ export class Dispatcher {
 
   private drain() {
     const now = this.clock();
-    for (const item of this.items.expire(now)) {
+    for (const item of this.items.expire(now, (item) => this.handlers.get(item.payload.kind)?.expireInTransaction?.(item))) {
       this.handlers.get(item.payload.kind)?.expired?.(item);
       this.notify(item.id);
     }
@@ -154,7 +157,12 @@ export class Dispatcher {
       }
       result = started ? { state: 'indeterminate', reason: 'outcome-unknown' } : { state: 'failed', reason: 'dispatch-failed' };
     }
-    if (this.items.finish(item, result.state, result.reason)) this.notify(item.id);
+    if (this.finish(item, result)) this.notify(item.id);
+  }
+
+  private finish(item: WorkLease, result: Result) {
+    const handler = this.handlers.get(item.payload.kind);
+    return handler?.finish?.(item, result) ?? this.items.finish(item, result.state, result.reason);
   }
 
   private async recover() {
@@ -166,9 +174,15 @@ export class Dispatcher {
       let result: Recovery | undefined;
       try { result = await this.handlers.get(item.payload.kind)?.recover?.(item); }
       catch { /* Inaccessible state cannot prove that the work is safe to replay. */ }
-      if (item.state !== 'running') continue;
+      if (item.state === 'indeterminate') {
+        if (result && result !== 'never-started' && (result.state === 'succeeded' || result.state === 'failed' || result.state === 'cancelled')) {
+          const handler = this.handlers.get(item.payload.kind);
+          if (handler?.resolve?.(item, result.state)) handler.resolved?.(item, result.state);
+        }
+        continue;
+      }
       if (result === 'never-started') this.items.requeue(item);
-      else this.items.finish(item, result?.state ?? 'indeterminate', result?.reason ?? 'restart-reconciliation');
+      else this.finish(item, result ?? { state: 'indeterminate', reason: 'restart-reconciliation' });
     }
   }
 
