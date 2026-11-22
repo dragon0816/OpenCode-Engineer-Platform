@@ -1,4 +1,4 @@
-import { modelLabel, request } from './api.js';
+import { modelLabel, request, sampleKnowledgeID } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const kinds = { answerable: '可回答', 'no-evidence': '缺乏證據', conflict: '證據衝突', injection: '含注入指令' };
@@ -45,8 +45,8 @@ export function bindKnowledgeQuality(openPassage, messages) {
     editor.hidden = !set || set.builtIn;
     find('quality-remove-set').disabled = !set || set.builtIn;
     find('quality-import').disabled = !set || set.builtIn;
-    find('quality-builtin-note').hidden = !set?.builtIn || selected?.id === 'oep-synthetic-demo';
-    run.disabled = !set?.questions.length || !selected?.modelEnabled || (set.builtIn && selected.id !== 'oep-synthetic-demo');
+    find('quality-builtin-note').hidden = !set?.builtIn || selected?.id === sampleKnowledgeID;
+    run.disabled = !set?.questions.length || !selected?.modelEnabled || (set.builtIn && selected.id !== sampleKnowledgeID);
     rows.replaceChildren();
     if (!set) return;
     for (const question of set.questions) {
@@ -158,7 +158,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
   };
   find('quality-import').onclick = () => {
     try { void save(JSON.parse(json.value)); }
-    catch { status.textContent = '請輸入有效的 JSON 題集。'; }
+    catch { status.textContent = '無法匯入題集。請在進階區檢查檔案格式。'; }
   };
 
   find('quality-find').onclick = async () => {

@@ -218,7 +218,7 @@ function toolCard(tool, previous) {
   const duration = Math.max(0, (tool.finishedAt ?? Date.now()) - tool.startedAt);
   const status = { running: '執行中', done: '完成', failed: '失敗', cancelled: '已停止' }[tool.status];
   card.dataset.status = tool.status;
-  card.firstElementChild.textContent = `工具${status} · ${(duration / 1000).toFixed(1)} 秒`;
+  card.firstElementChild.textContent = `進階 · 工具${status} · ${(duration / 1000).toFixed(1)} 秒`;
   const fields = card.lastElementChild;
   const signature = JSON.stringify([tool.name, tool.input, tool.output]);
   if (fields.dataset.signature === signature) return card;

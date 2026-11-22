@@ -11,13 +11,17 @@ import { dataDirectory } from '../../apps/launcher/src/paths.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { chromium } from './chromium.ts';
-import { assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
 const real = process.argv.includes('--real');
+const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
+assert.ok(!(real && captureGallery), 'The GUI gallery requires synthetic data');
+const screenshotViewports = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
+const capturePanels = captureGallery || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
 const root = join(dataDirectory(), 'OEP 瀏覽器驗收');
 mkdirSync(root);
 const audit = mkdtempSync(join(root, 'launch-'));
@@ -159,7 +163,7 @@ try {
       const reload = async () => {
         await page.evaluate('window.__beforeReload = true');
         await page.command('Page.reload');
-        await page.ready('window.__beforeReload !== true');
+        await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
       };
       const click = async (selector: string) => {
         const point = await page.evaluate<{ x: number; y: number }>(`(() => {
@@ -193,7 +197,9 @@ try {
       const capture = async (name: string) => {
         await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
         const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-        writeFileSync(join(audit, name + '.png'), Buffer.from(image.data, 'base64'));
+        const png = Buffer.from(image.data, 'base64');
+        writeFileSync(join(audit, name + '.png'), png);
+        if (captureGallery) writeFileSync(join('docs', 'validation', 'gui', name + '.png'), png);
       };
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
@@ -243,6 +249,7 @@ try {
         await page.evaluate("document.querySelector('#toggle-files').focus()");
         await escape();
         await page.ready("!document.querySelector('#top-menu').open && document.activeElement.id === 'top-menu-trigger'");
+        await assertContrastInThemes(page, [{ selector: '#top-menu-trigger', property: 'outlineColor', against: '.top' }]);
         await audit('#open-settings', '#settings-view');
         await selectSetting('mcp');
         await audit('#mcp-add', '#mcp-editor');
@@ -399,6 +406,10 @@ try {
         const wideContent = await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width");
         await clickArtifact();
         await page.ready(`document.activeElement.matches('${artifactTab}') && document.querySelector('#file-preview table')`);
+        await assertContrastInThemes(page, [
+          { selector: artifactTab }, { selector: `${visiblePreview} td` },
+          { selector: `${visiblePreview} td`, property: 'borderTopColor', against: visiblePreview },
+        ]);
         assert.ok(await page.evaluate<number>("document.querySelector('#work-area').getBoundingClientRect().width") < wideContent);
         assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('${visiblePreview} .file-actions a')].map(link => [link.textContent, link.target, Boolean(link.download)])`),
           [['在瀏覽器開啟', '_blank', false], ['下載', '', true]]);
@@ -425,10 +436,10 @@ try {
         assert.equal(await page.evaluate("document.querySelector('#close-files').textContent"), '返回對話');
         await escape();
         assert.equal(await page.evaluate(`document.activeElement.matches(${JSON.stringify(artifactButton)}) && !document.querySelector('#work-area').inert`), true);
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') {
+        if (capturePanels) {
           const originalTheme = await page.evaluate<string>('document.documentElement.dataset.theme');
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             await page.ready(`innerWidth === ${width}`);
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
@@ -447,13 +458,17 @@ try {
           await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(originalTheme)}`);
         }
         await page.command('Emulation.clearDeviceMetricsOverride');
-        await page.ready("!matchMedia('(max-width: 540px)').matches");
+        await page.ready("!matchMedia('(max-width: 800px)').matches");
         await assertUiTextInThemes(page);
         assert.equal(await page.evaluate("document.querySelectorAll('.tool-card').length"), 1);
         await page.evaluate("document.querySelector('.tool-card summary').click()");
         assert.equal(await page.evaluate("document.querySelector('.tool-card').open"), true);
         assert.equal(await page.evaluate("/sample-hidden-value|Z:\\/synthetic/.test(document.querySelector('.tool-details').textContent)"), false);
         assert.equal(await page.evaluate("!!document.querySelector('#messages table') && !!document.querySelector('#messages pre code')"), true);
+        await assertContrastInThemes(page, [
+          { selector: '.message > div pre code' }, { selector: '.message td' },
+          { selector: '.message td', property: 'borderTopColor' },
+        ]);
         assert.equal(await page.evaluate("!window.injected && !document.querySelector('#messages script, #messages img, #messages a[href^=javascript]')"), true);
         await page.evaluate(`
           document.querySelector('.tool-card summary').click();
@@ -477,6 +492,7 @@ try {
         await page.ready("document.activeElement.dataset.action === 'remove'");
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
         await page.ready("document.activeElement.tagName === 'SUMMARY' && !document.activeElement.parentElement.open");
+        await assertNativeDialogTextInThemes(page, '.session-list [aria-current=true] + details [data-action=rename]', 'prompt');
         assert.equal(await page.evaluate("document.querySelector('[aria-current=true] time').textContent === '剛剛'"), true);
         const selected = await page.evaluate<string>("document.querySelector('[aria-current=true]')?.dataset.session");
         const longTitle = '合成量測報告與工作表輸出驗證'.repeat(4);
@@ -755,10 +771,10 @@ try {
         await page.command('Emulation.clearDeviceMetricsOverride');
         await click('#settings-nav [data-section="appearance"]');
 
-        const saveSettingsShots = process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
+        const saveSettingsShots = captureGallery || process.env.OEP_CAPTURE_SETTINGS_PAGE === '1';
         const settingsPaths = ['#project-working-root', '#about-details dd:nth-of-type(2)'];
         const originalPaths = saveSettingsShots ? await page.evaluate<string[]>(`(() => {
-          const syntheticPaths = ['工作根目錄 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
+          const syntheticPaths = ['工作資料夾 · C:/OEP/合成工作區', 'C:/OEP/合成資料'];
           return ${JSON.stringify(settingsPaths)}.map((selector, index) => {
             const element = document.querySelector(selector);
             const original = element.textContent;
@@ -768,8 +784,8 @@ try {
         })()`) : [];
         const capturedSections = saveSettingsShots ? settingsPages.map(([section]) => section)
           : ['assistant', 'appearance', 'model', 'limits', 'runtime', 'integrations'];
-        for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-          await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+        for (const [width, height, layout] of screenshotViewports) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
           for (const theme of ['light', 'dark']) {
             await page.evaluate(`
               document.querySelector('#appearance-status').textContent = '';
@@ -782,7 +798,7 @@ try {
               assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
               const name = `settings-${section}-${theme}-${layout}`;
               await capture(name);
-              if (saveSettingsShots) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
+              if (saveSettingsShots && !captureGallery) copyFileSync(join(audit, name + '.png'), join('docs', 'validation', 'gui', name + '.png'));
             }
           }
         }
@@ -792,10 +808,10 @@ try {
         await page.evaluate("document.querySelector('#open-chat').click()");
         await page.command('Emulation.clearDeviceMetricsOverride');
         const captureLayouts = async (running: boolean) => {
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             assert.equal(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
-            if (layout === 'narrow') await page.ready("matchMedia('(max-width: 540px)').matches && document.querySelector('#session-sidebar').hidden");
+            if (layout === 'narrow') await page.ready("matchMedia('(max-width: 800px)').matches && document.querySelector('#session-sidebar').hidden");
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
                 const theme = document.querySelector('#theme');
@@ -821,7 +837,7 @@ try {
                   pane.scrollTop += card.getBoundingClientRect().top - pane.getBoundingClientRect().top - 110;
                   window.scrollTo(0, 0);
                 })()`);
-                if (process.env.OEP_CAPTURE_RIGHT_PANEL !== '1') await capture(`conversation-${theme}-${layout}`);
+                if (!capturePanels) await capture(`conversation-${theme}-${layout}`);
                 await page.evaluate(`(() => {
                   const pane = document.querySelector('#messages');
                   const card = document.querySelector('.tool-card');
@@ -971,8 +987,8 @@ try {
           await page.ready(ready);
         }
         const panelLayouts = async (diff: boolean) => {
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             await page.ready(`innerWidth === ${width}`);
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
@@ -1013,7 +1029,7 @@ try {
             }
           }
         };
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(false);
+        if (capturePanels) await panelLayouts(false);
         const downloaded = await page.evaluate<{ href: string; hash: string }>(`(() => {
           const row = [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'));
           const link = row.querySelector('a');
@@ -1039,6 +1055,7 @@ try {
           return results.map(response => response.status);
         })()`);
         assert.deepEqual(forbidden, [404, 404]);
+        await assertNativeDialogTextInThemes(page, '#attachments', 'confirm', '移除');
         await page.evaluate(`(() => {
           window.confirm = () => true;
           [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'))
@@ -1065,7 +1082,7 @@ try {
           { selector: '#tab-diff', property: 'borderTopColor', against: '.panel-header' },
         ]);
         await assertUiTextInThemes(page);
-        if (process.env.OEP_CAPTURE_RIGHT_PANEL === '1') await panelLayouts(true);
+        if (capturePanels) await panelLayouts(true);
         await page.evaluate("document.querySelector('#tab-diff').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
         assert.equal(await page.evaluate("document.activeElement.id === 'top-menu-trigger' && document.querySelector('#chat-files').hidden"), true);
         await page.evaluate(`
@@ -1075,15 +1092,23 @@ try {
           prompt.dispatchEvent(new Event('input'));
         `);
         await page.ready("!document.querySelector('#slash-palette').hidden && document.querySelectorAll('#slash-palette [role=option]').length === 8");
+        await assertUiTextInThemes(page, '#slash-palette');
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 });
         await page.ready("document.querySelector('#slash-palette [aria-selected=true]').textContent.includes('/help')");
         await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
         await page.ready("document.querySelector('#command-toast').textContent.includes('/clear-search')");
+        await assertUiTextInThemes(page, '#command-toast');
         await page.evaluate(`
           document.querySelector('#prompt').value = '/unknown';
           document.querySelector('#composer').requestSubmit();
         `);
         await page.ready("document.querySelector('#error').textContent.includes('無法辨識')");
+        await assertUiTextInThemes(page, '#error');
+        await page.evaluate("document.querySelector('.message.assistant .message-actions > summary').click()");
+        await assertUiTextInThemes(page, '.message.assistant .message-actions[open]');
+        for (const label of ['讚', '倒讚', '新增或編輯筆記']) {
+          await assertNativeDialogTextInThemes(page, '.message.assistant .message-actions', 'prompt', label);
+        }
         await page.evaluate(`
           const menu = [...document.querySelectorAll('.message.assistant')].find(message => message.textContent.includes('合成量測摘要')).querySelector('.message-actions');
           window.prompt = () => '合成筆記';
@@ -1091,6 +1116,7 @@ try {
         `);
         await openPanel('open-notes');
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        await assertUiTextInThemes(page, '#panel-notes');
         await page.evaluate(`(() => {
           window.prompt = () => '未選取的合成筆記';
           [...document.querySelector('.message.user .message-actions').querySelectorAll('button')]
@@ -1209,15 +1235,15 @@ try {
         })()`);
         assert.deepEqual(annotationIsolation, [404, 1, 1, 1]);
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
-        if (process.env.OEP_CAPTURE_SLICE2D === '1') {
+        if (captureGallery || process.env.OEP_CAPTURE_SLICE2D === '1') {
           const shots = resolve('docs/validation/gui');
           const shot = async (view: string, theme: string, layout: string) => {
             const name = `slice2d-${view}-${theme}-${layout}`;
             await capture(name);
-            writeFileSync(join(shots, name + '.png'), readFileSync(join(audit, name + '.png')));
+            if (!captureGallery) writeFileSync(join(shots, name + '.png'), readFileSync(join(audit, name + '.png')));
           };
-          for (const [width, layout] of [[1200, 'wide'], [390, 'narrow']] as const) {
-            await page.command('Emulation.setDeviceMetricsOverride', { width, height: 960, deviceScaleFactor: 1, mobile: false });
+          for (const [width, height, layout] of screenshotViewports) {
+            await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             for (const theme of ['light', 'dark']) {
               await page.evaluate(`(() => {
                 document.documentElement.dataset.theme = ${JSON.stringify(theme)};
@@ -1255,7 +1281,7 @@ try {
               await page.evaluate(`
                 document.querySelector('#remove-session-card [value=reject]').click();
                 document.querySelector('#open-settings').click();
-                document.querySelector('#project-working-root').textContent = '工作根目錄 · C:/OEP/合成工作區';
+                document.querySelector('#project-working-root').textContent = '工作資料夾 · C:/OEP/合成工作區';
                 var folderRow = document.querySelector('#project-folder-list li');
                 if (folderRow?.firstChild) folderRow.firstChild.textContent = 'C:/OEP/合成唯讀資料';
                 var aboutPath = document.querySelector('#about-details dd:nth-of-type(2)');

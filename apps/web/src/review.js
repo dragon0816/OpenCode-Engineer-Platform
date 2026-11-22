@@ -1,4 +1,4 @@
-import { request } from './api.js';
+import { request, sampleKnowledgeID } from './api.js';
 
 const element = (tag, text) => {
   const node = document.createElement(tag);
@@ -256,7 +256,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       const sequence = ++refreshSequence;
       const [{ reviews, jobs }, { vaults }] = await Promise.all([request(endpoint), request('/api/knowledge/vaults')]);
       if (sequence !== refreshSequence) return;
-      vaultChoices.replaceChildren(...vaults.filter((item) => item.kind === kind).map((item) => {
+      vaultChoices.replaceChildren(...vaults.filter((item) => item.kind === kind && item.id !== sampleKnowledgeID).map((item) => {
         const option = element('option', item.title);
         option.value = item.id;
         return option;

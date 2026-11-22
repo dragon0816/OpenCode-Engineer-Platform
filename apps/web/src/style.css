@@ -304,7 +304,7 @@ summary { cursor: pointer; }
 .message :is(pre, .message-table) { overflow: auto; margin: var(--space-1) 0; }
 .message pre { padding: var(--space-2); background: var(--code-surface); border-radius: 6px; }
 .message table { border-collapse: collapse; }
-.message :is(th, td) { padding: var(--space-1) var(--space-2); border: 1px solid var(--line); }
+.message :is(th, td) { padding: var(--space-1) var(--space-2); border: 1px solid var(--control-border); }
 #jump-latest { align-self: center; margin-block: var(--space-1); }
 #shortcuts { position: relative; font-size: var(--text-xs); color: var(--muted); }
 #shortcuts p {
@@ -383,7 +383,7 @@ summary { cursor: pointer; }
 .preview-body pre { color: var(--text); background: var(--code-surface); padding: .75rem; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
 .table-scroll { max-height: 45vh; overflow: auto; margin-block: var(--space-1); }
 .files table { border-collapse: collapse; width: 100%; }
-.files :is(th, td) { border: 1px solid var(--line); padding: var(--space-1) var(--space-2); min-width: 2rem; }
+.files :is(th, td) { border: 1px solid var(--control-border); padding: var(--space-1) var(--space-2); min-width: 2rem; }
 .files select { max-width: 100%; }
 .changed-cell { background: var(--selected); outline: 2px solid currentColor; outline-offset: -2px; }
 .changed-cell :is(del, ins) { display: block; padding-inline: .25rem; }
@@ -517,7 +517,7 @@ summary { cursor: pointer; }
 .knowledge-filters select, .knowledge-filters input { min-width: 0; max-width: 100%; }
 #knowledge-cards { overflow-x: auto; }
 #knowledge-cards table { width: 100%; border-collapse: collapse; }
-#knowledge-cards th, #knowledge-cards td { text-align: start; border-bottom: 1px solid var(--line); padding: var(--space-1); }
+#knowledge-cards th, #knowledge-cards td { text-align: start; border-bottom: 1px solid var(--control-border); padding: var(--space-1); }
 #knowledge-cards td { overflow-wrap: anywhere; }
 #knowledge-cards th button { white-space: nowrap; }
 #knowledge-matches article { padding-block: var(--space-2); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
@@ -526,7 +526,7 @@ summary { cursor: pointer; }
 .knowledge-reference { margin: var(--space-1) var(--space-1) 0 0; max-width: 100%; }
 #knowledge-cards { max-height: 360px; }
 .knowledge-results { overflow: auto; margin-block: var(--space-2); }
-.knowledge-results td, .knowledge-results th { text-align: start; padding: var(--space-1); border-bottom: 1px solid var(--line); }
+.knowledge-results td, .knowledge-results th { text-align: start; padding: var(--space-1); border-bottom: 1px solid var(--control-border); }
 #quality-questions { max-height: 330px; overflow: auto; }
 #quality-questions li { margin-block: var(--space-1); }
 #quality-editor { border-top: 1px solid var(--line); margin-top: var(--space-4); padding-top: var(--space-3); }

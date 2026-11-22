@@ -17,7 +17,7 @@ import { largeKnowledgeFixture } from '../fixtures/knowledge/large.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
 import { syntheticRepository } from '../fixtures/knowledge/repository.ts';
 import { chromium } from './chromium.ts';
-import { assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { assertContrastInThemes } from './gui-contrast.ts';
 import { mappingChecks } from './gui-mapping.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
@@ -171,8 +171,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
       const captureGallery = async (screens: [string, () => Promise<unknown>][]) => {
         try {
           for (const theme of ['light', 'dark']) {
-            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
-              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+            for (const [size, width, height] of [['wide', 1440, 900], ['narrow', 390, 844]] as const) {
+              await browser.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
               await ready(`innerWidth === ${width}`);
               await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'`);
               for (const [name, show] of screens) {
@@ -200,6 +200,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await ready("document.querySelector('#jobs-content').textContent.includes('Telegram 收件')");
         assert.equal(await browser.evaluate("document.querySelector('#jobs-view').hidden"), false);
         await featureText('#jobs-view');
+        await assertContrastInThemes(browser, [
+          { selector: '#jobs-title' }, { selector: '#jobs-view .page-help' },
+          { selector: '#jobs-content button' }, { selector: '#jobs-content button', property: 'borderTopColor' },
+        ]);
         await labels('#jobs-content', ['新增排程', '執行紀錄', '重新整理', '更多', 'Telegram 收件', '通知紀錄']);
         await mapping.check('feature-jobs-toolbar', '#jobs-view', { selectors: ['#jobs-status[role=status]'] });
         await clickLabel('#jobs-content', '更多');
@@ -225,6 +229,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           document.activeElement === document.querySelector('#review-title')`);
         await assertUiTextInThemes(browser);
         await featureText('#review-view');
+        await assertContrastInThemes(browser, [
+          { selector: '#review-title' }, { selector: '#review-view .page-help' },
+          { selector: '#review-refresh', property: 'borderTopColor' },
+        ]);
         await labels('#review-view', ['重新整理清單', '審核紀錄']);
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
         for (const tab of ['overview', 'ask', 'quality', 'build']) {
@@ -233,6 +241,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
             document.querySelectorAll('#knowledge-view [role=tabpanel]:not([hidden])').length === 1 &&
             !document.getElementById(document.querySelector('#knowledge-tab-${tab}').getAttribute('aria-controls')).hidden`);
           await featureText('#knowledge-view [role=tabpanel]:not([hidden])');
+          await assertContrastInThemes(browser, [
+            { selector: '#knowledge-title' }, { selector: '#vault-status' },
+            { selector: '#knowledge-tab-' + tab },
+            { selector: '#knowledge-tab-' + tab, property: 'borderTopColor', against: '.knowledge-header' },
+          ]);
         }
         await key('Home', 36);
         for (const tab of ['overview', 'ask', 'quality', 'build']) {
@@ -291,6 +304,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await mouse('#knowledge-answer .knowledge-reference');
         await ready(`${panelIsOpen} && document.querySelector('${previewBody}').textContent.includes('±0.8 dB')`);
         assert.equal(await browser.evaluate("document.activeElement.matches('#panel-tabs [aria-selected=true]')"), true);
+        await selectors(preview, ['details p']);
         await featureText(preview);
         await key('Escape', 27);
         await ready("document.querySelector('#chat-files').hidden && document.activeElement.matches('#knowledge-answer .knowledge-reference')");
@@ -325,11 +339,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await browser.evaluate("document.querySelector('#knowledge-matches button').click()");
         await ready(panelIsOpen);
         await mapping.check('feature-knowledge-search', '#knowledge-overview', { selectors: ['#knowledge-fts input', '#knowledge-fts button', '#knowledge-matches mark', '#knowledge-matches button'] });
-        await mapping.check('feature-knowledge-source', preview, { selectors: ['mark', 'blockquote', '.preview-body > p', 'details p'], labels: ['開啟卡片'] });
+        await mapping.check('feature-knowledge-source', preview, { selectors: ['mark', 'blockquote', '.preview-body > p'], labels: ['開啟卡片'] });
         await clickLabel(preview, '開啟卡片');
         await ready(`document.querySelector('${previewBody} blockquote')?.textContent.includes('±0.8 dB')`);
         await mapping.check('feature-knowledge-card', preview, {
-          selectors: ['dl dd', 'blockquote', 'details p'], labels: ['欄位出處', '欄位狀態', '欄位變更紀錄', '知識庫發布紀錄'],
+          selectors: ['dl dd', 'blockquote', 'details p'], labels: ['欄位變更紀錄', '知識庫發布紀錄'],
         });
         if (process.env.OEP_KNOWLEDGE_SCREENSHOTS === '1') {
           await captureGallery(['overview', 'ask', 'quality', 'build', 'drawer'].map((screen) =>
@@ -387,6 +401,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#quality-questions li')?.textContent.includes('Benchmark')");
         await labels('#quality-questions', ['編輯', '刪除']);
+        await assertNativeDialogTextInThemes(browser, '#quality-questions', 'confirm', '刪除');
+        await assertNativeDialogTextInThemes(browser, '#quality-remove-set', 'confirm');
         mapping.seen('feature-quality-editor');
         await browser.evaluate(`{
           document.querySelector('#quality-question-list').open = true;
@@ -600,19 +616,22 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         await clickLabel('#jobs-content', '新增排程');
         await selectors(preview, ['input[type=time]', 'input:not([type])', 'details textarea']);
         await labels(preview, ['儲存待核准排程', '立即送出工作']);
+        await featureText(preview);
         mapping.seen('feature-jobs-editor');
         await closePreview();
         await browser.evaluate("document.querySelector('#jobs-content .knowledge-pager details').open = true");
         await clickLabel('#jobs-content', '通知紀錄');
         await labels(preview, ['需核對的通知', '手動重送']);
         await mapping.check('feature-jobs-delivery', preview, { selectors: ['summary', 'details p'], labels: ['手動重送'] });
+        await assertNativeDialogTextInThemes(browser, preview, 'confirm', '手動重送');
         await featureText(preview);
         await closePreview();
         await clickLabel('#jobs-content', 'Telegram 收件');
         await clickLabel(preview, '收件 1 · 需要補件');
         await selectors(preview, ['a[href="/api/jobs/source/1"]', 'textarea']);
         await labels(preview, ['下載來源', '送審']);
-        await mapping.check('feature-jobs-source', preview, { selectors: ['details p', 'textarea', 'a[download]'] });
+        await featureText(preview);
+        await mapping.check('feature-jobs-source', preview, { selectors: ['details p', 'textarea', 'a[href^="/api/jobs/source/"]'] });
         await closePreview();
         await browser.evaluate("document.querySelector('#open-review').click()");
         await ready("document.querySelector('#review-import-jobs').textContent.includes('已送審')");
@@ -722,8 +741,10 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           await browser.evaluate("document.querySelector('#knowledge-cards tbody button').click()");
           await ready(`document.querySelector('${previewBody}').textContent.includes('合成欄位')`);
           assert.match(await browser.evaluate<string>(`document.querySelector('${previewBody}').textContent`), /欄位狀態無資料/);
+          await labels(preview, ['欄位出處', '欄位狀態']);
           await browser.evaluate("document.querySelector('#close-files').click()");
         }
+        await assertNativeDialogTextInThemes(browser, '#knowledge-rebuild', 'confirm');
         await browser.evaluate(`{
           window.confirm = () => true;
           document.querySelector('#knowledge-rebuild').click();
@@ -735,10 +756,11 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
           vault.value = 'synthetic-large';
           vault.dispatchEvent(new Event('change'));
           document.querySelector('#knowledge-tab-quality').click();
-          window.knowledgeReloadMarker = true;
         }`);
+        await browser.evaluate('window.__beforeReload = true');
         await browser.command('Page.reload');
-        await ready("!window.knowledgeReloadMarker && document.readyState === 'complete' && document.querySelector('#open-knowledge')?.disabled === false");
+        await ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
+        await ready("document.readyState === 'complete' && document.querySelector('#open-knowledge')?.disabled === false");
         await browser.evaluate("document.querySelector('#open-knowledge').click()");
         await ready(`document.querySelector('#vault').value === 'synthetic-large' &&
           document.querySelector('#knowledge-tab-quality').getAttribute('aria-selected') === 'true' &&
@@ -770,6 +792,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         }`);
         await ready("document.querySelector('#knowledge-settings-status').textContent === '已儲存。'");
         assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
+        await assertNativeDialogTextInThemes(browser, '#open-atlas', 'confirm');
         await browser.evaluate("window.confirm = () => false; document.querySelector('#open-atlas').click()");
         assert.equal(await browser.evaluate("window.atlasOpened.length"), 0);
         await browser.evaluate("window.confirm = () => true; document.querySelector('#open-atlas').click()");
@@ -793,8 +816,8 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         assert.equal(await browser.evaluate("document.querySelector('#mcp-knowledge-tools').hidden"), false);
         if (process.env.OEP_MCP_SCREENSHOTS === '1') {
           for (const theme of ['light', 'dark']) {
-            for (const [size, width] of [['wide', 1360], ['narrow', 420]] as const) {
-              await browser.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+            for (const [size, width, height] of [['wide', 1440, 900], ['narrow', 390, 844]] as const) {
+              await browser.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
               await browser.evaluate(`document.documentElement.dataset.theme = '${theme}'; window.scrollTo(0, 0)`);
               const image = await browser.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
               writeFileSync(join('docs', 'validation', 'gui', `slice4a-mcp-${theme}-${size}.png`), Buffer.from(image.data, 'base64'));

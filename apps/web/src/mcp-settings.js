@@ -16,6 +16,7 @@ const control = (text, action) => {
 };
 const labels = { connected: '已連線', disabled: '已停用', pending: '等待連線',
   failed: '連線失敗，請執行連線測試。', needs_auth: '需要憑證' };
+const connectionDetails = /\b(?:HTTPS|TLS|stdio|MCP)\b/i;
 
 export function bindMcpSettings(projects) {
   const editor = find('mcp-editor');
@@ -23,6 +24,7 @@ export function bindMcpSettings(projects) {
   const field = (name) => form.elements.namedItem(name);
   const rows = find('mcp-credential-rows');
   const formStatus = find('mcp-form-status');
+  const formDiagnostic = find('mcp-form-diagnostic');
   const status = find('mcp-status');
   const restart = find('mcp-restart');
   const list = find('mcp-servers');
@@ -83,6 +85,8 @@ export function bindMcpSettings(projects) {
     form.reset();
     form.querySelector('details').open = false;
     formStatus.textContent = '';
+    formDiagnostic.hidden = true;
+    formDiagnostic.textContent = '';
     current = server;
     changed = server?.id;
     opener = trigger;
@@ -116,7 +120,12 @@ export function bindMcpSettings(projects) {
   function renderResult(panel, result, server, apply) {
     panel.replaceChildren();
     if (!result) return;
-    panel.append(element('p', result.ok ? '連線測試成功。工具設定會在重新啟動後套用至新會話。' : result.reason));
+    if (result.ok) panel.append(element('p', '連線測試成功。工具設定會在重新啟動後套用至新會話。'));
+    else if (connectionDetails.test(result.reason)) {
+      const diagnostic = element('details', '', 'settings-advanced');
+      diagnostic.append(element('summary', '進階'), element('p', result.reason));
+      panel.append(element('p', '連線測試失敗。請檢查服務的網址和連線設定。'), diagnostic);
+    } else panel.append(element('p', result.reason));
     if (!result.ok || !result.tools.length) return;
     const tools = element('ul');
     for (const { name, description } of result.tools) {
@@ -206,6 +215,8 @@ export function bindMcpSettings(projects) {
     const buttons = [...form.querySelectorAll('button')];
     for (const button of buttons) button.disabled = true;
     formStatus.textContent = '正在儲存…';
+    formDiagnostic.hidden = true;
+    formDiagnostic.textContent = '';
     const kind = field('transport').value;
     const credentials = [...rows.children].map((row) => [row.querySelector('[data-mcp-name]'), row.querySelector('[data-mcp-value]')]);
     const names = credentials.map(([name]) => name.value.trim());
@@ -231,7 +242,13 @@ export function bindMcpSettings(projects) {
       saved = true;
       editor.close();
       (find('mcp-server-' + changed) ?? find('mcp-add')).focus();
-    } catch (error) { formStatus.textContent = error.message; }
+    } catch (error) {
+      if (connectionDetails.test(error.message)) {
+        formStatus.textContent = '無法儲存伺服器。請檢查網址是否支援安全連線。';
+        formDiagnostic.textContent = error.message;
+        formDiagnostic.hidden = false;
+      } else formStatus.textContent = error.message;
+    }
     finally {
       saving = false;
       for (const button of buttons) button.disabled = false;

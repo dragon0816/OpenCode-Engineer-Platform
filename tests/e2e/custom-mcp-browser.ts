@@ -12,7 +12,7 @@ import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { syntheticMcpCertificate } from '../fixtures/mcp/tls.ts';
 import { chromium } from './chromium.ts';
 import { mappingChecks } from './gui-mapping.ts';
-import { assertUiTextInThemes } from './forbidden-shell-text.ts';
+import { assertNativeDialogTextInThemes, assertUiTextInThemes } from './forbidden-shell-text.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 
@@ -123,7 +123,7 @@ async function settings() {
   await page.ready("document.querySelector('#mcp-servers').children.length > 0");
 }
 async function screenshots(state: string) {
-  for (const [name, width, height] of [['wide', 1280, 960], ['narrow', 390, 1000]] as const) {
+  for (const [name, width, height] of [['wide', 1440, 900], ['narrow', 390, 844]] as const) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     for (const theme of ['light', 'dark']) {
       await evaluate(`document.documentElement.dataset.theme = '${theme}'`);
@@ -303,6 +303,7 @@ try {
     assert.ok(tools && !tools.some((name) => name.endsWith('_synthetic_catalog')));
   }
   await page.command('Page.enable');
+  await assertNativeDialogTextInThemes(page, '#mcp-servers', 'confirm', '移除');
   const remove = click('#mcp-servers .settings-actions button:last-child');
   await new Promise((resolve) => setTimeout(resolve, 200));
   await page.command('Page.handleJavaScriptDialog', { accept: true });
@@ -329,7 +330,8 @@ try {
       });
       await assertUiTextInThemes(page, '#mcp-editor');
       await click('#mcp-form button[type=submit]');
-      await page.ready("document.querySelector('#mcp-form-status').textContent.includes('HTTPS')");
+      await page.ready("document.querySelector('#mcp-form-diagnostic').textContent.includes('HTTPS')");
+      await assertUiTextInThemes(page, '#mcp-editor');
       await evaluate(`document.querySelector('#mcp-form [name=url]').value = 'https://127.0.0.1:${port}/mcp'`);
       await click('#mcp-form button[type=submit]');
       await page.ready("document.querySelector('#mcp-form-status').textContent.includes('私人位址')");

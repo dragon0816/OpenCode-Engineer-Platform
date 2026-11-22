@@ -1,5 +1,7 @@
 let csrf;
 
+export const sampleKnowledgeID = 'oep-synthetic-demo';
+
 export function modelLabel(alias) {
   return alias.startsWith('synthetic-') ? '已設定的模型' : alias;
 }

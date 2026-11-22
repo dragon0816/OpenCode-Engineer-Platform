@@ -36,7 +36,7 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
     const insideAdvanced = element => {
       for (let detail = element.closest('details'); detail; detail = detail.parentElement.closest('details')) {
         const summary = detail.querySelector(':scope > summary');
-        if ((summary?.textContent.trim().startsWith('進階') || detail.matches('.tool-card')) &&
+        if (summary?.textContent.trim().startsWith('進階') &&
             !summary?.contains(element) && detail !== element) return true;
       }
       return false;
@@ -50,9 +50,16 @@ export async function assertNoForbiddenShellText(page: Page, selector = 'body') 
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (visible(node.parentElement)) add(node.parentElement, node.textContent);
     }
-    for (const element of [root, ...root.querySelectorAll('[aria-label], [aria-description], [title], [placeholder], [alt], select')]) {
+    const attributes = '[aria-label], [aria-description], [aria-describedby], [aria-labelledby], [title], [placeholder], [alt], select';
+    for (const element of [root, ...root.querySelectorAll(attributes)]) {
       if (!visible(element)) continue;
       for (const key of ['aria-label', 'aria-description', 'title', 'placeholder', 'alt']) add(element, element.getAttribute(key));
+      for (const key of ['aria-describedby', 'aria-labelledby']) {
+        for (const id of element.getAttribute(key)?.split(/\s+/) ?? []) {
+          const referenced = document.getElementById(id);
+          if (referenced && !visible(referenced)) add(element, referenced.textContent);
+        }
+      }
       if (element.matches('select')) for (const option of element.options) add(element, option.label);
     }
     return { normal: parts.normal.join(' '), advanced: parts.advanced.join(' ') };
@@ -77,4 +84,25 @@ export async function inThemes(page: Page, check: (theme: string) => Promise<voi
 
 export function assertUiTextInThemes(page: Page, scope = 'body') {
   return inThemes(page, () => assertNoForbiddenShellText(page, scope));
+}
+
+export async function assertNativeDialogTextInThemes(page: Page, selector: string, kind: 'confirm' | 'prompt', label?: string) {
+  await inThemes(page, async (theme) => {
+    const message = await page.evaluate<string | null>(`(() => {
+      const kind = ${JSON.stringify(kind)};
+      const original = window[kind];
+      let message = null;
+      window[kind] = text => { message = text; return kind === 'confirm' ? false : null; };
+      try {
+        const scope = document.querySelector(${JSON.stringify(selector)});
+        const label = ${JSON.stringify(label ?? null)};
+        const opener = label ? [...scope.querySelectorAll('button')].find(button => button.textContent.trim() === label) : scope;
+        opener.click();
+      }
+      finally { window[kind] = original; }
+      return message;
+    })()`);
+    assert.ok(message, theme + ' ' + kind + ' did not open from ' + selector);
+    assertUiText(message, theme + ' ' + selector);
+  });
 }
