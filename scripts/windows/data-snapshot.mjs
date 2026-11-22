@@ -142,6 +142,7 @@ const webAdditions = new Set([
   'web_turn_limits', 'web_model_settings', 'web_project_folders', 'web_action_decisions',
   'web_message_annotations', 'web_turn_replies', 'web_session_knowledge_disabled',
   'web_knowledge_settings', 'web_appearance', 'web_sessions', 'attachments', 'web_turns', 'mcp_servers',
+  'web_model_catalog', 'web_model_selection',
 ]);
 const knowledgeAdditions = new Set([
   'benchmark_sets', 'inactive_vaults', 'review_uploads', 'review_schemas', 'review_schema_heads',
