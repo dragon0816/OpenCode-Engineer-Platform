@@ -7,6 +7,7 @@ import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
+import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
@@ -129,10 +130,14 @@ export class WebStore extends Ledger {
         }
         if (!telegram && version < 4) migrateChannelAccounts(db);
         if (!telegram && version < 5) migrateWorkItems(db);
+        if (!telegram && version < 6) migrateDelegations(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
-        if (!telegram) verifyWorkItems(db);
+        if (!telegram) {
+          verifyWorkItems(db);
+          verifyDelegations(db);
+        }
       },
     });
     this.telegram = telegram;
