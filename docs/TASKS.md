@@ -241,3 +241,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 顯示通道指派與審核來源。依助理選擇模型、讀取來源與外部工具，Skill 與助理排程保留後續入口說明。
 - [x] 完成依序驗收、三次 Chromium 測試及 88 張雙語合成截圖。
 - [ ] 擁有者複核驗收結果與合成截圖。 [切片 4 報告](reviews/PHASE3B_SLICE4_REPORT.md)
+
+## Phase 3B 切片 5 交辦工具、台帳與預算
+
+- [x] 將五張 STRICT 交辦表加入中央工作台帳。新版驗證既有工作與預算保留，並比對新增結構及空表。
+- [x] 以固定 OpenCode 和合成 gateway 驗證主助理的交辦票券、封閉參數、請求鍵去重、額度保留及附件交接副本。
+- [ ] 接上正式派送與專職執行，包括 BI 待審收據、relay 與 broker 計量、時限、終態結算、取消與重啟對帳。
+- [ ] 提供已配對的結果、事件與設定 API，以及雙語預算設定欄位。專職執行可用後再於正式回合開放交辦工具。 [切片 5 報告](reviews/PHASE3B_SLICE5_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
