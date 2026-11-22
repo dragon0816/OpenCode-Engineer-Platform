@@ -71,7 +71,14 @@ export async function chromium(profile: string) {
       return result.value;
     }
     return { command, evaluate, close,
-      ready: (expression: string, timeout = 12_000) => until(async () => await evaluate<boolean>(expression) || undefined, timeout).catch((cause) => { throw new Error('Browser condition timed out: ' + expression, { cause }); }),
+      ready: (expression: string, timeout = 12_000) => until(async () => {
+        // A reload or navigation can destroy the execution context mid-evaluation; treat that as "not ready yet".
+        try { return await evaluate<boolean>(expression) || undefined; }
+        catch (error) {
+          if (error instanceof Error && ['Chromium command failed', 'Browser evaluation failed'].includes(error.message)) return undefined;
+          throw error;
+        }
+      }, timeout).catch((cause) => { throw new Error('Browser condition timed out: ' + expression, { cause }); }),
     };
   } catch (error) {
     await close();
