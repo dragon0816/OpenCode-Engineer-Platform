@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { discoverGatewayModels, gatewayAliases, maxDiscoveredModels, maxSelectedModels } from '../../apps/adapter/src/opencode/gateway.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import type { Runtime } from '../../apps/launcher/src/runtime.ts';
+import { waitForExit } from '../../scripts/phase0/probe-http.ts';
 
 const list = (ids: string[]) => ({ object: 'list', data: ids.map((id) => ({ object: 'model', id, owned_by: 'ignored' })) });
 
@@ -42,9 +45,12 @@ test('failed discovery omits credentials, status details and response bodies', a
     Response.json(list(['https://unexpected.invalid/', 'x'.repeat(161), 'has whitespace']))]) {
     assert.equal(await discoverGatewayModels({ url, key, fetch: async () => response }), undefined);
   }
+  let requestedInvalidURL = false;
   assert.equal(await discoverGatewayModels({ url: `${url}?credential=${key}`, key, fetch: async () => {
-    assert.fail('Invalid URL reached the gateway');
+    requestedInvalidURL = true;
+    return Response.json(list(['synthetic-model-a']));
   } }), undefined);
+  assert.equal(requestedInvalidURL, false);
   assert.equal(await discoverGatewayModels({ url, key, fetch: async () => { throw new Error(url + key); } }), undefined);
   assert.deepEqual(logs.map(({ mock }) => mock.callCount()), [0, 0, 0]);
 });
@@ -110,4 +116,65 @@ test('model storage preserves legacy defaults and the last good catalog, and val
     assert.deepEqual(store.modelSelection(gatewayAliases), { ids: [gatewayAliases[0]], defaultAlias: gatewayAliases[0] });
     assert.deepEqual(store.modelChoices(gatewayAliases), [b, ...gatewayAliases]);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a session with a removed model switches once before admitting its next turn', async () => {
+  const root = mkdtempSync(join(process.env.OEP_DATA_DIR ?? tmpdir(), 'oep-model-session-'));
+  for (const folder of ['sessions', 'model-work']) mkdirSync(join(root, folder));
+  const store = new WebStore(join(root, 'web.sqlite'));
+  const previous = 'synthetic-model-a';
+  const fallback = 'synthetic-model-b';
+  const calls: string[] = [];
+  let alias = previous;
+  let failSwitch = true;
+  let message: { id: string; type: 'user'; text: string } | undefined;
+  const runtime = {
+    alias: previous, aliases: [previous], setTurnBoundary: () => undefined,
+    gatewayCursor: () => 0, gatewaySince: () => [{ status: 200, output: 'text' }], redact: (text: string) => text,
+    client: {
+      session: {
+        create: async (input: object) => ({ ...input, id: 'synthetic-session' }),
+        switchModel: async (input: { sessionID: string; model: { providerID: string; id: string } }) => {
+          assert.equal(input.sessionID, 'synthetic-session');
+          assert.deepEqual(input.model, { providerID: 'oep-relay', id: fallback });
+          if (failSwitch) throw new Error('Synthetic switch failure');
+          calls.push('switch');
+          alias = input.model.id;
+        },
+        prompt: async (input: { id: string; text: string; sessionID: string }) => {
+          assert.equal(alias, fallback);
+          calls.push('prompt');
+          message = { id: input.id, text: input.text, type: 'user' };
+          return { id: input.id, sessionID: input.sessionID };
+        },
+        get: async () => ({ outcome: 'succeeded' }), active: async () => ({}), inbox: { list: async () => [] },
+      },
+      permission: { list: async () => [] },
+      message: { list: async ({ type }: { type?: string }) => ({ data: !message ? [] : type === 'user' ? [message] :
+        [{ id: 'synthetic-reply', type: 'assistant', content: [{ type: 'text', text: 'Synthetic reply' }] }, message] }) },
+    },
+  };
+  const verified = Promise.withResolvers<void>();
+  const chat = new ChatService(store, runtime as unknown as Runtime, root, join(root, 'audit.jsonl'), (id) => {
+    if (store.turns(id).at(-1)?.state === 'verified') verified.resolve();
+  });
+  try {
+    const session = await chat.create('inspector');
+    runtime.aliases = [fallback];
+    runtime.alias = fallback;
+    await assert.rejects(chat.switchModel(session, previous), { status: 400 });
+    const input = { id: randomUUID(), text: 'Synthetic question', attachments: [], workbook: false };
+    await assert.rejects(chat.submit(session, input), /Synthetic switch failure/);
+    assert.equal(store.sessions()[0].alias, previous);
+    assert.deepEqual(store.turns(session.id), []);
+    failSwitch = false;
+    const run = await chat.submit(session, input);
+    assert.ok('modelFallback' in run);
+    assert.equal(run.modelFallback, fallback);
+    assert.equal(store.sessions()[0].alias, fallback);
+    assert.equal(store.get(input.id).alias, fallback);
+    assert.equal(await waitForExit(verified.promise.then(() => true), 5_000), true);
+    await chat.submit(session, input);
+    assert.deepEqual(calls, ['switch', 'prompt']);
+  } finally { await chat.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });
