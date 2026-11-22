@@ -287,10 +287,11 @@ export class BiService {
         return;
       }
       const schema = store.installReviewSchema(vault, 'telegram-intake', '1', ['content']);
+      const title = (source.origin === 'delegation' ? 'BI 交辦收件 ' : 'Telegram 收件 ') + id;
       store.enqueueBi(job, {
-        vault: { id: vault, kind: 'bi', title: 'Telegram 收件 ' + id }, schema: schema.sha256,
+        vault: { id: vault, kind: 'bi', title }, schema: schema.sha256,
         sources: [{ id: 'source', ref: String(source.ref), original: text, markdown: text }],
-        cards: [{ id: 'record', type: 'record', key: 'record', title: 'Telegram 收件 ' + id, version: '1',
+        cards: [{ id: 'record', type: 'record', key: 'record', title, version: '1',
           fields: { content: text.slice(0, 4000) } }],
         evidence: [{ sourceId: 'source', cardId: 'record', field: 'content', start: 0, end: Math.min(text.length, 4000) }],
         relationships: [],
