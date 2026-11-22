@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { OpenCodeClient, SessionCreateInput } from '@opencode/client';
 import { createSession } from '../../apps/adapter/src/opencode/sessions.ts';
-import { allowedModelTool, knowledgeTool, readFileTool, sessionPermissions, statusTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
+import { allowedModelTool, delegateTool, knowledgeTool, listSpecialistsTool, readFileTool, sessionPermissions, statusTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { customMcpName } from '../../apps/adapter/src/runs/custom-mcp.ts';
 
 test('Session setup binds a fixed location, agent, relay alias and least permissions', async () => {
@@ -28,6 +28,23 @@ test('Session setup binds a fixed location, agent, relay alias and least permiss
     { action: 'read', resource: 'marker.txt', effect: 'allow' },
   ]);
   assert.ok(seen.every((entry) => entry.model?.providerID === 'oep-relay' && entry.model.id === 'contract-model'));
+});
+
+test('delegation grants are available only to explicitly enabled main Web or channel turns', () => {
+  for (const origin of ['web', 'channel', 'schedule', 'delegation'] as const) {
+    for (const agentID of ['main', 'specialist']) {
+      const permissions = sessionPermissions({ origin, agentID, delegation: true, status: true, files: true, knowledge: true });
+      for (const tool of [listSpecialistsTool, delegateTool]) {
+        assert.equal(allowedModelTool(permissions, tool), agentID === 'main' && (origin === 'web' || origin === 'channel'));
+      }
+      assert.equal(allowedModelTool(permissions, 'task'), false);
+      if (origin === 'delegation' && agentID === 'specialist') {
+        for (const tool of [statusTool, readFileTool, writeFileTool, knowledgeTool]) {
+          assert.equal(allowedModelTool(permissions, tool), true);
+        }
+      }
+    }
+  }
 });
 
 test('the permission builder starts closed and grants only origin-specific access', () => {

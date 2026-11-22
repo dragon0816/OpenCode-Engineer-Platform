@@ -68,6 +68,7 @@ SYNCHRONIZE = 0x100000
 DIRECTORY = 0x10
 REPARSE = 0x400
 MAX_BYTES = 256 * 1024
+MAX_COPY_BYTES = 20 * 1024 * 1024
 
 
 def check(ok):
@@ -170,8 +171,8 @@ def prepare(root, name, expected_inode):
         return {"inode": str(inode(verify(directory, ntpath.join(root, name), True, exact=True)))}
 
 
-def publish(root, name, content, expected_inode, before_rename=None):
-    if not valid_name(name) or len(content) > MAX_BYTES:
+def publish(root, name, content, expected_inode, before_rename=None, maximum=MAX_BYTES):
+    if not valid_name(name) or len(content) > maximum:
         raise ValueError("Invalid output")
     with pinned(root, expected_inode) as handle:
         temporary = "staging-" + uuid.uuid4().hex + ".tmp"
@@ -198,8 +199,9 @@ def publish(root, name, content, expected_inode, before_rename=None):
 if __name__ == "__main__":
     try:
         operation, location, filename, expected = sys.argv[1:]
-        if operation == "write":
-            result = publish(location, filename, sys.stdin.buffer.read(MAX_BYTES + 1), int(expected))
+        if operation in ("write", "copy"):
+            maximum = MAX_COPY_BYTES if operation == "copy" else MAX_BYTES
+            result = publish(location, filename, sys.stdin.buffer.read(maximum + 1), int(expected), maximum=maximum)
         elif operation == "mkdir":
             result = prepare(location, filename, int(expected))
         else:

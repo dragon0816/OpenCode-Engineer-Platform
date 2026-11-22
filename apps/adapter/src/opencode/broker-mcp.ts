@@ -7,6 +7,7 @@ import { parseAsk } from '../../../../packages/knowledge/src/ask.ts';
 import { objectRecord } from './tool-transport.ts';
 import { withMcpTicket } from './remote-mcp-broker.ts';
 import type { RemoteMcpBroker } from './remote-mcp-broker.ts';
+import { delegationTools } from './delegation-tools.ts';
 
 const localName = (name: string) => name.slice(brokerMcpName.length + 1);
 const ticket = { [transportField]: { type: 'string' } };
@@ -19,6 +20,7 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
   tickets.register(readFileTool, fileReadArgs);
   tickets.register(writeFileTool, fileWriteArgs);
   tickets.register(knowledgeTool, (args) => Boolean(parseAsk(args)));
+  for (const { name, validate } of delegationTools) tickets.register(name, validate);
   for (const { name, validate } of remote.tools) tickets.register(name, validate);
   return startLoopbackMcp({ name: brokerMcpName, timeout: remote.timeout, maxInput: 448 * 1024,
     invalidArguments: 'Tool authorization unavailable', failed: 'Tool authorization unavailable',
@@ -38,7 +40,10 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
       name: localName(knowledgeTool), description: 'Ask an authorized published OEP knowledge vault by ID. Report verified excerpts and citations, or relay the abstention.',
       inputSchema: schema({ vault: { type: 'string' }, question: { type: 'string', maxLength: 500 } }, ['vault', 'question']),
       annotations: readOnly,
-    }, ...remote.tools.map(({ name, description, inputSchema }) => ({
+    }, ...delegationTools.map(({ name, description, properties, required, readOnly }) => ({
+      name: localName(name), description, inputSchema: schema(properties, required),
+      annotations: { readOnlyHint: readOnly, destructiveHint: false },
+    })), ...remote.tools.map(({ name, description, inputSchema }) => ({
       name: localName(name), description, inputSchema: withMcpTicket(inputSchema),
     }))],
     async invoke(name, args, signal) {

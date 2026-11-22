@@ -11,7 +11,7 @@ import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
 export const MiB = 1024 * 1024;
 export const maxUpload = 20 * MiB;
 const quota = 200 * MiB;
-const maxProjection = MiB;
+export const maxProjection = MiB;
 const workbookType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
 const jpeg = Buffer.from('ffd8ff', 'hex');
@@ -75,7 +75,7 @@ export function convertWorkbook(data: Buffer): Promise<Buffer> {
   });
 }
 
-function validate(data: Buffer, mime: string) {
+export function validateAttachment(data: Buffer, mime: string) {
   if (mime === 'text/plain' || mime === 'text/html') decodeText(data);
   else if (mime === 'image/png' && (!startsWith(data, png) || data.subarray(12, 16).toString() !== 'IHDR') ||
     mime === 'image/jpeg' && !startsWith(data, jpeg) ||
@@ -102,7 +102,7 @@ export class AttachmentService {
     this.pending++;
     try {
       const data = await body();
-      validate(data, mime);
+      validateAttachment(data, mime);
       const projection = mime === workbookType ? await convertWorkbook(data) : undefined;
       if (this.store.attachmentBytes(sessionID) + data.length + (projection?.length ?? 0) > quota) {
         throw new HttpError(413, 'session-storage-full');
@@ -167,6 +167,14 @@ export class AttachmentService {
   prompt(sessionID: string, workspace: string, references: string[]) {
     const parts: NonNullable<SessionPromptInput['files']>[number][] = [];
     const text: string[] = [];
+    for (const { record, data, projection, decoded } of this.verifiedSelection(sessionID, workspace, references)) {
+      if (decoded === undefined) parts.push({ uri: `data:${record.mime};base64,${data.toString('base64')}`, name: record.name });
+      else text.push(`Attachment ${JSON.stringify(record.name)} (${projection ? 'sheet/row CSV' : 'UTF-8 text'}):\n${decoded}`);
+    }
+    return { files: parts, text: text.join('\n\n') };
+  }
+
+  *verifiedSelection(sessionID: string, workspace: string, references: readonly string[]) {
     let mediaBytes = 0;
     let textBytes = 0;
     for (const id of references) {
@@ -174,22 +182,23 @@ export class AttachmentService {
       if (!record) throw new HttpError(404, 'session-attachment-not-found');
       try {
         const { data } = openWorkspaceFile(workspace, sourceName(id), maxUpload, record.original);
+        let projection: Buffer | undefined;
+        let decoded: string | undefined;
         if (media(record.mime)) {
           mediaBytes += data.length;
           if (mediaBytes > 40 * MiB) throw new HttpError(413, 'message-media-limit');
-          parts.push({ uri: `data:${record.mime};base64,${data.toString('base64')}`, name: record.name });
         } else {
-          const bytes = record.projection ?
-            openWorkspaceFile(workspace, projectionName(id), maxProjection, record.projection).data : data;
+          projection = record.projection && openWorkspaceFile(workspace, projectionName(id), maxProjection, record.projection).data;
+          const bytes = projection ?? data;
           textBytes += bytes.length;
           if (textBytes > maxProjection) throw new HttpError(413, 'message-text-limit');
-          text.push(`Attachment ${JSON.stringify(record.name)} (${record.projection ? 'sheet/row CSV' : 'UTF-8 text'}):\n${decodeText(bytes)}`);
+          decoded = decodeText(bytes);
         }
+        yield { record, data, projection, decoded };
       } catch (error) {
         if (error instanceof HttpError) throw error;
         throw new HttpError(409, 'attachment-changed');
       }
     }
-    return { files: parts, text: text.join('\n\n') };
   }
 }

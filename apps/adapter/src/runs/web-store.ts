@@ -8,6 +8,7 @@ import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
+import { DelegationLedger } from './delegation-ledger.ts';
 import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
@@ -118,6 +119,7 @@ export class WebStore extends Ledger {
   private readonly telegram: boolean;
   private readonly executionChanges = new Set<() => void>();
   private readonly centralWorkItems?: WorkItems;
+  private readonly centralDelegations?: DelegationLedger;
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -141,7 +143,10 @@ export class WebStore extends Ledger {
       },
     });
     this.telegram = telegram;
-    if (!telegram) this.centralWorkItems = new WorkItems(this.db);
+    if (!telegram) {
+      this.centralWorkItems = new WorkItems(this.db);
+      this.centralDelegations = new DelegationLedger(this.db, this.centralWorkItems);
+    }
   }
 
   get workItems() {
@@ -149,7 +154,12 @@ export class WebStore extends Ledger {
     return this.centralWorkItems;
   }
 
-  get runStore() { return this.telegram ? 'channel' : 'web'; }
+  get runStore(): 'channel' | 'web' { return this.telegram ? 'channel' : 'web'; }
+
+  get delegations() {
+    if (!this.centralDelegations) throw new Error('Delegations are stored in the central Web ledger');
+    return this.centralDelegations;
+  }
 
   verifyLegacyChannel(config: LegacyChannel, fingerprint: string, sealLegacyOwner: () => boolean) {
     return this.transaction(() => {

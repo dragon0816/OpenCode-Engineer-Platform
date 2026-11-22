@@ -8,7 +8,7 @@ const filesWorker = () => atRepo('workers/files/windows_write.py');
 const unavailable = () => new Error('Workspace output is unavailable');
 const outputName = /^[a-z\d][a-z\d._-]{0,119}$/;
 
-function runWorker(operation: 'mkdir' | 'write', folder: OutputDirectory, name: string, data?: Buffer) {
+function runWorker(operation: 'mkdir' | 'write' | 'copy', folder: OutputDirectory, name: string, data?: Buffer) {
   if (process.platform !== 'win32' || !outputName.test(name) || name.startsWith('staging-')) throw unavailable();
   scopedPath(folder.root, name);
   const processResult = spawnSync(process.env.OEP_PYTHON || 'python',
@@ -27,9 +27,9 @@ export function createWorkspaceOutput(parent: string, name: string) {
   return { root, inode };
 }
 
-export function writeWorkspaceFile(folder: OutputDirectory, name: string, data: Buffer, maximum: number) {
+export function writeWorkspaceFile(folder: OutputDirectory, name: string, data: Buffer, maximum: number, operation: 'write' | 'copy' = 'write') {
   if (data.length > maximum) throw unavailable();
-  const result = runWorker('write', folder, name, data);
+  const result = runWorker(operation, folder, name, data);
   const { identity } = openWorkspaceFile(folder.root, name, maximum);
   const hash = createHash('sha256').update(data).digest('hex');
   if (String(checkDirectory(folder.root).ino) !== folder.inode || identity.inode !== result.inode ||

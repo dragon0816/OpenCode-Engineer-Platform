@@ -12,6 +12,7 @@ import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce, validateSessionProfile } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
 import { knowledgeTool, readFileTool, retainsPermissions, sessionPermissions, writeFileTool } from '../opencode/permissions.ts';
+import type { SessionOrigin } from '../opencode/permissions.ts';
 import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
@@ -29,6 +30,7 @@ import { turnMarker } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Dispatcher } from '../runs/dispatcher.ts';
 import type { ResolvedOutcome, WorkItem, WorkLease, WorkOutcome, WorkRequest } from '../runs/work-items.ts';
+import type { DelegationService } from '../runs/delegation.ts';
 
 export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string };
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
@@ -88,9 +90,10 @@ export class ChatService {
   private readonly dispatcher: Dispatcher;
   private readonly standalone?: { dispatcher: Dispatcher; users: number };
   private readonly workKind: string;
+  private readonly delegations?: DelegationService;
 
   constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void,
-    ledger = store, dispatcher?: Dispatcher) {
+    ledger = store, dispatcher?: Dispatcher, delegations?: DelegationService) {
     this.store = store;
     this.ledger = ledger;
     this.runtime = runtime;
@@ -99,6 +102,7 @@ export class ChatService {
     this.audit = audit;
     this.notify = notify;
     this.attachments = new AttachmentService(store);
+    this.delegations = delegations;
     if (!dispatcher) {
       const shared = standaloneDispatchers.get(ledger) ?? { dispatcher: new Dispatcher(ledger.workItems), users: 0 };
       standaloneDispatchers.set(ledger, shared);
@@ -160,10 +164,10 @@ export class ChatService {
   }
 
   private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
-    workspaceID: string, origin: 'web' | 'channel', vaults: readonly string[]) {
+    workspaceID: string, origin: SessionOrigin, vaults: readonly string[], delegation = false) {
     const custom = this.runtime.remoteMcp?.tools.length
       ? this.runtime.remoteMcp.names(this.ledger.executionMcpGrants(agentID, workspaceID), session.project) : [];
-    return sessionPermissions({ agentID, origin, custom,
+    return sessionPermissions({ agentID, origin, custom, delegation,
       status: Boolean(this.runtime.toolTickets), files: Boolean(this.runtime.toolTickets),
       knowledge: Boolean(this.runtime.toolTickets && vaults.length) });
   }
@@ -172,7 +176,7 @@ export class ChatService {
     return !disabled && this.ledger.knowledgeSettings().toolbox ? this.ledger.executionKnowledgeReads(agentID, workspaceID) : [];
   }
 
-  private executionScope(session: WebSession, channel?: Destination) {
+  private executionScope(session: WebSession, channel?: Destination, turnId?: string) {
     const owner = this.store.sessionOwner(session);
     const origin = channel ? 'channel' : 'web';
     if (!owner || owner.origin !== origin || channel && (owner.channelAccount !== channel.accountId ||
@@ -183,7 +187,8 @@ export class ChatService {
     const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
     const vaults = this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled);
-    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, vaults);
+    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, vaults,
+      Boolean(turnId && this.runtime.toolTickets && this.delegations?.allows(turnId, this.store.runStore)));
     return { ...owner, ...profile, model: session.alias, permissions, vaults };
   }
 
@@ -511,7 +516,7 @@ export class ChatService {
     const update = (state: RunState) => { this.store.change(run.id, state); this.notify(session.id); };
     try {
       this.stop.signal.throwIfAborted();
-      const readScope = () => this.executionScope(session, channel);
+      const readScope = () => this.executionScope(session, channel, run.id);
       const upstream = await client.session.get({ sessionID }, call());
       if (upstream.id !== sessionID) throw new Error('Session ID mismatch');
       validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
@@ -564,7 +569,9 @@ export class ChatService {
           if (input.workbook && args.name !== workbookInput) throw new Error('Workbook output name required');
           return files.write(args.name as string, args.content as string);
         }
-        if (name !== readFileTool) return;
+        if (name !== readFileTool) return this.delegations?.invoke(name, args, {
+          store: this.store, session, input, channel, attachments: this.attachments, workspace: () => this.workspace(session),
+        }, toolSignal);
         if (typeof args.attachment === 'string') {
           const file = this.attachments.read(session.id, this.workspace(session), args.attachment, true);
           return readFileResult(file.name, file.data, file.sha256, file.mime.startsWith('text/'));
