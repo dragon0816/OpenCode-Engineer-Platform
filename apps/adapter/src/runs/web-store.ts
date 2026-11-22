@@ -6,6 +6,8 @@ import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
+import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
+import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
 import type { Destination } from '../channels/transport.ts';
@@ -108,6 +110,7 @@ const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
 export class WebStore extends Ledger {
   private readonly telegram: boolean;
   private readonly executionChanges = new Set<() => void>();
+  private readonly centralWorkItems?: WorkItems;
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -118,12 +121,24 @@ export class WebStore extends Ledger {
           db.exec(webSchema);
           migrateAgentLedger(db, file, telegram);
         }
-        if (!telegram) migrateChannelAccounts(db);
+        if (!telegram && version < 4) migrateChannelAccounts(db);
+        if (!telegram && version < 5) migrateWorkItems(db);
       },
-      verify: (db) => verifyAgentLedger(db, file, telegram),
+      verify(db) {
+        verifyAgentLedger(db, file, telegram);
+        if (!telegram) verifyWorkItems(db);
+      },
     });
     this.telegram = telegram;
+    if (!telegram) this.centralWorkItems = new WorkItems(this.db);
   }
+
+  get workItems() {
+    if (!this.centralWorkItems) throw new Error('Work items are stored in the central Web ledger');
+    return this.centralWorkItems;
+  }
+
+  get runStore() { return this.telegram ? 'channel' : 'web'; }
 
   verifyLegacyChannel(config: LegacyChannel, fingerprint: string, sealLegacyOwner: () => boolean) {
     return this.transaction(() => {
@@ -489,14 +504,14 @@ export class WebStore extends Ledger {
     });
   }
 
-  sessions() {
+  sessions(includeHidden = false) {
     return this.db.prepare(`SELECT s.id, upstream_id AS upstreamID, agent, alias, created_at AS createdAt, d.title,
       COALESCE(p.project, 'default') AS project, k.id IS NOT NULL AS knowledgeDisabled
       FROM web_sessions s LEFT JOIN web_session_display d ON d.id = s.id
       LEFT JOIN web_session_project p ON p.id = s.id
       LEFT JOIN web_session_knowledge_disabled k ON k.id = s.id
-      WHERE COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
-      .all() as WebSession[];
+      WHERE ? OR COALESCE(d.removed, 0) = 0 ORDER BY created_at, s.id`)
+      .all(Number(includeHidden)) as WebSession[];
   }
 
   attachment(sessionID: string, id: string) {
@@ -533,11 +548,12 @@ export class WebStore extends Ledger {
     return Boolean(this.db.prepare('SELECT 1 FROM web_turns WHERE run_id = ?').get(id));
   }
 
-  saveTurn(sessionID: string, run: RunRecord, hash: string, reply?: { id: string; text: string }) {
+  saveTurn(sessionID: string, run: RunRecord, hash: string, reply?: { id: string; text: string }, work?: WorkRequest) {
     this.transaction(() => {
       this.insert(run);
       this.db.prepare('INSERT INTO web_turns VALUES (?, ?, ?)').run(sessionID, run.id, hash);
       if (reply) this.db.prepare('INSERT INTO web_turn_replies VALUES (?, ?, ?)').run(run.id, reply.id, reply.text);
+      if (work) this.workItems.enqueue(work, run.createdAt);
     });
   }
 
