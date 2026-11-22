@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,27 +11,24 @@ import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { canonical, sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
+import { seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { maintenanceFixture } from './maintenance-fixture.ts';
 
 const manifestName = 'config/release.manifest.json';
 const read = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
 
-test('upgrade and rollback reconcile data and recover interrupted swaps', { skip: process.platform !== 'win32' }, (t) => {
+test('upgrade and rollback reconcile data and recover interrupted swaps', { skip: process.platform !== 'win32' }, async (t) => {
   const fixture = maintenanceFixture();
   try {
-    const v1 = resolve(process.env.OEP_TEST_RELEASE ?? 'dist/OEP-0.0.0-windows-x64.zip');
-    const files = unzipSync(readFileSync(v1));
+    const release = resolve(process.env.OEP_TEST_RELEASE ?? 'dist/OEP-0.0.0-windows-x64.zip');
+    const files = unzipSync(readFileSync(release));
     const manifest = JSON.parse(strFromU8(files[manifestName]));
     const [major, minor, patch] = manifest.version.split('.').map(Number);
     const version = [major, minor, patch + 1].join('.');
     const storeFile = 'packages/knowledge/src/store.ts';
-    const storeCode = strFromU8(files[storeFile]);
-    const hook = 'this.activeFilter =';
-    assert.ok(storeCode.includes(hook));
-    files[storeFile] = strToU8(storeCode.replace('version > 1', 'version > 2')
-      .replace('else if (version !== 1)', 'else if (version !== 1 && version !== 2)')
-      .replace(hook, "if (!readOnly && version < 2) this.transaction(() => this.db.exec(" +
-        "'ALTER TABLE publications ADD COLUMN phase5c_fixture INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=2;'));\n      " + hook));
+    const historical = spawnSync('git', ['show', '6c511e6:' + storeFile]);
+    assert.ifError(historical.error);
+    assert.equal(historical.status, 0, historical.stderr.toString('utf8'));
     function fixtureZip(release: string, changed: string, files: Record<string, Uint8Array>) {
       const metadata = { ...manifest, version: release, files: manifest.files.map((file: { path: string }) =>
         (file.path === changed || file.path === storeFile) ? { ...file, sha256: sha256(files[file.path]), size: files[file.path].length } : file) };
@@ -44,15 +41,14 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     }
     const { path: v2, zip } = fixtureZip(version, storeFile, files);
     const oldVersion = manifest.version;
+    const { path: v1 } = fixtureZip(oldVersion, storeFile, { ...files, [storeFile]: historical.stdout });
 
     fixture.run('Install-OEP', ['-Source', v1]);
-    const web = join(fixture.data, 'web');
-    const profile = join(web, 'profile');
-    mkdirSync(profile, { recursive: true });
-    const profileFile = join(profile, 'synthetic.txt');
-    writeFileSync(profileFile, 'original profile');
+    const { web } = seedPhase3bFixture(fixture.data);
+    const profileFile = join(web, 'profile/synthetic.txt');
     const knowledge = join(web, 'knowledge.sqlite');
     const { snapshot } = goldFixture();
+    snapshot.publication.revision = 'maintenance-extended';
     for (let index = 0; index < 300; index++) {
       const id = 'fixture-card-' + index;
       const text = 'Synthetic observation ' + index;
@@ -61,7 +57,10 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
         locator: 'section ' + index, text, sha256: sha256(text) });
       snapshot.relationships.push({ from: id, to: 'fixture-card-' + ((index + 1) % 300), kind: 'references' });
     }
-    const store = new KnowledgeStore(knowledge);
+    const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
+    const { KnowledgeStore: HistoricalKnowledgeStore } = await import(oldStore) as
+      typeof import('../../packages/knowledge/src/store.ts');
+    const store = new HistoricalKnowledgeStore(knowledge);
     store.import(snapshot, Buffer.from(canonical(snapshot)));
     const before = store.retrieve(snapshot.vault.id, 'SYN-48B');
     store.close();
@@ -71,20 +70,16 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
         INSERT INTO notification_intents VALUES ('review','synthetic','revision');
         INSERT INTO ingest_jobs(id,payload) VALUES ('job','{}');`);
     }
-    const webDatabase = join(web, 'web.sqlite');
+    const webDatabase = join(fixture.data, 'web.sqlite');
     {
       using db = new DatabaseSync(webDatabase);
       db.exec(readFileSync(new URL('../fixtures/upgrade/web-before-model-selection.sql', import.meta.url), 'utf8'));
     }
     const telegram = join(web, 'telegram.sqlite');
-    const inbox = new TelegramInbox(telegram);
-    inbox.db.exec("INSERT INTO inbox(bot,id,topic,payload) VALUES ('main',1,0,'{}')");
-    inbox.db.close();
     const pending = (id: string) => {
       using db = new DatabaseSync(telegram);
       db.prepare("INSERT INTO outbox(bot,id,topic,text,state) VALUES('main', ?, 0, 'synthetic', 'pending')").run(id);
     };
-    pending('original');
     const pointer = join(fixture.install, 'current.json');
     const journalPath = join(fixture.install, 'upgrade.journal.json');
     const upgrade = (...args: string[]) => fixture.run('Upgrade-OEP', ['-Source', v2, ...args]);
@@ -102,7 +97,8 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
         assert.deepEqual(restoredStore.retrieve(snapshot.vault.id, 'SYN-48B'), before);
       } finally { restoredStore.close(); }
       using db = new DatabaseSync(telegram, { readOnly: true });
-      assert.deepEqual(db.prepare('SELECT id FROM outbox').all().map((row) => row.id), ['original']);
+      assert.deepEqual(db.prepare("SELECT id FROM outbox WHERE bot='main'").all().map((row) => row.id), ['original']);
+      assert.equal(db.prepare("SELECT state FROM outbox WHERE bot='bi' AND id='previous-bi'").get()?.state, 'indeterminate');
     };
     upgrade('-WhatIf');
     assert.ok(!existsSync(journalPath));
@@ -116,12 +112,17 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       assert.equal(read(pointer).version, version);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].before.userVersion, 1);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
-      const webMigration = read(journalPath).migration['web/web.sqlite'];
+      const webMigration = read(journalPath).migration['web.sqlite'];
       for (const table of ['web_model_catalog', 'web_model_selection']) {
         assert.equal(Object.hasOwn(webMigration.before.counts, table), false);
         assert.equal(webMigration.after.counts[table], 0);
       }
-      const oldStore = pathToFileURL(join(fixture.install, oldVersion, storeFile)).href;
+      for (const name of ['web/web.sqlite', 'web/telegram-chat.sqlite']) {
+        const { before, after } = read(journalPath).migration[name];
+        assert.equal(before.userVersion, 2);
+        assert.equal(after.userVersion, 3);
+        assert.equal(after.counts.session_ownership, 2);
+      }
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',
         'const { KnowledgeStore } = await import(process.argv[1]); new KnowledgeStore(process.argv[2]).close();',
         oldStore, knowledge], { encoding: 'utf8', timeout: 30_000 });

@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lstatSync } from 'node:fs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
+import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { webLedgerVersion } from '../../apps/adapter/src/runs/ledger.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 
 const [mode, root, destination] = process.argv.slice(2);
@@ -137,13 +139,16 @@ async function describe({ live = false } = {}) {
   return { inventory, databases };
 }
 
+function digestRow(values) {
+  return createHash('sha256').update(JSON.stringify(values.map((value) =>
+    typeof value === 'bigint' ? ['integer', String(value)] :
+      value instanceof Uint8Array ? ['blob', Buffer.from(value).toString('base64')] : value))).digest('hex');
+}
+
 function rowDigests(db, table, columns) {
   const statement = db.prepare('SELECT ' + columns.map(quote).join(',') + ' FROM ' + quote(table));
   statement.setReadBigInts(true);
-  return [...statement.iterate()].map((row) => createHash('sha256').update(JSON.stringify(
-    Object.values(row).map((value) => typeof value === 'bigint' ? ['integer', String(value)] :
-      value instanceof Uint8Array ? ['blob', Buffer.from(value).toString('base64')] : value),
-  )).digest('hex')).sort();
+  return [...statement.iterate()].map((row) => digestRow(Object.values(row))).sort();
 }
 
 const columnsOf = (db, table) => db.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid')
@@ -161,6 +166,9 @@ const knowledgeAdditions = new Set([
   'benchmark_sets', 'inactive_vaults', 'review_uploads', 'review_schemas', 'review_schema_heads',
   'reviews', 'review_edits', 'notification_intents', 'ingest_jobs', 'ingest_effects',
 ]);
+const webV3Empty = new Set(['file_classifications']);
+const knowledgeV2Empty = new Set(['vault_classifications']);
+const emptyTables = new Set();
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function backupManifest(path) {
@@ -185,6 +193,40 @@ async function reconcileRestore() {
   }
 }
 
+function verifyAgentSeeds(name, oldDb, newDb, counts, channel) {
+  const expected = legacyAgentRows(oldDb, dirname(join(destination, name)), channel);
+  for (const [table, rows] of Object.entries(expected)) {
+    const columns = columnsOf(newDb, table);
+    const digests = rows.map((row) => digestRow(row.map((value) => typeof value === 'number' ? BigInt(value) : value))).sort();
+    if (counts[table] !== rows.length || !same(rowDigests(newDb, table, columns), digests)) {
+      throw new SnapshotError(name, `升級比對失敗。${table} 初始資料、歸屬或來源不符。`);
+    }
+  }
+  return expected;
+}
+
+function verifyEmptyAdditions(name, counts, tables) {
+  for (const table of tables) {
+    if (counts[table] !== 0) throw new SnapshotError(name, `升級比對失敗。${table} 必須存在且初始為空。`);
+  }
+}
+
+async function verifyNewCentralStore(name, next, before) {
+  const chat = name.replace(/web\.sqlite$/, 'telegram-chat.sqlite');
+  if (name === chat || !name.endsWith('web.sqlite') || !Object.hasOwn(before, chat) || next.userVersion !== webLedgerVersion) {
+    throw new SnapshotError(name, '升級比對失敗。出現未預期的受管資料庫。');
+  }
+  await check(name, '升級比對失敗。無法驗證新建的中央工作台資料庫。', () => useDatabase(join(root, name), (db) => {
+    const seeds = verifyAgentSeeds(name, undefined, db, next.counts, false);
+    const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty]);
+    verifyEmptyAdditions(name, next.counts, empty);
+    if (Object.keys(next.counts).some((table) => !empty.has(table) && !Object.hasOwn(seeds, table))) {
+      throw new SnapshotError(name, '升級比對失敗。新建的中央工作台資料庫包含未知資料表。');
+    }
+    verifyAgentLedger(db, join(root, name), false);
+  }));
+}
+
 async function reconcileUpgrade() {
   const before = await backupManifest(join(destination, 'backup.manifest.json'));
   const after = await describe({ live: true });
@@ -193,6 +235,9 @@ async function reconcileUpgrade() {
     if ((!isOepDatabase(file.path) || !Object.hasOwn(before.databases, file.path)) && !same(inventory.get(file.path), file)) {
       throw new SnapshotError(file.path, '升級比對失敗。檔案大小或 SHA-256 不符。');
     }
+  }
+  for (const [name, next] of Object.entries(after.databases)) {
+    if (!Object.hasOwn(before.databases, name)) await verifyNewCentralStore(name, next, before.databases);
   }
   for (const [name, prior] of Object.entries(before.databases)) {
     if (!isOepDatabase(name)) continue;
@@ -203,15 +248,26 @@ async function reconcileUpgrade() {
     if (!same(prior.revisions, next.revisions) || !same(prior.publicationCounts, next.publicationCounts)) {
       throw new SnapshotError(name, '升級比對失敗。發布修訂雜湊或修訂筆數不符。');
     }
-    const allowed = /(?:^|\/)(web|telegram-chat)\.sqlite$/.test(name) ? webAdditions :
-      basename(name) === 'knowledge.sqlite' ? knowledgeAdditions : new Set();
-    for (const [table, count] of Object.entries(next.counts)) {
-      if (!Object.hasOwn(prior.counts, table) && (count !== 0 || !allowed.has(table))) {
-        throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
-      }
+    const channel = basename(name) === 'telegram-chat.sqlite';
+    const web = channel || basename(name) === 'web.sqlite';
+    const knowledge = basename(name) === 'knowledge.sqlite';
+    if (web && next.userVersion !== webLedgerVersion || knowledge && next.userVersion !== 2) {
+      throw new SnapshotError(name, '升級比對失敗。SQLite user_version 與新版不符。');
     }
+    const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
+    const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
+    const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty : emptyTables;
+    const allowed = web ? webAdditions : knowledge ? knowledgeAdditions : emptyTables;
     await check(name, '升級比對失敗。無法讀取 SQLite 欄位或工作狀態。', () => useDatabase(join(destination, name), (oldDb) =>
       useDatabase(join(root, name), (newDb) => {
+        const seeded = seedWeb ? verifyAgentSeeds(name, oldDb, newDb, next.counts, channel) : {};
+        verifyEmptyAdditions(name, next.counts, expectedEmpty);
+        for (const [table, count] of Object.entries(next.counts)) {
+          if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table)) continue;
+          if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table)) {
+            throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
+          }
+        }
         for (const [table, count] of Object.entries(prior.counts)) {
           if (next.counts[table] !== count) throw new SnapshotError(name, '升級比對失敗。既有資料表筆數不符。');
           const columns = columnsOf(oldDb, table);
@@ -221,6 +277,10 @@ async function reconcileUpgrade() {
             throw new SnapshotError(name, '升級比對失敗。既有欄位、資料列或工作狀態不符。');
           }
         }
+        if ((web || knowledge) && newDb.prepare('PRAGMA foreign_key_check').get()) {
+          throw new SnapshotError(name, '升級比對失敗。SQLite foreign_key_check 外鍵檢查失敗。');
+        }
+        if (web) verifyAgentLedger(newDb, join(root, name), channel);
       })));
   }
 }

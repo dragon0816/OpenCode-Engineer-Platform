@@ -97,7 +97,8 @@ try {
     Write-OEP $journalPath $journal
     Interrupt-Upgrade 'migration'
     [void](Read-RollbackBackup $journal)
-    [void](Invoke-OEPDataTool (Node-OEP $target) "$PSScriptRoot/data-snapshot.mjs" @('reconcile-upgrade', $DataRoot, $backup) '升級比對失敗。' 'scripts/windows/data-snapshot.mjs')
+    $reconciliation = 'scripts/windows/data-snapshot.mjs'
+    [void](Invoke-OEPDataTool (Node-OEP $target) (Entry-OEP $target $reconciliation) @('reconcile-upgrade', $DataRoot, $backup) '升級比對失敗。' $reconciliation)
     Select-OEPVersion $InstallRoot $DataRoot $journal.next
     Log-OEP $InstallRoot 'UPGRADE OK'
     Check-OEP '移除升級執行標記失敗。' $marker
