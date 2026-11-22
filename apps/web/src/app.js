@@ -1294,12 +1294,15 @@ function appearanceDirty() {
 const defaultAlias = find('default-alias');
 const sessionAlias = find('session-alias');
 const modelStatus = find('model-settings-status');
+const modelUnsaved = find('model-unsaved');
 const modelList = find('model-health');
 const modelRestart = find('model-restart');
+const modelApplyCookie = 'oep_model_apply';
 const modelTests = new Map();
 let modelSettings;
 let selectedModels = new Set();
 let modelBusy = false;
+let modelRetry;
 function aliasOptions(select, selected, aliases, configuredDefault) {
   select.replaceChildren(...aliases.map((alias) => optionText(
     alias === configuredDefault ? message('chat.default-in-settings-model', { model: alias }) : alias, alias)));
@@ -1311,6 +1314,7 @@ function updateSessionAlias() {
   const fallback = session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
   aliasOptions(sessionAlias, fallback ?? session?.alias, aliases, modelSettings?.defaultAlias);
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
+  find('session-model-hint').hidden = aliases.length !== 1 || modelSettings.selected.length !== 1 || modelSettings.choices.length <= 1;
   if (modelSettings) setText(model, session?.alias ?? modelSettings.defaultAlias);
   let notice = '';
   if (fallback) notice = message('model.fallback-next', { model: fallback });
@@ -1319,10 +1323,12 @@ function updateSessionAlias() {
 }
 function modelControls() {
   const disabled = stopped || modelBusy || !modelSettings;
+  const dirty = Boolean(modelDirty());
+  if (dirty !== Boolean(modelUnsaved.textContent)) setText(modelUnsaved, dirty ? message('model.unsaved') : '');
   for (const control of modelList.querySelectorAll('input, button')) control.disabled = disabled;
   for (const id of ['default-alias', 'recheck-model', 'refresh-models']) find(id).disabled = disabled;
-  find('save-model').disabled = disabled || !selectedModels.size || selectedModels.size > modelSettings.maxSelected;
-  modelRestart.disabled = disabled || !modelSettings.canRestart || modelDirty();
+  find('save-model').disabled = disabled || !dirty || !selectedModels.size || selectedModels.size > modelSettings.maxSelected;
+  modelRestart.disabled = disabled || !modelSettings.canRestart || dirty;
 }
 function applyModel(value, draft) {
   modelSettings = value;
@@ -1381,15 +1387,19 @@ async function updateModel(action) {
   if (modelBusy) return;
   const draft = { alias: defaultAlias.value, selected: [...selectedModels] };
   const save = action === 'save';
-  const keepDraft = !save && modelDirty();
-  if (save) settingsSaving = true;
+  let applySaved = false;
+  if (save) {
+    cancelModelRetry();
+    settingsSaving = true;
+  }
   modelBusy = true;
   modelControls();
   setText(modelStatus, save ? message('chat.saving') : action === 'refresh' ? message('model.refreshing') : message('chat.checking'));
   try {
     const value = await request('/api/settings/model' + (save ? '' : '/' + action), { data: save ? draft : {} });
     if (action === 'recheck') for (const { alias } of value.aliases) modelTests.delete(alias);
-    applyModel(value, keepDraft ? draft : undefined);
+    applyModel(value, !save && modelDirty() ? draft : undefined);
+    applySaved = save && value.restartRequired && value.canRestart;
     const status = save ? message('chat.saved') : action === 'recheck' ? message('chat.recheck-complete') :
       value.refreshed ? message('model.refreshed') : message('model.refresh-failed');
     setText(modelStatus, status);
@@ -1401,26 +1411,110 @@ async function updateModel(action) {
     modelBusy = false;
     modelControls();
   }
+  if (applySaved) void restartModels(modelSettings);
 }
 find('model-settings').addEventListener('submit', (event) => {
   event.preventDefault();
+  modelControls();
   if (!find('save-model').disabled) void updateModel('save');
 });
 find('recheck-model').addEventListener('click', () => void updateModel('recheck'));
 find('refresh-models').addEventListener('click', () => void updateModel('refresh'));
 defaultAlias.addEventListener('change', modelControls);
-modelRestart.addEventListener('click', async () => {
+
+function modelSectionOpen() {
+  return !settingsView.hidden && activeSettingsSection === 'model';
+}
+function cancelModelRetry() {
+  if (!modelRetry) return;
+  clearTimeout(modelRetry.timer);
+  modelRetry.controller.abort();
+  modelRetry = undefined;
+}
+function leaveModelSection() {
+  if (modelRetry) setText(modelStatus, '');
+  cancelModelRetry();
+}
+function queueModelRetry() {
+  const controller = new AbortController();
+  const { signal } = controller;
+  const retry = modelRetry = { controller, timer: setTimeout(check, 2_000) };
+  async function check() {
+    if (stopped || !modelSectionOpen()) {
+      cancelModelRetry();
+      return;
+    }
+    try {
+      if (!modelBusy && !modelDirty()) {
+        const value = await request('/api/settings/model', { signal });
+        if (signal.aborted) return;
+        if (!modelBusy && !modelDirty()) {
+          if (value.restartRequired) void restartModels(value);
+          else {
+            cancelModelRetry();
+            applyModel(value);
+            setText(modelStatus, message('model.applied'));
+          }
+          return;
+        }
+      }
+      retry.timer = setTimeout(check, 2_000);
+    } catch (error) {
+      if (signal.aborted) return;
+      cancelModelRetry();
+      setText(modelStatus, errorText(error));
+    }
+  }
+}
+
+async function modelSelectionDigest({ selected, configuredDefaultAlias }) {
+  const bytes = new TextEncoder().encode(JSON.stringify([configuredDefaultAlias, [...selected].sort()]));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)));
+}
+function readModelApplyCookie() {
+  return document.cookie.split('; ').find((entry) => entry.startsWith(modelApplyCookie + '='))?.slice(modelApplyCookie.length + 1);
+}
+function writeModelApplyCookie(value, seconds) {
+  document.cookie = `${modelApplyCookie}=${value}; Path=/; Max-Age=${seconds}; SameSite=Strict`;
+}
+async function confirmModelApply(value) {
+  const [port, selection] = readModelApplyCookie()?.split('.') ?? [];
+  if (!port || port === location.port || value.restartRequired || selection !== await modelSelectionDigest(value)) return;
+  writeModelApplyCookie('', 0);
+  setText(modelStatus, message('model.applied'));
+  setText(find('session-model-status'), message('model.applied'));
+}
+async function restartModels(value) {
+  if (modelBusy || stopped || !modelSectionOpen()) return;
+  cancelModelRetry();
   modelBusy = true;
   modelControls();
+  let marker;
+  let restarting = false;
   try {
+    // The launcher opens a paired tab on a new port. Only the expiring UI handoff crosses ports.
+    marker = `${location.port}.${await modelSelectionDigest(value)}`;
+    if (!modelSectionOpen()) return;
+    writeModelApplyCookie(marker, 120);
     await request('/api/settings/model/restart', { data: {} });
+    restarting = true;
     setText(modelStatus, message('tools.restarting-continue-in-the-oep-tab-that'));
   } catch (error) {
-    setText(modelStatus, error.status === 409 ? message('model.restart-busy') : errorText(error));
-    modelBusy = false;
-    modelControls();
+    if (marker && error instanceof RequestError && readModelApplyCookie() === marker) writeModelApplyCookie('', 0);
+    if (error.status === 409 && modelSectionOpen()) {
+      setText(modelStatus, message('model.apply-deferred'));
+      queueModelRetry();
+    } else setText(modelStatus, errorText(error));
+  } finally {
+    if (!restarting) {
+      modelBusy = false;
+      modelControls();
+    }
   }
-});
+}
+modelRestart.addEventListener('click', () => void restartModels(modelSettings));
+window.addEventListener('pagehide', cancelModelRetry);
 sessionAlias.addEventListener('change', async () => {
   const context = current;
   const status = find('session-model-status');
@@ -1612,6 +1706,7 @@ function loadActiveSettingsSection() {
 function switchSettingsSection(section) {
   if (section === activeSettingsSection) return true;
   if (!discardSettings()) return false;
+  if (activeSettingsSection === 'model') leaveModelSection();
   activeSettingsSection = section;
   localStorage.setItem(settingsSectionKey, section);
   renderSettingsSection();
@@ -1636,6 +1731,10 @@ function showSettings() {
 }
 
 settingsEntry.addEventListener('click', showSettings);
+find('choose-more-models').addEventListener('click', (event) => {
+  event.preventDefault();
+  if (switchSettingsSection('model')) showSettings();
+});
 find('close-settings').addEventListener('click', () => {
   find('open-chat').click();
   if (settingsView.hidden && narrowNavigation.matches) sidebarToggle.focus();
@@ -1647,6 +1746,7 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
       event.stopImmediatePropagation();
       return;
     }
+    if (activeSettingsSection === 'model') leaveModelSection();
     settingsView.hidden = true;
     settingsEntry.removeAttribute('aria-current');
     if (id === 'open-chat') {
@@ -1981,11 +2081,15 @@ stop.addEventListener('click', async () => {
 });
 
 try {
+  const pairedLaunch = new URLSearchParams(location.hash.slice(1)).has('pair');
   const bootstrap = await connect();
   setText(connection, message('chat.connected'));
   setText(model, bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
-  request('/api/settings/model').then(applyModel).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
+  request('/api/settings/model').then(async (value) => {
+    applyModel(value);
+    if (pairedLaunch) await confirmModelApply(value);
+  }).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   request('/api/settings/projects').then((entries) => {
     projectFolders = entries;
     folderProject.replaceChildren(...entries.map(entry => optionText(projectLabel(entry), entry.id)));
