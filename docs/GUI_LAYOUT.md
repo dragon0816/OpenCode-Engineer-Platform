@@ -119,6 +119,8 @@
 
 ## 版面樣張
 
+樣張使用合成資料。寬版為 1440 × 900，窄版為 390 × 844。
+
 | 畫面 | 淺色寬版 | 深色寬版 | 淺色窄版 | 深色窄版 |
 |---|---|---|---|---|
 | 對話 | [PNG](validation/gui/conversation-light-wide.png) | [PNG](validation/gui/conversation-dark-wide.png) | [PNG](validation/gui/conversation-light-narrow.png) | [PNG](validation/gui/conversation-dark-narrow.png) |
