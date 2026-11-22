@@ -85,15 +85,15 @@ export class ChannelSpool {
     });
   }
 
-  nextInbound(binding: Binding, lane: Lane, now: number) {
+  nextInbound(binding: Binding, lane: Lane, now: number, ordered = false) {
     return this.spoolDb.prepare(`SELECT account_id AS accountId, event_key AS eventKey, conversation_key AS conversationKey,
       binding_revision AS bindingRevision, agent_id AS agentId, payload, first_attempt_at AS started, attempts
       FROM channel_inbound AS item
       WHERE account_id=? AND agent_id=? AND binding_revision=? AND lane=? AND status='pending' AND due_at<=? AND NOT EXISTS (
         SELECT 1 FROM channel_inbound AS prior WHERE prior.account_id=item.account_id
           AND prior.conversation_key=item.conversation_key AND prior.binding_revision=item.binding_revision
-          AND prior.lane=item.lane AND prior.status IN ('pending','handed_off') AND prior.rowid<item.rowid)
-      ORDER BY rowid LIMIT 1`).get(binding.accountId, binding.agentId, binding.bindingRevision, lane, now) as Item | undefined;
+          AND (? OR prior.lane=item.lane) AND prior.status IN ('pending','handed_off') AND prior.rowid<item.rowid)
+      ORDER BY rowid LIMIT 1`).get(binding.accountId, binding.agentId, binding.bindingRevision, lane, now, Number(ordered)) as Item | undefined;
   }
 
   attemptInbound(item: Pick<Item, 'accountId' | 'eventKey'>, now: number, due: number) {
@@ -108,12 +108,14 @@ export class ChannelSpool {
       .run(...destination(message), message.effectKey, JSON.stringify({ text: message.text, locale: message.locale }));
   }
 
-  completeInbound(eventKey: string, message: OutboundMessage, failed: boolean) {
+  completeInbound(eventKey: string, message: OutboundMessage, failed: boolean, workId?: string) {
     this.transaction(() => {
       const { changes } = this.spoolDb.prepare(`UPDATE channel_inbound SET status=?,reason_code=?
-        WHERE account_id=? AND conversation_key=? AND binding_revision=? AND agent_id=? AND event_key=? AND status='pending'`)
-        .run(failed ? 'failed' : 'handled', failed ? 'intake-deadline' : null, ...destination(message), eventKey);
-      if (changes) this.enqueueOutbound(message);
+        WHERE account_id=? AND conversation_key=? AND binding_revision=? AND agent_id=? AND event_key=?
+          AND (status='pending' AND ? IS NULL OR status='handed_off' AND work_id=?)`)
+        .run(failed ? 'failed' : 'handled', failed ? 'intake-deadline' : null, ...destination(message), eventKey,
+          workId ?? null, workId ?? null);
+      if (changes && message.text) this.enqueueOutbound(message);
     });
   }
 

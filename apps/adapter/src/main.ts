@@ -23,7 +23,7 @@ import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
 import { ChatService, publicSession } from './http/chat.ts';
 import type { Turn } from './http/chat.ts';
-import { proposeReview, reviewAction, uploadReviewSource } from './http/review.ts';
+import { reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError, WebMessageError } from './http/errors.ts';
 import { codeForFallback, describeRepositoryIssue, webMessage } from './http/messages.ts';
 import { WebEvents } from './http/events.ts';
@@ -36,6 +36,8 @@ import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 import type { TelegramEnvironment } from './telegram/accounts.ts';
+import { Dispatcher } from './runs/dispatcher.ts';
+import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { prepareBiWorkspace } from './runs/agent-ledger.ts';
 
 const assets = new Map([
@@ -111,14 +113,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const dispatcher = new Dispatcher(store.workItems);
   const telegram = (() => {
-    try { return startTelegram(root, runtime, telegramEnabled, store, channelEnvironment); }
+    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment); }
     catch (error) { store.close(); throw error; }
   })();
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));
   const events = new WebEvents(runtime.endpoint, (id) => upstreamIDs.get(id));
-  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id));
+  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher);
   const active = new Set<Promise<void>>();
   const approvedAlias = (alias: unknown) => {
     if (typeof alias !== 'string' || !runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
@@ -167,6 +170,20 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     }
     if (path === '/api/settings/channels') {
       send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request)));
+      return;
+    }
+    if (path === '/api/work-items') {
+      if (method === 'POST') {
+        const { id, leaseId, outcome } = await body(request);
+        if (typeof id !== 'string' || typeof leaseId !== 'string' ||
+            (outcome !== 'succeeded' && outcome !== 'failed' && outcome !== 'cancelled')) {
+          throw new HttpError(400, 'work-resolution-invalid');
+        }
+        if (!await dispatcher.resolve(id, leaseId, outcome)) throw new HttpError(409, 'work-resolution-unavailable');
+      }
+      send(response, 200, { indeterminate: store.workItems.withLease().filter(({ state }) => state === 'indeterminate')
+        .map(({ id, agentId, source, enqueuedAt, leaseId, runStore, runId, scheduleRef, reasonCode }) =>
+          ({ id, agentId, source, enqueuedAt, leaseId, runStore, runId, scheduleRef, reasonCode })) });
       return;
     }
     if (path === '/api/settings') {
@@ -310,7 +327,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       const input = await body(request);
       if (Object.keys(input).length) throw new HttpError(400, 'restart-has-input');
       if (!requestRestart) throw new HttpError(503, 'restart-unavailable');
-      if (restarting || active.size > 1 || chat.busy() || !telegram.pauseForRestart()) {
+      if (restarting || active.size > 1 || chat.busy() || dispatcher.busy() || !telegram.pauseForRestart()) {
         throw new HttpError(409, 'restart-busy');
       }
       restarting = true;
@@ -484,11 +501,15 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       } else {
         const input = await body(request);
         try {
-          if (input.action === 'propose') {
+          if (input.action === 'propose' || input.action === 'stage-change' && (input.draft as Candidate)?.vault?.kind === 'bi') {
             const client = new AbortController();
             response.once('close', () => client.abort());
-            const result = await proposeReview(reviewStore, input, runtime.knowledge.propose, client.signal);
+            const result = await telegram.reviewBi(input, client.signal);
             if (!response.destroyed) send(response, 200, result);
+          } else if (input.action === 'run' || input.action === 'stage' && (input.draft as Candidate)?.vault?.kind === 'bi') {
+            const id = typeof input.id === 'string' ? input.id : '';
+            await telegram.runBi(id, input.action === 'stage' ? input.draft as Candidate : undefined);
+            send(response, 200, { id });
           } else send(response, 200, reviewAction(reviewStore, input));
         }
         catch { throw new HttpError(422, 'review-failed'); }
@@ -798,6 +819,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
     void operation.finally(() => active.delete(operation));
   });
   try {
+    await dispatcher.start();
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', () => {
@@ -807,6 +829,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       });
     });
   } catch (error) {
+    await dispatcher.close();
     await telegram.close();
     await events.close();
     store.close();
@@ -820,6 +843,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       await events.close();
       server.closeAllConnections();
       await closed;
+      await dispatcher.close();
       await Promise.all([stopped, telegram.close(), ...active]);
       store.close();
     },

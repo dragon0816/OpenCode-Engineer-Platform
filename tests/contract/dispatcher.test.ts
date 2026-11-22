@@ -9,6 +9,17 @@ import { ModelSeat } from '../../apps/adapter/src/opencode/model-seat.ts';
 import { Dispatcher } from '../../apps/adapter/src/runs/dispatcher.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import type { WorkRequest } from '../../apps/adapter/src/runs/work-items.ts';
+import { BiService } from '../../apps/adapter/src/bi/service.ts';
+import { dispatchBi } from '../../apps/adapter/src/bi/dispatch.ts';
+import { BiScheduler } from '../../packages/knowledge/src/jobs/scheduler.ts';
+import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
+import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
+import { dispatchTelegram } from '../../apps/adapter/src/telegram/dispatch.ts';
+import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
+import type { TelegramAccounts } from '../../apps/adapter/src/telegram/accounts.ts';
+import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
+import type { Runtime } from '../../apps/launcher/src/runtime.ts';
+import { startAdapter } from '../../apps/adapter/src/main.ts';
 
 function seed(t: TestContext) {
   const path = mkdtempSync(join(tmpdir(), 'oep-dispatcher-'));
@@ -18,7 +29,7 @@ function seed(t: TestContext) {
     web.close();
     rmSync(path, { recursive: true, force: true });
   });
-  return { file, items: web.workItems };
+  return { file, path, items: web.workItems };
 }
 
 function request(id: string, source: WorkRequest['source'] = 'direct', agentId = 'main',
@@ -155,4 +166,116 @@ test('serializes work sharing a conversation even if one item is a verified read
   assert.equal(items.claim(() => true, 3), undefined);
   assert.equal(items.finish(first, 'succeeded'), true);
   assert.equal(items.claim(() => true, 3)?.id, 'second');
+});
+
+test('scheduled and Run Now triggers share one dispatcher item and one BI effect across the DST fold', async (t) => {
+  const { path, items } = seed(t);
+  const inbox = new TelegramInbox(join(path, 'telegram.sqlite'));
+  const store = new KnowledgeStore(join(path, 'knowledge.sqlite'));
+  const queue = new Dispatcher(items);
+  const jobs = dispatchBi(queue, new BiService(inbox), store);
+  const scheduler = new BiScheduler(inbox.db, store, jobs.occurrence);
+  const schema = store.installReviewSchema('sample', 'sample', '1', ['setting']);
+  const candidate: Candidate = {
+    vault: { id: 'sample', kind: 'bi', title: 'Synthetic' }, schema: schema.sha256,
+    sources: [{ id: 's', ref: 'sample.md', original: 'Amber', markdown: 'Amber' }],
+    cards: [{ id: 'card', key: 'card', type: 'record', title: 'Synthetic', version: '1', fields: { setting: 'Amber' } }],
+    relationships: [], evidence: [{ sourceId: 's', cardId: 'card', field: 'setting', start: 0, end: 5 }],
+  };
+  try {
+    const at = Date.parse('2026-11-01T05:30:00Z');
+    scheduler.save('daily', 'America/New_York', '01:30', candidate, at - 120_000);
+    scheduler.state('daily', 'active', at - 120_000);
+    scheduler.reconcile(at);
+    const job = scheduler.runNow('daily', at);
+    const queued = items.find('schedule', 'bi-job:' + job)!;
+    assert.equal(queued.state, 'queued');
+    assert.equal(queued.scheduleRef, 'daily');
+    assert.equal(store.reconciliation().effects.length, 0);
+    await queue.start();
+    assert.equal((await queue.wait(queued.id)).state, 'succeeded');
+    scheduler.reconcile(at + 3_600_000);
+    assert.equal(scheduler.runNow('daily', at + 3_600_000), job);
+    assert.equal(items.find('schedule', 'bi-job:' + job)?.id, queued.id);
+    assert.deepEqual(scheduler.list().occurrences.map(({ wall, state }) => [wall, state]), [['2026-11-01T01:30', 'awaiting_review']]);
+    assert.deepEqual(store.reconciliation().effects.map(({ job }) => job), [job]);
+  } finally {
+    await queue.close();
+    inbox.db.close();
+    store.close();
+  }
+});
+
+test('the production Telegram handoff preserves one conversation across lanes while other topics progress', async (t) => {
+  const { path, items } = seed(t);
+  const inbox = new TelegramInbox(join(path, 'telegram.sqlite'));
+  const queue = new Dispatcher(items);
+  const router = new TelegramRouter(inbox, {} as Runtime, undefined!, undefined!);
+  const stop = new AbortController();
+  const accounts = { connections: new Map([['telegram-bi', {
+    account: { agentId: 'bi', bindingRevision: 1 }, stop, redact: (text: string) => text,
+  }]]) } as unknown as TelegramAccounts;
+  const channel = dispatchTelegram(queue, inbox, undefined!, router, accounts, () => 'en', (text) => text);
+  const now = Date.now();
+  const binding = { accountId: 'telegram-bi', agentId: 'bi', bindingRevision: 1 };
+  const message = (id: number, topic: number, text: string) => ({ update_id: id, message: {
+    message_thread_id: topic, chat: { id: 42, type: 'private' }, from: { id: 42 }, text,
+  } });
+  const item = (id: number) => items.find('direct', JSON.stringify(['telegram', binding.accountId, id]))!;
+  try {
+    inbox.admit('bi', '42', [message(1, 1, '/approve'), message(2, 1, '/status'), message(3, 2, '/status')], now);
+    assert.equal(inbox.nextBound('bi', binding, 'command', now, true)?.id, 3);
+    channel.handoff(inbox.nextBound('bi', binding, 'work', now, true)!, now, now + 120_000);
+    assert.equal(inbox.nextBound('bi', binding, 'command', now, true)?.id, 3);
+    channel.handoff(inbox.nextBound('bi', binding, 'command', now, true)!, now, now + 120_000);
+    await queue.start();
+    assert.equal((await queue.wait(item(1).id)).state, 'succeeded');
+    assert.equal((await queue.wait(item(3).id)).state, 'succeeded');
+    assert.equal(inbox.nextBound('bi', binding, 'command', now, true)?.id, 2);
+    channel.handoff(inbox.nextBound('bi', binding, 'command', now, true)!, now, now + 120_000);
+    assert.equal((await queue.wait(item(2).id)).state, 'succeeded');
+    const replies = inbox.db.prepare("SELECT effect_key FROM channel_outbound WHERE conversation_key='topic:1' ORDER BY rowid").all();
+    assert.deepEqual(replies.map(({ effect_key }) => effect_key), ['update-1', 'update-2']);
+  } finally {
+    await queue.close();
+    inbox.db.close();
+  }
+});
+
+test('the resolution API requires a paired owner, CSRF, and the current lease', async (t) => {
+  const { path, items } = seed(t);
+  items.enqueue({ ...request('work'), payload: { kind: 'delegation-placeholder', privateInput: 'Synthetic private input' } });
+  const lease = items.claim(() => true)!;
+  items.markStarted(lease);
+  items.finish(lease, 'indeterminate');
+  const runtime = {
+    root: path, alias: 'synthetic', aliases: ['synthetic'], redact: (text: string) => text,
+    endpoint: { request: async () => new Response(null, { status: 503 }) },
+  } as unknown as Runtime;
+  const app = await startAdapter(path, runtime, () => {});
+  try {
+    const launch = new URL(app.pairURL());
+    const { origin } = launch;
+    const url = origin + '/api/work-items';
+    const post = (params: object, headers: Record<string, string> = {}) => fetch(url, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json', ...headers }, body: JSON.stringify(params),
+    });
+    const decision = { id: lease.id, leaseId: lease.leaseId, outcome: 'cancelled' };
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await post(decision)).status, 401);
+    const pair = await fetch(origin + '/api/pair', { method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket: launch.hash.slice('#pair='.length) }) });
+    assert.equal(pair.status, 200);
+    const cookie = pair.headers.get('set-cookie')!.split(';')[0];
+    const { csrf } = await pair.json();
+    const visible = await (await fetch(url, { headers: { cookie } })).json();
+    assert.equal(visible.indeterminate[0].id, lease.id);
+    assert.equal(Object.hasOwn(visible.indeterminate[0], 'payload'), false);
+    assert.equal((await post(decision, { cookie })).status, 403);
+    const headers = { cookie, 'x-oep-csrf': csrf };
+    assert.equal((await post({ ...decision, leaseId: 'old' }, headers)).status, 409);
+    assert.equal((await post(decision, headers)).status, 200);
+    assert.equal(items.get(lease.id)?.state, 'cancelled');
+    assert.equal(items.get(lease.id)?.leaseId, null);
+  } finally { await app.close(); }
 });

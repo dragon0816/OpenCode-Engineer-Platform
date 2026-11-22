@@ -363,14 +363,14 @@ const schema = this.reviewSchema(input.vault.id, base);
     return this.transaction(() => this.stageCandidate(id, input, provenance));
   }
 
-  enqueueBi(id: string, input: Candidate, origin: BiProvenance['origin'] = 'owner') {
+  enqueueBi(id: string, input: Candidate, origin: BiProvenance['origin'] = 'owner', workId?: string) {
     if (input.vault.kind !== 'bi') throw new Error('Expected a BI candidate');
     const payload = canonical(input);
     this.transaction(() => {
       const existing = this.db.prepare('SELECT payload FROM ingest_jobs WHERE id=?').get(key(id));
       if (!existing) materialize(input, this.reviewSchema(key(input.vault.id)), 'review-' + sha256(id));
       const insert = this.db.prepare('INSERT OR IGNORE INTO ingest_jobs(id,payload) VALUES (?,?)').run(id, payload);
-      if (insert.changes && this.ownsBi) this.db.prepare("INSERT INTO bi_job_ownership VALUES (?,'bi',NULL,?)").run(id, origin);
+      if (insert.changes && this.ownsBi) this.db.prepare("INSERT INTO bi_job_ownership VALUES (?,'bi',?,?)").run(id, workId ?? null, origin);
       if (this.db.prepare('SELECT payload FROM ingest_jobs WHERE id=?').get(id)?.payload !== payload) {
         throw new Error('Job key already exists with different input');
       }
@@ -412,12 +412,25 @@ const schema = this.reviewSchema(input.vault.id, base);
     return this.db.prepare('SELECT completed FROM ingest_jobs WHERE id=?').get(key(id))?.completed === 1;
   }
 
+  pendingBi(now = Date.now()) {
+    return this.db.prepare(`SELECT j.id, j.expires, o.work_id AS workId FROM ingest_jobs j
+      LEFT JOIN bi_job_ownership o ON o.job_id=j.id WHERE j.completed=0 AND j.expires<=? ORDER BY j.id`).all(now);
+  }
+
+  canRunBi(id: string, now = Date.now()) {
+    return !this.db.prepare('SELECT 1 FROM ingest_jobs WHERE id=? AND completed=0 AND expires>?').get(key(id), now);
+  }
+
   hasReview(id: string, vault: string, provenance?: BiProvenance) {
     if (!this.db.prepare('SELECT 1 FROM reviews WHERE id=? AND vault=?').get(key(id), key(vault))) return false;
     if (this.ownsBi && provenance?.origin === 'telegram') {
       const existing = this.db.prepare('SELECT source_key,delivery_destination FROM review_provenance WHERE review_id=?').get(id);
       const expected = reviewProvenanceRow(id, provenance);
       return existing?.source_key === expected[3] && existing?.delivery_destination === expected[5];
+    }
+    if (this.ownsBi && provenance?.sourceKey) {
+      const owner = this.db.prepare('SELECT origin,source_key FROM review_provenance WHERE review_id=?').get(id);
+      return owner?.origin === provenance.origin && owner.source_key === provenance.sourceKey;
     }
     return true;
   }

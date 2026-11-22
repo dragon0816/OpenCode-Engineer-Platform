@@ -8,6 +8,7 @@ type Handler = {
   recover?: (item: WorkLease) => Promise<Recovery | undefined>;
   canResolve?: (item: WorkLease, outcome: ResolvedOutcome) => Promise<boolean>;
   resolved?: (item: WorkLease, outcome: ResolvedOutcome) => void;
+  expired?: (item: WorkItem) => void;
 };
 const pending = (item: WorkItem) => item.state === 'queued' || item.state === 'running';
 
@@ -111,7 +112,10 @@ export class Dispatcher {
 
   private drain() {
     const now = this.clock();
-    for (const item of this.items.expire(now)) this.notify(item.id);
+    for (const item of this.items.expire(now)) {
+      this.handlers.get(item.payload.kind)?.expired?.(item);
+      this.notify(item.id);
+    }
     while (true) {
       const lease = this.items.claim((item) => {
         const handler = this.handlers.get(item.payload.kind);
@@ -151,14 +155,14 @@ export class Dispatcher {
 
   private async recover() {
     for (const item of this.items.withLease()) {
-      if (item.state !== 'running') continue;
-      if (item.reasonCode === null) {
+      if (item.state === 'running' && item.reasonCode === null) {
         this.items.requeue(item);
         continue;
       }
       let result: Recovery | undefined;
       try { result = await this.handlers.get(item.payload.kind)?.recover?.(item); }
       catch { /* Inaccessible state cannot prove that the work is safe to replay. */ }
+      if (item.state !== 'running') continue;
       if (result === 'never-started') this.items.requeue(item);
       else this.items.finish(item, result?.state ?? 'indeterminate', result?.reason ?? 'restart-reconciliation');
     }

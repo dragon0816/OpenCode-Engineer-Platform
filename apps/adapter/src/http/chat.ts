@@ -27,6 +27,8 @@ import { HttpError } from './errors.ts';
 import { describeTurnError, webMessage } from './messages.ts';
 import { turnMarker } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
+import { Dispatcher } from '../runs/dispatcher.ts';
+import type { ResolvedOutcome, WorkItem, WorkLease, WorkOutcome, WorkRequest } from '../runs/work-items.ts';
 
 export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string };
 const active = new Set<RunState>(['accepted', 'running', 'awaiting_permission', 'background']);
@@ -82,9 +84,12 @@ export class ChatService {
   private readonly switching = new Set<string>();
   private readonly executing = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private readonly modelSeat: ModelSeat;
-  private readonly pending = new Set<Promise<void>>();
+  private readonly dispatcher: Dispatcher;
+  private readonly ownsDispatcher: boolean;
+  private readonly workKind: string;
 
-  constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void, ledger = store) {
+  constructor(store: WebStore, runtime: RuntimeConnection, root: string, audit: string, notify: (sessionID: string) => void,
+    ledger = store, dispatcher?: Dispatcher) {
     this.store = store;
     this.ledger = ledger;
     this.runtime = runtime;
@@ -93,12 +98,32 @@ export class ChatService {
     this.audit = audit;
     this.notify = notify;
     this.attachments = new AttachmentService(store);
-    for (const session of this.store.sessions()) {
+    this.dispatcher = dispatcher ?? new Dispatcher(ledger.workItems);
+    this.ownsDispatcher = !dispatcher;
+    this.workKind = this.store.runStore + '-turn';
+    this.dispatcher.register(this.workKind, {
+      execute: async (item, start, signal) => {
+        const session = this.workSession(item);
+        return { state: await this.runTurn(session, this.store.get(item.runId!), item.payload.input as Turn, item.id, start, signal,
+          item.payload.channel as Destination | undefined) };
+      },
+      recover: (item) => this.recoverTurn(item),
+      canResolve: (item, outcome) => this.canResolveTurn(item, outcome),
+      resolved: (item, outcome) => this.resolveTurn(item, outcome),
+    });
+    for (const session of this.store.sessions(true)) {
       try { this.attachments.clean(session.id, this.workspace(session)); }
       catch { /* An unsafe or unavailable workspace is rejected when used. */ }
       const latest = this.store.turns(session.id).at(-1);
-      if (latest && active.has(latest.state)) this.store.change(latest.id, latest.state === 'accepted' ? 'failed' : 'indeterminate',
-        { errors: ['OEP restarted before this turn could be verified. The message was not resent'] });
+      if (!latest) continue;
+      const work = this.dispatcher.items.byRun(this.store.runStore, latest.id);
+      if (work?.reasonCode === 'owner-resolved' && work.state !== 'queued' && work.state !== 'running' &&
+          work.state !== 'indeterminate' && work.state !== 'timed_out') this.resolveTurn(work, work.state);
+      else if (work?.state === 'cancelled' && latest.state === 'accepted') this.resolveTurn(work, 'cancelled');
+      else if (!work && active.has(latest.state)) {
+        this.store.change(latest.id, latest.state === 'accepted' ? 'failed' : 'indeterminate',
+          { errors: ['OEP restarted before this turn could be verified. The message was not resent'] });
+      }
     }
   }
 
@@ -245,8 +270,11 @@ export class ChatService {
       });
       if (latest?.state === 'indeterminate' && !status?.[sessionID] && !inbox.length && !permissions.length &&
           !this.recovering.has(latest.id)) {
-        const current = this.store.get(latest.id);
-        if (current.state === 'indeterminate') this.store.change(latest.id, 'failed', { finishedAt: Date.now() });
+        const work = this.dispatcher.items.byRun(this.store.runStore, latest.id);
+        if (work) this.modelSeat.release(work.id);
+        else if (this.store.get(latest.id).state === 'indeterminate') {
+          this.store.change(latest.id, 'failed', { finishedAt: Date.now() });
+        }
       }
     } catch {
       stateErrorDetail = webMessage('session-unavailable');
@@ -281,12 +309,17 @@ export class ChatService {
     return this.applyModel(session, alias, () => publicSession(session));
   }
 
-  async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }, channel?: Destination) {
+  async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }, channel?: Destination,
+    lease?: { id: string; start: () => void; signal: AbortSignal }) {
     if (this.switching.has(session.id)) throw new HttpError(409, 'model-changing');
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
       if (existing.hash !== hash) throw new HttpError(409, 'message-id-in-use');
+      if (lease && existing.run.state === 'accepted') {
+        await this.runTurn(session, existing.run, input, lease.id, lease.start, lease.signal, channel);
+        return publicRun(this.store.get(input.id));
+      }
       return publicRun(existing.run);
     }
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
@@ -297,33 +330,122 @@ export class ChatService {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'session-attachment-not-found');
     }
     const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
-    if (modelFallback) return this.applyModel(session, modelFallback, () => {
+    const accept = () => {
       if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
-      return { ...this.acceptTurn(session, input, hash, reply, channel), modelFallback };
-    });
-    return this.acceptTurn(session, input, hash, reply, channel);
+      return this.acceptTurn(session, input, hash, reply, channel, Boolean(lease));
+    };
+    const run = modelFallback ? await this.applyModel(session, modelFallback, accept) : accept();
+    if (lease) {
+      await this.runTurn(session, run, input, lease.id, lease.start, lease.signal, channel);
+      return { ...publicRun(this.store.get(run.id)), ...(modelFallback && { modelFallback }) };
+    }
+    return { ...publicRun(run), ...(modelFallback && { modelFallback }) };
   }
 
-  private acceptTurn(session: WebSession, input: Turn, hash: string, reply?: { id: string; text: string }, channel?: Destination) {
-    this.executionScope(session, channel);
+  private acceptTurn(session: WebSession, input: Turn, hash: string, reply: { id: string; text: string } | undefined,
+    channel: Destination | undefined, leased: boolean) {
+    const scope = this.executionScope(session, channel);
     const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
       submissionID: promptID(), retries: 0, errors: [] };
-    this.store.saveTurn(session.id, run, hash, reply);
+    const work: WorkRequest | undefined = leased ? undefined : {
+      agentId: scope.agentID, source: 'direct', sourceKey: this.store.runStore + ':' + run.id, effectClass: 'write',
+      run: { store: this.store.runStore, id: run.id },
+      payload: { kind: this.workKind, serialKey: this.store.runStore + ':' + session.id, sessionId: session.id, input, channel },
+    };
+    if (work && this.store.runStore === 'channel') this.dispatcher.items.enqueue(work, run.createdAt);
+    this.store.saveTurn(session.id, run, hash, reply, this.store.runStore === 'web' ? work : undefined);
+    if (this.ownsDispatcher) void this.dispatcher.start();
+    this.dispatcher.kick();
     this.notify(session.id);
+    return run;
+  }
+
+  private async runTurn(session: WebSession, run: RunRecord, input: Turn, workId: string, start: () => void,
+    signal: AbortSignal, channel?: Destination): Promise<WorkOutcome> {
+    if (run.state === 'verified') return 'succeeded';
+    if (run.state === 'failed' || run.state === 'cancelled' || run.state === 'indeterminate') return run.state;
     const limits = this.store.turnLimits();
-    const task = this.modelSeat.run(async () => {
-      if (this.store.get(run.id).state === 'cancelled') return;
-      const stop = new AbortController();
-      const done = this.execute(session, run, input, limits, stop.signal, channel);
-      this.executing.set(run.id, { stop, done });
-      try { await done; }
-      finally { this.executing.delete(run.id); }
-    }).catch(() => {
-      console.error('OEP failed to record a web turn');
-    }).finally(() => this.pending.delete(task));
-    this.pending.add(task);
-    return publicRun(run);
+    const stop = new AbortController();
+    const waiting = AbortSignal.any([this.stop.signal, signal, stop.signal]);
+    const done = this.modelSeat.run(async () => {
+      await this.execute(session, run, input, limits, waiting, start, channel);
+      if (this.store.get(run.id).state === 'indeterminate') await this.inspectRuntime(workId, run);
+    }, waiting);
+    this.executing.set(run.id, { stop, done });
+    try { await done; }
+    catch (error) {
+      if (!waiting.aborted || this.stop.signal.aborted || signal.aborted) throw error;
+      if (this.store.get(run.id).state === 'accepted') this.store.change(run.id, 'cancelled', { finishedAt: Date.now() });
+    } finally {
+      this.executing.delete(run.id);
+      this.notify(session.id);
+    }
+    const state = this.store.get(run.id).state;
+    if (state === 'verified') return 'succeeded';
+    if (state === 'cancelled' || state === 'indeterminate') return state;
+    return 'failed';
+  }
+
+  private workSession(item: WorkItem) {
+    const session = this.store.sessions(true).find(({ id }) => id === item.payload.sessionId);
+    if (!session || !item.runId || !this.store.turn(session.id, item.runId)) throw new Error('Turn work has no session');
+    return session;
+  }
+
+  private async inspectRuntime(workId: string, run: RunRecord) {
+    this.modelSeat.hold(workId);
+    try {
+      const { client } = this.runtime;
+      const sessionID = run.sessionID!;
+      const [session, active, inbox, permissions, { data }] = await Promise.all([
+        client.session.get({ sessionID }, call()), client.session.active(call()),
+        client.session.inbox.list({ sessionID }, call()), client.permission.list({ sessionID }, call()),
+        client.message.list({ sessionID, order: 'desc', limit: 40 }, call()),
+      ]);
+      if (session.id !== sessionID || active[sessionID] || inbox.length || permissions.length) return;
+      this.modelSeat.release(workId);
+      const index = data.findIndex(({ id, type }) => id === run.submissionID && type === 'user');
+      const reply = index < 0 ? [] : data.slice(0, index).reverse();
+      const next = reply.findIndex(({ type }) => type === 'user');
+      const answer = (next < 0 ? reply : reply.slice(0, next)).some((message) => message.type === 'assistant' &&
+        message.content.some((part) => part.type === 'text' && part.text.trim()));
+      return { succeeded: session.outcome === 'succeeded' && answer };
+    } catch { /* Keep the model seat held until the upstream runtime can be checked. */ }
+  }
+
+  async recoverTurn(item: WorkLease) {
+    if (!item.runId || !this.store.hasTurn(item.runId)) return;
+    const run = this.store.get(item.runId);
+    if (run.state === 'verified') return { state: 'succeeded' } as const;
+    if (run.state === 'failed' || run.state === 'cancelled') return { state: run.state };
+    const evidence = await this.inspectRuntime(item.id, run);
+    if (run.state !== 'indeterminate') this.store.change(run.id, 'indeterminate', {
+      errors: ['OEP restarted before this turn could be verified. The message was not resent'],
+    });
+    if (item.state === 'running' && evidence?.succeeded && run.mode === 'web-chat') {
+      this.resolveTurn(item, 'succeeded');
+      return { state: 'succeeded' } as const;
+    }
+  }
+
+  async canResolveTurn(item: WorkLease, outcome: ResolvedOutcome) {
+    if (!item.runId || !this.store.hasTurn(item.runId)) return outcome !== 'succeeded';
+    const run = this.store.get(item.runId);
+    const evidence = await this.inspectRuntime(item.id, run);
+    return Boolean(evidence && (outcome !== 'succeeded' || run.state === 'verified' ||
+          run.mode === 'web-chat' && evidence.succeeded));
+  }
+
+  resolveTurn(item: WorkItem, outcome: ResolvedOutcome) {
+    if (!item.runId || !this.store.hasTurn(item.runId)) return;
+    const run = this.store.get(item.runId);
+    if (run.state === 'indeterminate' || run.state === 'accepted' && outcome !== 'succeeded') {
+      this.store.change(run.id, outcome === 'succeeded' ? 'verified' : outcome, { finishedAt: Date.now() });
+      const session = this.store.sessions(true).find(({ upstreamID }) => upstreamID === run.sessionID);
+      if (session) this.notify(session.id);
+    }
+    this.modelSeat.release(item.id);
   }
 
   async cancel(session: WebSession, id: string) {
@@ -334,13 +456,17 @@ export class ChatService {
       execution.stop.abort();
       await execution.done;
     } else if (run.state === 'accepted') {
-      this.store.change(id, 'cancelled', { finishedAt: Date.now() });
-      this.notify(session.id);
+      const work = this.dispatcher.items.byRun(this.store.runStore, id);
+      if (!work || this.dispatcher.cancel(work.id)) {
+        this.store.change(id, 'cancelled', { finishedAt: Date.now() });
+        this.notify(session.id);
+      }
     }
     return publicRun(this.store.get(id));
   }
 
-  private async execute(session: WebSession, run: RunRecord, input: Turn, limits: TurnLimits, cancelled: AbortSignal, channel?: Destination) {
+  private async execute(session: WebSession, run: RunRecord, input: Turn, limits: TurnLimits, cancelled: AbortSignal,
+    start: () => void, channel?: Destination) {
     const { client } = this.runtime;
     const { upstreamID: sessionID } = session;
     const cursor = this.runtime.gatewayCursor();
@@ -441,6 +567,7 @@ export class ChatService {
       });
       const text = input.text + marker + additional + nonceMarker(nonce);
       update('running');
+      start();
       sent = true;
       this.recovering.add(run.id);
       const admission = await submitOnce(client, { sessionID, id: run.submissionID!, text, files: parts.files });
@@ -535,5 +662,9 @@ export class ChatService {
     }));
   }
 
-  async close() { this.stop.abort(); await Promise.all(this.pending); }
+  async close() {
+    this.stop.abort();
+    if (this.ownsDispatcher) await this.dispatcher.close();
+    await Promise.allSettled([...this.executing.values()].map(({ done }) => done));
+  }
 }

@@ -99,8 +99,8 @@ export class TelegramInbox extends ChannelSpool {
       payload: row.payload, started: row.started, attempts: row.attempts };
   }
 
-  nextBound(bot: Bot, binding: Binding, lane: Lane, now: number) {
-    const row = this.nextInbound(binding, lane, now);
+  nextBound(bot: Bot, binding: Binding, lane: Lane, now: number, ordered = false) {
+    const row = this.nextInbound(binding, lane, now, ordered);
     if (!row) return;
     const { conversationKey } = row;
     return { bot, id: Number(row.eventKey), topic: Number(conversationKey.split(':').at(-1)), payload: row.payload,
@@ -109,6 +109,25 @@ export class TelegramInbox extends ChannelSpool {
 
   attempt(row: Intake, now: number, due: number) {
     this.attemptInbound({ accountId: row.destination?.accountId ?? legacyBinding(row.bot).accountId, eventKey: String(row.id) }, now, due);
+  }
+
+  handOff(row: Intake, id: string, now: number) {
+    const owner = row.destination!;
+    const result = this.db.prepare(`UPDATE channel_inbound SET status='handed_off',work_id=?,
+      first_attempt_at=COALESCE(first_attempt_at,?),attempts=attempts+1
+      WHERE account_id=? AND binding_revision=? AND agent_id=? AND event_key=? AND status='pending'`)
+      .run(id, now, owner.accountId, owner.bindingRevision, owner.agentId, String(row.id));
+    if (!result.changes) throw new Error('Telegram work no longer matches its intake record');
+  }
+
+  receipt(destination: Destination, event: number, workId: string) {
+    return this.db.prepare(`SELECT status,payload FROM channel_inbound WHERE account_id=? AND binding_revision=?
+      AND agent_id=? AND conversation_key=? AND event_key=? AND work_id=?`)
+      .get(destination.accountId, destination.bindingRevision, destination.agentId, destination.conversationKey, String(event), workId);
+  }
+
+  handedOffWork() {
+    return this.db.prepare("SELECT work_id AS id FROM channel_inbound WHERE status='handed_off' AND work_id IS NOT NULL").all();
   }
 
   notify(bot: Bot, id: string, topic: number, text: string, locale: ChannelLocale = 'zh-TW') {
@@ -134,10 +153,10 @@ export class TelegramInbox extends ChannelSpool {
     this.retryOutbound(legacyBinding(bot).accountId, id);
   }
 
-  complete(row: Intake, text: string, failed = false, locale: ChannelLocale = 'zh-TW') {
+  complete(row: Intake, text: string, failed = false, locale: ChannelLocale = 'zh-TW', workId?: string) {
     const destination = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
     this.completeInbound(String(row.id), { ...destination,
-      effectKey: 'update-' + row.id, locale, text }, failed);
+      effectKey: 'update-' + row.id, locale, text }, failed, workId);
   }
 
   conversation(binding: Binding, conversationKey: string) {

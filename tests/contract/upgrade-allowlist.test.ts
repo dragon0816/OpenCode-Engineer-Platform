@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
-import { legacyAgentRows } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { legacyAgentRows, migrateAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { migrateChannelAccounts } from '../../apps/adapter/src/channels/accounts.ts';
 import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
@@ -78,6 +79,33 @@ test('pre-model WebStore schema migrates from an actual old snapshot and reconci
     assert.equal(migration.before.counts.run_events, 1);
     assert.equal(migration.before.counts.web_sessions, 1);
     run(snapshot, ['reconcile-upgrade', data, copy]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the slice 3b central fixture upgrades from v4 without changing accounts or admitting work', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-dispatcher-upgrade-'));
+  try {
+    const data = join(root, 'data');
+    const copy = join(root, 'backup');
+    const { web } = seedPhase3bFixture(data);
+    const file = join(web, 'web.sqlite');
+    {
+      using db = new DatabaseSync(file);
+      db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
+      migrateAgentLedger(db, file, false);
+      migrateChannelAccounts(db);
+      db.exec(`UPDATE channel_accounts SET state='disabled' WHERE id='telegram-main';
+        PRAGMA user_version=4; COMMIT`);
+    }
+    backup(data, copy);
+    const result = JSON.parse(migrate(data))['web/web.sqlite'];
+    assert.equal(result.before.userVersion, 4);
+    assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
+    assert.equal(result.after.userVersion, 5);
+    assert.equal(result.after.counts.agent_work_items, 0);
+    run(snapshot, ['reconcile-upgrade', data, copy]);
+    using db = new DatabaseSync(file);
+    assert.equal(db.prepare("SELECT state FROM channel_accounts WHERE id='telegram-main'").get()?.state, 'disabled');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

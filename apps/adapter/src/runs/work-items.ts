@@ -75,6 +75,12 @@ export class WorkItems {
     return row && decode(row);
   }
 
+  find(source: Source, key: string) {
+    const row = this.db.prepare(`SELECT ${columns} FROM agent_work_items WHERE source=? AND source_key=?`)
+      .get(source, key) as WorkRow | undefined;
+    return row && decode(row);
+  }
+
   byRun(store: RunStore, id: string) {
     const row = this.db.prepare(`SELECT ${columns} FROM agent_work_items WHERE run_store=? AND run_id=?`)
       .get(store, id) as WorkRow | undefined;
@@ -84,6 +90,11 @@ export class WorkItems {
   withLease() {
     return (this.db.prepare(`SELECT ${columns} FROM agent_work_items
       WHERE lease_id IS NOT NULL ORDER BY enqueued_at,id`).all() as WorkRow[]).map(decode) as WorkLease[];
+  }
+
+  scheduleOccupied(scheduleRef: string) {
+    return Boolean(this.db.prepare(`SELECT 1 FROM agent_work_items
+      WHERE source='schedule' AND schedule_ref=? AND lease_id IS NOT NULL LIMIT 1`).get(scheduleRef));
   }
 
   expire(now = Date.now()) {

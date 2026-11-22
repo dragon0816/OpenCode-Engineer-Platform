@@ -5,14 +5,18 @@ import { BiScheduler } from '../../../../packages/knowledge/src/jobs/scheduler.t
 import type { Candidate } from '../../../../packages/knowledge/src/ingest.ts';
 import { ChatService } from '../http/chat.ts';
 import { WebStore } from '../runs/web-store.ts';
+import type { Dispatcher } from '../runs/dispatcher.ts';
 import { TelegramInbox } from './inbox.ts';
 import { TelegramAccounts } from './accounts.ts';
 import type { TelegramEnvironment } from './accounts.ts';
 import { TelegramRouter } from './router.ts';
 import { verifyChannelConversations } from './channel-migration.ts';
 import { openBiReviewStore, verifyBiSourceReceipts } from '../bi/source-ownership.ts';
+import { dispatchBi } from '../bi/dispatch.ts';
+import { dispatchTelegram } from './dispatch.ts';
 
-export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore, environment?: TelegramEnvironment) {
+export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore, dispatcher: Dispatcher,
+  environment?: TelegramEnvironment) {
   const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
   let sessions: WebStore | undefined;
   try {
@@ -26,17 +30,20 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     inbox.db.close();
     throw error;
   }
-  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger);
+  const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger, dispatcher);
   const stop = new AbortController();
-  const accounts = new TelegramAccounts(ledger, inbox, sessions, enabledForLaunch, stop.signal,
-    (row, signal) => router.handle(row, signal), environment);
+  const accounts: TelegramAccounts = new TelegramAccounts(ledger, inbox, sessions, enabledForLaunch, stop.signal,
+    (row, now, deadline) => inbound.handoff(row, now, deadline), environment);
   const router: TelegramRouter = new TelegramRouter(inbox, runtime, chat, sessions, undefined, (id) => ledger.channelLocale(id),
     (id) => accounts.connections.get(id)?.client, () => {
       const model = ledger.executionProfile('bi', 'bi')?.defaultModel;
       return model && runtime.aliases.includes(model) ? model : undefined;
     });
+  const inbound = dispatchTelegram(dispatcher, inbox, chat, router, accounts, (id) => ledger.channelLocale(id), runtime.redact);
   const knowledge = runtime.knowledge?.reviewStore;
-  const scheduler = knowledge && new BiScheduler(inbox.db, knowledge);
+  const bi = dispatchBi(dispatcher, router.bi, knowledge, runtime.knowledge?.propose);
+  const scheduler = knowledge && new BiScheduler(inbox.db, knowledge, bi.occurrence,
+    (schedule) => dispatcher.items.scheduleOccupied(schedule));
   const active = new Map<string, Promise<void>>();
   function launch(id: string, work: () => Promise<void>) {
     if (active.has(id)) return;
@@ -46,10 +53,12 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
 
   function tick() {
     try {
+      inbound.reconcile();
       scheduler?.reconcile();
-      const ready = inbox.db.prepare("SELECT id FROM bi_sources WHERE state='ready' AND supplement IS NOT NULL ORDER BY id LIMIT 1").get();
-      if (ready) launch('supplement', () => router.bi.stage(Number(ready.id), stop.signal));
-      knowledge?.reconcileBi();
+      const ready = inbox.db.prepare(`SELECT s.id FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
+        WHERE s.state='ready' AND s.supplement IS NOT NULL AND o.work_id IS NULL ORDER BY s.id`).all();
+      for (const row of ready) bi.recoverSource(Number(row.id));
+      bi.recoverJobs();
       if (accounts.connections.has('telegram-bi')) inbox.notifyReviews(knowledge?.reconciliation().intents ?? [], ledger.channelLocale('bi'));
     } catch { /* Persisted work remains available to the next cycle. */ }
     accounts.refresh(launch);
@@ -72,6 +81,8 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
       return true;
     },
     configured: () => accounts.connections.size > 0,
+    runBi: (id: string, candidate?: Candidate, signal?: AbortSignal) => bi.run(id, candidate, signal),
+    reviewBi: bi.review,
     channels: () => accounts.list(),
     configureChannel: (input: Record<string, unknown>) => accounts.configure(input),
     status() {
@@ -96,19 +107,17 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     action(input: Record<string, unknown>) {
       switch (input.action) {
         case 'configure': router.bi.configure(input.domain, input.origins, input.target); break;
-        case 'supplement': return router.bi.supplement(Number(input.id), input.text, stop.signal);
+        case 'supplement': return bi.supplement(Number(input.id), input.text, stop.signal);
         case 'resend': inbox.resend(input.bot, input.id); break;
         case 'schedule': scheduler?.save(String(input.id), String(input.zone), String(input.time), input.candidate as Candidate); break;
         case 'state': scheduler?.state(String(input.id), input.state); break;
-        case 'runNow': scheduler?.runNow(String(input.id)); break;
-        case 'runJob': knowledge?.runBi(String(input.id)); break;
-        case 'immediate': {
-          const id = String(input.id);
-          if (!knowledge) throw new Error('Knowledge is unavailable');
-          knowledge.enqueueBi(id, input.candidate as Candidate);
-          knowledge.runBi(id);
-          break;
+        case 'runNow': {
+          if (!scheduler) break;
+          const job = scheduler.runNow(String(input.id));
+          return bi.runOccurrence(job, stop.signal).then(() => scheduler.reconcile());
         }
+        case 'runJob': return knowledge && bi.run(String(input.id), undefined, stop.signal);
+        case 'immediate': return bi.run(String(input.id), input.candidate as Candidate, stop.signal);
         default: throw new Error('Unknown job action');
       }
     },

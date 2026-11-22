@@ -8,14 +8,20 @@ const minute = 60_000;
 const day = 1440 * minute;
 const utcMinute = (now: number) => Math.floor(now / minute) * minute;
 type Schedule = { id: string; zone: string; time: string; payload: string; state: string; since: number };
+export type BiOccurrence = { job: string; schedule: string; candidate: Candidate };
+type DispatchOccurrence = (occurrence: BiOccurrence) => 'queued' | 'awaiting_review' | 'blocked';
 
 export class BiScheduler {
   private readonly db: DatabaseSync;
   private readonly store: KnowledgeStore;
+  private readonly dispatch?: DispatchOccurrence;
+  private readonly occupied?: (schedule: string) => boolean;
 
-  constructor(db: DatabaseSync, store: KnowledgeStore) {
+  constructor(db: DatabaseSync, store: KnowledgeStore, dispatch?: DispatchOccurrence, occupied?: (schedule: string) => boolean) {
     this.db = db;
     this.store = store;
+    this.dispatch = dispatch;
+    this.occupied = occupied;
     db.exec(`CREATE TABLE IF NOT EXISTS bi_schedules(id TEXT PRIMARY KEY, zone TEXT, time TEXT,
       payload TEXT, state TEXT, since INTEGER);
       CREATE TABLE IF NOT EXISTS bi_occurrences(schedule TEXT, wall TEXT, zone TEXT, utc INTEGER, job TEXT UNIQUE,
@@ -50,8 +56,9 @@ export class BiScheduler {
     if (!schedule) throw new Error('Schedule is unavailable');
     const clock = zoneClock(schedule.zone);
     const wall = clock(now).slice(0, 10) + 'T' + schedule.time;
-    this.admit(schedule, wall, utcMinute(now));
+    const job = this.admit(schedule, wall, utcMinute(now));
     this.recover();
+    return job;
   }
 
   reconcile(now = Date.now()) {
@@ -83,7 +90,8 @@ export class BiScheduler {
           if (wall.slice(11) === schedule.time && !due.has(wall)) due.set(wall, at);
         }
         const latest = [...due.keys()].at(-1);
-        for (const [wall, at] of due) this.admit(schedule, wall, at, wall === latest ? 'queued' : 'missed');
+        const occupied = this.occupied?.(schedule.id);
+        for (const [wall, at] of due) this.admit(schedule, wall, at, wall === latest && !occupied ? 'queued' : 'missed');
       }
       this.db.prepare(`INSERT INTO cursor VALUES ('scheduler',?)
         ON CONFLICT(bot) DO UPDATE SET next=MAX(next,excluded.next)`).run(end + minute);
@@ -94,15 +102,22 @@ export class BiScheduler {
     const job = 'scheduled-' + createHash('sha256').update(JSON.stringify([schedule.id, wall])).digest('hex');
     this.db.prepare('INSERT OR IGNORE INTO bi_occurrences VALUES (?,?,?,?,?,?,?)')
       .run(schedule.id, wall, schedule.zone, utc, job, schedule.payload, state);
+    return job;
   }
 
   private recover() {
-    const rows = this.db.prepare("SELECT job,payload FROM bi_occurrences WHERE state='queued'").all();
+    const rows = this.db.prepare("SELECT job,schedule,payload FROM bi_occurrences WHERE state='queued' ORDER BY utc,job").all();
     const update = this.db.prepare('UPDATE bi_occurrences SET state=? WHERE job=?');
     for (const row of rows) {
       const job = String(row.job);
       try {
-        this.store.enqueueBi(job, JSON.parse(String(row.payload)), 'schedule');
+        const candidate = JSON.parse(String(row.payload)) as Candidate;
+        if (this.dispatch) {
+          const state = this.dispatch({ job, schedule: String(row.schedule), candidate });
+          if (state !== 'queued') update.run(state, job);
+          continue;
+        }
+        this.store.enqueueBi(job, candidate, 'schedule');
         this.store.runBi(job);
         if (this.store.biCompleted(job)) update.run('awaiting_review', job);
       } catch {

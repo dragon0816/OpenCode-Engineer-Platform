@@ -8,7 +8,7 @@ const transitions: Record<RunState, RunState[]> = {
   running: ['running', 'awaiting_permission', 'background', 'failed', 'cancelled', 'indeterminate', 'verified'],
   awaiting_permission: ['running', 'failed', 'cancelled', 'indeterminate'],
   background: ['running', 'failed', 'cancelled', 'indeterminate', 'verified'],
-  indeterminate: ['running', 'failed'],
+  indeterminate: ['running', 'failed', 'cancelled', 'verified'],
   cancelled: [],
   failed: [],
   verified: [],
