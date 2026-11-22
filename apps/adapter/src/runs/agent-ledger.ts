@@ -162,6 +162,13 @@ export function migrateAgentLedger(db: DatabaseSync, file: string, channel: bool
     ${channel ? '' : ', FOREIGN KEY(workspace_id, agent_id) REFERENCES agent_workspaces(id, agent_id) ON DELETE RESTRICT ON UPDATE RESTRICT'}
   ) STRICT;
   CREATE INDEX session_ownership_by_agent_origin ON session_ownership(agent_id, origin, session_id);`);
+  if (!channel) db.exec(`CREATE TRIGGER agents_archive_without_open_runs BEFORE UPDATE OF state ON agents
+    WHEN OLD.state = 'active' AND NEW.state = 'archived' AND OLD.builtin_key IS NULL AND EXISTS (
+      SELECT 1 FROM session_ownership o JOIN web_turns t ON t.session_id = o.session_id
+      JOIN runs r ON r.id = t.run_id WHERE o.agent_id = OLD.id AND r.state NOT IN ('verified', 'failed', 'cancelled')
+    ) BEGIN
+      SELECT RAISE(ABORT, 'An agent with open runs cannot be archived');
+    END;`);
   for (const [table, rows] of Object.entries(legacyAgentRows(db, dirname(file), channel))) {
     if (!rows.length) continue;
     const insert = db.prepare(`INSERT INTO ${table} VALUES (${rows[0].map(() => '?').join(', ')})`);
@@ -183,9 +190,19 @@ export function verifyAgentLedger(db: DatabaseSync, file: string, channel: boole
   if (channel) {
     using central = openSibling(dirname(file), 'web.sqlite');
     verifyTelegramSessionOwners(db, central);
-  } else if (db.prepare(`SELECT count(*) AS total FROM agents
-    WHERE (id='main' AND builtin_key='main' AND role='orchestrator' AND state='active')
-      OR (id='bi' AND builtin_key='bi' AND role='specialist' AND state='active')`).get()?.total !== 2) {
+    return;
+  }
+  if (db.prepare(`SELECT count(*) AS total FROM agents
+    WHERE role='orchestrator' OR id='bi'`).get()?.total !== 2 ||
+      !db.prepare(`SELECT 1 FROM agents WHERE id='main' AND builtin_key='main' AND role='orchestrator' AND state='active'`).get() ||
+      !db.prepare(`SELECT 1 FROM agents WHERE id='bi' AND builtin_key='bi' AND role='specialist' AND state='active'`).get()) {
     throw new Error('Built-in agents are missing');
+  }
+  const grants = db.prepare(`SELECT vault_id FROM agent_knowledge_reads
+    UNION SELECT target_id FROM agent_write_targets WHERE target_kind='knowledge'`).all();
+  if (grants.length) {
+    using knowledge = openSibling(dirname(file), 'knowledge.sqlite');
+    const find = knowledge?.prepare(`SELECT 1 FROM vaults v JOIN publications p ON p.id=v.publication AND p.vault=v.id WHERE v.id=?`);
+    if (grants.some(({ vault_id }) => !find?.get(vault_id))) throw new Error('Agent knowledge vault reference is invalid');
   }
 }
