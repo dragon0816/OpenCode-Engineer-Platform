@@ -37,6 +37,8 @@ export async function testCustomMcp(server: CustomMcp) {
     let catalog: Catalog;
     let clean = false;
     try {
+      // A fast probe can publish its result before the supervisor checks Job membership.
+      await job.ready();
       catalog = await until(async () => {
         if (!job.alive()) return { reason: 'exited' };
         if (existsSync(resultPath)) return JSON.parse(readFileSync(resultPath, 'utf8')) as Catalog;

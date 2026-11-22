@@ -1,7 +1,9 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public sealed class PhaseZeroJob : IDisposable
 {
@@ -22,6 +24,13 @@ public sealed class PhaseZeroJob : IDisposable
         public BasicLimits Basic;
         public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes;
         public UIntPtr ProcessMemory, JobMemory, PeakProcess, PeakJob;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Accounting
+    {
+        public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+        public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -61,6 +70,10 @@ public sealed class PhaseZeroJob : IDisposable
     private static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr information, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting information, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcess(string executable, StringBuilder command, IntPtr processAttributes,
         IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
@@ -151,6 +164,23 @@ public sealed class PhaseZeroJob : IDisposable
             return ids;
         }
         finally { Marshal.FreeHGlobal(data); }
+    }
+
+    public Tuple<uint, uint> TerminateAndWait(int milliseconds)
+    {
+        if (!TerminateJobObject(job, 1)) throw new Win32Exception();
+        const int BasicAccountingInformation = 1;
+        uint size = (uint)Marshal.SizeOf(typeof(Accounting));
+        var elapsed = Stopwatch.StartNew();
+        for (;;)
+        {
+            Accounting state;
+            if (!QueryInformationJobObject(job, BasicAccountingInformation, out state, size, IntPtr.Zero))
+                throw new Win32Exception();
+            if (state.ActiveProcesses == 0 || elapsed.ElapsedMilliseconds >= milliseconds)
+                return Tuple.Create(state.TotalProcesses, state.ActiveProcesses);
+            Thread.Sleep(20);
+        }
     }
 
     public void Dispose()
