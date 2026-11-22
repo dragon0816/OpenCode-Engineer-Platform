@@ -51,6 +51,33 @@ Each command ran with a separate temporary `OEP_DATA_DIR` outside the owner data
 
 Lint, typecheck and the 75-test suite passed again after the packaged test fixture adjustment.
 
-## Left for reviewer
+## Same-version repair follow-up
 
-- `test:e2e:web`, `test:e2e:excel`, `test:install`, `test:upgrade` and `test:backup` were left for review while the owner's OEP was running. The packaged upgrade and rollback assertions still need that run. The passing contract exercises the actual offline migration and reconciliation entry points against both historical fixtures.
+`phase-3b/slice-1-fix` starts at `6583a0f` and merges `main` at `9e1db75`. The reviewer reproduced the failure in packaged `test:upgrade` at `Upgrade-OEP -AllowSameVersion` after the cross-version upgrade and rollback cases. The historical fixture ZIP deliberately uses the version 1 knowledge reader and writer. Repair ran that candidate's migration, which correctly left the restored `web/knowledge.sqlite` at version 1. The same ZIP carried the current reconciler with a hard-coded version 2 target, so it rejected the database and triggered automatic rollback.
+
+Commit `67f2b5f` shares the candidate's migration definitions between the offline runner and reconciler. Each owned database's expected version comes from its store. Reconciliation reads the actual SQLite `user_version` and requires exact equality with that target. The reported migration result remains available in the journal for diagnostics. Slice-specific checks use the actual transition to verify seeded rows and new tables.
+
+The packaged and isolated tests now share the historical knowledge store fixture. The source assertion checks the named version guard and the version 2 migration target because the guard now reads the candidate's version declaration. The packaged test still asserts that the historical reader rejects the migrated version 2 database. It also asserts that the repair commits with version 1 before and after, and that automatic rollback restores the previous installation and data when a candidate reports version 2 but leaves the live database at version 1.
+
+In the isolated test, the same candidate migration and reconciliation commands used by `Upgrade-OEP` run against a temporary candidate, backup and data root. Before the fix, the test failed at the reconciliation command with `【web/knowledge.sqlite】升級比對失敗。SQLite user_version 與新版不符。` and exit code 1. After the fix, the version 1 repair case passes and rejects a live version 2. The cross-version contract also rejects a stale live version 1 against a version 2 candidate.
+
+### Follow-up gates
+
+The commands ran sequentially with a fresh temporary `OEP_DATA_DIR` per command and the verification Python configured for the test process.
+
+| Gate | Observed result |
+| --- | --- |
+| `npm run lint` | Exit 0 in 0.91 s. Checked 222 source and configuration files. |
+| `npm run typecheck` | Exit 0 in 4.82 s. `tsc --noEmit` completed without diagnostics. |
+| `npm test` | 76 passed, 0 failed, 0 skipped in 7.82 s. Includes fresh stores and per-database migration rollback. |
+| `npm run build:release` | Exit 0 in 43.36 s. Built `OEP-0.0.0-windows-x64.zip` with SHA-256 `c67b3c70e370dfc7ea566b899c234cd98ec746bf7e2b949f020795f475fa390a`. Release scan passed. |
+| `npm run test:e2e:browser` | One run, exit 0 in 66.36 s. `supervisorExit: 0`, `childExit: 0`, `orphans: 0`. |
+| `npm run test:release:determinism` | 1 passed, 0 failed, 0 skipped in 36.63 s. Both builds matched the release SHA-256 above. |
+| `npm run scan` | Exit 0 in 1.08 s. 540 files, 0 hits. |
+| `node --disable-warning=ExperimentalWarning --test tests/contract/upgrade-allowlist.test.ts` | 5 passed, 0 failed, 0 skipped in 5.01 s. Includes the same-version reproduction and both wrong-version rejections. |
+
+### Left for reviewer
+
+The maintenance fixture uses separate install and data roots. `Stopped-OEP` checks processes machine-wide and uses the standard runtime mutex. Its process filter matched three live processes, so the isolated regression invoked the candidate's Node entry points directly. The browser gate used its own test runtime mutex.
+
+Run `npm run test:upgrade` with the maintenance guard clear to verify the packaged install, cross-version upgrade, same-version repair, automatic rollback on migration and reconciliation failure, and interrupted swap recovery. `npm run test:install` covers the separate fresh-install suite. The reviewer's prior passes for `test:backup`, `test:e2e:web` and `test:e2e:excel` apply to the pre-fix merge.
