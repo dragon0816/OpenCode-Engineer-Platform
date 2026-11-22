@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { jsonInput, listen, send, until } from '../../scripts/phase0/probe-http.ts';
@@ -120,35 +121,94 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     await evaluate(`document.querySelector(${JSON.stringify(choice(c))}).closest('li').querySelector('button').click()`);
     await ready(`document.querySelector(${JSON.stringify(choice(c))}).closest('li').querySelector('small').textContent === '可用'`);
     assert.equal(pinged.at(-1), c);
-    await click(choice(b));
+
+    const unsaved = '有尚未儲存的變更';
+    const deferred = '目前有對話或工作進行中，完成後會自動套用';
+    const confirmText = '設定尚未儲存。要捨棄變更嗎？';
+    const selectDefault = (id: string) => evaluate(`{
+      const select = document.querySelector('#default-alias');
+      select.value = ${JSON.stringify(id)};
+      select.dispatchEvent(new Event('change'));
+    }`);
+    const draftStatus = (dirty: boolean) => ready(`document.querySelector('#model-unsaved').textContent === ${JSON.stringify(dirty ? unsaved : '')} &&
+      document.querySelector('#save-model').disabled === ${!dirty}`);
+    await draftStatus(false);
+    await selectDefault(b);
+    await draftStatus(true);
+    await selectDefault(a);
+    await draftStatus(false);
     await click(choice(c));
-    await evaluate(`document.querySelector('#default-alias').value = ${JSON.stringify(c)}`);
-    await click('#save-model');
-    await status('已儲存');
-    await ready("!document.querySelector('#model-restart-bar').hidden && !document.querySelector('#model-restart').disabled");
-    assert.deepEqual(await values('#session-alias option'), [a, b]);
-    await evaluate('window.__beforeReload = true');
-    await command('Page.reload');
-    await ready("window.__beforeReload !== true && document.querySelector('#connection')?.textContent === '已連線' && !document.querySelector('#save-model')?.disabled");
-    await settings();
-    assert.deepEqual(await values('#model-health input:checked'), [a, c]);
-    assert.equal(await evaluate("document.querySelector('#default-alias').value"), c);
-    assert.equal(await evaluate("document.querySelector('#model-restart-bar').hidden"), false);
+    await draftStatus(true);
+    assert.ok(await evaluate(`(() => {
+      const save = document.querySelector('#save-model');
+      const actions = save.parentElement;
+      return actions.previousElementSibling.matches('.model-choices') && getComputedStyle(actions).position === 'sticky' &&
+        getComputedStyle(save).backgroundColor !== getComputedStyle(document.querySelector('#refresh-models')).backgroundColor;
+    })()`));
+    await evaluate(`{
+      window.__modelConfirm = [];
+      window.confirm = (text) => { window.__modelConfirm.push(text); return window.__discardModel === true; };
+    }`);
+    await click('#settings-nav [data-section="assistant"]');
+    await ready("!document.querySelector('#settings-model').hidden");
     await click('#open-chat');
-    await ready("!document.querySelector('#send').disabled");
+    await ready("!document.querySelector('#settings-view').hidden");
+    await draftStatus(true);
+    assert.deepEqual(await evaluate('window.__modelConfirm'), [confirmText, confirmText]);
+    await evaluate('window.__discardModel = true');
+    await click('#settings-nav [data-section="assistant"]');
+    await ready("!document.querySelector('#settings-assistant').hidden");
+    await settings();
+    await draftStatus(false);
+    assert.deepEqual(await values('#model-health input:checked'), [a, b]);
+    await click(choice(c));
+    await click('#open-chat');
+    await ready("document.querySelector('#settings-view').hidden && !document.querySelector('#send').disabled");
+    assert.deepEqual(await evaluate('window.__modelConfirm'), [confirmText, confirmText, confirmText, confirmText]);
+
     await turn(busyTurn);
     await until(async () => routed.get(busyTurn));
     assert.equal(routed.get(busyTurn), b);
     await settings();
+    await evaluate(`{
+      const fetchRequest = window.fetch;
+      window.__modelRestartRequests = 0;
+      window.fetch = (path, options) => {
+        if (path === '/api/settings/model/restart') window.__modelRestartRequests++;
+        return fetchRequest(path, options);
+      };
+    }`);
+    await click(choice(b));
+    await click(choice(c));
+    await selectDefault(c);
+    await click('#save-model');
+    await status(deferred);
+    await ready("!document.querySelector('#model-restart-bar').hidden && !document.querySelector('#model-restart').disabled");
+    await draftStatus(false);
+    assert.deepEqual(await values('#session-alias option'), [a, b]);
+    await ready('window.__modelRestartRequests >= 2');
+    await click('#settings-nav [data-section="assistant"]');
+    await ready("!document.querySelector('#settings-assistant').hidden");
+    const requestsBeforeLeaving = await evaluate('window.__modelRestartRequests');
+    await delay(2_300);
+    assert.equal(await evaluate('window.__modelRestartRequests'), requestsBeforeLeaving);
+
+    await evaluate('window.__beforeReload = true');
+    await command('Page.reload');
+    await ready("window.__beforeReload !== true && document.querySelector('#connection')?.textContent === '已連線' && !document.querySelector('#refresh-models')?.disabled");
+    await settings();
+    assert.deepEqual(await values('#model-health input:checked'), [a, c]);
+    assert.equal(await evaluate("document.querySelector('#default-alias').value"), c);
+    assert.equal(await evaluate("document.querySelector('#model-restart-bar').hidden"), false);
     await click('#model-restart');
-    await status('請稍後重試');
+    await status(deferred);
     releaseBusy.resolve();
     await ready("document.querySelector('#messages').textContent.includes('Synthetic model reply') && !document.querySelector('#send').disabled");
-    await click('#model-restart');
     await status('正在重新啟動');
     await restart.promise;
     await closeRuntime();
     await openRuntime();
+    await ready("document.querySelector('#session-model-status').textContent === '已套用'");
     assert.equal(discoveries, 4);
     assert.deepEqual(runtime!.aliases, [a, c]);
     assert.deepEqual([...runtime!.knowledge!.benchmarks.keys()], [a, c]);
@@ -177,9 +237,12 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     assert.equal(await sessionAlias(await evaluate<string>("localStorage.getItem('oep.activeSession.default')")), c);
     await settings();
     assert.equal(await evaluate("document.querySelector('#model-restart-bar').hidden"), true);
+    await status('已套用');
     assert.deepEqual(await values('#model-health input:checked'), [a, c]);
     const visible = await evaluate<string>("fetch('/api/settings/model').then(response => response.text()).then(data => data + document.documentElement.outerHTML)");
     assert.ok(!visible.includes(key) && !visible.includes(gateway.url));
+    await click(choice(d));
+    await draftStatus(true);
     for (const [width, height, layout] of [[1440, 900, 'wide'], [390, 844, 'narrow']] as const) {
       await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
       await ready(`innerWidth === ${width}`);
@@ -201,7 +264,20 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
         await selectLocale(browser, 'zh-TW');
       }
     }
-    console.log('Chromium verified model discovery, selection, idle restart, reload, default and session fallback.');
+    await click(choice(d));
+    await click(choice(a));
+    await click('#save-model');
+    await status('正在重新啟動');
+    await restart.promise;
+    await closeRuntime();
+    await openRuntime();
+    await ready("document.querySelector('#session-model-status').textContent === '已套用' && !document.querySelector('#session-alias').disabled");
+    assert.deepEqual(await values('#session-alias option'), [c]);
+    await ready("document.querySelector('#choose-more-models').checkVisibility() && document.querySelector('#choose-more-models').textContent === '到設定選擇更多模型'");
+    await click('#choose-more-models');
+    await ready("!document.querySelector('#settings-view').hidden && !document.querySelector('#settings-model').hidden");
+    assert.deepEqual(await values('#model-health input:checked'), [c]);
+    console.log('Chromium verified model discovery, unsaved edits and confirmation, automatic and deferred apply, reload, composer hint, default and session fallback.');
   } finally {
     releaseBusy.resolve();
     try { await page?.close(); }
