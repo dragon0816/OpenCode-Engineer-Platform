@@ -72,8 +72,14 @@ let stopped = false;
 let knowledge;
 const voice = bindVoice(find('enable-microphone'), find('microphone'), find('microphone-settings-status'), prompt, () => current, showError);
 
+const limitErrors = new Map([
+  ['已停止：達到回合時限。', '已停止，因為達到回合時限。請縮短要求，或在設定調整回合時限後重送。'],
+  ['已停止：達到工具呼叫次數上限。', '已停止，因為達到工具呼叫次數上限。請把要求拆成幾步，或在設定調整上限後重送。'],
+]);
+
 function showError(error) {
-  notice.textContent = error ? errorText(error) : '';
+  const message = error ? errorText(error) : '';
+  notice.textContent = limitErrors.get(message) ?? message;
   notice.hidden = !error;
 }
 
