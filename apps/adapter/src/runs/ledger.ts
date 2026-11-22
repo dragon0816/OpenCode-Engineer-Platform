@@ -14,10 +14,14 @@ const transitions: Record<RunState, RunState[]> = {
   verified: [],
 };
 
+export const runLedgerVersion = 1;
+export const webLedgerVersion = 3;
+type WebMigration = { migrate: (db: DatabaseSync) => void; verify: (db: DatabaseSync) => void };
+
 export class Ledger {
   protected readonly db: DatabaseSync;
 
-  constructor(file: string, web = false) {
+  constructor(file: string, web?: WebMigration) {
     this.db = new DatabaseSync(file);
     try {
       this.migrate(file, web);
@@ -27,22 +31,36 @@ export class Ledger {
     }
   }
 
-  private migrate(file: string, web: boolean) {
-    const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
-    if (version > (web ? 2 : 1)) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
-    if (version < 0) throw new Error('執行紀錄資料庫版本無效。');
+  private migrate(file: string, web?: WebMigration) {
+    const expectedVersion = web ? webLedgerVersion : runLedgerVersion;
+    const current = () => {
+      const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
+      if (version > expectedVersion) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
+      if (version < 0) throw new Error('執行紀錄資料庫版本無效。');
+      return version;
+    };
+    const version = current();
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 4000;');
-    if (version === 0) this.transaction(() => {
-      this.db.exec(readFileSync(atRepo('apps/adapter/migrations/001_runs.sql'), 'utf8'));
-      this.db.exec('PRAGMA user_version = 1');
-    });
-    if (web && version !== 2) {
-      if (version === 1) this.db.prepare('VACUUM INTO ?').run(`${file}.before-v2-${Date.now()}`);
-      this.transaction(() => {
-        this.db.exec(readFileSync(atRepo('apps/adapter/migrations/002_attachments.sql'), 'utf8'));
-        this.db.exec('PRAGMA user_version = 2');
-      });
+    if (version === expectedVersion) {
+      web?.verify(this.db);
+      return;
     }
+    if (web && version === 1) this.db.prepare('VACUUM INTO ?').run(`${file}.before-v2-${Date.now()}`);
+    this.transaction(() => {
+      const version = current();
+      if (version === 0) {
+        this.db.exec(readFileSync(atRepo('apps/adapter/migrations/001_runs.sql'), 'utf8'));
+        this.db.exec(`PRAGMA user_version = ${runLedgerVersion}`);
+      }
+      if (web && version < 2) {
+        this.db.exec(readFileSync(atRepo('apps/adapter/migrations/002_attachments.sql'), 'utf8'));
+      }
+      if (web && version < webLedgerVersion) {
+        web.migrate(this.db);
+        web.verify(this.db);
+        this.db.exec(`PRAGMA user_version = ${webLedgerVersion}`);
+      }
+    });
   }
 
   protected transaction<T>(work: () => T) {

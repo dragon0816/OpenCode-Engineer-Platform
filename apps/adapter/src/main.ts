@@ -34,6 +34,7 @@ import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
+import { prepareBiWorkspace } from './runs/agent-ledger.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -105,6 +106,7 @@ export async function startAdapter(root: string, runtime: Runtime, requestStop: 
       checkDirectory(folder);
     }
   }
+  prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].map((session) => [session.upstreamID, session.id]));

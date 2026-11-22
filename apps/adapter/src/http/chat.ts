@@ -95,7 +95,7 @@ export class ChatService {
   workspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'sessions'), session.id); }
   private modelWorkspace(session: Pick<WebSession, 'id' | 'project'>) { return scopedPath(join(this.projectRoot(session.project), 'model-work'), session.id); }
 
-  async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias) {
+  async create(agent: Agent, project: ProjectID = 'default', alias = this.runtime.alias, telegramTopic?: number) {
     const id = randomUUID();
     const createdAt = Date.now();
     const knowledgeDisabled = !this.store.knowledgeSettings().toolbox;
@@ -118,7 +118,7 @@ export class ChatService {
     });
     const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, true, knowledgeDisabled, permissions);
     const session = { ...local, upstreamID };
-    this.store.createSession(session);
+    this.store.createSession(session, telegramTopic);
     return session;
   }
 
