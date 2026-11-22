@@ -141,14 +141,14 @@ export class ChatService {
   private sessionRoot(session: WebSession) {
     const owner = this.store.sessionOwner(session);
     if (!owner) throw new HttpError(409, 'session-unavailable');
-    return this.profile(owner.agentID, owner.workspaceID, session.project).directory;
+    return this.profile(owner.agentID, owner.workspaceID, session.project, true).directory;
   }
 
   workspace(session: WebSession) { return scopedPath(join(this.sessionRoot(session), 'sessions'), session.id); }
   private modelWorkspace(session: WebSession) { return scopedPath(join(this.sessionRoot(session), 'model-work'), session.id); }
 
-  private profile(agentID: string, workspaceID: string, project: ProjectID) {
-    const profile = this.ledger.executionProfile(agentID, workspaceID);
+  private profile(agentID: string, workspaceID: string, project: ProjectID, includeArchived = false) {
+    const profile = this.ledger.executionProfile(agentID, workspaceID, includeArchived);
     const legacy = agentID === 'main';
     const relativeRoot = legacy ? (project === 'default' ? 'web' : `web/${project}`) : `web/agents/${agentID}`;
     if (!profile || profile.relativeRoot !== relativeRoot ||
@@ -200,14 +200,16 @@ export class ChatService {
     });
   }
 
-  async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, channel?: Destination) {
+  async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, channel?: Destination,
+    owner?: { agentId: string; workspaceID: string }) {
     if (agent !== 'inspector' && agent !== 'workbook') throw new HttpError(400, 'invalid-assistant');
-    const agentID = channel?.agentId ?? 'main';
-    const workspaceID = channel ? this.ledger.defaultWorkspace(agentID) : legacyWorkspace(project);
+    const agentID = channel?.agentId ?? owner?.agentId ?? 'main';
+    const workspaceID = channel ? this.ledger.defaultWorkspace(agentID) : owner?.workspaceID ?? legacyWorkspace(project);
     if (!workspaceID) throw new HttpError(409, 'session-unavailable');
     const origin = channel ? 'channel' : 'web';
     const profile = this.profile(agentID, workspaceID, project);
-    const alias = requestedAlias ?? profile.defaultModel ?? this.runtime.alias;
+    const agentAlias = profile.defaultModel && this.runtime.aliases.includes(profile.defaultModel) ? profile.defaultModel : undefined;
+    const alias = requestedAlias ?? agentAlias ?? this.runtime.alias;
     if (!this.runtime.aliases.includes(alias)) throw new HttpError(400, 'unapproved-model');
     const id = randomUUID();
     const createdAt = Date.now();
@@ -231,7 +233,7 @@ export class ChatService {
     const permissions = this.permissions(local, agentID, workspaceID, origin, this.knowledgeVaults(agentID, workspaceID, local.knowledgeDisabled));
     const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, permissions);
     const session = { ...local, upstreamID };
-    this.store.createSession(session, channel && { ...channel, workspaceID });
+    this.store.createSession(session, channel && { ...channel, workspaceID }, owner);
     return session;
   }
 

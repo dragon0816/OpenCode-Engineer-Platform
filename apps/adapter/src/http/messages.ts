@@ -1,5 +1,15 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'agent-not-found': "找不到此助理。",
+  'agent-workspace-not-found': "找不到此助理的工作資料夾。",
+  'agent-settings-invalid': "請檢查助理設定。",
+  'agent-revision-conflict': "助理設定已變更。請重新載入後再試。",
+  'agent-inactive': "此助理已封存。",
+  'agent-builtin': "內建助理無法封存。",
+  'agent-busy': "請等助理完成目前的工作後再封存。",
+  'agent-channel-bound': "請先解除此助理的通道綁定。",
+  'agent-knowledge-invalid': "請選擇已發布的知識庫。",
+  'agent-mcp-invalid': "請選擇此助理可用的外部工具。",
   'CHANNEL_ACCOUNT_IN_USE': "此 Telegram 帳號已綁定至助理 {agentId}。",
   'channel-settings-invalid': "請提供有效的通道帳號設定。",
   'channel-binding-stale': "通道綁定已變更。請重新載入並確認。",

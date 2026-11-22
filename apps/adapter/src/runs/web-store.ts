@@ -13,6 +13,7 @@ import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
 import type { Destination } from '../channels/transport.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
+import { HttpError } from '../http/errors.ts';
 import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
   verifyAgentLedger } from './agent-ledger.ts';
 
@@ -21,6 +22,11 @@ export type ProjectID = typeof projects[number]['id'];
 
 export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null; knowledgeDisabled?: number };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
+export type AgentSettings = {
+  name?: string; introduction?: string; instructions?: string; defaultModel?: string | null; replyLocale?: 'zh-TW' | 'en';
+  avatar?: { bytes: Buffer; mime: string } | null; knowledgeReads?: string[]; mcpGrants?: string[];
+};
+type WebOwner = { agentId: string; workspaceID: string };
 type ModelCatalog = { ids: string[]; discoveredAt: number };
 
 const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
@@ -169,12 +175,13 @@ export class WebStore extends Ledger {
       .get(accountId ?? null, credentialRef, fingerprint) as { accountId: string; agentId: string } | undefined;
   }
 
-  saveTelegramAccount(account: ChannelAccount, previous: ChannelAccount | undefined, sealOwner: () => void) {
+  saveTelegramAccount(account: ChannelAccount, previous: ChannelAccount | undefined, sealOwner: () => void,
+    createAgent?: () => void) {
     return this.transaction(() => {
       const conflict = this.telegramAccountConflict(account.fingerprint!, account.credentialRef, account.accountId);
       if (conflict) return conflict;
+      createAgent?.();
       if (!this.defaultWorkspace(account.agentId)) throw new Error('Invalid Telegram agent workspace');
-      sealOwner();
       const now = Date.now();
       if (!previous) {
         this.db.prepare(`INSERT INTO channel_accounts VALUES (?,'telegram',?,?,?,?,?,'enabled',?,?,?)`).run(account.accountId,
@@ -186,11 +193,127 @@ export class WebStore extends Ledger {
             account.bindingRevision, now, account.accountId, previous.bindingRevision);
         if (!changes) throw new Error('Stale Telegram binding');
       }
+      sealOwner();
     });
   }
 
   channelLocale(agentID: string): 'zh-TW' | 'en' {
     return this.db.prepare('SELECT reply_locale FROM agents WHERE id=?').get(agentID)?.reply_locale === 'en' ? 'en' : 'zh-TW';
+  }
+
+  agents() {
+    return this.db.prepare(`SELECT id, role, builtin_key AS builtin, state, name, introduction, instructions,
+      avatar IS NOT NULL AS hasAvatar, default_model_id AS defaultModel, reply_locale AS replyLocale,
+      config_revision AS revision FROM agents ORDER BY builtin_key IS NULL, id<>'main', created_at, id`).all() as {
+        id: string; role: 'orchestrator' | 'specialist'; builtin: 'main' | 'bi' | null; state: 'active' | 'archived';
+        name: string; introduction: string; instructions: string; hasAvatar: number; defaultModel: string | null;
+        replyLocale: 'zh-TW' | 'en'; revision: number;
+      }[];
+  }
+
+  agentWorkspaces(agentID: string) {
+    return this.db.prepare(`SELECT id, layout, relative_root AS relativeRoot, is_default AS isDefault FROM agent_workspaces
+      WHERE agent_id=? ORDER BY is_default DESC,id`).all(agentID).map((row) => ({
+      ...row as { id: string; layout: string; relativeRoot: string; isDefault: number },
+      folders: this.db.prepare('SELECT folder FROM workspace_read_folders WHERE workspace_id=? ORDER BY folder')
+        .all(row.id).map(({ folder }) => String(folder)),
+    }));
+  }
+
+  agentStatus(agentID: string) {
+    const rows = this.db.prepare(`SELECT DISTINCT r.state FROM session_ownership o JOIN web_turns t ON t.session_id=o.session_id
+      JOIN runs r ON r.id=t.run_id WHERE o.agent_id=? AND r.state NOT IN ('verified','failed','cancelled')`).all(agentID);
+    return rows.some(({ state }) => state !== 'accepted') ? 'busy' : rows.length ? 'queued' : 'available';
+  }
+
+  agentAvatar(id: string) {
+    return this.db.prepare('SELECT avatar, avatar_mime AS mime FROM agents WHERE id=? AND avatar IS NOT NULL').get(id) as
+      { avatar: Uint8Array; mime: string } | undefined;
+  }
+
+  agentBindings(id: string) {
+    return {
+      knowledgeReads: this.db.prepare('SELECT vault_id AS id FROM agent_knowledge_reads WHERE agent_id=? ORDER BY id')
+        .all(id).map(({ id }) => String(id)),
+      mcpGrants: this.db.prepare("SELECT capability_id AS id FROM agent_capabilities WHERE agent_id=? AND kind='mcp' AND enabled=1 ORDER BY id")
+        .all(id).map(({ id }) => String(id)),
+      writeTargets: this.db.prepare('SELECT target_id AS id, target_kind AS kind FROM agent_write_targets WHERE agent_id=? ORDER BY id')
+        .all(id),
+    };
+  }
+
+  private saveAgentBindings(id: string, settings: AgentSettings) {
+    if (settings.knowledgeReads) {
+      this.db.prepare('DELETE FROM agent_knowledge_reads WHERE agent_id=?').run(id);
+      const add = this.db.prepare('INSERT INTO agent_knowledge_reads VALUES (?,?)');
+      for (const vault of settings.knowledgeReads) add.run(id, vault);
+    }
+    if (settings.mcpGrants) {
+      if (id === 'main' && !this.hasExplicitMainMcpGrants()) this.auditSettings('agent-mcp-main');
+      this.db.prepare("DELETE FROM agent_capabilities WHERE agent_id=? AND kind='mcp'").run(id);
+      this.db.prepare('DELETE FROM workspace_mcp_grants WHERE workspace_id IN (SELECT id FROM agent_workspaces WHERE agent_id=?)').run(id);
+      const grant = this.db.prepare("INSERT INTO agent_capabilities VALUES (?,'mcp',?,1)");
+      const workspace = this.db.prepare('INSERT INTO workspace_mcp_grants VALUES (?,?)');
+      const definitions = this.customMcpServers();
+      for (const server of settings.mcpGrants) {
+        grant.run(id, server);
+        const applies = definitions.find(({ id }) => id === server)?.appliesToProjects ?? [];
+        for (const folder of this.agentWorkspaces(id)) {
+          if (applies.includes(folder.layout === 'legacy_secondary' ? 'secondary' : 'default')) workspace.run(folder.id, server);
+        }
+      }
+    }
+  }
+
+  // The channel registry supplies its transaction when the wizard binds a bot.
+  agentCreation(id: string, settings: AgentSettings, validate: () => void) {
+    return () => {
+      validate();
+      const now = Date.now();
+      this.db.prepare(`INSERT INTO agents VALUES (?,'specialist',NULL,'active',?,?,?,?,?,?,?,1,?,?)`).run(id,
+        settings.name!, settings.introduction ?? '', settings.instructions ?? '', settings.avatar?.bytes ?? null,
+        settings.avatar?.mime ?? null, settings.defaultModel ?? null, settings.replyLocale ?? 'zh-TW', now, now);
+      this.db.prepare("INSERT INTO agent_workspaces VALUES (?,?,'managed',?,NULL,1,'unclassified',?)")
+        .run(id, id, 'web/agents/' + id, now);
+      this.db.prepare('INSERT INTO agent_trigger_settings VALUES (?,1)').run(id);
+      this.saveAgentBindings(id, settings);
+    };
+  }
+
+  createAgent(create: () => void) { this.transaction(create); }
+
+  updateAgent(id: string, revision: number, settings: AgentSettings | null, channelStatus: string) {
+    this.transaction(() => {
+      const agent = this.agents().find((agent) => agent.id === id);
+      if (!agent) throw new HttpError(404, 'agent-not-found');
+      if (agent.revision !== revision) throw new HttpError(409, 'agent-revision-conflict');
+      if (agent.state !== 'active') throw new HttpError(409, 'agent-inactive');
+      if (!settings) {
+        if (agent.builtin) throw new HttpError(409, 'agent-builtin');
+        if (this.telegramAccounts().some((row) => row.agentId === id && row.state === 'enabled')) {
+          throw new HttpError(409, 'agent-channel-bound');
+        }
+        if (this.agentStatus(id) !== 'available' || channelStatus !== 'available') throw new HttpError(409, 'agent-busy');
+        this.db.prepare("UPDATE agents SET state='archived',config_revision=config_revision+1,updated_at=? WHERE id=?")
+          .run(Date.now(), id);
+        return;
+      }
+      const name = settings.name ?? agent.name;
+      const intro = settings.introduction ?? agent.introduction;
+      const instructions = settings.instructions ?? agent.instructions;
+      this.db.prepare(`UPDATE agents SET name=?, introduction=?, instructions=?, default_model_id=?, reply_locale=?,
+        config_revision=config_revision+1, updated_at=? WHERE id=?`).run(name, intro, instructions,
+        settings.defaultModel === undefined ? agent.defaultModel : settings.defaultModel, settings.replyLocale ?? agent.replyLocale, Date.now(), id);
+      if (settings.avatar !== undefined) this.db.prepare('UPDATE agents SET avatar=?,avatar_mime=? WHERE id=?')
+        .run(settings.avatar?.bytes ?? null, settings.avatar?.mime ?? null, id);
+      this.saveAgentBindings(id, settings);
+      if (id === 'main') {
+        this.writePreferences(name, intro, instructions);
+        if (settings.avatar !== undefined) this.writeAppearanceAvatar(settings.avatar);
+      }
+      this.auditSettings('assistant');
+    });
+    this.executionChanges.forEach((check) => check());
   }
 
   defaultWorkspace(agentID: string) {
@@ -233,7 +356,7 @@ export class WebStore extends Ledger {
         ON CONFLICT(id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at
       `).run(id, JSON.stringify(definition), createdAt, now, id);
       if (!changes) throw new Error('最多可設定 20 個自訂 MCP 伺服器。');
-      if (!this.telegram) replaceLegacyMcpGrants(this.db, definition);
+      if (!this.telegram) replaceLegacyMcpGrants(this.db, definition, this.hasExplicitMainMcpGrants());
       return { ...definition, createdAt, updatedAt: now };
     });
     this.executionChanges.forEach((check) => check());
@@ -257,6 +380,10 @@ export class WebStore extends Ledger {
     return () => { this.executionChanges.delete(check); };
   }
 
+  private hasExplicitMainMcpGrants() {
+    return Boolean(this.db.prepare("SELECT 1 FROM web_settings_audit WHERE section='agent-mcp-main' LIMIT 1").get());
+  }
+
   knowledgeSettings() {
     const row = this.db.prepare('SELECT atlas_url AS atlasUrl, toolbox FROM web_knowledge_settings WHERE id=1').get();
     return { atlasUrl: String(row?.atlasUrl ?? ''), toolbox: row?.toolbox !== 0 };
@@ -276,12 +403,12 @@ export class WebStore extends Ledger {
       } | undefined;
   }
 
-  executionProfile(agentID: string, workspaceID: string) {
+  executionProfile(agentID: string, workspaceID: string, includeArchived = false) {
     return this.db.prepare(`SELECT a.config_revision AS revision, a.name, a.introduction, a.instructions, a.reply_locale AS replyLocale,
       a.default_model_id AS defaultModel, w.relative_root AS relativeRoot,
       COALESCE(w.display_name,w.id) AS workspaceName
       FROM agents a JOIN agent_workspaces w ON w.agent_id=a.id
-      WHERE a.id=? AND w.id=? AND a.state='active'`).get(agentID, workspaceID) as {
+      WHERE a.id=? AND w.id=? AND (a.state='active' OR ?)`).get(agentID, workspaceID, Number(includeArchived)) as {
         revision: number; name: string; introduction: string; instructions: string; replyLocale: 'zh-TW' | 'en';
         defaultModel: string | null; relativeRoot: string; workspaceName: string;
       } | undefined;
@@ -371,14 +498,18 @@ export class WebStore extends Ledger {
 
   savePreferences(name: string, introduction: string, instructions: string) {
     this.transaction(() => {
-      this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
-        .run(name, introduction, instructions);
+      this.writePreferences(name, introduction, instructions);
       if (!this.telegram) this.db.prepare(`UPDATE agents SET name = ?, introduction = ?, instructions = ?,
         config_revision = config_revision + 1, updated_at = ? WHERE id = 'main'`)
         .run(name, introduction, instructions, Date.now());
       this.auditSettings('assistant');
     });
+  }
+
+  private writePreferences(name: string, introduction: string, instructions: string) {
+    this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
+      .run(name, introduction, instructions);
   }
 
   private auditSettings(section: string) {
@@ -395,14 +526,18 @@ export class WebStore extends Ledger {
       this.db.prepare(`INSERT INTO web_appearance (id, theme, density) VALUES (1, ?, ?)
         ON CONFLICT(id) DO UPDATE SET theme = excluded.theme, density = excluded.density`).run(theme, density);
       if (image !== undefined) {
-        this.db.prepare('UPDATE web_appearance SET avatar = ?, mime = ? WHERE id = 1')
-          .run(image?.bytes ?? null, image?.mime ?? null);
+        this.writeAppearanceAvatar(image);
         if (!this.telegram) this.db.prepare(`UPDATE agents SET avatar = ?, avatar_mime = ?,
           config_revision = config_revision + 1, updated_at = ? WHERE id = 'main'`)
           .run(image?.bytes ?? null, image?.mime ?? null, Date.now());
       }
       this.auditSettings('appearance');
     });
+  }
+
+  private writeAppearanceAvatar(image: NonNullable<AgentSettings['avatar']> | null) {
+    this.db.prepare(`INSERT INTO web_appearance (id,theme,density,avatar,mime) VALUES (1,'system','comfortable',?,?)
+      ON CONFLICT(id) DO UPDATE SET avatar=excluded.avatar,mime=excluded.mime`).run(image?.bytes ?? null, image?.mime ?? null);
   }
 
   turnLimits() {
@@ -490,7 +625,7 @@ export class WebStore extends Ledger {
   }
 
   createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>,
-    channel?: number | (Destination & { workspaceID: string })) {
+    channel?: number | (Destination & { workspaceID: string }), owner?: WebOwner) {
     this.transaction(() => {
       const project = session.project ?? 'default';
       this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
@@ -500,6 +635,10 @@ export class WebStore extends Ledger {
       if (typeof channel === 'object') {
         this.db.prepare("INSERT INTO session_ownership VALUES (?,?,?,'channel',?,?,?)").run(session.id,
           channel.agentId, channel.workspaceID, channel.accountId, channel.conversationKey, channel.bindingRevision);
+      } else if (owner) {
+        if (!this.executionProfile(owner.agentId, owner.workspaceID)) throw new HttpError(409, 'agent-inactive');
+        this.db.prepare("INSERT INTO session_ownership VALUES (?,?,?,'web',NULL,NULL,NULL)")
+          .run(session.id, owner.agentId, owner.workspaceID);
       } else insertLegacySessionOwner(this.db, session.id, project, this.telegram || channel !== undefined, channel);
     });
   }

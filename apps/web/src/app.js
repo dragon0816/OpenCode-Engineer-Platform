@@ -1,4 +1,4 @@
-import { bindFilePicker, formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
+import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
 import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
@@ -6,6 +6,8 @@ import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
 import { bindJobs, loadJobSummary } from './jobs.js';
+import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
+import { bindChannels, channelName } from './channels.js';
 
 initializeLocale();
 
@@ -16,7 +18,14 @@ const agent = find('agent');
 let projects = [];
 let project = 'default';
 let projectBusy = false;
-const sessionPath = (id) => `/api/projects/${project}/sessions${id ? '/' + id : ''}`;
+let assistantEntries = [];
+const sessionScopes = new Map();
+const sessionsPath = (agentId, workspaceId) => `/api/agents/${agentId}/workspaces/${workspaceId}/sessions`;
+const sessionPath = (id) => {
+  const scope = sessionScopes.get(id);
+  return `${sessionsPath(scope.agentId, scope.workspaceId)}/${id}`;
+};
+const sessionAgent = (id) => assistantEntries.find(({ id: agentId }) => agentId === sessionScopes.get(id)?.agentId);
 const pick = find('pick');
 const fileInput = find('file-input');
 const drop = find('drop');
@@ -91,17 +100,18 @@ function runningID(context) {
 }
 
 function setControls() {
+  const inactive = sessionAgent(current?.id)?.state === 'archived';
   const cancellable = !stopped && Boolean(runningID(current));
   send.hidden = cancellable;
   cancelTurn.hidden = !cancellable;
   cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
-  pick.disabled = !current || uploadBusy || stopped;
-  prompt.disabled = !current || stopped;
-  find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped;
+  pick.disabled = !current || uploadBusy || stopped || inactive;
+  prompt.disabled = !current || stopped || inactive;
+  find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped || inactive;
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped;
   find('project-read-button').disabled = uploadBusy;
-  send.disabled = !current || uploadBusy || sending || stopped || Boolean(current.pendingID || current.aliasUpdating) ||
+  send.disabled = !current || uploadBusy || sending || stopped || inactive || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
 
@@ -144,7 +154,7 @@ function bindRowMenu(menu, trigger, actions) {
   });
   menu.addEventListener('toggle', () => {
     if (!menu.open) return;
-    for (const other of sessions.querySelectorAll('details[open]')) {
+    for (const other of document.querySelectorAll('#sessions details[open], .agent-row > details[open]')) {
       if (other !== menu) other.open = false;
     }
     if (document.activeElement === trigger) actions[0].focus();
@@ -158,7 +168,9 @@ function bindRowMenu(menu, trigger, actions) {
       close();
     } else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
       event.preventDefault();
-      actions[document.activeElement === actions[0] ? 1 : 0].focus();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      const index = actions.indexOf(document.activeElement);
+      actions[(index + step + actions.length) % actions.length].focus();
     }
   });
   menu.addEventListener('focusout', (event) => {
@@ -282,7 +294,7 @@ function render(context) {
       const entry = node('article', '', `message ${item.role}`);
       entry.dataset.id = item.id;
       entry.tabIndex = -1;
-      if (item.role === 'assistant') entry.append(avatar());
+      if (item.role === 'assistant') entry.append(avatar(sessionAgent(id)));
       const role = node('strong', item.role === 'user' ? message('chat.you') : labels[state.session.agent]);
       if (item.createdAt) setAttribute(role, 'title', formatDate(item.createdAt));
       entry.append(role);
@@ -926,12 +938,14 @@ function select(id) {
   current?.events.close();
   current?.abort.abort();
   const session = knownSessions.get(id);
+  const scope = sessionScopes.get(id);
   current = undefined;
   updateAttachmentCount();
   find('file-status').textContent = '';
   renderNotes(null);
   renderReply();
   setText(find('runtime-agent'), session ? message('chat.session-assistant-assistant', { assistant: labels[session.agent] }) : message('chat.no-session-selected'));
+  updateTopAgent(id);
   closePanel(false);
   find('chat-resources').replaceChildren();
   find('chat-resources').hidden = true;
@@ -939,10 +953,11 @@ function select(id) {
   find('panel-diff').replaceChildren();
   jump.hidden = true;
   if (!session) {
+    localStorage.removeItem('oep.activeSession');
     updateSessionAlias();
     setText(sessionTitle, message('ui.chat'));
     progress.textContent = '';
-    messages.replaceChildren();
+    messages.replaceChildren(node('p', message('ui.select-or-create-a-session-to-start'), 'empty'));
     attachmentList.replaceChildren();
     emptyList(artifactList, message('ui.no-downloadable-files-yet'));
     emptyList(activityList, message('chat.no-jobs-in-progress'));
@@ -953,7 +968,13 @@ function select(id) {
     renderSessions();
     return;
   }
-  localStorage.setItem(`oep.activeSession.${project}`, id);
+  if (scope.agentId === 'main') {
+    project = session.project;
+    localStorage.setItem('oep.activeProject', project);
+    localStorage.setItem(`oep.activeSession.${project}`, id);
+  }
+  localStorage.setItem('oep.activeSession', id);
+  collapsedGroups.delete(scope.workspaceId);
   setText(sessionTitle, sessionLabel(session));
   const draft = drafts.get(id);
   prompt.value = draft?.text ?? '';
@@ -970,6 +991,7 @@ function select(id) {
   const events = new EventSource(`${path}/events`);
   const context = { id, path, abort: new AbortController(), events, selected: selections.get(id) };
   current = context;
+  updateProjectRead();
   renderReply();
   find('session-model-status').textContent = '';
   updateSessionAlias();
@@ -998,8 +1020,9 @@ function select(id) {
   setControls();
 }
 
-function addSession(session) {
+function addSession(session, agentId, workspaceId) {
   knownSessions.set(session.id, session);
+  if (agentId) sessionScopes.set(session.id, { agentId, workspaceId });
 }
 
 function sessionButton(label, action) {
@@ -1010,38 +1033,62 @@ function sessionButton(label, action) {
   return button;
 }
 
-let collapsedProject;
+const collapsedGroups = new Set();
 function renderSessions() {
   setText(find('session-count'), knownSessions.size);
   const query = find('session-search').value.trim().toLocaleLowerCase(getLocale());
   find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
-  for (const entry of projects) {
+  for (const entry of assistantEntries) {
+    const group = node('section', undefined, 'agent-session-group');
+    const heading = node('h2', undefined, 'agent-session-heading');
+    heading.append(node('span', agentName(entry)));
+    heading.firstElementChild.toggleAttribute('data-ui-content', typeof agentName(entry) === 'string');
+    if (entry.state === 'archived') heading.append(node('small', message('agents.status-disabled')));
+    group.append(heading);
+    sessions.append(group);
+    for (const workspace of entry.workspaces) renderWorkspace(group, entry, workspace, query);
+  }
+}
+
+function renderWorkspace(group, entry, workspace, query) {
+    const legacy = entry.builtin === 'main';
+    const legacyProject = workspace.layout === 'legacy_secondary' ? 'secondary' : 'default';
+    const activeWorkspace = sessionScopes.get(current?.id)?.workspaceId;
     const section = node('section', undefined, 'project');
     const heading = node('h2', '', 'project-heading');
-    const expanded = entry.id === project && collapsedProject !== entry.id;
-    const projectButton = sessionButton(projectLabel(entry), () => {
-      if (entry.id !== project) { collapsedProject = undefined; void changeProject(entry.id); return; }
-      collapsedProject = expanded ? entry.id : undefined;
+    const expanded = Boolean(query) || !collapsedGroups.has(workspace.id) &&
+      (legacy ? legacyProject === project || activeWorkspace === workspace.id : true);
+    const projectButton = sessionButton(legacy ? workspaceName(workspace) : message('agents.sessions'), () => {
+      if (legacy && legacyProject !== project) { changeProject(legacyProject); return; }
+      if (expanded) collapsedGroups.add(workspace.id);
+      else collapsedGroups.delete(workspace.id);
       renderSessions();
-      sessions.querySelector(`[data-project="${entry.id}"]`)?.focus();
+      sessions.querySelector(`[data-project="${workspace.id}"]`)?.focus();
     });
     projectButton.setAttribute('aria-expanded', String(expanded));
-    projectButton.dataset.project = entry.id;
+    projectButton.dataset.project = workspace.id;
     heading.append(projectButton);
     section.append(heading);
-    const create = sessionButton('+', () => { collapsedProject = undefined; return createSession(entry.id); });
-    create.id = entry.id === 'default' ? 'new-session' : 'new-session-secondary';
-    setAttribute(create, 'aria-label', message('chat.new-session-in-project', { project: projectLabel(entry) }));
-    heading.append(create);
-    sessions.append(section);
-    if (!expanded) continue;
+    if (entry.state === 'active') {
+      const create = sessionButton('+', () => createAgentSession(entry.id, workspace.id));
+      if (legacy) create.id = legacyProject === 'default' ? 'new-session' : 'new-session-secondary';
+      else create.setAttribute('data-agent-start', '');
+      setAttribute(create, 'aria-label', legacy ? message('chat.new-session-in-project', { project: workspaceName(workspace) }) :
+        message('agents.start-named', { name: agentName(entry) }));
+      heading.append(create);
+    }
+    group.append(section);
+    if (!expanded) return;
     const list = node('ul', undefined, 'session-list');
     for (const session of knownSessions.values()) {
+      if (sessionScopes.get(session.id)?.workspaceId !== workspace.id) continue;
       const label = sessionLabel(session);
       if (!resolveText(label).toLocaleLowerCase(getLocale()).includes(query)) continue;
       const row = node('li');
       const link = sessionButton(undefined, () => {
+        find('open-chat').click();
+        if (find('chat-view').hidden) return;
         select(session.id);
         if (narrowNavigation.matches) setSidebar(false);
         prompt.focus();
@@ -1071,20 +1118,17 @@ function renderSessions() {
     }
     section.append(list);
     if (!list.children.length) section.append(node('p', query ? message('chat.no-matching-sessions') : message('chat.no-sessions-yet')));
-  }
 }
 
-async function switchProject(id) {
-  if (id === project) return;
-  const entries = await request(`/api/projects/${id}/sessions`);
-  select();
+function switchProject(id) {
   project = id;
-  updateProjectRead();
-  knownSessions.clear();
   localStorage.setItem('oep.activeProject', id);
-  for (const entry of entries) addSession(entry);
+  const workspace = 'legacy-' + id;
+  collapsedGroups.delete(workspace);
+  const entries = [...knownSessions.keys()].filter((id) => sessionScopes.get(id)?.workspaceId === workspace);
   const saved = localStorage.getItem(`oep.activeSession.${project}`);
-  select(knownSessions.has(saved) ? saved : entries.at(-1)?.id);
+  select(entries.includes(saved) ? saved : entries.at(-1));
+  updateProjectRead();
 }
 
 async function upload(files) {
@@ -1121,7 +1165,7 @@ const folderProject = find('folder-project');
 const folderStatus = find('project-folder-status');
 
 function updateProjectRead() {
-  const folders = projectFolders.find((entry) => entry.id === project)?.folders ?? [];
+  const folders = !current || sessionAgent(current.id)?.builtin === 'main' ? projectFolders.find((entry) => entry.id === project)?.folders ?? [] : [];
   find('project-read-folder').replaceChildren(...folders.map((path) => optionText(path, path)));
   setControls();
 }
@@ -1175,64 +1219,145 @@ find('project-read-button').addEventListener('click', async () => {
   }
 });
 
-const preferenceFields = ['name', 'introduction', 'instructions'];
-let savedAssistant;
 let settingsSaving = false;
-function assistantValues() {
-  return Object.fromEntries(preferenceFields.map((field) => [field, find(`assistant-${field}`).value]));
-}
-function applyPreferences(preferences) {
-  for (const field of preferenceFields) find(`assistant-${field}`).value = preferences[field];
-  savedAssistant = JSON.stringify(assistantValues());
-  setText(find('sidebar-assistant-name'), preferences.name || message('ui.assistant'));
+function updateAgentBranding() {
+  const main = assistantEntries.find(({ builtin }) => builtin === 'main');
+  const name = find('sidebar-assistant-name');
+  name.toggleAttribute('data-ui-content', Boolean(main?.name));
+  setText(name, agentName(main));
   const introduction = find('sidebar-assistant-intro');
-  introduction.toggleAttribute('data-ui-content', Boolean(preferences.introduction));
-  const intro = preferences.introduction || message('ui.local-engineering-assistant');
+  introduction.toggleAttribute('data-ui-content', Boolean(main?.introduction));
+  const intro = agentIntroduction(main);
   setText(introduction, intro);
   setAttribute(introduction, 'title', intro);
+  agentAvatar(document.querySelector('.sidebar-assistant .assistant-avatar'), main);
+  for (const element of messages.querySelectorAll('.assistant-avatar')) agentAvatar(element, sessionAgent(current?.id));
+  updateTopAgent(current?.id);
 }
-find('assistant-settings').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = find('save-assistant');
-  if (button.disabled) return;
-  const data = assistantValues();
-  const controls = [...event.currentTarget.elements];
-  controls.forEach((control) => { control.disabled = true; });
-  settingsSaving = true;
-  setText(find('settings-status'), message('chat.saving'));
-  try {
-    applyPreferences(await request('/api/settings', { data }));
-    setText(find('settings-status'), message('chat.saved'));
-  } catch {
-    setText(find('settings-status'), message('chat.could-not-save-assistant-settings-try-again'));
-  } finally {
-    settingsSaving = false;
-    controls.forEach((control) => { control.disabled = stopped; });
+
+function updateTopAgent(id) {
+  const entry = sessionAgent(id);
+  const label = find('top-agent');
+  label.toggleAttribute('data-ui-content', typeof agentName(entry) === 'string');
+  setText(label, id ? agentName(entry) : '');
+  label.hidden = !id;
+}
+
+let agentOpener;
+const agentView = find('agent-view');
+const agentEditor = bindAgents({ onChange: refreshAgents, close: () => find('close-agent').click(),
+  openChannels: () => openAgentSettings('channels'), openMcp: () => openAgentSettings('mcp') });
+const loadChannels = bindChannels(() => assistantEntries, refreshAgents);
+
+function openAgent(id, copy, opener) {
+  if (stopped || !settingsView.hidden && !discardSettings() || !agentEditor.leave()) return;
+  agentOpener = opener;
+  leaveModelSection();
+  closePanel(false);
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view', 'settings-view']) find(id).hidden = true;
+  for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review', 'open-settings']) find(id).removeAttribute('aria-current');
+  agentView.hidden = false;
+  if (narrowNavigation.matches) setSidebar(false);
+  void agentEditor.open(id, copy);
+}
+
+function openAgentSettings(section) {
+  if (!agentEditor.leave()) return;
+  if (switchSettingsSection(section)) showSettings();
+}
+
+find('new-agent').addEventListener('click', (event) => openAgent(undefined, false, event.currentTarget));
+find('open-main-agent').addEventListener('click', (event) => openAgent('main', false, event.currentTarget));
+find('close-agent').addEventListener('click', () => {
+  if (!agentEditor.leave()) return;
+  if (agentOpener?.id === 'open-main-agent') showSettings();
+  else find('open-chat').click();
+  if (!agentOpener?.isConnected || narrowNavigation.matches && !agentOpener.closest('#settings-view')) {
+    if (narrowNavigation.matches) sidebarToggle.focus();
+    return;
+  }
+  agentOpener.focus();
+});
+agentView.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !event.defaultPrevented) {
+    event.preventDefault();
+    find('close-agent').click();
   }
 });
 
+function renderAgents() {
+  const states = { available: message('agents.status-available'), busy: message('agents.status-busy'), queued: message('agents.status-queued'),
+    disabled: message('agents.status-disabled') };
+  const active = assistantEntries.filter(({ state }) => state === 'active');
+  const archived = assistantEntries.filter(({ state }) => state === 'archived');
+  setText(find('assistant-count'), active.length);
+  const rowFor = (entry) => {
+    const row = node('article', undefined, 'agent-row');
+    row.dataset.agent = entry.id;
+    const open = sessionButton(undefined, () => openAgent(entry.id, false, open));
+    open.className = 'agent-row-open';
+    const name = node('strong', agentName(entry));
+    name.toggleAttribute('data-ui-content', typeof agentName(entry) === 'string');
+    const info = node('span');
+    info.append(name, node('small', states[entry.status]));
+    for (const channel of entry.channels) {
+      const bot = node('small', channelName(channel));
+      bot.toggleAttribute('data-ui-content', typeof channelName(channel) === 'string');
+      info.append(bot);
+    }
+    open.append(avatar(entry), info);
+    const start = sessionButton(message('agents.start'), () => createAgentSession(entry.id,
+      entry.id === 'main' ? 'legacy-' + project : entry.workspaces.find(({ isDefault }) => isDefault)?.id));
+    start.className = 'agent-row-start';
+    start.hidden = entry.state === 'archived';
+    const menu = node('details');
+    const trigger = node('summary', '⋯', 'menu-trigger');
+    setAttribute(trigger, 'aria-label', message('agents.more-named', { name: agentName(entry) }));
+    const copy = sessionButton(message('agents.copy'), () => openAgent(entry.id, true, open));
+    const actions = [copy];
+    if (!entry.builtin && entry.state === 'active') actions.push(sessionButton(message('agents.archive'), async () => {
+      if (!window.confirm(t('agents.confirm-archive', { name: resolveText(agentName(entry)) }))) return;
+      try {
+        await request('/api/agents/' + entry.id, { data: { action: 'archive', revision: entry.revision } });
+        await refreshAgents();
+        find('new-agent').focus();
+      } catch (error) { showError(error); }
+    }));
+    const options = node('div', undefined, 'menu-actions');
+    options.append(...actions);
+    menu.append(trigger, options);
+    bindRowMenu(menu, trigger, actions);
+    row.append(open, start, menu);
+    return row;
+  };
+  find('agent-list').replaceChildren(...active.map(rowFor));
+  find('archived-agent-list').replaceChildren(...archived.map(rowFor));
+  find('archived-agents').hidden = !archived.length;
+}
+
+async function refreshAgents() {
+  const { agents: entries } = await request('/api/agents');
+  if (JSON.stringify(entries) === JSON.stringify(assistantEntries)) return;
+  const focused = document.activeElement.closest?.('.agent-row[data-agent]');
+  assistantEntries = entries;
+  renderAgents();
+  updateAgentBranding();
+  renderSessions();
+  setControls();
+  if (focused) find('rail-assistants').querySelector(`[data-agent="${CSS.escape(focused.dataset.agent)}"] .agent-row-open`)?.focus();
+}
+
 const theme = find('theme');
 const density = find('density');
-const avatarFile = find('avatar-file');
-const refreshAvatarPicker = bindFilePicker(avatarFile);
 const appearanceStatus = find('appearance-status');
 const appearanceSave = find('save-appearance');
 const legacyTheme = localStorage.getItem('oep.theme');
 let savedAppearance;
-let avatarReset = false;
-let showingAvatar = false;
-function avatar() {
+function avatar(entry) {
   const element = node('span', 'O', 'assistant-avatar');
   element.setAttribute('aria-hidden', 'true');
-  paintAvatar(element);
+  agentAvatar(element, entry);
   return element;
-}
-function paintAvatar(element) {
-  if (!showingAvatar) { element.textContent = 'O'; return; }
-  const image = document.createElement('img');
-  image.alt = '';
-  image.src = '/api/settings/avatar';
-  element.replaceChildren(image);
 }
 function previewAppearance() {
   document.documentElement.dataset.theme = theme.value;
@@ -1242,41 +1367,20 @@ function applyAppearance(value) {
   savedAppearance = { ...value, theme: value.theme ?? theme.value };
   theme.value = savedAppearance.theme;
   density.value = value.density;
-  avatarFile.value = '';
-  refreshAvatarPicker();
-  avatarReset = false;
-  showingAvatar = value.hasAvatar;
-  document.querySelectorAll('.assistant-avatar').forEach(paintAvatar);
   previewAppearance();
 }
 if (['system', 'light', 'dark'].includes(legacyTheme)) theme.value = legacyTheme;
 for (const input of [theme, density]) input.addEventListener('change', previewAppearance);
 previewAppearance();
-find('avatar-reset').addEventListener('click', () => {
-  avatarReset = true;
-  avatarFile.value = '';
-  refreshAvatarPicker();
-  setText(appearanceStatus, message('chat.saving-will-restore-the-default-avatar'));
-});
-avatarFile.addEventListener('change', () => { avatarReset = false; });
-async function encodeAvatar(file) {
-  if (file.size > 90 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error();
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let value = '';
-  for (const byte of bytes) value += String.fromCharCode(byte);
-  return btoa(value);
-}
 find('appearance-settings').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (appearanceSave.disabled) return;
-  const fields = [theme, density, avatarFile, find('avatar-reset'), appearanceSave];
+  const fields = [theme, density, appearanceSave];
   fields.forEach((field) => { field.disabled = true; });
   settingsSaving = true;
   setText(appearanceStatus, message('chat.saving'));
   try {
     const data = { theme: theme.value, density: density.value };
-    if (avatarFile.files.length) data.avatar = await encodeAvatar(avatarFile.files[0]);
-    else if (avatarReset) data.avatar = null;
     applyAppearance(await request('/api/settings/appearance', { data }));
     localStorage.removeItem('oep.theme');
     setText(appearanceStatus, message('chat.saved'));
@@ -1288,8 +1392,7 @@ find('appearance-settings').addEventListener('submit', async (event) => {
   }
 });
 function appearanceDirty() {
-  return savedAppearance && (theme.value !== savedAppearance.theme || density.value !== savedAppearance.density ||
-    avatarReset || avatarFile.files.length > 0);
+  return savedAppearance && (theme.value !== savedAppearance.theme || density.value !== savedAppearance.density);
 }
 const defaultAlias = find('default-alias');
 const sessionAlias = find('session-alias');
@@ -1601,22 +1704,18 @@ find('limits-settings').addEventListener('submit', async (event) => {
     saveLimits.disabled = stopped;
   }
 });
-function assistantDirty() {
-  return savedAssistant !== undefined && savedAssistant !== JSON.stringify(assistantValues());
-}
 function discardSettings() {
   if (settingsSaving) return false;
-  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return true;
+  if (!appearanceDirty() && !modelDirty() && !limitsDirty()) return true;
   if (!window.confirm(t('chat.discard-unsaved-settings'))) return false;
-  if (assistantDirty()) applyPreferences(JSON.parse(savedAssistant));
   if (appearanceDirty()) applyAppearance(savedAppearance);
   if (modelDirty()) applyModel(modelSettings);
   if (limitsDirty()) for (const [key, input] of limitInputs) input.value = savedLimits[key];
-  [find('settings-status'), appearanceStatus, modelStatus, limitsStatus].forEach(element => setText(element, ''));
+  [appearanceStatus, modelStatus, limitsStatus].forEach(element => setText(element, ''));
   return true;
 }
 window.addEventListener('beforeunload', (event) => {
-  if (!assistantDirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return;
+  if (!agentEditor.dirty() && !appearanceDirty() && !modelDirty() && !limitsDirty()) return;
   event.preventDefault();
   event.returnValue = true;
 });
@@ -1705,6 +1804,7 @@ async function loadMcpSettings() {
 }
 
 function loadActiveSettingsSection() {
+  if (activeSettingsSection === 'channels') void loadChannels();
   if (activeSettingsSection === 'mcp') void loadMcpSettings();
   if (activeSettingsSection === 'integrations') void loadTelegramStatus();
 }
@@ -1725,6 +1825,7 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 });
 
 function showSettings() {
+  if (!agentEditor.leave()) return;
   closePanel(false);
   for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
@@ -1747,6 +1848,10 @@ find('close-settings').addEventListener('click', () => {
 });
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
   find(id).addEventListener('click', (event) => {
+    if (!agentEditor.leave()) {
+      event.stopImmediatePropagation();
+      return;
+    }
     if (settingsView.hidden) return;
     if (!discardSettings()) {
       event.stopImmediatePropagation();
@@ -1793,7 +1898,6 @@ for (const section of document.querySelectorAll('.rail-section')) {
   section.open = localStorage.getItem(key) !== 'false';
   section.addEventListener('toggle', () => localStorage.setItem(key, String(section.open)));
 }
-setText(find('assistant-count'), agent.options.length);
 function syncNavigation() {
   const view = ['chat', 'jobs', 'knowledge', 'review'].find((id) => !find(id + '-view').hidden);
   const visible = 'open-' + view;
@@ -1823,7 +1927,7 @@ find('clear-session-search').addEventListener('click', () => {
   find('session-search').focus();
 });
 document.addEventListener('click', (event) => {
-  for (const menu of sessions.querySelectorAll('details[open]')) {
+  for (const menu of document.querySelectorAll('#sessions details[open], .agent-row > details[open]')) {
     if (!menu.contains(event.target)) menu.open = false;
   }
 });
@@ -1833,7 +1937,6 @@ async function renameSession(session) {
   if (title === null) return;
   try {
     const renamed = await request(`${sessionPath(session.id)}/rename`, { data: { title } });
-    if (project !== session.project) return;
     addSession(renamed);
     renderSessions();
     if (current?.id === session.id) setText(sessionTitle, sessionLabel(renamed));
@@ -1858,9 +1961,10 @@ async function removeSession(session, opener) {
     replies.delete(session.id);
     selections.delete(session.id);
     submitted.delete(session.id);
-    if (project !== session.project) return;
+    const workspace = sessionScopes.get(session.id)?.workspaceId;
+    sessionScopes.delete(session.id);
     knownSessions.delete(session.id);
-    if (current?.id === session.id) select([...knownSessions.keys()].at(-1));
+    if (current?.id === session.id) select([...knownSessions.keys()].filter((id) => sessionScopes.get(id)?.workspaceId === workspace).at(-1));
     renderSessions();
     (sessions.querySelector('[aria-current="true"]') ?? find('session-search')).focus();
     setText(find('command-toast'), message('chat.session-deleted'));
@@ -1869,8 +1973,10 @@ async function removeSession(session, opener) {
 
 async function changeProject(id) {
   if (projectBusy || stopped) return;
+  find('open-chat').click();
+  if (find('chat-view').hidden) return;
   projectBusy = true;
-  try { await switchProject(id); }
+  try { switchProject(id); }
   catch (error) { showError(error); }
   finally {
     projectBusy = false;
@@ -1879,14 +1985,15 @@ async function changeProject(id) {
   }
 }
 
-async function createSession(id) {
-  if (projectBusy || stopped) return;
+async function createAgentSession(agentId, workspaceId) {
+  if (projectBusy || stopped || !workspaceId) return;
+  find('open-chat').click();
+  if (find('chat-view').hidden) return;
   projectBusy = true;
   showError();
   try {
-    await switchProject(id);
-    const session = await request(sessionPath(), { data: { agent: agent.value } });
-    addSession(session);
+    const session = await request(sessionsPath(agentId, workspaceId), { data: agentId === 'main' ? { agent: agent.value } : {} });
+    addSession(session, agentId, workspaceId);
     find('session-search').value = '';
     select(session.id);
     if (narrowNavigation.matches) setSidebar(false);
@@ -1920,7 +2027,8 @@ drop.addEventListener('drop', (event) => {
 const executeCommand = bindCommands(prompt, find('slash-palette'), find('command-toast'), {
   async '/new'() {
     const previous = current?.id;
-    const created = await createSession(project);
+    const scope = sessionScopes.get(current?.id) ?? { agentId: 'main', workspaceId: 'legacy-' + project };
+    const created = await createAgentSession(scope.agentId, scope.workspaceId);
     if (created && created.id !== previous) return { text: message('chat.session-created') };
   },
   async '/stop'() {
@@ -2093,9 +2201,9 @@ try {
   setText(connection, message('chat.connected'));
   setText(model, bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
-  request('/api/settings/model').then(async (value) => {
+  const modelBootstrap = request('/api/settings/model').then((value) => {
     applyModel(value);
-    if (pairedLaunch) await confirmModelApply(value);
+    return value;
   }).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   request('/api/settings/projects').then((entries) => {
     projectFolders = entries;
@@ -2144,19 +2252,21 @@ try {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;
   }).catch(() => { setText(appearanceStatus, message('chat.could-not-load-appearance-settings-refresh-the')); });
-  request('/api/settings').then((preferences) => {
-    applyPreferences(preferences);
-    find('save-assistant').disabled = stopped;
-  }).catch(() => { setText(find('settings-status'), message('chat.could-not-load-assistant-settings-refresh-the')); });
   projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;
-  const entries = project === 'default' ? bootstrap.sessions : await request(sessionPath());
-  for (const session of entries) addSession(session);
-  const saved = localStorage.getItem(`oep.activeSession.${project}`) ?? localStorage.getItem('oep.activeSession');
+  await refreshAgents();
+  await Promise.all(assistantEntries.flatMap((assistant) => assistant.workspaces.map(async (workspace) => {
+    const entries = await request(sessionsPath(assistant.id, workspace.id));
+    for (const session of entries) addSession(session, assistant.id, workspace.id);
+  })));
+  const saved = localStorage.getItem('oep.activeSession') ?? localStorage.getItem(`oep.activeSession.${project}`);
+  const recent = [...knownSessions.values()].filter((entry) => sessionScopes.get(entry.id)?.workspaceId === 'legacy-' + project).at(-1);
   renderSessions();
-  if (entries.length) select(knownSessions.has(saved) ? saved : entries.at(-1).id);
-  agent.disabled = stop.disabled = false;
+  select(knownSessions.has(saved) ? saved : recent?.id);
+  if (pairedLaunch) void modelBootstrap.then((value) => value && confirmModelApply(value))
+    .catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
+  agent.disabled = stop.disabled = find('new-agent').disabled = false;
   bindJobs(openFeaturePreview);
   if (bootstrap.knowledge) {
     knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false));
@@ -2167,6 +2277,9 @@ try {
     find('chat-view').hidden = false;
   });
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
+  window.setInterval(() => {
+    if (!stopped && !document.hidden) void refreshAgents().catch(() => {});
+  }, 10_000);
 } catch (error) {
   setText(connection, message('chat.disconnected'));
   showError(error instanceof RequestError && error.status === 401 ? message('chat.double-click-the-windows-launcher-to-open') : error);

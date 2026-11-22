@@ -24,8 +24,10 @@ const conflict = (params: { accountId: string; agentId: string }) => new HttpErr
 const invalid = () => new HttpError(400, 'channel-settings-invalid');
 const stale = () => new HttpError(409, 'channel-binding-stale');
 
-type Verified = { client: TelegramApi; owner: string; value: string; identity: string; fingerprint: string };
-type Connection = { poller: TelegramPoller; client: TelegramApi; stop: AbortController; account: ChannelAccount; redact(text: string): string };
+type Verified = { client: TelegramApi; owner: string; value: string; identity: string; fingerprint: string; botName?: string };
+type Connection = {
+  poller: TelegramPoller; client: TelegramApi; stop: AbortController; account: ChannelAccount; botName?: string; redact(text: string): string;
+};
 type PollState = 'credential-unavailable' | 'verification-failed' | 'identity-changed' | 'account-in-use';
 
 export class TelegramAccounts {
@@ -60,12 +62,13 @@ export class TelegramAccounts {
   }
 
   list() {
-    return this.ledger.telegramAccounts().map(({ fingerprint: _, ...account }) => {
+    return this.ledger.telegramAccounts().map(({ fingerprint, ...account }) => {
       const connection = this.connections.get(account.accountId);
       const pollState = account.state === 'disabled' || !this.enabled ? 'disabled' : connection
         ? connection.poller.pollConflict ? 'poll-conflict' : 'polling'
         : this.states.get(account.accountId) ?? 'verifying';
-      return { ...account, replyLocale: this.ledger.channelLocale(account.agentId), pollState };
+      return { ...account, botName: connection?.botName, verified: Boolean(fingerprint),
+        replyLocale: this.ledger.channelLocale(account.agentId), pollState };
     });
   }
 
@@ -83,10 +86,10 @@ export class TelegramAccounts {
     }
     try {
       const client = this.credentials.createApi(value);
-      const { identity } = await new TelegramTransport(bot(handler), owner, client).verifyAccount(this.signal);
+      const { identity, botName } = await new TelegramTransport(bot(handler), owner, client).verifyAccount(this.signal);
       this.signal.throwIfAborted();
       if (identity !== value.split(':', 1)[0]) throw new Error('Unexpected Telegram identity');
-      return { client, owner, value, identity, fingerprint: hash(identity) };
+      return { client, owner, value, identity, botName, fingerprint: hash(identity) };
     } catch { throw new HttpError(422, 'channel-verification-failed'); }
   }
 
@@ -120,7 +123,9 @@ export class TelegramAccounts {
       }),
     });
     this.connections.get(accountId)?.stop.abort();
-    this.connections.set(accountId, { poller, client, stop, account, redact: (text) => text.replaceAll(value, '[已遮蔽]') });
+    this.connections.set(accountId, {
+      poller, client, stop, account, botName: verified.botName, redact: (text) => text.replaceAll(value, '[已遮蔽]'),
+    });
     this.states.delete(accountId);
   }
 
@@ -164,7 +169,7 @@ export class TelegramAccounts {
     }
   }
 
-  async configure(input: Record<string, unknown>) {
+  async configure(input: Record<string, unknown>, createAgent?: () => void) {
     const { action, accountId, bindingRevision, confirmed } = input;
     if (typeof action !== 'string' || !['verify', 'bind', 'unbind', 'rebind'].includes(action) ||
         Object.keys(input).some((key) => !['action', 'accountId', 'bindingRevision', 'confirmed', 'credentialRef', 'agentId', 'handler'].includes(key))) {
@@ -183,13 +188,13 @@ export class TelegramAccounts {
       if (used) throw conflict(used);
       if (previous?.fingerprint && previous.fingerprint !== verified.fingerprint) throw new HttpError(409, 'channel-identity-changed');
       if (previous) this.seal(previous, verified, false);
-      return { verified: true };
+      return { verified: true, botName: verified.botName };
     }
     if (confirmed !== true) throw new HttpError(409, 'channel-confirmation-required');
     if (!this.enabled) throw new HttpError(503, 'channel-verification-failed');
     if (previous && bindingRevision !== previous.bindingRevision) throw stale();
     if (action === 'bind' ? previous?.state === 'enabled' : previous?.state !== 'enabled') throw stale();
-    if (typeof agentId !== 'string' || !this.ledger.defaultWorkspace(agentId) ||
+    if (typeof agentId !== 'string' || (!createAgent && !this.ledger.defaultWorkspace(agentId)) ||
         handler === 'bi_intake' && (previous?.accountId !== 'telegram-bi' || agentId !== 'bi')) throw invalid();
     if (action === 'unbind' && (agentId !== previous!.agentId || handler !== previous!.handler || credentialRef !== previous!.credentialRef)) {
       throw invalid();
@@ -204,7 +209,7 @@ export class TelegramAccounts {
       const account: ChannelAccount = { accountId: current?.accountId ?? 'telegram-' + randomUUID(), agentId, credentialRef,
         allowlistRef: legacyAllowlistRef, handler, state: verified ? 'enabled' : 'disabled',
         fingerprint: verified?.fingerprint ?? current!.fingerprint, bindingRevision: (current?.bindingRevision ?? 0) + 1 };
-      const used = this.ledger.saveTelegramAccount(account, current, () => { if (verified) this.seal(account, verified); });
+      const used = this.ledger.saveTelegramAccount(account, current, () => { if (verified) this.seal(account, verified); }, createAgent);
       if (used) throw conflict(used);
       if (verified) this.install(account, verified);
       else {
