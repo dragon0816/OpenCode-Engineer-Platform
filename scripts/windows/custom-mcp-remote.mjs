@@ -6,7 +6,7 @@ export async function sendRemoteMcp(server, message, session, headers, signal) {
   const payload = JSON.stringify(message);
   return await new Promise((resolve, reject) => {
     const upstream = request(server.url, {
-      method: 'POST', signal, family: 4, agent: false,
+      method: 'POST', signal, family: 4, agent: false, rejectUnauthorized: true,
       lookup: (_name, options, callback) => options.all
         ? callback(null, [{ address, family: 4 }])
         : callback(null, address, 4),

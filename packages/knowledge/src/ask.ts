@@ -64,8 +64,9 @@ export class KnowledgeAsk {
     this.model = model;
   }
 
-  async ask(request: AskRequest, signal: AbortSignal, onAttempt?: (status: Attempt) => void) {
+  async ask(request: AskRequest, signal: AbortSignal, onAttempt?: (status: Attempt) => void, authorized?: () => boolean) {
     const { vault, question } = request;
+    if (authorized && !authorized()) return { state: 'abstain', reason: 'vault-unavailable' } as const;
     const found = this.store.retrieve(vault, question);
     if (!found) return { state: 'abstain', reason: 'vault-unavailable' } as const;
     const { revision, hash, passages } = found;
@@ -73,10 +74,12 @@ export class KnowledgeAsk {
     if (!passages.length) return { state: 'abstain', reason: 'no-evidence', ...scope } as const;
     if (!found.allowModel) return { state: 'abstain', reason: 'model-disabled', ...scope } as const;
     if (this.inFlight >= 2) return { state: 'error', reason: 'busy', ...scope } as const;
+    const current = () => !signal.aborted && (!authorized || authorized()) &&
+      this.store.isCurrent(vault, revision, hash, Boolean(authorized));
     this.inFlight++;
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        if (signal.aborted || !this.store.isCurrent(vault, revision, hash)) {
+        if (!current()) {
           return { state: 'error', reason: 'evidence-changed-or-cancelled', ...scope } as const;
         }
         const result = await this.model(question, passages, signal);
@@ -87,7 +90,7 @@ export class KnowledgeAsk {
         }
         const verified = proposed({ question, revision, passages }, result.content);
         onAttempt?.(verified?.state === 'verified' ? 'answered' : verified?.state === 'abstain' ? 'abstained' : 'invalid-citation');
-        if (signal.aborted || !this.store.isCurrent(vault, revision, hash)) {
+        if (!current()) {
           return { state: 'error', reason: 'evidence-changed-or-cancelled', ...scope } as const;
         }
         if (verified?.state !== 'verified') {

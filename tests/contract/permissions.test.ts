@@ -33,7 +33,7 @@ test('Session setup binds a fixed location, agent, relay alias and least permiss
 test('the permission builder starts closed and grants only origin-specific access', () => {
   const agentID = 'main';
   const name = customMcpName('a'.repeat(32));
-  const policy = { agentID, knowledge: true, status: true, files: true, custom: [`${name}_allowed`] };
+  const policy = { agentID, knowledge: true, status: true, files: true, custom: [`${name}_allowed`, `${name}_*`, 'edit'] };
   const deny = { action: '*', resource: '*', effect: 'deny' };
   const web = sessionPermissions({ ...policy, origin: 'web' });
   assert.deepEqual(web, [deny,

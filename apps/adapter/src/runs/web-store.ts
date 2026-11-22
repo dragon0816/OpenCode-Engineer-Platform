@@ -179,7 +179,9 @@ export class WebStore extends Ledger {
       o.channel_account_id AS channelAccount, o.conversation_key AS conversationKey, o.binding_revision AS bindingRevision
       FROM session_ownership o JOIN web_sessions s ON s.id=o.session_id
       LEFT JOIN web_session_project p ON p.id=s.id
-      WHERE s.id=? AND s.upstream_id=? AND s.agent=? AND s.alias=? AND COALESCE(p.project,'default')=?`)
+      LEFT JOIN web_session_display d ON d.id=s.id
+      WHERE s.id=? AND s.upstream_id=? AND s.agent=? AND s.alias=? AND COALESCE(p.project,'default')=?
+        AND COALESCE(d.removed,0)=0`)
       .get(session.id, session.upstreamID, session.agent, session.alias, session.project) as {
         agentID: string; workspaceID: string; origin: SessionOrigin;
         channelAccount: string | null; conversationKey: string | null; bindingRevision: number | null;
@@ -203,6 +205,13 @@ export class WebStore extends Ledger {
       WHERE g.workspace_id=? AND a.agent_id=? AND a.kind='mcp' AND a.enabled=1`).all(workspaceID, agentID);
     const ids = new Set(grants.map(({ id }) => id));
     return this.customMcpServers().filter(({ enabled, id }) => enabled && ids.has(id));
+  }
+
+  executionKnowledgeReads(agentID: string, workspaceID: string) {
+    return this.db.prepare(`SELECT r.vault_id AS vault FROM agent_knowledge_reads r
+      JOIN agents a ON a.id=r.agent_id JOIN agent_workspaces w ON w.agent_id=a.id
+      WHERE a.id=? AND w.id=? AND a.state='active' ORDER BY r.vault_id`).all(agentID, workspaceID)
+      .map(({ vault }) => String(vault));
   }
 
   saveKnowledgeSettings(atlasUrl: string, toolbox: boolean) {

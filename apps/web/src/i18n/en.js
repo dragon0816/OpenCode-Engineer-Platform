@@ -726,6 +726,8 @@ export default {
   'tools.remove-field': "Remove field",
   'tools.remove-this-server-configuration': "Remove this server configuration?",
   'tools.restart-pending': "Restart pending",
+  'tools.paused-for-assistants': "Paused for assistants",
+  'tools.paused-isolation-explanation': "Local programs and private-network services are paused until execution isolation is verified. You can still test the connection.",
   'tools.restarting-continue-in-the-oep-tab-that': "Restarting. Continue in the OEP tab that opens.",
   'tools.service-credential-fields': "Service credential fields",
   'tools.test-connection': "Test connection",

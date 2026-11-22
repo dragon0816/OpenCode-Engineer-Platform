@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord, RunState } from '../../../../packages/contracts/src/run.ts';
+import { parseAsk } from '../../../../packages/knowledge/src/ask.ts';
+import type { AskRequest } from '../../../../packages/knowledge/src/ask.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { knowledgeMcpName, knowledgeToolName } from '../opencode/knowledge-mcp.ts';
 import { call } from '../opencode/client.ts';
@@ -9,7 +11,7 @@ import { providerID } from '../opencode/gateway.ts';
 import { submissionCount, waitForOutcome } from '../opencode/reconcile.ts';
 import { createSession, promptID, submitOnce, validateSessionProfile } from '../opencode/sessions.ts';
 import type { Agent } from '../opencode/sessions.ts';
-import { readFileTool, retainsPermissions, sessionPermissions, writeFileTool } from '../opencode/permissions.ts';
+import { knowledgeTool, readFileTool, retainsPermissions, sessionPermissions, writeFileTool } from '../opencode/permissions.ts';
 import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
@@ -18,7 +20,6 @@ import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
 import { publishWorkbook, workbookLimit, workbookName } from '../runs/web-workbook.ts';
 import { readFileResult, runFiles, workbookInput } from '../runs/controlled-files.ts';
-import { customMcpName } from '../runs/custom-mcp.ts';
 import { until } from '../../../../scripts/phase0/probe-http.ts';
 import { HttpError } from './errors.ts';
 import { describeTurnError, webMessage } from './messages.ts';
@@ -57,13 +58,14 @@ export function publicRun(run: RunRecord) {
       ? { name: workbookName, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
 
-export function publicSession({ id, agent, alias, createdAt, title, project, knowledgeDisabled }: WebSession) {
-  return { id, agent, alias, createdAt, project, tools: knowledgeDisabled ? [] : [`${knowledgeMcpName}_${knowledgeToolName}`],
+export function publicSession({ id, agent, alias, createdAt, title, project, knowledgeDisabled,
+  knowledgeAllowed = !knowledgeDisabled }: WebSession & { knowledgeAllowed?: boolean }) {
+  return { id, agent, alias, createdAt, project, tools: knowledgeAllowed ? [`${knowledgeMcpName}_${knowledgeToolName}`] : [],
     ...(title ? { title } : {}) };
 }
 
 type RuntimeConnection = Pick<Runtime, 'client' | 'alias' | 'aliases' | 'setTurnBoundary' | 'gatewayCursor' | 'gatewaySince' | 'redact'> &
-  Partial<Pick<Runtime, 'customMcp' | 'modelSeat' | 'toolTickets'>>;
+  Partial<Pick<Runtime, 'remoteMcp' | 'knowledge' | 'modelSeat' | 'toolTickets'>>;
 
 export class ChatService {
   readonly attachments: AttachmentService;
@@ -115,18 +117,16 @@ export class ChatService {
   }
 
   private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
-    workspaceID: string, origin: 'web' | 'channel') {
-    const applied = this.runtime.customMcp ?? [];
-    const current = applied.length ? this.ledger.executionMcpGrants(agentID, workspaceID) : [];
-    const custom = applied.flatMap((registered) => {
-      const grant = current.find(({ id }) => id === registered.id);
-      return registered.enabled && registered.appliesToProjects.includes(session.project) && grant?.appliesToProjects.includes(session.project)
-        ? [{ id: registered.id, deniedTools: [...new Set([...registered.deniedTools, ...grant.deniedTools])].sort() }] : [];
-    });
-    return sessionPermissions({ agentID, origin, custom: custom.map(({ id }) => `${customMcpName(id)}_*`),
-      deniedCustom: custom.flatMap(({ id, deniedTools }) => deniedTools.map((tool) => `${customMcpName(id)}_${tool}`)),
+    workspaceID: string, origin: 'web' | 'channel', vaults: readonly string[]) {
+    const custom = this.runtime.remoteMcp?.tools.length
+      ? this.runtime.remoteMcp.names(this.ledger.executionMcpGrants(agentID, workspaceID), session.project) : [];
+    return sessionPermissions({ agentID, origin, custom,
       status: Boolean(this.runtime.toolTickets), files: Boolean(this.runtime.toolTickets),
-      knowledge: !session.knowledgeDisabled && this.ledger.knowledgeSettings().toolbox });
+      knowledge: Boolean(this.runtime.toolTickets && vaults.length) });
+  }
+
+  private knowledgeVaults(agentID: string, workspaceID: string, disabled?: number) {
+    return !disabled && this.ledger.knowledgeSettings().toolbox ? this.ledger.executionKnowledgeReads(agentID, workspaceID) : [];
   }
 
   private executionScope(session: WebSession, telegramTopic?: number) {
@@ -138,8 +138,21 @@ export class ChatService {
     }
     const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
-    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin);
-    return { ...owner, ...profile, model: session.alias, permissions };
+    const vaults = this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled);
+    const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, vaults);
+    return { ...owner, ...profile, model: session.alias, permissions, vaults };
+  }
+
+  async askKnowledge(input: AskRequest, signal: AbortSignal, session?: WebSession, telegramTopic?: number) {
+    return this.runtime.knowledge?.scopedAsk(input, signal, () => {
+      try {
+        if (session) return this.executionScope(session, telegramTopic);
+        if (telegramTopic === undefined) return;
+        const workspaceID = legacyWorkspace('default');
+        const profile = this.profile('main', workspaceID, 'default');
+        return { model: profile.defaultModel ?? this.runtime.alias, vaults: this.knowledgeVaults('main', workspaceID) };
+      } catch { /* Invalid session ownership or ledger state blocks the query. */ }
+    });
   }
 
   async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, telegramTopic?: number) {
@@ -162,7 +175,7 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const permissions = this.permissions(local, agentID, workspaceID, origin);
+    const permissions = this.permissions(local, agentID, workspaceID, origin, this.knowledgeVaults(agentID, workspaceID, local.knowledgeDisabled));
     const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, permissions);
     const session = { ...local, upstreamID };
     this.store.createSession(session, telegramTopic);
@@ -218,7 +231,10 @@ export class ChatService {
       stateErrorDetail = webMessage('session-unavailable');
     }
     runs = this.store.turns(session.id);
-    return { session: publicSession(session), messages, stateError: stateErrorDetail?.text, stateErrorDetail, runs: runs.map(publicRun),
+    const owner = this.store.sessionOwner(session);
+    const knowledgeAllowed = Boolean(owner && this.runtime.toolTickets &&
+      this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled).length);
+    return { session: publicSession({ ...session, knowledgeAllowed }), messages, stateError: stateErrorDetail?.text, stateErrorDetail, runs: runs.map(publicRun),
       attachments: this.store.attachments(session.id).map(publicAttachment), annotations: this.store.annotations(session.id) };
   }
 
@@ -341,7 +357,7 @@ export class ChatService {
         const current = liveScope();
         if (current && current.agentID === scope.agentID && current.workspaceID === scope.workspaceID && current.origin === scope.origin &&
             current.conversationKey === scope.conversationKey && current.model === scope.model &&
-            retainsPermissions(scope.permissions, current.permissions)) return true;
+            retainsPermissions(scope.permissions, current.permissions) && scope.vaults.every((vault) => current.vaults.includes(vault))) return true;
         stopAtLimit('Session permissions changed.');
         return false;
       };
@@ -368,7 +384,12 @@ export class ChatService {
       const fileReferences = input.attachments.length ? `Session attachment IDs in submission order: ${input.attachments.join(', ')}` : '';
       const additional = [quote, parts.text, fileReferences, output, assistant].filter(Boolean).join('\n\n');
       signal.throwIfAborted();
-      const attempt = this.runtime.toolTickets?.begin({ sessionID, runID: run.id, scope }, signal, liveScope, (name, args) => {
+      const attempt = this.runtime.toolTickets?.begin({ sessionID, runID: run.id, scope }, signal, liveScope, (name, args, toolSignal) => {
+        if (name === knowledgeTool) {
+          const query = parseAsk(args);
+          if (!query) throw new Error('Invalid knowledge request');
+          return this.runtime.knowledge?.scopedAsk(query, toolSignal, liveScope, true);
+        }
         if (name === writeFileTool) {
           if (input.workbook && args.name !== workbookInput) throw new Error('Workbook output name required');
           return files.write(args.name as string, args.content as string);

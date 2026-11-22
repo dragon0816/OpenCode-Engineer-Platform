@@ -16,6 +16,8 @@ export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp>;
 export type CustomRemoteMcp = ReturnType<typeof validateCustomRemoteMcp>;
 export type CustomMcp = CustomStdioMcp | CustomRemoteMcp;
 
+export const assistantMcpPaused = (server: CustomMcp) => server.transport === 'stdio' || server.localService;
+
 function validateCommon(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new WebMessageError('mcp-invalid-server-id');
   const { name, enabled, timeouts, dataScope, appliesToProjects, deniedTools = [] } = input;

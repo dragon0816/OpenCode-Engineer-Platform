@@ -64,6 +64,30 @@ test('imports and restores content-addressed published snapshots, preserving rev
   } finally { restored.close(); }
 });
 
+test('scoped knowledge discards an answer when the binding or model consent changes during inference', async () => {
+  const { snapshot } = goldFixture();
+  const path = join(root(), 'knowledge.sqlite');
+  const store = new KnowledgeStore(path);
+  using writer = new DatabaseSync(path);
+  const input = { vault: snapshot.vault.id, question: 'SYN-48B 的零點容差？' };
+  try {
+    store.import(snapshot, data(snapshot), true);
+    for (const revoke of ['binding', 'consent']) {
+      const authorized = { allowed: true };
+      const update = writer.prepare('UPDATE publications SET allow_model = ? WHERE vault = ?');
+      update.run(1, input.vault);
+      const ask = new KnowledgeAsk(store, async () => {
+        if (revoke === 'binding') authorized.allowed = false;
+        else update.run(0, input.vault);
+        return guess('calibration', '±0.8 dB');
+      });
+      const result = await ask.ask(input, active(), undefined, () => authorized.allowed);
+      assert.equal(result.state, 'error');
+      assert.ok('reason' in result && result.reason === 'evidence-changed-or-cancelled');
+    }
+  } finally { store.close(); }
+});
+
 test('performs retrieval before inference and fails closed on wrong, stale, or unrelated evidence', async () => {
   const { snapshot } = goldFixture();
   const path = join(root(), 'knowledge.sqlite');

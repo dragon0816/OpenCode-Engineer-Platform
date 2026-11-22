@@ -9,12 +9,12 @@ const {
 } = process.env;
 const stop = join(control, 'stop');
 const namesFile = join(control, 'mcp-credential-names.json');
-const names = existsSync(namesFile) ? JSON.parse(readFileSync(namesFile, 'utf8')) : [];
+const names = probe && existsSync(namesFile) ? JSON.parse(readFileSync(namesFile, 'utf8')) : [];
 const command = probe
   ? [process.execPath, [join(import.meta.dirname, 'custom-mcp-probe.mjs'), control]]
   : [executable, ['serve', '--stdio', '--hostname', '127.0.0.1', '--port', port]];
 const child = spawn(...command, {
-  env: { ...env, ...readCustomMcpCredentials(names) }, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,
+  env: probe ? { ...env, ...readCustomMcpCredentials(names) } : env, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,
 });
 function record(name, value) {
   const path = join(control, name);

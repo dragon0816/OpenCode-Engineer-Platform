@@ -24,7 +24,7 @@ export function fileReadArgs(args: Record<string, unknown>) {
 
 export function fileWriteArgs(args: Record<string, unknown>) {
   return Object.keys(args).length === 2 && validOutputName(args.name) &&
-    typeof args.content === 'string' && Buffer.byteLength(args.content) <= fileWriteLimit;
+    typeof args.content === 'string' && args.content.isWellFormed() && Buffer.byteLength(args.content) <= fileWriteLimit;
 }
 
 export class ControlledFiles {

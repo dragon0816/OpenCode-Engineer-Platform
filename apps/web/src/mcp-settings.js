@@ -157,7 +157,9 @@ export function bindMcpSettings(projects) {
       heading.tabIndex = -1;
       heading.id = 'mcp-server-' + server.id;
       const badges = element('div', '', 'mcp-badges');
-      for (const text of [server.enabled ? message('jobs.enabled') : message('chat.disabled'), server.enabled && (!server.restartRequired || server.status !== 'pending') && labels[server.status],
+      for (const text of [server.enabled ? message('jobs.enabled') : message('chat.disabled'),
+        server.status === 'paused' ? message('tools.paused-for-assistants') :
+          server.enabled && (!server.restartRequired || server.status !== 'pending') && labels[server.status],
         server.restartRequired && message('tools.restart-pending')]) {
         if (text) badges.append(element('span', text, 'runtime-badge'));
       }
@@ -196,6 +198,7 @@ export function bindMcpSettings(projects) {
         }));
       card.append(heading, badges, element('p', joinText([server.transport === 'stdio' ? message('ui.local-program') : message('ui.remote-service'),
         allowed.length ? joinText(allowed, ', ') : message('tools.no-projects-allowed')])));
+      if (server.status === 'paused') card.append(element('p', message('tools.paused-isolation-explanation')));
       if (server.dataScope) {
         const scope = element('p', server.dataScope);
         scope.dataset.uiContent = '';

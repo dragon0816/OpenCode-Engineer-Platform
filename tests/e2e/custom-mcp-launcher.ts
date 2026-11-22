@@ -97,11 +97,12 @@ try {
   assert.equal(created.status, 200);
   const saved = await created.json();
   assert.equal(saved.restartRequired, true);
+  assert.equal(saved.servers[0].status, 'paused');
   await turn(api, 'Before custom MCP restart', false);
   assert.equal((await api.post('/api/settings/mcp/restart', {})).status, 202);
   api = await instance.connect(1);
   assert.equal((await (await api.get('/api/settings/mcp/custom')).json()).restartRequired, false);
-  await turn(api, 'After custom MCP restart', true);
+  await turn(api, 'After custom MCP restart', false);
   await instance.stop(api);
   instance = undefined;
   api = undefined;
@@ -110,7 +111,8 @@ try {
   const reopened = await (await api.get('/api/settings/mcp/custom')).json();
   assert.equal(reopened.restartRequired, false);
   assert.equal(reopened.servers[0].id, saved.changedId);
-  await turn(api, 'After launcher relaunch', true);
+  assert.equal(reopened.servers[0].status, 'paused');
+  await turn(api, 'After launcher relaunch', false);
 } finally {
   try { await instance?.stop(api); }
   finally { await gateway.close(); }

@@ -1,15 +1,16 @@
 import { appendFileSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { knowledgeCompletion, knowledgeModel } from '../../adapter/src/opencode/knowledge-model.ts';
-import { startKnowledgeMcp } from '../../adapter/src/opencode/knowledge-mcp.ts';
 import { startGateway } from '../../adapter/src/opencode/gateway.ts';
 import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
+import type { AskRequest } from '../../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../../packages/knowledge/src/repository.ts';
 import { KnowledgeStore } from '../../../packages/knowledge/src/store.ts';
 import { checkDirectory } from '../../adapter/src/runs/workspace.ts';
 import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
 
 export const knowledgeFile = 'knowledge.sqlite';
+type AskScope = { model: string; vaults: readonly string[] };
 
 export function verifyKnowledgePath(path: string) {
   checkDirectory(dirname(path));
@@ -62,9 +63,8 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
   const store = new KnowledgeStore(path);
   let reader: KnowledgeStore | undefined;
   let relay: Awaited<ReturnType<typeof startGateway>> | undefined;
-  let mcp: Awaited<ReturnType<typeof startKnowledgeMcp>> | undefined;
   const close = async () => {
-    const results = await Promise.allSettled([mcp?.close(), relay?.close()]);
+    const results = await Promise.allSettled([relay?.close()]);
     reader?.close();
     store.close();
     if (results.some((result) => result.status === 'rejected')) throw new Error('Knowledge services could not close');
@@ -77,16 +77,24 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     const benchmarks = new Map([...models].map(([alias, model]) => [alias,
       new KnowledgeAsk(queryStore, (question, evidence, signal) => modelSeat.run(() => model(question, evidence, signal)))]));
     const ask = () => benchmarks.get(defaultAlias())!;
-    // Legacy MCP calls use the parent OpenCode turn's lease and serialize their model requests within it.
+    // MCP asks already hold the OpenCode turn's model seat.
     const nested = new ModelSeat();
-    const legacy = new Map([...models].map(([alias, model]) => [alias,
-      new KnowledgeAsk(queryStore, (question, evidence, signal) => nested.run(() => model(question, evidence, signal)))]));
-    mcp = await startKnowledgeMcp({ ask: (input, signal) => legacy.get(defaultAlias())!.ask(input, signal) });
-    return { get ask() { return ask(); }, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
+    const scoped = new Map([...models].map(([alias, model]) => [alias, new KnowledgeAsk(queryStore, model)]));
+    const scopedAsk = async (input: AskRequest, signal: AbortSignal, resolve: () => AskScope | undefined, inTurn = false) => {
+      const model = resolve()?.model;
+      const service = model && scoped.get(model);
+      const authorized = () => {
+        const scope = resolve();
+        return Boolean(scope && scope.model === model && scope.vaults.includes(input.vault));
+      };
+      if (!service || !authorized()) return { state: 'abstain', reason: 'vault-unavailable' } as const;
+      return (inTurn ? nested : modelSeat).run(() => service.ask(input, signal, undefined, authorized), signal);
+    };
+    return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
       propose: (prompt: string, input: unknown, signal: AbortSignal) =>
         modelSeat.run(() => knowledgeCompletion(relay!, defaultAlias(), prompt, input, signal)),
-      config: mcp.config, close };
+      close };
   } catch (error) {
     try { await close(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Knowledge startup and cleanup failed'); }

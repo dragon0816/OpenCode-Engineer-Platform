@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -11,10 +12,11 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { startGateway } from '../../apps/adapter/src/opencode/gateway.ts';
 import { knowledgeMcpName, knowledgeToolName } from '../../apps/adapter/src/opencode/knowledge-mcp.ts';
 import { waitForOutcome } from '../../apps/adapter/src/opencode/reconcile.ts';
-import { statusTool } from '../../apps/adapter/src/opencode/permissions.ts';
+import { readFileTool, statusTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { createSession, promptID, submitOnce } from '../../apps/adapter/src/opencode/sessions.ts';
 import { turnMarker } from '../../apps/adapter/src/opencode/turn-limits.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
+import { workbook } from '../../apps/adapter/src/runs/workbook.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { supervise } from '../../apps/launcher/src/supervisor.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
@@ -24,6 +26,7 @@ import { bufferedCompletion } from '../../scripts/phase0/probe-redaction.ts';
 import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { dataDirectory } from './test-data.ts';
+import { workbookFixture } from './synthetic-excel.ts';
 
 const alias = 'synthetic-isolation-gate';
 const tool = `${knowledgeMcpName}_${knowledgeToolName}`;
@@ -144,9 +147,9 @@ test('pinned OpenCode transports relay-owned MCP arguments in SSE', { timeout: 1
     response.end(frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n');
   });
   context.after(relay.close);
-  const runtime = await supervise(root, { baseURL: relay.url + '/v1', key: relayKey }, [alias], undefined,
-    { type: 'remote', url: `${mcp.url}/mcp`, headers: { Authorization: `Bearer ${mcpKey}` },
-      oauth: false, codemode: false, timeout: { execution: 80_000 } }, true);
+  const runtime = await supervise(root, { baseURL: relay.url + '/v1', key: relayKey }, [alias], undefined, true,
+    { name: knowledgeMcpName, config: { type: 'remote', url: `${mcp.url}/mcp`, headers: { Authorization: `Bearer ${mcpKey}` },
+      oauth: false, codemode: false, timeout: { execution: 80_000 } } });
   context.after(async () => {
     const stop = await runtime.stop();
     assert.deepEqual({ version: runtime.version, supervisorExit: stop.supervisorExit,
@@ -251,13 +254,17 @@ test('the built-in broker completes a native status call and shares the model se
   const root = mkdtempSync(join(dataDirectory(), 'broker-'));
   const profile = join(root, 'profile');
   const audit = join(root, 'launch');
-  for (const dir of [profile, audit, join(root, 'sessions'), join(root, 'model-work')]) mkdirSync(dir);
+  for (const dir of [profile, audit, join(root, 'sessions'), join(root, 'model-work'), join(root, 'artifacts')]) mkdirSync(dir);
   const enteredWeb = Promise.withResolvers<void>();
   const releaseWeb = Promise.withResolvers<void>();
   const calls: string[] = [];
   let receipt: string | undefined;
   let leaked = false;
   let modelStatusSchema: unknown;
+  let attachmentID: string;
+  let artifactID: string;
+  const fileResults = new Map<string, string>();
+  const d08 = workbookFixture();
   const runtime = await startRuntime(audit, { url: 'http://example.invalid', key: randomUUID(), alias, isolatedJob: true,
     fetch: async (_target, init) => {
       if (!init?.body) return Response.json({ object: 'list', data: [{ id: alias }] });
@@ -268,7 +275,22 @@ test('the built-in broker completes a native status call and shares the model se
         calls.push('BI');
         return Response.json({ choices: [{ message: { content: 'Synthetic BI proposal' }, finish_reason: 'stop' }] });
       }
-      if (request.messages.some(({ role }) => role === 'tool')) {
+      const user = request.messages.findLastIndex(({ role }) => role === 'user');
+      const result = request.messages.slice(user + 1).find(({ role }) => role === 'tool');
+      const fileCase = ['broker workbook', 'own attachment', 'foreign attachment', 'own artifact', 'foreign artifact', 'bad path', 'bad fields']
+        .find((value) => JSON.stringify(request.messages[user]?.content).includes('Synthetic ' + value));
+      if (fileCase) {
+        if (result) fileResults.set(fileCase, JSON.stringify(result.content));
+        else {
+          const [name, args] = fileCase === 'broker workbook' ? [writeFileTool, { name: 'workbook.json', content: JSON.stringify(d08) }] :
+            fileCase === 'bad path' ? [writeFileTool, { name: 'C:/synthetic/private.txt', content: 'blocked path' }] :
+              fileCase === 'bad fields' ? [writeFileTool, { name: 'notes.txt', content: 'blocked args', note: 'token: sample-hidden-value' }] :
+                [readFileTool, fileCase.endsWith('attachment') ? { attachment: attachmentID } : { artifact: artifactID }];
+          assert.ok(request.tools?.some(({ function: fn }) => fn?.name === name));
+          assert.ok(!request.tools?.some(({ function: fn }) => fn?.name === 'write' || fn?.name === 'edit'));
+          return completion(alias, toolCall(0, 'call_synthetic_file', name, args), 'tool_calls');
+        }
+      } else if (result) {
         calls.push('Web tool result');
         receipt = JSON.stringify(request.messages.find(({ role }) => role === 'tool')?.content);
       } else if (wire.includes('Synthetic Web status')) {
@@ -327,6 +349,39 @@ test('the built-in broker completes a native status call and shares the model se
     await until(() => Promise.resolve(store.get(forgedID).state === 'failed' || undefined), 20_000);
     const denied = await web.state(forged);
     assert.ok(!denied.messages?.some(({ tools }) => tools?.some(({ name }) => name === statusTool)));
+
+    const writer = await web.create('workbook');
+    artifactID = randomUUID();
+    await web.submit(writer, { id: artifactID, text: 'Synthetic broker workbook', attachments: [], workbook: true });
+    await until(() => Promise.resolve(store.get(artifactID).state === 'verified' || undefined), 25_000);
+    const output = web.download(writer, artifactID);
+    assert.deepEqual(output.data, Buffer.from(workbook(d08)));
+    const oracle = execFileSync(process.env.OEP_PYTHON || 'python', [
+      '-I', 'tests/oracles/verify_xlsx.py', join(root, 'artifacts', artifactID, 'output.xlsx'), 'tests/fixtures/d08/oracle.json',
+    ], { encoding: 'utf8', windowsHide: true });
+    assert.deepEqual(JSON.parse(oracle), { ok: true, cells: 13 });
+
+    const text = Buffer.from('Synthetic session-private file');
+    const own = await web.create('inspector');
+    attachmentID = (await web.attachments.upload(own.id, web.workspace(own), 'notes.txt', 'text/plain', text.length,
+      async () => text)).id;
+    for (const [fileCase, session, successful] of [
+      ['own attachment', own, true], ['foreign attachment', await web.create('inspector'), true],
+      ['own artifact', writer, true], ['foreign artifact', await web.create('inspector'), true],
+      ['bad path', await web.create('inspector'), false], ['bad fields', await web.create('inspector'), false],
+    ] as const) {
+      const id = randomUUID();
+      await web.submit(session, { id, text: 'Synthetic ' + fileCase, attachments: [], workbook: false });
+      await until(() => Promise.resolve(store.get(id).state === (successful ? 'verified' : 'failed') || undefined), 20_000);
+    }
+    assert.match(fileResults.get('own attachment') ?? '', /Synthetic session-private file/);
+    assert.match(fileResults.get('own artifact') ?? '', /output\.xlsx/);
+    for (const fileCase of ['foreign attachment', 'foreign artifact']) {
+      assert.match(fileResults.get(fileCase) ?? '', /Tool authorization unavailable/);
+      assert.doesNotMatch(fileResults.get(fileCase) ?? '', /session-private|output\.xlsx/);
+    }
+    assert.equal(fileResults.has('bad path'), false);
+    assert.equal(fileResults.has('bad fields'), false);
   } finally {
     releaseWeb.resolve();
     try { await Promise.all([web.close(), chat.close()]); }

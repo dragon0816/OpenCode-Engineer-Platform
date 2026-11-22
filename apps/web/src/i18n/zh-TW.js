@@ -726,6 +726,8 @@ export default {
   'tools.remove-field': "移除此欄位",
   'tools.remove-this-server-configuration': "要移除此伺服器設定嗎？",
   'tools.restart-pending': "等待重新啟動",
+  'tools.paused-for-assistants': "已暫停提供給助理",
+  'tools.paused-isolation-explanation': "本機程式與私人網路服務在執行隔離通過驗證前暫停提供給助理，仍可測試連線。",
   'tools.restarting-continue-in-the-oep-tab-that': "正在重新啟動。請使用即將開啟的 OEP 分頁。",
   'tools.service-credential-fields': "服務的憑證欄位",
   'tools.test-connection': "測試連線",

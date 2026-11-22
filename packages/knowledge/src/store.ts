@@ -651,9 +651,10 @@ const schema = this.reviewSchema(input.vault.id, base);
     return { revision, hash: publication.manifest_hash, allowModel: Boolean(publication.allow_model), passages };
   }
 
-  isCurrent(vault: string, revision: string, hash: string) {
+  isCurrent(vault: string, revision: string, hash: string, requireModel = false) {
     const publication = this.publication(vault);
-    return publication?.revision === revision && publication.manifest_hash === hash && publication.index_hash === hash;
+    return publication?.revision === revision && publication.manifest_hash === hash && publication.index_hash === hash &&
+      (!requireModel || publication.allow_model === 1);
   }
 
   rebuild() {
