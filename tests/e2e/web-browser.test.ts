@@ -195,11 +195,26 @@ try {
         document.querySelector(${JSON.stringify('#' + id)}).click();
       })()`);
       const capture = async (name: string) => {
-        await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-        const png = Buffer.from(image.data, 'base64');
-        writeFileSync(join(audit, name + '.png'), png);
-        if (captureGallery) writeFileSync(join('docs', 'validation', 'gui', name + '.png'), png);
+        if (captureGallery) await page.evaluate(`document.querySelectorAll('#messages .message :is(p, .message-quote)').forEach(paragraph => {
+          if (!paragraph.hidden && paragraph.textContent.includes('window.injected=1')) {
+            paragraph.dataset.galleryText = paragraph.textContent;
+            paragraph.textContent = paragraph.textContent.split('\\n').filter(line => !line.includes('window.injected=1')).join('\\n');
+            paragraph.hidden = !paragraph.textContent.trim();
+          }
+        })`);
+        try {
+          await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          const image = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+          const png = Buffer.from(image.data, 'base64');
+          writeFileSync(join(audit, name + '.png'), png);
+          if (captureGallery) writeFileSync(join('docs', 'validation', 'gui', name + '.png'), png);
+        } finally {
+          if (captureGallery) await page.evaluate(`document.querySelectorAll('[data-gallery-text]').forEach(paragraph => {
+            paragraph.textContent = paragraph.dataset.galleryText;
+            paragraph.hidden = false;
+            delete paragraph.dataset.galleryText;
+          })`);
+        }
       };
       await page.command('Page.navigate', { url: web.pairURL() });
       await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
@@ -657,6 +672,7 @@ try {
             document.querySelector('#composer').requestSubmit();
           `);
           await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(status)})`);
+          assert.match(await page.evaluate<string>("document.querySelector('#error').textContent"), /在設定調整.*後重送/);
         }
         slowStarted = false;
         await page.evaluate(`
