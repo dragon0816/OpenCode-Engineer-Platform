@@ -1521,7 +1521,7 @@ document.addEventListener('keydown', (event) => {
   showSettings();
 });
 
-const narrowNavigation = matchMedia('(max-width: 540px)');
+const narrowNavigation = matchMedia('(max-width: 800px)');
 const sidebarToggle = find('toggle-sidebar');
 function setSidebar(open) {
   find('session-sidebar').hidden = !open;

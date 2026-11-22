@@ -224,6 +224,56 @@ try {
         // Restore the first settings section for the later navigation and reload checks.
         await selectSetting('assistant');
         await audit('#close-settings', '#chat-view');
+        const noOverflow = async (label: string) => {
+          const size = await page.evaluate<{ scroll: number; client: number }>(`({
+            scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth,
+          })`);
+          assert.ok(size.scroll <= size.client, `${label}: ${size.scroll} > ${size.client}`);
+        };
+        for (const [width, height] of [[390, 844], [768, 1024], [1440, 900]]) {
+          const narrow = width < 800;
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+          await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${narrow}`);
+          for (const view of ['chat', 'settings', 'knowledge', 'jobs', 'review']) {
+            await page.evaluate(`(() => {
+              if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click();
+              document.querySelector('#open-${view}').click();
+            })()`);
+            await page.ready(`!document.querySelector('#${view}-view').hidden`);
+            assert.equal(await page.evaluate("document.querySelector('#session-sidebar').hidden"), narrow);
+            await noOverflow(`${width} ${view}`);
+            await assertUiTextInThemes(page, `#${view}-view`);
+            if (view === 'settings') {
+              assert.equal(await page.evaluate("document.querySelector('#settings-section').checkVisibility()"), narrow);
+              for (const [section] of settingsPages) {
+                await selectSetting(section);
+                await noOverflow(`${width} ${section}`);
+              }
+              await selectSetting('assistant');
+            }
+            if (view === 'knowledge') {
+              for (const name of ['overview', 'ask', 'quality', 'build']) {
+                await page.evaluate(`document.querySelector('#knowledge-tab-${name}').click()`);
+                await noOverflow(`${width} knowledge ${name}`);
+              }
+              await page.evaluate("document.querySelector('#knowledge-tab-overview').click()");
+            }
+          }
+          await page.evaluate("document.querySelector('#open-chat').click()");
+          if (narrow) {
+            const targets = ['#toggle-sidebar', '#top-menu-trigger', '#pick', '#session-alias', '#send', '#shortcuts summary'];
+            assert.deepEqual(await page.evaluate(`${JSON.stringify(targets)}.filter(selector => {
+              const box = document.querySelector(selector).getBoundingClientRect();
+              return box.width < 40 || box.height < 40 || box.left < 0 || box.right > innerWidth;
+            })`), [], `${width} touch targets`);
+            await openPanel('toggle-files');
+            await page.ready(`document.querySelector('#chat-files').offsetWidth === ${width} &&
+              document.querySelector('#chat-files').getAttribute('aria-modal') === 'true'`);
+            await noOverflow(`${width} preview overlay`);
+            await page.evaluate("document.querySelector('#close-files').click()");
+          }
+        }
+        await page.command('Emulation.clearDeviceMetricsOverride');
       }
       await page.command('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
       let passed = 0;
@@ -296,6 +346,16 @@ try {
       }
       if (!real) {
         await page.ready("document.querySelector('.tool-card[data-status=done]')");
+        await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 420, deviceScaleFactor: 1, mobile: false });
+        await page.ready('innerWidth === 390 && innerHeight === 420');
+        await page.evaluate("document.querySelector('#prompt').focus()");
+        assert.equal(await page.evaluate(`['#prompt', '#send'].every(selector => {
+          const control = document.querySelector(selector);
+          const { top, bottom, left, right } = control.getBoundingClientRect();
+          return !control.disabled && top >= 0 && bottom <= innerHeight && left >= 0 && right <= innerWidth;
+        })`), true, 'The composer fits the remaining viewport');
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await page.ready('innerWidth > 900');
         const artifactButton = "#chat-resources button[data-file*='/artifacts/']";
         const artifactTab = "#panel-tabs [role=tab][aria-selected=true]";
         const visiblePreview = "#file-preview [role=tabpanel]:not([hidden])";
@@ -931,7 +991,7 @@ try {
         await page.evaluate(`(() => {
           window.confirm = () => true;
           [...document.querySelectorAll('#attachments li')].find(row => row.textContent.includes('sample.txt'))
-            .querySelectorAll('button')[2].click();
+            .querySelectorAll('.file-actions button')[1].click();
         })()`);
         await page.ready("!document.querySelector('#attachments').textContent.includes('sample.txt')");
         assert.equal(await page.evaluate(`fetch(${JSON.stringify(downloaded.href)}).then(response => response.status)`), 404);
