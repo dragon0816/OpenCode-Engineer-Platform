@@ -16,6 +16,14 @@ const benchmarksMigration = `
   ) STRICT;
 `;
 
+const vaultClassificationsMigration = `
+  CREATE TABLE vault_classifications (
+    vault_id TEXT PRIMARY KEY REFERENCES vaults(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    classification TEXT NOT NULL DEFAULT 'unclassified' CHECK(classification IN ('unclassified', 'public', 'confidential')),
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+`;
+
 const schema = `
   CREATE TABLE IF NOT EXISTS blobs (
     hash TEXT PRIMARY KEY, bytes BLOB NOT NULL
@@ -71,13 +79,21 @@ export class KnowledgeStore {
   constructor(path: string, readOnly = false) {
     this.db = new DatabaseSync(path, { readOnly, timeout: 5000 });
     try {
-      const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-      if (version > 1) throw new Error('知識資料庫版本比程式新。請使用新版程式或先回退資料。');
-      if (version === 0 && !readOnly) {
-        this.db.exec('PRAGMA journal_mode=WAL');
-        this.transaction(() => this.db.exec(`${schema} PRAGMA user_version=1;`));
-      } else if (version !== 1) throw new Error('知識資料庫版本無效。');
-      if (!readOnly) this.transaction(() => this.db.exec(ingestMigration + jobsMigration + benchmarksMigration));
+      const version = this.version(readOnly);
+      this.db.exec('PRAGMA foreign_keys=ON');
+      if (!readOnly) {
+        if (version === 0) this.db.exec('PRAGMA journal_mode=WAL');
+        this.transaction(() => {
+          const version = this.version(false);
+          if (version === 0) this.db.exec(schema);
+          this.db.exec(ingestMigration + jobsMigration + benchmarksMigration);
+          if (version < 2) {
+            this.db.exec(vaultClassificationsMigration);
+            if (this.db.prepare('PRAGMA foreign_key_check').get()) throw new Error('Knowledge foreign keys are invalid');
+            this.db.exec('PRAGMA user_version=2');
+          }
+        });
+      }
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
     } catch (error) {
@@ -87,6 +103,13 @@ export class KnowledgeStore {
   }
 
   close() { this.db.close(); }
+
+  private version(readOnly: boolean) {
+    const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
+    if (version > 2) throw new Error('知識資料庫版本比程式新。請使用新版程式或先回退資料。');
+    if (version < 0 || (version === 0 && readOnly)) throw new Error('知識資料庫版本無效。');
+    return version;
+  }
 
   private transaction<T>(work: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');

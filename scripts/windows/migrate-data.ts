@@ -5,6 +5,7 @@ import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
+import { prepareBiWorkspace } from '../../apps/adapter/src/runs/agent-ledger.ts';
 import { diagnosticPath } from './snapshot-paths.mjs';
 
 function describe(path: string) {
@@ -33,13 +34,20 @@ try {
       const path = join(root, key);
       failurePath = key;
       failureCheck = '遷移前讀取 SQLite 結構及筆數失敗。';
-      if (!existsSync(path)) return [];
-      const before = describe(path);
+      const existing = existsSync(path);
+      // The Telegram session ledger needs a central workspace even if the old Web store was absent.
+      if (!existing && !(name === 'web.sqlite' && existsSync(join(root, directory, 'telegram-chat.sqlite')))) return [];
+      const before = existing ? describe(path) : null;
       failureCheck = '套用 SQLite 結構遷移失敗。請檢查版本、權限和剩餘空間。';
       migrate(path);
       failureCheck = '遷移後讀取 SQLite 結構及筆數失敗。';
       return [[key, { before, after: describe(path) }]];
     })));
+  if (result['web/web.sqlite'] || result['web.sqlite']) {
+    failurePath = 'web/agents/bi';
+    failureCheck = '建立 BI 受管工作資料夾失敗。';
+    prepareBiWorkspace(join(root, 'web'));
+  }
   console.log(JSON.stringify(result));
 } catch {
   console.error(`【${diagnosticPath(failurePath)}】新版資料庫遷移失敗。${failureCheck}`);

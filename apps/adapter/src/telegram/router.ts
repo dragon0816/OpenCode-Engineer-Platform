@@ -102,7 +102,7 @@ export class TelegramRouter {
       }
     }
     if (!session) {
-      session = await this.chat.create('inspector');
+      session = await this.chat.create('inspector', undefined, undefined, row.topic);
       signal.throwIfAborted();
       db.prepare('INSERT OR REPLACE INTO telegram_sessions VALUES (?,?)').run(row.topic, session.id);
     }

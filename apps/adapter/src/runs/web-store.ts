@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src/run.ts';
 import type { Agent } from '../opencode/sessions.ts';
 import { maxSelectedModels } from '../opencode/gateway.ts';
@@ -6,21 +7,17 @@ import type { TurnLimits } from '../opencode/turn-limits.ts';
 import { Ledger } from './ledger.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
+import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
+  verifyAgentLedger } from './agent-ledger.ts';
 
-export const projects = [
-  { id: 'default', title: '主要工作區' },
-  { id: 'secondary', title: '獨立工作區' },
-] as const;
+export const projects = legacyProjects;
 export type ProjectID = typeof projects[number]['id'];
 
 export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null; knowledgeDisabled?: number };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
 type ModelCatalog = { ids: string[]; discoveredAt: number };
 
-export class WebStore extends Ledger {
-  constructor(file: string) {
-    super(file, true);
-    this.db.exec(`CREATE TABLE IF NOT EXISTS web_session_display (
+const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
       id TEXT PRIMARY KEY REFERENCES web_sessions(id),
       title TEXT,
       removed INTEGER NOT NULL DEFAULT 0
@@ -102,7 +99,21 @@ export class WebStore extends Ledger {
       density TEXT NOT NULL,
       avatar BLOB,
       mime TEXT
-    ) STRICT`);
+    ) STRICT`;
+
+export class WebStore extends Ledger {
+  private readonly telegram: boolean;
+
+  constructor(file: string) {
+    const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
+    super(file, {
+      migrate(db) {
+        db.exec(webSchema);
+        migrateAgentLedger(db, file, telegram);
+      },
+      verify: (db) => verifyAgentLedger(db, file, telegram),
+    });
+    this.telegram = telegram;
   }
 
   customMcpServers() {
@@ -121,21 +132,30 @@ export class WebStore extends Ledger {
 
   saveCustomMcp<T extends CustomMcp>(definition: T) {
     const { id } = definition;
-    const existing = this.db.prepare('SELECT created_at, updated_at FROM mcp_servers WHERE id = ?').get(id);
-    const now = Math.max(Date.now(), Number(existing?.updated_at ?? 0) + 1);
-    const createdAt = Number(existing?.created_at ?? now);
-    const { changes } = this.db.prepare(`
-      INSERT INTO mcp_servers (id, definition, created_at, updated_at)
-      SELECT ?, ?, ?, ?
-      WHERE EXISTS (SELECT 1 FROM mcp_servers WHERE id = ?) OR (SELECT count(*) FROM mcp_servers) < 20
-      ON CONFLICT(id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at
-    `).run(id, JSON.stringify(definition), createdAt, now, id);
-    if (!changes) throw new Error('最多可設定 20 個自訂 MCP 伺服器。');
-    return { ...definition, createdAt, updatedAt: now };
+    return this.transaction(() => {
+      const existing = this.db.prepare('SELECT created_at, updated_at FROM mcp_servers WHERE id = ?').get(id);
+      const now = Math.max(Date.now(), Number(existing?.updated_at ?? 0) + 1);
+      const createdAt = Number(existing?.created_at ?? now);
+      const { changes } = this.db.prepare(`
+        INSERT INTO mcp_servers (id, definition, created_at, updated_at)
+        SELECT ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM mcp_servers WHERE id = ?) OR (SELECT count(*) FROM mcp_servers) < 20
+        ON CONFLICT(id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at
+      `).run(id, JSON.stringify(definition), createdAt, now, id);
+      if (!changes) throw new Error('最多可設定 20 個自訂 MCP 伺服器。');
+      if (!this.telegram) replaceLegacyMcpGrants(this.db, definition);
+      return { ...definition, createdAt, updatedAt: now };
+    });
   }
 
   removeCustomMcp(id: string) {
-    return Boolean(this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes);
+    return this.transaction(() => {
+      if (!this.telegram) {
+        this.db.prepare('DELETE FROM workspace_mcp_grants WHERE server_id = ?').run(id);
+        this.db.prepare("DELETE FROM agent_capabilities WHERE kind='mcp' AND capability_id = ?").run(id);
+      }
+      return Boolean(this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes);
+    });
   }
 
   knowledgeSettings() {
@@ -153,11 +173,20 @@ export class WebStore extends Ledger {
   }
 
   addProjectFolder(project: ProjectID, folder: string) {
-    this.db.prepare('INSERT INTO web_project_folders VALUES (?, ?)').run(project, folder);
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO web_project_folders VALUES (?, ?)').run(project, folder);
+      if (!this.telegram) this.db.prepare('INSERT INTO workspace_read_folders VALUES (?, ?)').run(legacyWorkspace(project), folder);
+    });
   }
 
   removeProjectFolder(project: ProjectID, folder: string) {
-    return this.db.prepare('DELETE FROM web_project_folders WHERE project = ? AND folder = ?').run(project, folder).changes > 0;
+    return this.transaction(() => {
+      if (!this.telegram) {
+        this.db.prepare('DELETE FROM workspace_read_folders WHERE workspace_id = ? AND folder = ?')
+          .run(legacyWorkspace(project), folder);
+      }
+      return this.db.prepare('DELETE FROM web_project_folders WHERE project = ? AND folder = ?').run(project, folder).changes > 0;
+    });
   }
 
   actionDecisions(sessionID: string) {
@@ -205,6 +234,9 @@ export class WebStore extends Ledger {
       this.db.prepare(`INSERT INTO web_preferences VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
         name = excluded.name, introduction = excluded.introduction, instructions = excluded.instructions`)
         .run(name, introduction, instructions);
+      if (!this.telegram) this.db.prepare(`UPDATE agents SET name = ?, introduction = ?, instructions = ?,
+        config_revision = config_revision + 1, updated_at = ? WHERE id = 'main'`)
+        .run(name, introduction, instructions, Date.now());
       this.auditSettings('assistant');
     });
   }
@@ -225,6 +257,9 @@ export class WebStore extends Ledger {
       if (image !== undefined) {
         this.db.prepare('UPDATE web_appearance SET avatar = ?, mime = ? WHERE id = 1')
           .run(image?.bytes ?? null, image?.mime ?? null);
+        if (!this.telegram) this.db.prepare(`UPDATE agents SET avatar = ?, avatar_mime = ?,
+          config_revision = config_revision + 1, updated_at = ? WHERE id = 'main'`)
+          .run(image?.bytes ?? null, image?.mime ?? null, Date.now());
       }
       this.auditSettings('appearance');
     });
@@ -314,12 +349,14 @@ export class WebStore extends Ledger {
       ON CONFLICT(id) DO UPDATE SET removed = 1`).run(id);
   }
 
-  createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>) {
+  createSession(session: Omit<WebSession, 'project'> & Partial<Pick<WebSession, 'project'>>, telegramTopic?: number) {
     this.transaction(() => {
+      const project = session.project ?? 'default';
       this.db.prepare('INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?)')
         .run(session.id, session.upstreamID, session.agent, session.alias, session.createdAt);
       if (session.knowledgeDisabled) this.db.prepare('INSERT INTO web_session_knowledge_disabled VALUES (?)').run(session.id);
-      this.db.prepare('INSERT INTO web_session_project VALUES (?, ?)').run(session.id, session.project ?? 'default');
+      this.db.prepare('INSERT INTO web_session_project VALUES (?, ?)').run(session.id, project);
+      insertLegacySessionOwner(this.db, session.id, project, this.telegram || telegramTopic !== undefined, telegramTopic);
     });
   }
 
