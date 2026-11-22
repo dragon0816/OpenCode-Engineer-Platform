@@ -124,8 +124,12 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
       }
     }
     if (!profile) {
+      const cursor = relay.requestCursor();
       const firstHealth = await checkHealth(0);
-      const health = firstHealth === 'empty-output' ? await checkHealth(1) : firstHealth;
+      // One fresh health turn is allowed after an empty reply or a transient upstream 5xx (gateway cold start).
+      const transient = firstHealth === 'gateway-failed' &&
+        gatewaySince(cursor).some((request) => typeof request.upstreamStatus === 'number' && request.upstreamStatus >= 500);
+      const health = firstHealth === 'empty-output' || transient ? await checkHealth(1) : firstHealth;
       if (health !== 'passed') throw new Error('Model health turn failed');
     }
     const health = new Map(aliases.map((name) => [name, false]));
