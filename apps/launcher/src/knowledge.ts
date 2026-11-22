@@ -92,8 +92,8 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     };
     return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
-      propose: (prompt: string, input: unknown, signal: AbortSignal) =>
-        modelSeat.run(() => knowledgeCompletion(relay!, defaultAlias(), prompt, input, signal)),
+      propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias()) =>
+        modelSeat.run(() => knowledgeCompletion(relay!, models.has(model) ? model : defaultAlias(), prompt, input, signal), signal),
       close };
   } catch (error) {
     try { await close(); }

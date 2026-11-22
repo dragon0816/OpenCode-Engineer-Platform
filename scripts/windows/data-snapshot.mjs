@@ -6,6 +6,8 @@ import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/
 import { legacyChannelAccounts } from '../../apps/adapter/src/channels/accounts.ts';
 import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
   from '../../apps/adapter/src/telegram/channel-migration.ts';
+import { openBiReviewStore, verifyBiSourceOwners, verifyBiSourceReceipts } from '../../apps/adapter/src/bi/source-ownership.ts';
+import { biOwnershipTables, legacyBiOwnership, openBiChannelStore, verifyBiOwnership } from '../../packages/knowledge/src/bi/ownership.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 
@@ -210,9 +212,10 @@ function verifyEmptyAdditions(name, counts, tables) {
 }
 
 function verifyChannelSeeds(name, oldDb, newDb, counts) {
+  using knowledge = openBiReviewStore(dirname(join(destination, name)));
   for (const table of migratedChannelTables) {
     const ordered = table === 'channel_inbound' || table === 'channel_outbound';
-    verifySeedRows(name, newDb, counts, table, legacyChannelRows(oldDb, table), ordered);
+    verifySeedRows(name, newDb, counts, table, legacyChannelRows(oldDb, table, knowledge), ordered);
   }
 }
 
@@ -284,7 +287,8 @@ async function reconcileUpgrade() {
     }
     const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion >= 3;
     const seedAccounts = file === 'web.sqlite' && [0, 1, 2, 3].includes(prior.userVersion) && next.userVersion === 4;
-    const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
+    const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion >= 2;
+    const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
     const seedTelegram = telegram && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
     const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty :
       seedTelegram ? new Set(legacyTelegramTables.filter((table) => !Object.hasOwn(prior.counts, table))) : emptyTables;
@@ -294,10 +298,15 @@ async function reconcileUpgrade() {
         const seeded = seedWeb ? verifyAgentSeeds(name, oldDb, newDb, next.counts, channel) : {};
         if (seedAccounts) verifySeedRows(name, newDb, next.counts, 'channel_accounts', legacyChannelAccounts());
         if (seedTelegram) verifyChannelSeeds(name, oldDb, newDb, next.counts);
+        if (seedBi) {
+          using spool = openBiChannelStore(dirname(join(destination, name)));
+          for (const table of biOwnershipTables) verifySeedRows(name, newDb, next.counts, table, legacyBiOwnership(oldDb, spool, table));
+        }
         verifyEmptyAdditions(name, next.counts, expectedEmpty);
         for (const [table, count] of Object.entries(next.counts)) {
           if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
               seedAccounts && table === 'channel_accounts' ||
+              seedBi && biOwnershipTables.includes(table) ||
               seedTelegram && migratedChannelTables.includes(table)) continue;
           if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table)) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
@@ -316,7 +325,13 @@ async function reconcileUpgrade() {
           throw new SnapshotError(name, '升級比對失敗。SQLite foreign_key_check 外鍵檢查失敗。');
         }
         if (web) verifyAgentLedger(newDb, join(root, name), channel);
-        if (telegram && next.userVersion === telegramInboxVersion) verifyChannelOwners(name, newDb);
+        if (knowledge && next.userVersion === 3) verifyBiOwnership(newDb);
+        if (telegram && next.userVersion === telegramInboxVersion) {
+          verifyChannelOwners(name, newDb);
+          verifyBiSourceOwners(newDb);
+          using reviews = openBiReviewStore(dirname(join(root, name)));
+          verifyBiSourceReceipts(newDb, reviews);
+        }
       })));
   }
 }

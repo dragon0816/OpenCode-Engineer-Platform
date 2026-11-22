@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { ChannelSpool } from '../channels/spool.ts';
-import type { Binding, ChannelLocale, InboundEnvelope, Lane } from '../channels/transport.ts';
+import type { Binding, ChannelLocale, Destination, InboundEnvelope, Lane } from '../channels/transport.ts';
 import { channelText } from '../channels/catalog.ts';
+import { verifyBiSourceOwners } from '../bi/source-ownership.ts';
 import { legacyBinding, migrateTelegramSpool, telegramLane, topicKey } from './channel-migration.ts';
 import type { Bot } from './channel-migration.ts';
 
@@ -52,7 +53,10 @@ export class TelegramInbox extends ChannelSpool {
     this.db = db;
     try {
       db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
-      this.transaction(() => migrateTelegramSpool(db));
+      this.transaction(() => {
+        migrateTelegramSpool(db, path);
+        verifyBiSourceOwners(db);
+      });
       // A process can die after Telegram accepts a send and before SQLite records the reply.
       if (recoverSending) this.recoverSending();
     } catch (error) {
@@ -87,9 +91,16 @@ export class TelegramInbox extends ChannelSpool {
     this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale, text });
   }
 
-  notifyReviews(intents: readonly { review?: unknown }[], locale: ChannelLocale = 'zh-TW') {
-    for (const { review } of intents) {
-      this.notify('bi', 'review-' + review, 0, channelText(locale).published, locale);
+  notifyReviews(intents: readonly { review?: unknown; destination?: unknown; sourceKey?: unknown }[], locale: ChannelLocale = 'zh-TW') {
+    const find = this.db.prepare(`SELECT account_id AS accountId, conversation_key AS conversationKey,
+      binding_revision AS bindingRevision, agent_id AS agentId FROM bi_source_ownership
+      WHERE source_key=? AND origin='telegram' AND agent_id='bi'`);
+    for (const { review, destination: receipt, sourceKey } of intents) {
+      if (typeof review !== 'string') continue;
+      const destination = typeof sourceKey === 'string' ? find.get(sourceKey) as Destination | undefined : undefined;
+      if (receipt && (!destination || receipt !== JSON.stringify(destination))) continue;
+      const message = { effectKey: 'review-' + review, text: channelText(locale).published, locale };
+      this.enqueueOutbound({ ...(destination ?? { ...legacyBinding('bi'), conversationKey: topicKey(0) }), ...message });
     }
   }
 

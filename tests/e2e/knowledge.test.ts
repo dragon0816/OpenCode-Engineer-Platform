@@ -628,6 +628,7 @@ test('uses the same validated knowledge service from Chromium and OpenCode chat 
         try {
           jobsFixture.db.prepare("INSERT INTO bi_sources(id,ref,state,reason,domain,bytes) VALUES (1,'fixture.txt','blocked','需要文字','檢查',?)")
             .run(Buffer.from(sampleSource));
+          jobsFixture.db.exec("INSERT INTO bi_source_ownership(source_id,source_key,agent_id,origin) VALUES (1,'telegram-bi-1','bi','legacy')");
           jobsFixture.notify('bi', 'fixture-notice', 1, '測試通知');
           jobsFixture.db.exec("UPDATE channel_outbound SET state='indeterminate' WHERE effect_key='fixture-notice'");
         } finally { jobsFixture.db.close(); }

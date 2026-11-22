@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { prepareBiWorkspace } from '../../apps/adapter/src/runs/agent-ledger.ts';
 import { verifyChannelConversations } from '../../apps/adapter/src/telegram/channel-migration.ts';
+import { openBiReviewStore, verifyBiSourceReceipts } from '../../apps/adapter/src/bi/source-ownership.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath } from './snapshot-paths.mjs';
 
@@ -42,6 +43,9 @@ try {
     const path = join(root, directory, 'telegram-chat.sqlite');
     using sessions = existsSync(path) ? new DatabaseSync(path, { readOnly: true }) : undefined;
     verifyChannelConversations(db, sessions);
+    failureCheck = 'BI 來源及審核歸屬檢查失敗。';
+    using reviews = openBiReviewStore(join(root, directory));
+    verifyBiSourceReceipts(db, reviews);
   }
   if (result['web/web.sqlite'] || result['web.sqlite']) {
     failurePath = 'web/agents/bi';

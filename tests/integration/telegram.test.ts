@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { maxWorkAttempts, TelegramApi, TelegramPoller, TelegramTransport, workDeadline } from '../../apps/adapter/src/telegram/poller.ts';
 import { legacyChannels } from '../../apps/adapter/src/channels/accounts.ts';
+import { reviewAction } from '../../apps/adapter/src/http/review.ts';
 import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
 import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { ModelSeat } from '../../apps/adapter/src/opencode/model-seat.ts';
@@ -133,12 +134,13 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     assert(sends.every((send) => send.bot === 'botfake-main' ? send.text.startsWith('MAIN ') : !send.text.startsWith('MAIN ')));
     assert.equal(sends.filter((send) => send.text === 'MAIN 1' && send.topic === 1).length, 1);
     assert.equal(new Set(sends.map((send) => JSON.stringify(send))).size, sends.length);
-    await router.supplement(2, 'Synthetic manual supplement', signal);
+    await router.bi.supplement(2, 'Synthetic manual supplement', signal);
     assert.equal(store.reconciliation().effects.length, 24);
-    store.decideReview('telegram-bi-2', 0, 'approved');
-    store.publishReview('telegram-bi-2');
-    store.publishReview('telegram-bi-2');
+    reviewAction(store, { action: 'approve', id: 'telegram-bi-2', edit: 0 });
+    reviewAction(store, { action: 'publish', id: 'telegram-bi-2' });
+    reviewAction(store, { action: 'publish', id: 'telegram-bi-2' });
     assert.equal(store.reconciliation().intents.length, 1);
+    assert.equal(store.reviews().find(({ id }) => id === 'telegram-bi-2')?.agentSource, 'BI 資料處理');
     let modelCalls = 0;
     const alias = 'synthetic-telegram';
     const seat = new ModelSeat();
@@ -168,12 +170,21 @@ test('two fake bots reconcile duplicate updates, process crashes, blocked links,
     inbox.notifyReviews(store.reconciliation().intents);
     await step(bi, start + 6000);
     assert.equal(sends.filter((send) => send.text.startsWith('BI 審核')).length, 1);
+    assert.equal(sends.find((send) => send.text.startsWith('BI 審核'))?.topic, 2);
+    assert.equal(sends.find((send) => send.text.startsWith('BI 審核'))?.bot, 'botfake-bi');
     assert(!sends.some((send) => send.text === 'Synthetic unknown delivery'));
     inbox.resend('bi', 'crash-send');
     assert.throws(() => inbox.resend('bi', 'crash-send'));
     await bi.deliver(signal, () => start + 6001);
     assert.equal(sends.filter((send) => send.text === 'Synthetic unknown delivery').length, 1);
     assert.throws(() => inbox.resend('bi', 'crash-send'));
+    const recovered = new TelegramInbox(ledger);
+    try {
+      const restarted = new TelegramPoller('bi', '42', biApi, recovered, (row, stop) => router.handle(row, stop));
+      recovered.notifyReviews(store.reconciliation().intents);
+      await restarted.deliver(signal, () => start + 6002);
+      assert.equal(sends.filter((send) => send.text.startsWith('BI 審核')).length, 1);
+    } finally { recovered.db.close(); }
   } finally {
     server.closeAllConnections();
     server.close();
@@ -363,8 +374,8 @@ test('targeted intake stages verified change sets and blocks fabricated quotes o
       } }) };
     } } } as unknown as Runtime;
     const router = new TelegramRouter(inbox, runtime, undefined!, undefined!);
-    assert.throws(() => router.configure('sample', [], 'missing'));
-    router.configure('sample', [], 'target');
+    assert.throws(() => router.bi.configure('sample', [], 'missing'));
+    router.bi.configure('sample', [], 'target');
     const signal = new AbortController().signal;
     const receive = (id: number) => router.handle({ bot: 'bi', id, topic: 0, payload: JSON.stringify({ text }) }, signal);
     const parent = store.reviewBase('target').parent;
@@ -382,8 +393,15 @@ test('targeted intake stages verified change sets and blocks fabricated quotes o
     assert.match(await receive(3) ?? '', /需要補件/);
     assert(!store.hasReview('telegram-bi-3', 'target'));
     mode = 'valid';
-    await router.supplement(2, text, signal);
+    const command = (id: number, topic: number, text: string) =>
+      router.handle({ bot: 'bi', id, topic, payload: JSON.stringify({ text }) }, signal);
+    assert.match(await command(4, 1, '/status 2') ?? '', /無法存取/);
+    assert.match(await command(5, 0, '/status 2') ?? '', /需要補件/);
+    assert.match(await command(6, 1, '/supplement 2 ' + text) ?? '', /無法存取/);
+    assert.match(await command(7, 0, '/supplement 2 ' + text) ?? '', /已送審/);
+    assert.match(await command(8, 0, '/publish telegram-bi-2') ?? '', /工作台/);
     assert(store.hasReview('telegram-bi-2', 'target'));
+    assert.equal(store.reviews().find((row) => row.id === 'telegram-bi-2')?.status, 'pending');
     assert.equal(store.reviewBase('target').cards.length, 1);
   } finally {
     inbox.db.close();

@@ -12,6 +12,7 @@ import { TelegramInbox } from './inbox.ts';
 import { TelegramApi, TelegramPoller, TelegramTransport } from './poller.ts';
 import { TelegramRouter } from './router.ts';
 import { verifyChannelConversations } from './channel-migration.ts';
+import { openBiReviewStore, verifyBiSourceReceipts } from '../bi/source-ownership.ts';
 
 const names = [legacyAllowlistRef, ...legacyChannels.map(({ credentialRef }) => credentialRef)];
 
@@ -36,19 +37,25 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   const redact = (value: string) => Object.values(credentials).reduce((text, secret) =>
     secret ? text.replaceAll(secret, '[已遮蔽]') : text, value);
   const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
-  const sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
+  let sessions: WebStore | undefined;
   try {
+    sessions = new WebStore(join(root, 'telegram-chat.sqlite'));
     using sessionDb = new DatabaseSync(join(root, 'telegram-chat.sqlite'), { readOnly: true });
+    using reviewDb = openBiReviewStore(root);
     verifyChannelConversations(inbox.db, sessionDb);
+    verifyBiSourceReceipts(inbox.db, reviewDb);
   } catch (error) {
-    sessions.close();
+    sessions?.close();
     inbox.db.close();
     throw error;
   }
   const chat = new ChatService(sessions, runtime, root, join(runtime.root, 'telegram-turns.jsonl'), () => {}, ledger);
   const api = new Map<string, TelegramApi>();
   const router = new TelegramRouter(inbox, runtime, chat, sessions, undefined, (bot) => ledger.channelLocale(bot),
-    (bot) => api.get(bot));
+    (bot) => api.get(bot), () => {
+      const model = ledger.executionProfile('bi', 'bi')?.defaultModel;
+      return model && runtime.aliases.includes(model) ? model : undefined;
+    });
   const knowledge = runtime.knowledge?.reviewStore;
   const scheduler = knowledge && new BiScheduler(inbox.db, knowledge);
   const stop = new AbortController();
@@ -60,6 +67,11 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     const legacy = createHash('sha256').update(config.bot + ':' + id + ':' + owner).digest('hex');
     const oldFingerprint = inbox.db.prepare('SELECT fingerprint FROM telegram_binding WHERE bot=?').get(config.bot)?.fingerprint;
     if (oldFingerprint && oldFingerprint !== legacy) return [];
+    if (!oldFingerprint && inbox.db.prepare(`SELECT 1 FROM channel_cursors WHERE account_id=?
+      UNION ALL SELECT 1 FROM channel_inbound WHERE account_id=?
+      UNION ALL SELECT 1 FROM channel_outbound WHERE account_id=?
+      UNION ALL SELECT 1 FROM channel_conversations WHERE account_id=? LIMIT 1`)
+      .get(config.accountId, config.accountId, config.accountId, config.accountId)) return [];
     return [{ config, owner, id, legacy, client: new TelegramApi(token), due: 0 }];
   });
   const active = new Map<string, Promise<void>>();
@@ -93,7 +105,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     try {
       scheduler?.reconcile();
       const ready = inbox.db.prepare("SELECT id FROM bi_sources WHERE state='ready' AND supplement IS NOT NULL ORDER BY id LIMIT 1").get();
-      if (ready) launch('supplement', () => router.stage(Number(ready.id), stop.signal));
+      if (ready) launch('supplement', () => router.bi.stage(Number(ready.id), stop.signal));
       knowledge?.reconcileBi();
       if (pollers.has('bi')) inbox.notifyReviews(knowledge?.reconciliation().intents ?? [], ledger.channelLocale('bi'));
     } catch { /* Persisted work remains available to the next cycle. */ }
@@ -124,7 +136,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
       return {
         main: pollers.has('main'), bi: pollers.has('bi'),
         pollConflicts: [...pollers.values()].filter((poller) => poller.pollConflict).map((poller) => poller.bot),
-        domain: router.config('domain'), origins: JSON.parse(router.config('origins') || '[]'), target: router.config('target'),
+        domain: router.bi.config('domain'), origins: JSON.parse(router.bi.config('origins') || '[]'), target: router.bi.config('target'),
         sources: inbox.db.prepare('SELECT id,ref,state,reason,domain,target,bytes IS NOT NULL AS hasFile FROM bi_sources ORDER BY id DESC LIMIT 200').all(),
         delivery: inbox.db.prepare(`SELECT substr(account_id,10) AS bot,state,COUNT(*) AS count
           FROM channel_outbound GROUP BY account_id,state`).all(),
@@ -141,8 +153,8 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     },
     action(input: Record<string, unknown>) {
       switch (input.action) {
-        case 'configure': router.configure(input.domain, input.origins, input.target); break;
-        case 'supplement': return router.supplement(Number(input.id), input.text, stop.signal);
+        case 'configure': router.bi.configure(input.domain, input.origins, input.target); break;
+        case 'supplement': return router.bi.supplement(Number(input.id), input.text, stop.signal);
         case 'resend': inbox.resend(input.bot, input.id); break;
         case 'schedule': scheduler?.save(String(input.id), String(input.zone), String(input.time), input.candidate as Candidate); break;
         case 'state': scheduler?.state(String(input.id), input.state); break;

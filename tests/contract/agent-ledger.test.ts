@@ -46,7 +46,7 @@ test('fresh stores seed built-ins and enforce identity, default workspace, class
   using db = new DatabaseSync(file);
   using telegram = new DatabaseSync(chatPath);
   using knowledge = new DatabaseSync(knowledgePath);
-  assert.deepEqual([version(db), version(telegram), version(knowledge)], [4, 3, 2]);
+  assert.deepEqual([version(db), version(telegram), version(knowledge)], [4, 3, 3]);
   assert.deepEqual(values(db, 'SELECT id, role, state, name, default_model_id, reply_locale FROM agents ORDER BY id'), [
     ['bi', 'specialist', 'active', 'BI 資料處理', null, 'zh-TW'],
     ['main', 'orchestrator', 'active', '', null, 'zh-TW'],
@@ -58,7 +58,7 @@ test('fresh stores seed built-ins and enforce identity, default workspace, class
     [db, ['agents', 'agent_workspaces', 'workspace_read_folders', 'agent_knowledge_reads', 'agent_write_targets',
       'agent_capabilities', 'workspace_mcp_grants', 'agent_trigger_settings', 'session_ownership',
       'file_classifications', 'delegation_budget_settings', 'channel_accounts']],
-    [telegram, ['session_ownership']], [knowledge, ['vault_classifications']],
+    [telegram, ['session_ownership']], [knowledge, ['vault_classifications', 'bi_job_ownership', 'review_provenance', 'bi_publication_ownership']],
   ] as const) {
     for (const name of names) {
       assert.equal(store.prepare('SELECT strict FROM pragma_table_list WHERE name=?').get(name)?.strict, 1, name);
@@ -180,21 +180,31 @@ test('a failed slice migration rolls back each owned DB and resumes earlier comm
     migrate(root, /【web\/knowledge.sqlite】.*套用 SQLite 結構遷移失敗/);
     assert.equal(version(db), 1);
     assert.equal(table(db, 'benchmark_sets'), undefined);
-    assert.deepEqual(values(db, 'SELECT status FROM reviews'), [['pending']]);
+    assert.deepEqual(values(db, "SELECT status FROM reviews WHERE id='pending-bi'"), [['pending']]);
+    assert.deepEqual(values(db, "SELECT status FROM reviews WHERE id='manual-bi'"), [['approved']]);
     using telegram = open('telegram-chat');
     assert.equal(version(telegram), 3);
     db.exec('DROP TABLE vault_classifications');
   }
+  {
+    using db = open('knowledge');
+    db.exec('CREATE TABLE review_provenance (id INTEGER)');
+    migrate(root, /【web\/knowledge.sqlite】.*套用 SQLite 結構遷移失敗/);
+    assert.equal(version(db), 1);
+    assert.equal(table(db, 'bi_job_ownership'), undefined);
+    assert.equal(table(db, 'vault_classifications'), undefined);
+    db.exec('DROP TABLE review_provenance');
+  }
   migrate(root);
   using db = open('knowledge');
-  assert.equal(version(db), 2);
+  assert.equal(version(db), 3);
   assert.ok(table(db, 'benchmark_sets'));
   assert.ok(table(db, 'vault_classifications'));
   const paths = ['web', 'telegram-chat', 'knowledge', 'telegram'];
   assert.deepEqual(paths.map((name) => {
     using db = open(name);
     return version(db);
-  }), [4, 3, 2, 2]);
+  }), [4, 3, 3, 2]);
 });
 
 test('opening a current session ledger rejects absent owners and invalid central references', (t) => {

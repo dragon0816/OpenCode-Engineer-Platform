@@ -90,7 +90,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 4], 'telegram-chat': [2, 3], knowledge: [1, 2], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 4], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);
@@ -101,7 +101,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
       db.exec('PRAGMA user_version=1');
       reconcile(/【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/);
-      db.exec('PRAGMA user_version=2');
+      db.exec('PRAGMA user_version=3');
     }
     const repeat = JSON.parse(migrate(data));
     for (const { before, after } of Object.values(repeat) as { before: unknown; after: unknown }[]) {
@@ -146,9 +146,17 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       ]);
     }
     {
-      using db = new DatabaseSync(join(web, 'knowledge.sqlite'), { readOnly: true });
+      using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
       assert.equal(db.prepare("SELECT status FROM reviews WHERE id='pending-bi'").get()?.status, 'pending');
       assert.equal(db.prepare('SELECT revision FROM publications').get()?.revision, 'gold.v2');
+      assert.deepEqual(db.prepare('SELECT review_id,origin,source_key FROM review_provenance ORDER BY review_id').all()
+        .map((row) => Object.values(row)), [['manual-bi', 'legacy', null], ['pending-bi', 'telegram', 'telegram-bi-10']]);
+      assert.equal(db.prepare('SELECT review_id FROM bi_publication_ownership').get()?.review_id, 'manual-bi');
+      assert.equal(db.prepare("SELECT origin FROM bi_job_ownership WHERE job_id='telegram-bi-10'").get()?.origin, 'telegram');
+      db.exec("UPDATE review_provenance SET source_key='telegram-bi-11' WHERE review_id='pending-bi'");
+      reconcile(/【web\/knowledge.sqlite】.*review_provenance/);
+      migrate(data, /【web\/telegram.sqlite】.*BI 來源及審核歸屬檢查失敗/);
+      db.exec("UPDATE review_provenance SET source_key='telegram-bi-10' WHERE review_id='pending-bi'");
     }
     {
       using spool = new DatabaseSync(join(web, 'telegram.sqlite'));
@@ -162,6 +170,11 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       assert.deepEqual(rows('SELECT effect_key,state FROM channel_outbound ORDER BY rowid'), [
         ['original', 'pending'], ['previous-bi', 'indeterminate'], ['interrupted-bi', 'sending'], ['already-sent-bi', 'sent'],
       ]);
+      assert.deepEqual(rows('SELECT source_id,origin,conversation_key,review_id FROM bi_source_ownership ORDER BY source_id'),
+        [[10, 'telegram', 'topic:3', 'pending-bi'], [11, 'telegram', 'topic:3', null]]);
+      spool.exec("UPDATE bi_source_ownership SET agent_id='main' WHERE source_id=11");
+      reconcile(/【web\/telegram.sqlite】.*bi_source_ownership/);
+      spool.exec("UPDATE bi_source_ownership SET agent_id='bi' WHERE source_id=11");
       spool.exec("UPDATE channel_inbound SET agent_id='main' WHERE account_id='telegram-bi' AND event_key='11'");
       reconcile(/【web\/telegram.sqlite】.*channel_inbound/);
       spool.exec("UPDATE channel_inbound SET agent_id='bi' WHERE account_id='telegram-bi' AND event_key='11'");

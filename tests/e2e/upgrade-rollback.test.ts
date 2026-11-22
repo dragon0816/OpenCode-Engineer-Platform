@@ -110,7 +110,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       t.diagnostic('本機升級時間 ' + Math.round(performance.now() - start) + ' ms');
       assert.equal(read(pointer).version, version);
       assert.equal(read(journalPath).migration['web/knowledge.sqlite'].before.userVersion, 1);
-      assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+      assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 3);
       const webMigration = read(journalPath).migration['web.sqlite'];
       for (const table of ['web_model_catalog', 'web_model_selection']) {
         assert.equal(Object.hasOwn(webMigration.before.counts, table), false);
@@ -215,7 +215,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     assert.match(fixture.run('Upgrade-OEP', ['-Source', wrongSchema.path],
       /【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/), /已回退至/);
     restored();
-    assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+    assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 3);
     assert.ok(!existsSync(join(fixture.install, wrongSchemaVersion)));
 
     const damaged = currentLicense;

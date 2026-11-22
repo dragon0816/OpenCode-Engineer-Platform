@@ -9,9 +9,12 @@ import type { Passage } from '../../contracts/src/evidence.ts';
 import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './retrieval.ts';
 import { canonical, compareRepositoryPublications, digestPattern, string, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
+import { migrateBiOwnership, recoverBiTelegramSource, reviewProvenanceRow, verifyBiOwnership } from './bi/ownership.ts';
+import type { BiProvenance } from './bi/ownership.ts';
 
 const vaultClassificationsVersion = 2;
-export const knowledgeSchemaVersion = vaultClassificationsVersion;
+const biOwnershipVersion = 3;
+export const knowledgeSchemaVersion = biOwnershipVersion;
 
 const benchmarksMigration = `
   CREATE TABLE IF NOT EXISTS benchmark_sets (
@@ -78,8 +81,11 @@ export class KnowledgeStore {
   private db: DatabaseSync;
   private browser?: { hash: string; view: ReturnType<typeof browseSnapshot> };
   private activeFilter: string;
+  private readonly ownsBi: boolean;
+  private readonly path: string;
 
   constructor(path: string, readOnly = false) {
+    this.path = path;
     this.db = new DatabaseSync(path, { readOnly, timeout: 5000 });
     try {
       const version = this.version(readOnly);
@@ -95,8 +101,14 @@ export class KnowledgeStore {
             if (this.db.prepare('PRAGMA foreign_key_check').get()) throw new Error('Knowledge foreign keys are invalid');
             this.db.exec(`PRAGMA user_version=${vaultClassificationsVersion}`);
           }
+          if (version < biOwnershipVersion) {
+            migrateBiOwnership(this.db, path);
+            this.db.exec(`PRAGMA user_version=${biOwnershipVersion}`);
+          }
+          verifyBiOwnership(this.db);
         });
       }
+      this.ownsBi = this.version(readOnly) >= biOwnershipVersion;
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
     } catch (error) {
@@ -195,7 +207,7 @@ export class KnowledgeStore {
     });
   }
 
-  private writeSnapshot(snapshot: Snapshot, input: Uint8Array, allowModel: boolean, reviewed = false, midCommit?: () => void) {
+  private writeSnapshot(snapshot: Snapshot, input: Uint8Array, allowModel: boolean, reviewID?: string, midCommit?: () => void) {
     validateSnapshot(snapshot);
     const bytes = Buffer.from(canonical(snapshot));
     const hash = sha256(bytes);
@@ -230,13 +242,15 @@ export class KnowledgeStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(vault.id, publication.revision, vault.title, vault.kind, publishedAt, schema.id, schema.version, hash, inputHash, Number(allowModel));
     const id = Number(lastInsertRowid);
+    if (this.ownsBi && vault.kind === 'bi') this.db.prepare("INSERT INTO bi_publication_ownership VALUES (?,'bi',?)")
+      .run(id, reviewID ?? null);
     this.index(id, hash, snapshot);
     const revisionOrder = current ? publication.revision.localeCompare(current.revision, 'en', { numeric: true }) ||
       (publication.revision < current.revision ? -1 : 1) : 0;
     const newer = current && (publishedAt > current.published_at ||
       publishedAt === current.published_at && revisionOrder > 0);
     midCommit?.();
-    if (reviewed || (snapshot.repository ? activateRepository : !current || newer)) this.activate(vault.id, id);
+    if (reviewID || (snapshot.repository ? activateRepository : !current || newer)) this.activate(vault.id, id);
     return { state: 'imported', ...manifest(snapshot, inputHash) } as const;
   }
 
@@ -321,11 +335,18 @@ const schema = this.reviewSchema(input.vault.id, base);
       : materialize(input, schema, revision, parent);
   }
 
-  private stageCandidate(id: string, input: Candidate | ChangeSet) {
+  private stageCandidate(id: string, input: Candidate | ChangeSet, provenance: BiProvenance) {
     const original = canonical(input);
     const existing = this.db.prepare('SELECT original FROM reviews WHERE id=?').get(key(id));
     if (existing) {
       if (existing.original !== original) throw new Error('Review key already exists with different input');
+      if (this.ownsBi && provenance.origin === 'telegram') {
+        const recorded = this.db.prepare('SELECT source_key,delivery_destination FROM review_provenance WHERE review_id=?').get(id);
+        const expected = reviewProvenanceRow(id, provenance);
+        if (recorded?.source_key !== expected[3] || recorded?.delivery_destination !== expected[5]) {
+          throw new Error('Review key belongs to another source');
+        }
+      }
       return;
     }
     const vault = key(input.vault.id);
@@ -334,19 +355,22 @@ const schema = this.reviewSchema(input.vault.id, base);
     this.reviewSnapshot(input, 'review-' + sha256(id), parent?.revision);
     this.db.prepare('INSERT INTO reviews(id,vault,parent,original,draft) VALUES (?,?,?,?,?)')
       .run(id, vault, parent?.revision ?? null, original, original);
+    if (this.ownsBi && input.vault.kind === 'bi') this.db.prepare('INSERT INTO review_provenance VALUES (?,?,?,?,?,?)')
+      .run(...reviewProvenanceRow(id, provenance));
   }
 
-  stage(id: string, input: Candidate | ChangeSet) {
-    return this.transaction(() => this.stageCandidate(id, input));
+  stage(id: string, input: Candidate | ChangeSet, provenance: BiProvenance = { origin: 'owner' }) {
+    return this.transaction(() => this.stageCandidate(id, input, provenance));
   }
 
-  enqueueBi(id: string, input: Candidate) {
+  enqueueBi(id: string, input: Candidate, origin: BiProvenance['origin'] = 'owner') {
     if (input.vault.kind !== 'bi') throw new Error('Expected a BI candidate');
     const payload = canonical(input);
     this.transaction(() => {
       const existing = this.db.prepare('SELECT payload FROM ingest_jobs WHERE id=?').get(key(id));
       if (!existing) materialize(input, this.reviewSchema(key(input.vault.id)), 'review-' + sha256(id));
-      this.db.prepare('INSERT OR IGNORE INTO ingest_jobs(id,payload) VALUES (?,?)').run(id, payload);
+      const insert = this.db.prepare('INSERT OR IGNORE INTO ingest_jobs(id,payload) VALUES (?,?)').run(id, payload);
+      if (insert.changes && this.ownsBi) this.db.prepare("INSERT INTO bi_job_ownership VALUES (?,'bi',NULL,?)").run(id, origin);
       if (this.db.prepare('SELECT payload FROM ingest_jobs WHERE id=?').get(id)?.payload !== payload) {
         throw new Error('Job key already exists with different input');
       }
@@ -361,28 +385,41 @@ const schema = this.reviewSchema(input.vault.id, base);
     return claimed.changes ? lease : undefined;
   }
 
-  completeBi(id: string, lease: string) {
+  completeBi(id: string, lease: string, source?: BiProvenance) {
     return this.transaction(() => {
       const row = this.db.prepare(`SELECT payload FROM ingest_jobs
         WHERE id=? AND lease=? AND completed=0 AND expires>?`).get(key(id), lease, Date.now());
       if (!row) throw new Error('Job lease is no longer active');
-      this.stageCandidate(id, JSON.parse(String(row.payload)));
+      const saved = this.ownsBi ? this.db.prepare('SELECT origin FROM bi_job_ownership WHERE job_id=?').get(id)?.origin : 'legacy';
+      if (typeof saved !== 'string') throw new Error('BI job ownership is missing');
+      const provenance = saved === 'telegram' ? source ?? recoverBiTelegramSource(this.path, id) :
+        { origin: saved as BiProvenance['origin'] };
+      if (!provenance || (saved === 'telegram' && (provenance.origin !== 'telegram' || provenance.sourceKey !== id))) {
+        throw new Error('BI job source is unavailable');
+      }
+      this.stageCandidate(id, JSON.parse(String(row.payload)), provenance);
       this.db.prepare('INSERT INTO ingest_effects VALUES (?,?)').run(id, id);
       this.db.prepare('UPDATE ingest_jobs SET completed=1, lease=NULL, expires=0 WHERE id=?').run(id);
     });
   }
 
-  runBi(id: string) {
+  runBi(id: string, source?: BiProvenance) {
     const lease = this.claimBi(id);
-    if (lease) this.completeBi(id, lease);
+    if (lease) this.completeBi(id, lease, source);
   }
 
   biCompleted(id: string) {
     return this.db.prepare('SELECT completed FROM ingest_jobs WHERE id=?').get(key(id))?.completed === 1;
   }
 
-  hasReview(id: string, vault: string) {
-    return Boolean(this.db.prepare('SELECT 1 FROM reviews WHERE id=? AND vault=?').get(key(id), key(vault)));
+  hasReview(id: string, vault: string, provenance?: BiProvenance) {
+    if (!this.db.prepare('SELECT 1 FROM reviews WHERE id=? AND vault=?').get(key(id), key(vault))) return false;
+    if (this.ownsBi && provenance?.origin === 'telegram') {
+      const existing = this.db.prepare('SELECT source_key,delivery_destination FROM review_provenance WHERE review_id=?').get(id);
+      const expected = reviewProvenanceRow(id, provenance);
+      return existing?.source_key === expected[3] && existing?.delivery_destination === expected[5];
+    }
+    return true;
   }
 
   biStatus() {
@@ -400,18 +437,23 @@ const schema = this.reviewSchema(input.vault.id, base);
   }
 
   reviews() {
+    const provenance = this.ownsBi ? `LEFT JOIN review_provenance AS owner ON owner.review_id=r.id` : '';
+    const source = this.ownsBi ? `,owner.agent_id AS agentId,owner.origin AS origin,
+      CASE WHEN owner.origin='telegram' THEN 'BI 資料處理' END AS agentSource` : '';
     return this.db.prepare(`SELECT r.id,r.vault,r.parent,r.edit,r.status,r.publication,r.draft,
       p.revision=r.publication AND i.vault IS NULL AS active,
-      p.revision=r.publication AND i.vault IS NOT NULL AS inactive
+      p.revision=r.publication AND i.vault IS NOT NULL AS inactive ${source}
       FROM reviews r LEFT JOIN vaults v ON v.id=r.vault LEFT JOIN publications p ON p.id=v.publication
-      LEFT JOIN inactive_vaults i ON i.vault=v.id ORDER BY r.rowid DESC`).all();
+      LEFT JOIN inactive_vaults i ON i.vault=v.id ${provenance} ORDER BY r.rowid DESC`).all();
   }
 
   reconciliation() {
     return {
       jobs: this.db.prepare('SELECT id,expires,completed FROM ingest_jobs ORDER BY id').all(),
       effects: this.db.prepare('SELECT * FROM ingest_effects ORDER BY job').all(),
-      intents: this.db.prepare('SELECT * FROM notification_intents ORDER BY review').all(),
+      intents: this.db.prepare(this.ownsBi ? `SELECT n.*,p.delivery_destination AS destination,p.source_key AS sourceKey
+        FROM notification_intents n LEFT JOIN review_provenance p ON p.review_id=n.review ORDER BY n.review` :
+        'SELECT * FROM notification_intents ORDER BY review').all(),
     };
   }
 
@@ -485,7 +527,7 @@ const schema = this.reviewSchema(input.vault.id, base);
       const snapshot = this.reviewSnapshot(draft, revision, parent);
       fault?.('before-blob');
       this.writeSnapshot(snapshot, Buffer.from(String(review.draft)), draft.allowModel === true,
-        true, () => fault?.('mid-commit'));
+        id, () => fault?.('mid-commit'));
       this.db.prepare('UPDATE reviews SET publication=? WHERE id=?').run(revision, id);
       this.db.prepare('INSERT INTO notification_intents VALUES (?,?,?)').run(id, vault, revision);
       return { revision, replay: false };

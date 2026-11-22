@@ -99,6 +99,8 @@ export function seedPhase3bFixture(root: string) {
   knowledge.exec(`
     INSERT INTO reviews(id, vault, parent, original, draft, edit) VALUES
       ('pending-bi', 'synthetic-bench', 'gold.v2', '{}', '{}', 1);
+    INSERT INTO reviews(id, vault, original, draft, status, publication) VALUES
+      ('manual-bi', 'synthetic-bench', '{}', '{}', 'approved', 'gold.v2');
     INSERT INTO review_edits VALUES ('pending-bi', 1, '{}');
     INSERT INTO ingest_jobs(id, payload, completed) VALUES ('telegram-bi-10', '{}', 1);
     INSERT INTO ingest_effects VALUES ('telegram-bi-10', 'pending-bi');

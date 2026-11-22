@@ -1,5 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
+import { dirname } from 'node:path';
 import { channelSpoolSchema } from '../channels/spool.ts';
+import { legacyBiSourceOwners, openBiReviewStore, sourceOwnershipSchema } from '../bi/source-ownership.ts';
 
 export const telegramInboxVersion = 2;
 export type Bot = 'main' | 'bi';
@@ -29,7 +31,7 @@ export const legacyTelegramTables = ['cursor', 'inbox', 'outbox', 'telegram_bind
 
 export function telegramLane(bot: Bot, text: unknown) {
   return typeof text === 'string' &&
-    (bot === 'main' ? /^\/ask(?:\s|$)/.test(text) : text.trim() === '/status') ? 'command' : 'work';
+    (bot === 'main' ? /^\/ask(?:\s|$)/.test(text) : /^\/status(?:\s|$)/.test(text.trim())) ? 'command' : 'work';
 }
 
 const hasTable = (db: DatabaseSync, name: string) =>
@@ -52,7 +54,7 @@ function* legacyRows(db: DatabaseSync, table: string, order = 'rowid') {
 }
 
 // Keep this projection read-only so upgrade reconciliation can compute expected values from the backup.
-export function* legacyChannelRows(db: DatabaseSync, table: string): Generator<SQLInputValue[]> {
+export function* legacyChannelRows(db: DatabaseSync, table: string, knowledge?: DatabaseSync): Generator<SQLInputValue[]> {
   switch (table) {
     case 'channel_cursors':
       for (const row of legacyRows(db, 'cursor')) {
@@ -83,11 +85,15 @@ export function* legacyChannelRows(db: DatabaseSync, table: string): Generator<S
         yield ['telegram-main', topicKey(integer(row.topic)), 1, 'main', row.session];
       }
       break;
+    case 'bi_source_ownership':
+      yield* legacyBiSourceOwners(db, knowledge);
+      break;
     default: throw new Error('Unknown channel migration table');
   }
 }
 
-export const migratedChannelTables = ['channel_cursors', 'channel_inbound', 'channel_outbound', 'channel_conversations'];
+export const migratedChannelTables = ['channel_cursors', 'channel_inbound', 'channel_outbound', 'channel_conversations',
+  'bi_source_ownership'];
 
 export function verifyChannelConversations(db: DatabaseSync, sessions?: DatabaseSync) {
   const find = sessions?.prepare(`SELECT 1 FROM session_ownership WHERE session_id=? AND agent_id=?
@@ -99,15 +105,16 @@ export function verifyChannelConversations(db: DatabaseSync, sessions?: Database
   }
 }
 
-export function migrateTelegramSpool(db: DatabaseSync) {
+export function migrateTelegramSpool(db: DatabaseSync, path: string) {
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version);
   if (version > telegramInboxVersion || version < 0) throw new Error('Telegram 資料庫版本不相容。');
   if (version === telegramInboxVersion) return;
+  using knowledge = path === ':memory:' ? undefined : openBiReviewStore(dirname(path));
   db.exec(historicalSchema);
-  db.exec(channelSpoolSchema);
+  db.exec(channelSpoolSchema + sourceOwnershipSchema);
   for (const table of migratedChannelTables) {
     let insert;
-    for (const row of legacyChannelRows(db, table)) {
+    for (const row of legacyChannelRows(db, table, knowledge)) {
       insert ??= db.prepare(`INSERT INTO ${table} VALUES (${row.map(() => '?').join(',')})`);
       insert.run(...row);
     }

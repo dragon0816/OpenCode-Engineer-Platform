@@ -14,6 +14,10 @@ const channelStrings = {
     status: (jobs: number, complete: number) => `BI 工作共 ${jobs} 筆，已送審 ${complete} 筆。`,
     review: (id: number) => `收件 ${id} 已送審。`,
     blocked: (id: number) => `收件 ${id} 需要補件，請開啟工作台。`,
+    ready: (id: number) => `收件 ${id} 正在處理。`,
+    sourceUnavailable: '這個對話無法存取該收件。',
+    supplementUsage: '請輸入 /supplement 收件ID 補件文字',
+    ownerAction: '請在工作台核准、拒絕或發布審核。',
     replyInstruction: '請以繁體中文回覆使用者。',
   },
   en: {
@@ -29,8 +33,22 @@ const channelStrings = {
     status: (jobs: number, complete: number) => `BI jobs: ${jobs} total, ${complete} submitted for review.`,
     review: (id: number) => `Intake ${id} was submitted for review.`,
     blocked: (id: number) => `Intake ${id} needs additional information. Open the workbench.`,
+    ready: (id: number) => `Intake ${id} is being processed.`,
+    sourceUnavailable: 'This intake is unavailable in this conversation.',
+    supplementUsage: 'Enter /supplement intakeID additional text',
+    ownerAction: 'Use the workbench to approve, reject, or publish reviews.',
     replyInstruction: 'Reply to the user in English.',
   },
 };
 
 export const channelText = (locale: ChannelLocale = 'zh-TW') => channelStrings[locale];
+
+export function intakeStatus(locale: ChannelLocale, id: number, state: string | undefined) {
+  const messages = channelText(locale);
+  switch (state) {
+    case 'awaiting_review': return messages.review(id);
+    case 'blocked': return messages.blocked(id);
+    case 'ready': return messages.ready(id);
+    default: return messages.sourceUnavailable;
+  }
+}
