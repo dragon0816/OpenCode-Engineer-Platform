@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { until, waitForExit } from '../../scripts/phase0/probe-http.ts';
 
 const root = dataDirectory();

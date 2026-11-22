@@ -8,7 +8,7 @@ import { ChatService } from '../../apps/adapter/src/http/chat.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { TelegramRouter } from '../../apps/adapter/src/telegram/router.ts';
-import { dataDirectory } from '../../apps/launcher/src/paths.ts';
+import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
