@@ -107,7 +107,7 @@ export class TelegramRouter {
       db.prepare('INSERT OR REPLACE INTO telegram_sessions VALUES (?,?)').run(row.topic, session.id);
     }
     const id = turnId(row.id);
-    this.chat.submit(session, { id, text, attachments: [], workbook: false });
+    await this.chat.submit(session, { id, text, attachments: [], workbook: false });
     const state = await this.chat.state(session);
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);

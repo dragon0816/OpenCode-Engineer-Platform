@@ -1,5 +1,5 @@
 import { bindFilePicker, formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
-import { connect, errorText, modelLabel, projectLabel, request, RequestError, serverText } from './api.js';
+import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -253,6 +253,10 @@ function toolCard(tool, previous) {
 
 function render(context) {
   const { state, id } = context;
+  if (state.session.alias !== knownSessions.get(id)?.alias) {
+    knownSessions.set(id, state.session);
+    updateSessionAlias();
+  }
   if (state.messages) {
     const follow = !context.renderedMessages || atBottom();
     const offset = messages.scrollTop;
@@ -1290,51 +1294,133 @@ function appearanceDirty() {
 const defaultAlias = find('default-alias');
 const sessionAlias = find('session-alias');
 const modelStatus = find('model-settings-status');
+const modelList = find('model-health');
+const modelRestart = find('model-restart');
+const modelTests = new Map();
 let modelSettings;
+let selectedModels = new Set();
+let modelBusy = false;
 function aliasOptions(select, selected, aliases, configuredDefault) {
-  select.replaceChildren(...aliases.map(({ alias }) => {
-    const label = modelLabel(alias);
-    const option = node('option', alias === configuredDefault ? message('chat.default-in-settings-model', { model: label }) : label);
-    option.value = alias;
-    return option;
-  }));
+  select.replaceChildren(...aliases.map((alias) => optionText(
+    alias === configuredDefault ? message('chat.default-in-settings-model', { model: alias }) : alias, alias)));
   select.value = selected ?? '';
 }
 function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
-  aliasOptions(sessionAlias, session?.alias, modelSettings?.aliases ?? [], modelSettings?.defaultAlias);
+  const aliases = modelSettings?.aliases.map(({ alias }) => alias) ?? [];
+  const fallback = session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
+  aliasOptions(sessionAlias, fallback ?? session?.alias, aliases, modelSettings?.defaultAlias);
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
-  if (modelSettings) setText(model, modelLabel(session?.alias ?? modelSettings.defaultAlias));
+  if (modelSettings) setText(model, session?.alias ?? modelSettings.defaultAlias);
+  let notice = '';
+  if (fallback) notice = message('model.fallback-next', { model: fallback });
+  else if (current?.modelFallback) notice = message('model.fallback-used', { model: current.modelFallback });
+  setText(find('session-model-fallback'), notice);
 }
-function applyModel(value, draft = value.defaultAlias) {
+function modelControls() {
+  const disabled = stopped || modelBusy || !modelSettings;
+  for (const control of modelList.querySelectorAll('input, button')) control.disabled = disabled;
+  for (const id of ['default-alias', 'recheck-model', 'refresh-models']) find(id).disabled = disabled;
+  find('save-model').disabled = disabled || !selectedModels.size || selectedModels.size > modelSettings.maxSelected;
+  modelRestart.disabled = disabled || !modelSettings.canRestart || modelDirty();
+}
+function applyModel(value, draft) {
   modelSettings = value;
-  aliasOptions(defaultAlias, draft, value.aliases);
+  selectedModels = new Set(draft?.selected.filter((id) => value.choices.includes(id)) ?? value.selected);
+  const picked = draft?.alias ?? value.configuredDefaultAlias;
+  aliasOptions(defaultAlias, selectedModels.has(picked) ? picked : [...selectedModels][0], [...selectedModels]);
   setText(find('model-credentials'), value.credentialsConfigured ? message('chat.credentials-configured') : message('chat.credentials-missing'));
-  find('model-health').replaceChildren(...value.aliases.map(({ alias, healthy }) =>
-    node('li', joinText([modelLabel(alias), healthy ? message('chat.available') : message('chat.check-failed')]))));
+  setText(find('model-discovery'), value.discoveredAt === null ? message('model.built-ins') :
+    message('model.last-refresh', { date: formatDate(value.discoveredAt) }));
+  setText(find('model-limit'), message('model.selection-limit', { max: value.maxSelected }));
+  const health = new Map(value.aliases.map(({ alias, healthy }) => [alias, healthy]));
+  modelList.replaceChildren(...value.choices.map((alias) => {
+    const row = node('li');
+    const label = node('label');
+    const choice = node('input');
+    choice.type = 'checkbox';
+    choice.value = alias;
+    choice.checked = selectedModels.has(alias);
+    const name = node('span', alias);
+    name.dataset.uiContent = '';
+    label.append(choice, name);
+    const status = node('small');
+    const showHealth = (healthy) => setText(status, healthy === undefined ? '' : healthy ? message('chat.available') : message('chat.check-failed'));
+    showHealth(modelTests.get(alias) ?? health.get(alias));
+    choice.addEventListener('change', () => {
+      if (choice.checked) selectedModels.add(alias);
+      else selectedModels.delete(alias);
+      const previous = defaultAlias.value;
+      aliasOptions(defaultAlias, selectedModels.has(previous) ? previous : [...selectedModels][0], [...selectedModels]);
+      modelControls();
+    });
+    const test = node('button', message('model.test'));
+    test.type = 'button';
+    setAttribute(test, 'aria-label', message('model.test-model', { model: alias }));
+    test.addEventListener('click', async () => {
+      if (modelBusy) return;
+      modelBusy = true;
+      modelControls();
+      setText(status, message('chat.checking'));
+      try {
+        const { healthy } = await request('/api/settings/model/test', { data: { alias } });
+        modelTests.set(alias, healthy);
+        showHealth(healthy);
+      } catch (error) { setText(status, errorText(error)); }
+      finally { modelBusy = false; modelControls(); }
+    });
+    status.setAttribute('role', 'status');
+    row.append(label, status, test);
+    return row;
+  }));
+  find('model-restart-bar').hidden = !value.restartRequired;
   updateSessionAlias();
-  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
+  modelControls();
 }
-async function updateModel(recheck) {
-  const draft = defaultAlias.value;
-  if (!recheck) settingsSaving = true;
-  setText(modelStatus, recheck ? message('chat.checking') : message('chat.saving'));
-  for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = true;
+async function updateModel(action) {
+  if (modelBusy) return;
+  const draft = { alias: defaultAlias.value, selected: [...selectedModels] };
+  const save = action === 'save';
+  const keepDraft = !save && modelDirty();
+  if (save) settingsSaving = true;
+  modelBusy = true;
+  modelControls();
+  setText(modelStatus, save ? message('chat.saving') : action === 'refresh' ? message('model.refreshing') : message('chat.checking'));
   try {
-    const path = '/api/settings/model' + (recheck ? '/recheck' : '');
-    const value = await request(path, { data: recheck ? {} : { alias: draft } });
-    applyModel(value, recheck ? defaultAlias.value : undefined);
-    setText(modelStatus, recheck ? message('chat.recheck-complete') : message('chat.saved'));
+    const value = await request('/api/settings/model' + (save ? '' : '/' + action), { data: save ? draft : {} });
+    if (action === 'recheck') for (const { alias } of value.aliases) modelTests.delete(alias);
+    applyModel(value, keepDraft ? draft : undefined);
+    const status = save ? message('chat.saved') : action === 'recheck' ? message('chat.recheck-complete') :
+      value.refreshed ? message('model.refreshed') : message('model.refresh-failed');
+    setText(modelStatus, status);
   } catch (error) {
-    setText(modelStatus, error.status === 429 ? message('chat.wait-30-seconds-before-checking-again') : message('chat.could-not-update-model-settings-try-again'));
-    for (const id of ['default-alias', 'recheck-model', 'save-model']) find(id).disabled = stopped;
-  } finally { if (!recheck) settingsSaving = false; }
+    setText(modelStatus, error.status === 429 ? message('chat.wait-30-seconds-before-checking-again') :
+      errorText(error, message('chat.could-not-update-model-settings-try-again')));
+  } finally {
+    if (save) settingsSaving = false;
+    modelBusy = false;
+    modelControls();
+  }
 }
 find('model-settings').addEventListener('submit', (event) => {
   event.preventDefault();
-  if (!find('save-model').disabled) void updateModel(false);
+  if (!find('save-model').disabled) void updateModel('save');
 });
-find('recheck-model').addEventListener('click', () => void updateModel(true));
+find('recheck-model').addEventListener('click', () => void updateModel('recheck'));
+find('refresh-models').addEventListener('click', () => void updateModel('refresh'));
+defaultAlias.addEventListener('change', modelControls);
+modelRestart.addEventListener('click', async () => {
+  modelBusy = true;
+  modelControls();
+  try {
+    await request('/api/settings/model/restart', { data: {} });
+    setText(modelStatus, message('tools.restarting-continue-in-the-oep-tab-that'));
+  } catch (error) {
+    setText(modelStatus, error.status === 409 ? message('model.restart-busy') : errorText(error));
+    modelBusy = false;
+    modelControls();
+  }
+});
 sessionAlias.addEventListener('change', async () => {
   const context = current;
   const status = find('session-model-status');
@@ -1344,6 +1430,7 @@ sessionAlias.addEventListener('change', async () => {
   try {
     const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
     knownSessions.set(session.id, session);
+    context.modelFallback = undefined;
     if (current === context) setText(status, message('chat.model-switched'));
   } catch (error) {
     if (current === context) setText(status, error.status === 409 ? message('chat.wait-for-this-turn-to-finish') : message('chat.could-not-switch-models-try-again'));
@@ -1356,7 +1443,8 @@ sessionAlias.addEventListener('change', async () => {
   }
 });
 function modelDirty() {
-  return modelSettings && defaultAlias.value !== modelSettings.defaultAlias;
+  return modelSettings && (defaultAlias.value !== modelSettings.configuredDefaultAlias ||
+    selectedModels.size !== modelSettings.selected.length || modelSettings.selected.some((id) => !selectedModels.has(id)));
 }
 const limitLabels = {
   recentMessages: message('chat.recent-messages'), historyBytes: message('chat.history-size-limit'),
@@ -1740,6 +1828,7 @@ const executeCommand = bindCommands(prompt, find('slash-palette'), find('command
     async function change(value) {
       const session = await request(context.path + '/model', { data: { alias: value } });
       if (current === context) {
+        context.modelFallback = undefined;
         knownSessions.set(session.id, session);
         updateSessionAlias();
       }
@@ -1810,7 +1899,13 @@ find('composer').addEventListener('submit', async (event) => {
   showError();
   setControls();
   try {
-    await request(`${context.path}/turns`, { data: { id, ...data } });
+    const result = await request(`${context.path}/turns`, { data: { id, ...data } });
+    if (result.modelFallback) {
+      context.modelFallback = result.modelFallback;
+      const session = knownSessions.get(context.id);
+      if (session) knownSessions.set(context.id, { ...session, alias: result.modelFallback });
+      if (current === context) updateSessionAlias();
+    }
     submitted.delete(context.id);
     if (replies.get(context.id) === reference) replies.delete(context.id);
     if (current === context) renderReply();
@@ -1888,7 +1983,7 @@ stop.addEventListener('click', async () => {
 try {
   const bootstrap = await connect();
   setText(connection, message('chat.connected'));
-  setText(model, modelLabel(bootstrap.alias));
+  setText(model, bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
   request('/api/settings/model').then(applyModel).catch(() => { setText(modelStatus, message('chat.could-not-load-model-settings-refresh-the')); });
   request('/api/settings/projects').then((entries) => {

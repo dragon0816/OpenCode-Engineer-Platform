@@ -154,8 +154,16 @@
             <h2 id="settings-model-title" data-i18n="ui.model"></h2>
             <p class="settings-help" data-i18n="ui.choose-the-default-model-for-new-sessions"></p>
             <p id="model-credentials"></p>
-            <ul id="model-health"></ul>
             <form id="model-settings">
+              <div class="settings-actions">
+                <button id="refresh-models" type="button" disabled data-i18n="model.refresh"></button>
+                <small id="model-discovery"></small>
+              </div>
+              <fieldset class="model-choices">
+                <legend data-i18n="model.menu-models"></legend>
+                <small id="model-limit"></small>
+                <ul id="model-health"></ul>
+              </fieldset>
               <label for="default-alias" data-i18n="ui.default-model-for-new-sessions"></label>
               <select id="default-alias" disabled></select>
               <div class="settings-actions">
@@ -164,6 +172,10 @@
                 <p id="model-settings-status" role="status"></p>
               </div>
             </form>
+            <div id="model-restart-bar" class="mcp-restart" hidden>
+              <p data-i18n="model.restart-required"></p>
+              <button id="model-restart" type="button" data-i18n="model.restart"></button>
+            </div>
             <details class="settings-advanced">
               <summary data-i18n="ui.advanced"></summary>
               <p data-i18n="ui.external-operators-manage-the-model-gateway-and"></p>
@@ -364,7 +376,7 @@
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
             </div>
-            <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status" disabled></select></label>
+            <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status session-model-fallback" disabled></select></label>
             <div class="composer-input-options">
               <button id="microphone" type="button" aria-pressed="false" hidden data-i18n="ui.start-dictation"></button>
               <label id="workbook-option" hidden><input id="workbook" type="checkbox"> <span data-i18n="ui.create-excel-file"></span></label>
@@ -376,6 +388,7 @@
         <div class="composer-status">
           <small id="session-model-help" data-i18n="ui.changes-apply-to-the-next-message"></small>
           <small id="session-model-status" role="status"></small>
+          <small id="session-model-fallback" role="status"></small>
           <small id="upload-status" role="status"></small>
         </div>
         </div>

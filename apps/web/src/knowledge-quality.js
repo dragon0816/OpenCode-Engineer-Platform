@@ -1,5 +1,5 @@
 import { bindFilePicker, message, optionText, setText, t } from './i18n.js';
-import { errorText, modelLabel, request, sampleKnowledgeID } from './api.js';
+import { errorText, request, sampleKnowledgeID } from './api.js';
 
 const find = (id) => document.getElementById(id);
 const kinds = { answerable: message('ui.answerable'), 'no-evidence': message('ui.missing-evidence'), conflict: message('ui.conflicting-evidence'), injection: message('ui.contains-injected-instructions') };
@@ -97,7 +97,7 @@ export function bindKnowledgeQuality(openPassage, messages) {
       catalog = data.sets;
       sets.replaceChildren(...catalog.map(({ name, builtIn }) => optionText(builtIn ? message('quality.standard-question-set') : name, name)));
       if (catalog.some(({ name }) => name === preferred)) sets.value = preferred;
-      aliases.replaceChildren(...data.aliases.map((alias) => optionText(modelLabel(alias), alias)));
+      aliases.replaceChildren(...data.aliases.map((alias) => optionText(alias, alias)));
       setText(status, selected.modelEnabled ? '' : message('quality.model-access-is-disabled-for-this-release'));
       render();
     } catch {

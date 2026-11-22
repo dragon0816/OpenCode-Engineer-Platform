@@ -32,10 +32,10 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
   const template = JSON.parse(readFileSync(atRepo('config/opencode.example.jsonc'), 'utf8'));
   const provider = template.providers[providerID];
   provider.settings = { baseURL: relay.baseURL, apiKey: relay.key };
-  for (const alias of aliases) provider.models[alias] = {
+  provider.models = Object.fromEntries(aliases.map((alias) => [alias, {
     modelID: alias, capabilities: { tools: true, input: ['text', 'image', 'pdf'], output: ['text'] },
     limit: { context: 32_000, output: 2048 },
-  };
+  }]));
   if (web) {
     template.agents.inspector.system = 'Answer the user using the supplied content. Explain when a document cannot be read. You are a read-only analysis assistant.';
     template.agents.workbook.system = 'Answer the user using the supplied content. Prepare workbook data only when the server gives a workbook output instruction.';
