@@ -20,6 +20,16 @@ function node(tag, text) {
   return element;
 }
 
+function cell(label) {
+  const value = node('td');
+  value.setAttribute('role', 'cell');
+  const caption = node('strong', label);
+  caption.className = 'channel-cell-label';
+  caption.setAttribute('aria-hidden', 'true');
+  value.append(caption);
+  return value;
+}
+
 export function bindChannels(getAgents, refreshAgents) {
   const table = document.getElementById('channel-accounts');
   const form = document.getElementById('channel-new');
@@ -57,10 +67,12 @@ export function bindChannels(getAgents, refreshAgents) {
     const { state, pollState, botName, agentId, accountId, bindingRevision, verified, handler } = account;
     const tr = node('tr');
     tr.dataset.channel = accountId;
+    tr.setAttribute('role', 'row');
     const bot = node('th', channelName(account));
     bot.scope = 'row';
+    bot.setAttribute('role', 'rowheader');
     if (botName || !['telegram-main', 'telegram-bi'].includes(accountId)) bot.setAttribute('data-ui-content', '');
-    const assignment = node('td');
+    const assignment = cell(message('channels.agent'));
     const select = node('select');
     setAttribute(select, 'aria-label', message('channels.agent'));
     agents(select, agentId, handler === 'bi_intake');
@@ -71,15 +83,15 @@ export function bindChannels(getAgents, refreshAgents) {
       assignment.append(label);
     }
     assignment.append(select);
-    const language = node('td');
+    const language = cell(message('agents.replyLocale'));
     const locale = replyLanguage(account.replyLocale);
     setAttribute(locale, 'aria-label', message('agents.replyLocale'));
     language.append(locale);
     locale.disabled = state === 'disabled';
-    const polling = node('td');
+    const polling = cell(message('channels.poll-status'));
     polling.append(node('p', verified ? message('channels.verified') : message('channels.unverified')),
       node('p', pollLabels[pollState]));
-    const actions = node('td');
+    const actions = cell(message('channels.actions'));
     const status = node('p');
     status.setAttribute('role', 'status');
     const operation = (key, action) => agentButton(actionLabels[key], async (event) => {
@@ -120,7 +132,7 @@ export function bindChannels(getAgents, refreshAgents) {
     try {
       const { accounts } = await request('/api/settings/channels');
       agents(target, target.value);
-      table.replaceChildren(...accounts.map(row));
+      table.replaceChildren(...[...accounts].sort((first, second) => Number(second.state === 'enabled') - Number(first.state === 'enabled')).map(row));
       if (focus) table.querySelector(`[data-channel="${CSS.escape(focus)}"] [data-channel-action]`)?.focus();
     } catch (error) { setText(status, errorText(error)); }
   }

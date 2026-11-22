@@ -128,16 +128,16 @@
             <h2 id="settings-channels-title" data-i18n="channels.title"></h2>
             <p class="settings-help" data-i18n="channels.assignment-help"></p>
             <button id="channel-refresh" type="button" data-i18n="channels.refresh"></button>
-            <div class="channel-table-scroll" role="region" tabindex="0" data-i18n-aria-label="channels.table">
-              <table class="channel-table">
-                <thead><tr>
-                  <th scope="col" data-i18n="channels.bot"></th>
-                  <th scope="col" data-i18n="channels.agent"></th>
-                  <th scope="col" data-i18n="agents.replyLocale"></th>
-                  <th scope="col" data-i18n="channels.poll-status"></th>
-                  <th scope="col" data-i18n="channels.actions"></th>
+            <div class="channel-table-scroll">
+              <table class="channel-table" role="table" data-i18n-aria-label="channels.table">
+                <thead role="rowgroup"><tr role="row">
+                  <th scope="col" role="columnheader" data-i18n="channels.bot"></th>
+                  <th scope="col" role="columnheader" data-i18n="channels.agent"></th>
+                  <th scope="col" role="columnheader" data-i18n="agents.replyLocale"></th>
+                  <th scope="col" role="columnheader" data-i18n="channels.poll-status"></th>
+                  <th scope="col" role="columnheader" data-i18n="channels.actions"></th>
                 </tr></thead>
-                <tbody id="channel-accounts"></tbody>
+                <tbody id="channel-accounts" role="rowgroup"></tbody>
               </table>
             </div>
             <form id="channel-new" class="settings-group">

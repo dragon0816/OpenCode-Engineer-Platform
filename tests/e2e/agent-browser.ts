@@ -217,7 +217,10 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await activate('#agent-cancel');
         await openChannels();
         await page.evaluate('window.scrollTo(0, 0)');
-        if (locale === 'zh-TW' && theme === 'light') await check('#settings-channels', '#channel-refresh', viewport + ' channels');
+        if (locale === 'zh-TW' && theme === 'light') {
+          await check('#settings-channels', '#channel-refresh', viewport + ' channels');
+          assert.equal(await page.evaluate("document.querySelector('#channel-accounts .channel-cell-label').checkVisibility()"), width < 800);
+        }
         await shot('channels', theme, viewport, locale);
         await rail();
         await activate('#open-review');
@@ -242,7 +245,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await setValue(`${channelRow} td:first-of-type select`, specialist);
   await click(`${channelRow} [data-channel-action=bind]`);
   await page.ready(`document.querySelector('${channelRow} td:first-of-type p')?.textContent === ${JSON.stringify(name)}`);
-  await page.evaluate(`document.querySelector('${channelRow} td:last-child button:nth-child(3)').click()`);
+  await page.evaluate(`document.querySelector('${channelRow} td:last-child button:nth-of-type(3)').click()`);
   await page.ready(`document.querySelector('${channelRow} [data-channel-action=bind]')?.textContent === '綁定'`);
   await rail();
   await page.evaluate(`document.querySelector('${specialistRow} summary').click()`);
