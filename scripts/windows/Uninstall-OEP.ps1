@@ -17,6 +17,7 @@ try {
     Guard-OEP $InstallRoot
     Guard-OEP $DataRoot
     Separate-OEP $InstallRoot $DataRoot
+    $script:failureLogRoot = $InstallRoot
     if ($RemoveData -and $ConfirmRemoveData -cne 'DELETE OEP DATA') {
         Fail-OEP '刪除資料需要 -ConfirmRemoveData "DELETE OEP DATA"。'
     }
@@ -36,13 +37,17 @@ try {
         [void](Root-OEP $path)
         if ([IO.Directory]::Exists($path)) {
             [void]@(Tree-OEP $path)
-            if (![IO.File]::Exists((Join-Path $path 'config/release.manifest.json'))) { Fail-OEP '目錄缺少 OEP 發行清單。' }
+            $manifest = Join-Path $path 'config/release.manifest.json'
+            if (![IO.File]::Exists($manifest)) { Fail-OEP '目錄缺少 OEP 發行清單。' $manifest }
         }
     }
     if ($RemoveData -and [IO.Directory]::Exists($DataRoot)) { [void]@(Tree-OEP $DataRoot) }
     if (!$PSCmdlet.ShouldProcess('OEP', '解除安裝')) { return }
     if (($All -or ($Version -and $Version -eq $current)) -and [IO.File]::Exists($pointer)) {
-        foreach ($link in Links-OEP) { [IO.File]::Delete((Root-OEP $link)) }
+        foreach ($link in Links-OEP) {
+            Check-OEP '移除 OEP 捷徑失敗。' 'OEP.lnk'
+            [IO.File]::Delete((Root-OEP $link))
+        }
         if ($env:OEP_MAINTENANCE_TEST -ne '1') {
             $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
             foreach ($name in @("OEP-Logon-$sid", "OEP-Backup-$sid")) {
@@ -51,19 +56,26 @@ try {
                 }
             }
         }
+        Check-OEP '移除目前版本指標失敗。' $pointer
         [IO.File]::Delete($pointer)
     }
     foreach ($path in $targets) {
-        if ([IO.Directory]::Exists($path)) { [IO.Directory]::Delete($path, $true) }
+        if ([IO.Directory]::Exists($path)) {
+            Check-OEP '移除發行版本目錄失敗。' $path
+            [IO.Directory]::Delete($path, $true)
+        }
     }
     if ([IO.Directory]::Exists($DataRoot)) {
-        if ($RemoveData) { [IO.Directory]::Delete($DataRoot, $true) }
+        if ($RemoveData) {
+            Check-OEP '移除資料目錄失敗。' $DataRoot
+            [IO.Directory]::Delete($DataRoot, $true)
+        }
         else { Log-OEP $DataRoot 'UNINSTALL OK' }
     }
     if ($RemoveData) { Write-Output 'OEP 解除安裝完成，資料已移除。' }
     else { Write-Output 'OEP 解除安裝完成，資料已保留。' }
 } catch {
-    [Console]::Error.WriteLine($script:failure)
+    Report-OEPFailure '解除安裝失敗'
     exit 1
 } finally {
     Unlock-OEP $mutex

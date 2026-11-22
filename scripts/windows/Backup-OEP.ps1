@@ -16,7 +16,10 @@ try {
     Guard-OEP $DataRoot
     Guard-OEP $Destination
     Separate-OEP $DataRoot $Destination
-    Separate-OEP (Root-OEP $InstallRoot) $Destination
+    $InstallRoot = Root-OEP $InstallRoot
+    Guard-OEP $InstallRoot
+    Separate-OEP $InstallRoot $Destination
+    $script:failureLogRoot = if ([IO.Directory]::Exists($InstallRoot)) { $InstallRoot } else { $DataRoot }
     Stopped-OEP $InstallRoot
     if (![IO.Directory]::Exists($DataRoot)) { Fail-OEP '找不到 OEP 資料目錄。' }
     if (!$PSCmdlet.ShouldProcess($Destination, '建立 OEP 備份')) { return }
@@ -30,13 +33,16 @@ try {
             } catch { continue }
         }
         foreach ($old in @($verified | Sort-Object Name -Descending | Select-Object -Skip $KeepLast)) {
-            if ($PSCmdlet.ShouldProcess($old.FullName, '移除較舊的 OEP 備份')) { [IO.Directory]::Delete($old.FullName, $true) }
+            if ($PSCmdlet.ShouldProcess($old.FullName, '移除較舊的 OEP 備份')) {
+                Check-OEP '移除較舊的備份目錄失敗。' $old.FullName $Destination
+                [IO.Directory]::Delete($old.FullName, $true)
+            }
         }
     }
     Log-OEP $DataRoot 'BACKUP OK'
     Write-Output ('備份完成。備份資料夾為 ' + [IO.Path]::GetFileName($target))
 } catch {
-    [Console]::Error.WriteLine($script:failure)
+    Report-OEPFailure '備份失敗'
     exit 1
 } finally {
     Unlock-OEP $mutex

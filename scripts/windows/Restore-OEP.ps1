@@ -18,7 +18,10 @@ try {
     $Backup = Root-OEP $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Backup)
     Guard-OEP $DataRoot
     Separate-OEP $Backup $DataRoot
-    Separate-OEP (Root-OEP $InstallRoot) $DataRoot
+    $InstallRoot = Root-OEP $InstallRoot
+    Guard-OEP $InstallRoot
+    Separate-OEP $InstallRoot $DataRoot
+    $script:failureLogRoot = if ([IO.Directory]::Exists($InstallRoot)) { $InstallRoot } else { $DataRoot }
     Stopped-OEP $InstallRoot
     $manifest = Read-Backup $Backup
     $nonempty = [IO.Directory]::Exists($DataRoot) -and @(Get-ChildItem -LiteralPath $DataRoot -Force).Count
@@ -40,7 +43,7 @@ try {
     $original = "$DataRoot.oep-restore-original-$id"
     Move-RestoreStage $stage $DataRoot $original
     if ([IO.Directory]::Exists($original)) { $old = $original }
-    Reconcile-Snapshot $DataRoot $manifest
+    Reconcile-Snapshot $DataRoot $Backup
     Log-OEP $DataRoot 'RESTORE OK'
     if ($old -and !$nonempty) { [IO.Directory]::Delete($old) }
     Write-Output '回復比對通過。資料筆數、SQLite 版本與發布修訂雜湊相符。'
@@ -48,7 +51,7 @@ try {
     Write-Output '請依需要重新設定下列使用者環境變數，再執行 Check-OEP-Credentials.ps1。'
     CredentialStatus-OEP $manifest.credentials
 } catch {
-    [Console]::Error.WriteLine($script:failure)
+    Report-OEPFailure '回復失敗'
     exit 1
 } finally {
     if ($stage -and [IO.Directory]::Exists($stage) -and !$old) { [IO.Directory]::Delete($stage, $true) }

@@ -16,7 +16,7 @@ import { maintenanceFixture } from './maintenance-fixture.ts';
 
 test('online backup and staged restore', { skip: process.platform !== 'win32' }, async (t) => {
   const fixture = maintenanceFixture();
-  const database = join(fixture.data, 'synthetic.sqlite');
+  const database = join(fixture.data, 'runs.sqlite');
   const backups = join(fixture.root, 'backups');
   const prior = join(fixture.root, 'prior');
   const db = new DatabaseSync(database);
@@ -97,15 +97,15 @@ test('online backup and staged restore', { skip: process.platform !== 'win32' },
       cards: snapshot.cards.length, passages: snapshot.passages.length, evidence: 0, relations: snapshot.relationships.length,
     }]);
     for (const [table, count] of Object.entries(counts)) {
-      assert.equal(metadata.databases['synthetic.sqlite'].counts[table], count);
+      assert.equal(metadata.databases['runs.sqlite'].counts[table], count);
     }
     fixture.run('Restore-OEP', ['-Backup', backup], /已有檔案/);
-    metadata.databases['synthetic.sqlite'].counts.cards = 0;
+    metadata.databases['runs.sqlite'].counts.cards = 0;
     writeFileSync(manifest, JSON.stringify(metadata));
     fixture.run('Restore-OEP', ['-Backup', backup, '-Force', '-ConfirmReplaceData', 'REPLACE OEP DATA'], /比對失敗/);
     assert.ok(existsSync(database));
     writeFileSync(manifest, original);
-    const stored = join(backup, 'synthetic.sqlite');
+    const stored = join(backup, 'runs.sqlite');
     const bytes = readFileSync(stored);
     bytes[0] ^= 1;
     writeFileSync(stored, bytes);

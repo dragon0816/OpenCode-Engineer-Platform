@@ -1,13 +1,38 @@
 $ErrorActionPreference = 'Stop'
-$script:failure = '作業失敗。請檢查權限、剩餘空間及使用中的檔案。'
-function Fail-OEP($Message) { $script:failure = $Message; throw 'Maintenance failed' }
+$script:failure = '【.】維護作業失敗。請檢查權限、剩餘空間及使用中的檔案。'
+function Relative-OEP([string]$Path, [string]$Base) {
+    if (!$Path) { return '.' }
+    if ([IO.Path]::IsPathFullyQualified($Path)) {
+        $scope = @($InstallRoot, $DataRoot, $Base) | Where-Object {
+            $_ -and [IO.Path]::IsPathFullyQualified($_) -and (Within-OEP $Path $_)
+        } | Select-Object -First 1
+        $Path = if ($scope) { [IO.Path]::GetRelativePath($scope, $Path) } else { [IO.Path]::GetFileName($Path) }
+    }
+    ($Path -replace '\\', '/' -replace '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', '�').Replace('】', '］')
+}
+function Check-OEP($Message, $Path = '.', $Base) {
+    $script:failure = "【$(Relative-OEP $Path $Base)】$Message"
+}
+function Fail-OEP($Message, $Path = '.', $Base) {
+    Check-OEP $Message $Path $Base
+    throw 'Maintenance failed'
+}
+function Report-OEPFailure($Operation, [switch]$Warning) {
+    $message = $script:failure
+    if ($Warning) { Write-Warning $message } else { [Console]::Error.WriteLine($message) }
+    if ($script:failureLogRoot -and !$WhatIfPreference -and [IO.Directory]::Exists($script:failureLogRoot)) {
+        try { Log-OEP $script:failureLogRoot "$Operation $message" }
+        catch { [Console]::Error.WriteLine('【maintenance.log】無法寫入維護失敗紀錄。') }
+        finally { $script:failure = $message }
+    }
+}
 function Root-OEP([string]$Path) {
     if (![IO.Path]::IsPathFullyQualified($Path)) { Fail-OEP '請指定完整路徑。' }
     $full = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
     if ($full -eq [IO.Path]::GetPathRoot($full)) { Fail-OEP '請勿指定磁碟根目錄。' }
     for ($at = $full; $at; $at = [IO.Path]::GetDirectoryName($at)) {
         $item = Get-Item -LiteralPath $at -Force -ErrorAction SilentlyContinue
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail-OEP '路徑含有連結。' }
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail-OEP '路徑含有連結。' $at }
     }
     $full
 }
@@ -23,30 +48,39 @@ function Guard-OEP($Path) {
         Separate-OEP $Path "$env:LOCALAPPDATA\Programs\OEP"
     }
 }
-function Tree-OEP($Root) {
+function Tree-OEP($Root, $Base = $Root) {
+    Check-OEP '無法列出目錄。請檢查目錄是否存在及其權限。' $Root $Base
     foreach ($item in Get-ChildItem -LiteralPath $Root -Force) {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType -eq 'HardLink') {
-            Fail-OEP '發現檔案或目錄連結。'
+            Fail-OEP '發現檔案或目錄連結。' $item.FullName $Base
         }
-        if ($item.PSIsContainer) { Tree-OEP $item.FullName } else { $item }
+        if ($item.PSIsContainer) { Tree-OEP $item.FullName $Base } else { $item }
+    }
+}
+function Assert-EntryOEP($Root, [string]$Relative) {
+    foreach ($part in $Relative.Split('/')) {
+        if ($part -notmatch '^[^\\/:*?"<>|\x00-\x1f]+$' -or $part -match '[ .]$|^(CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\.|$)') {
+            Fail-OEP '清單或壓縮檔含有不安全的路徑。' $Root
+        }
     }
 }
 function Entry-OEP($Root, [string]$Relative) {
-    foreach ($part in $Relative.Split('/')) {
-        if ($part -notmatch '^[^\\/:*?"<>|\x00-\x1f]+$' -or $part -match '[ .]$|^(CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\.|$)') {
-            Fail-OEP '清單或壓縮檔含有不安全的路徑。'
-        }
-    }
+    Assert-EntryOEP $Root $Relative
     Join-Path $Root $Relative
 }
-function Hash-OEP($Path) {
+function Hash-OEP($Path, $Base) {
+    Check-OEP '讀取檔案以計算 SHA-256 失敗。' $Path $Base
     $stream = [IO.File]::OpenRead($Path)
     $sha = [Security.Cryptography.SHA256]::Create()
     try { [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose(); $stream.Dispose() }
 }
-function Read-OEP($Path) { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable }
+function Read-OEP($Path, $Base) {
+    Check-OEP '讀取檔案或解析 JSON 失敗。' $Path $Base
+    Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
+}
 function Write-OEP($Path, $Value) {
+    Check-OEP '原子寫入 JSON 檔案失敗。' $Path
     $scratch = "$Path.$([guid]::NewGuid()).tmp"
     try {
         [IO.File]::WriteAllText($scratch, (ConvertTo-Json -InputObject $Value -Depth 30))
@@ -55,31 +89,34 @@ function Write-OEP($Path, $Value) {
 }
 function Log-OEP($Root, $Operation) {
     $path = Root-OEP (Join-Path $Root 'maintenance.log')
+    Check-OEP '附加維護紀錄失敗。' $path $Root
     [IO.File]::AppendAllText($path, "$([DateTime]::UtcNow.ToString('o')) $Operation" + [Environment]::NewLine)
 }
 function Lock-OEP {
+    Check-OEP '無法取得維護作業鎖。' 'maintenance.log'
     $mutex = [Threading.Mutex]::new($false, 'Local\OEP.Maintenance')
     try {
         try { $entered = $mutex.WaitOne(0) }
         catch [Threading.AbandonedMutexException] { $entered = $true }
-        if (!$entered) { Fail-OEP '另一項 OEP 維護作業正在執行。' }
+        if (!$entered) { Fail-OEP '另一項 OEP 維護作業正在執行。' 'maintenance.log' }
         $mutex
     } catch { $mutex.Dispose(); throw }
 }
 function Stopped-OEP([string]$InstallRoot) {
+    Check-OEP '無法檢查 OEP 執行程序或取得執行鎖。' 'current.json'
     foreach ($process in Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'opencode.exe'") {
         if ($process.Name -eq 'opencode.exe' -or $process.CommandLine -match '(?i)apps[/\\]+launcher[/\\]+src[/\\]+(?:web|main)\.ts|scripts[/\\]+windows[/\\]+runtime-worker\.mjs') {
             if ($InstallRoot -and $process.ExecutablePath -and (Within-OEP $process.ExecutablePath $InstallRoot)) {
-                Fail-OEP '這套 OEP 正在執行。請先從網頁停止服務。'
+                Fail-OEP '這套 OEP 正在執行。請先從網頁停止服務。' 'current.json'
             }
-            Fail-OEP '偵測到正在執行的 OEP 或 OpenCode。請先停止服務。'
+            Fail-OEP '偵測到正在執行的 OEP 或 OpenCode。請先停止服務。' 'current.json'
         }
     }
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $script:runtimeMutex = [Threading.Mutex]::new($false, "Global\OEP.Runtime.$sid")
     try { $script:runtimeHeld = $script:runtimeMutex.WaitOne(0) }
     catch [Threading.AbandonedMutexException] { $script:runtimeHeld = $true }
-    if (!$script:runtimeHeld) { Fail-OEP 'OEP 正在啟動或執行。請先停止服務。' }
+    if (!$script:runtimeHeld) { Fail-OEP 'OEP 正在啟動或執行。請先停止服務。' 'current.json' }
 }
 function Unlock-OEP($MaintenanceMutex) {
     if ($script:runtimeMutex) {
@@ -93,23 +130,25 @@ function Verify-OEP($Root, $Files, $Manifest) {
     foreach ($entry in $Files) {
         $path = Entry-OEP $Root $entry.path
         if ($path -eq (Join-Path $Root $Manifest) -or !$expected.Add($path) -or $entry.sha256 -cnotmatch '^[a-f0-9]{64}$') {
-            Fail-OEP '檔案清單格式錯誤或含有重複項目。'
+            Fail-OEP '檔案清單格式錯誤或含有重複項目。' $path $Root
         }
     }
     foreach ($file in Tree-OEP $Root) {
         if ($file.FullName -eq (Join-Path $Root $Manifest)) { continue }
-        if (!$expected.Remove($file.FullName)) { Fail-OEP '發現清單以外的檔案。' }
+        if (!$expected.Remove($file.FullName)) { Fail-OEP '發現清單以外的檔案。' $file.FullName $Root }
     }
-    if ($expected.Count) { Fail-OEP '缺少清單列出的檔案。' }
+    if ($expected.Count) { Fail-OEP '缺少清單列出的檔案。' ($expected | Sort-Object | Select-Object -First 1) $Root }
     foreach ($entry in $Files) {
         $path = Entry-OEP $Root $entry.path
-        if ([IO.FileInfo]::new($path).Length -ne $entry.size -or (Hash-OEP $path) -cne $entry.sha256) {
-            Fail-OEP '檔案大小或 SHA-256 不符。'
+        Check-OEP '讀取檔案大小失敗。' $path $Root
+        if ([IO.FileInfo]::new($path).Length -ne $entry.size -or (Hash-OEP $path $Root) -cne $entry.sha256) {
+            Fail-OEP '檔案大小或 SHA-256 不符。' $path $Root
         }
     }
 }
-function Version-OEP($Value) {
-    if ($Value -cnotmatch '^\d+\.\d+\.\d+$') { Fail-OEP '版本格式錯誤。' }
+function Version-OEP($Value, $Path = 'current.json') {
+    if ($Value -cnotmatch '^\d+\.\d+\.\d+$') { Fail-OEP '版本格式錯誤。' $Path }
+    Check-OEP '解析版本失敗。' $Path
     [version]$Value
 }
 function Links-OEP {
@@ -130,9 +169,11 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
         $arguments = """$start"" ""$DataRoot"""
     }
     $links = @(Links-OEP)
+    Check-OEP '建立捷徑管理物件失敗。' 'OEP.lnk'
     $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $links) {
         $link = Root-OEP $link
+        Check-OEP '更新 OEP 捷徑失敗。' 'OEP.lnk'
         if ($link -eq $links[1] -and !$DesktopShortcut) { [IO.File]::Delete($link); continue }
         $shortcut = $shell.CreateShortcut($link)
         $shortcut.TargetPath = $launcher
@@ -142,6 +183,7 @@ function Publish-OEPShortcuts($Target, $DataRoot) {
     }
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $name = "OEP-Logon-$sid"
+    Check-OEP '更新 OEP 登入排程失敗。' 'current.json'
     if ($AutoStart) {
         $action = New-ScheduledTaskAction -Execute $launcher -Argument $arguments
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
@@ -180,39 +222,43 @@ function Check-Prerequisites($Release) {
     }
     $bundled = $Release.manifest.variant -ceq 'bundled'
     $node = if ($bundled) { Entry-OEP $Release.root 'vendor/node/node.exe' } else { Node-OEP $null }
+    Check-OEP '執行 Node.js 版本檢查失敗。' 'vendor/node/node.exe'
     if (!$node -or ![IO.File]::Exists($node) -or (& $node -p "process.versions.node.split('.')[0]+'/'+process.arch" 2>$null) -ne '24/x64') {
-        if ($bundled) { Fail-OEP '發行套件內的 Node.js 執行環境無法使用。' }
-        Fail-OEP '需要 Node.js 24 x64。下載 https://nodejs.org/dist/latest-v24.x/ 或執行 winget install --id OpenJS.NodeJS.LTS --exact，並確認版本為 24。'
+        if ($bundled) { Fail-OEP '發行套件內的 Node.js 執行環境無法使用。' 'vendor/node/node.exe' }
+        Fail-OEP '需要 Node.js 24 x64。請安裝後重新執行。' 'node.exe'
     }
     $python = if ($env:OEP_PYTHON) { $env:OEP_PYTHON } else { 'python.exe' }
-    $script:failure = '需要 Python 3.12 和 openpyxl、defusedxml。執行 winget install --id Python.Python.3.12 --exact，再依操作文件安裝套件。'
+    Check-OEP '需要 Python 3.12 和 openpyxl、defusedxml。請依操作文件安裝。' 'python.exe'
     if ($bundled) {
         $python = Entry-OEP $Release.root 'vendor/python/python.exe'
-        $script:failure = '發行套件內的 Python 執行環境無法使用。'
-        if (![IO.File]::Exists($python)) { Fail-OEP $script:failure }
+        Check-OEP '發行套件內的 Python 執行環境無法使用。' 'vendor/python/python.exe'
+        if (![IO.File]::Exists($python)) { throw 'Maintenance failed' }
     }
     & $python -I -c 'import sys,openpyxl,defusedxml; sys.exit(sys.version_info[:2] != (3,12))' 2>$null
-    if ($LASTEXITCODE) { Fail-OEP $script:failure }
-    $script:failure = '作業失敗。請檢查權限、剩餘空間及使用中的檔案。'
+    if ($LASTEXITCODE) { throw 'Maintenance failed' }
 }
 function Expand-Release($Archive, $Destination) {
     $sums = Root-OEP (Join-Path (Split-Path $Archive) 'SHA256SUMS')
     if (Test-Path -LiteralPath $sums) {
+        Check-OEP '讀取 ZIP 雜湊清單失敗。' $sums
         $pattern = '^([a-fA-F0-9]{64})  ' + [regex]::Escape([IO.Path]::GetFileName($Archive)) + '$'
         $matchesForZip = @(Get-Content -LiteralPath $sums | Where-Object { $_ -cmatch $pattern })
         if ($matchesForZip.Count -ne 1 -or $matchesForZip[0].Substring(0,64) -ne (Hash-OEP $Archive)) {
-            Fail-OEP 'ZIP 的 SHA-256 與 SHA256SUMS 不符。'
+            Fail-OEP 'ZIP 的 SHA-256 與 SHA256SUMS 不符。' $Archive
         }
     }
+    Check-OEP '開啟 ZIP 失敗。' $Archive
     $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
     try {
         $entries = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($entry in $zip.Entries) {
-            $path = Entry-OEP $Destination $entry.FullName
+            Assert-EntryOEP $Archive $entry.FullName
+            $path = Join-Path $Destination $entry.FullName
             $mode = ($entry.ExternalAttributes -shr 16) -band 0xf000
             if (!$entries.Add($path) -or ($mode -ne 0 -and $mode -ne 0x8000) -or ($entry.ExternalAttributes -band 0x450)) {
-                Fail-OEP '壓縮檔含有連結、目錄或重複項目。'
+                Fail-OEP '壓縮檔含有連結、目錄或重複項目。' $entry.FullName
             }
+            Check-OEP '解壓縮 ZIP 項目失敗。' $entry.FullName
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path)
         }
@@ -224,13 +270,15 @@ function Read-ReleaseOEP($sourcePath, $scratch) {
         Expand-Release $sourcePath $scratch
         $sourcePath = $scratch
     }
-    [void]@(Tree-OEP $sourcePath)
     $manifestPath = Join-Path $sourcePath $manifestName
-    $manifest = Read-OEP $manifestPath
-    if ($manifest.format -ne 1 -or $manifest.platform -cne 'windows-x64' -or !$manifest.files) { Fail-OEP '發行清單格式不符。' }
-    $version = Version-OEP $manifest.version
+    [void]@(Tree-OEP $sourcePath)
+    $manifest = Read-OEP $manifestPath $sourcePath
+    if ($manifest.format -ne 1 -or $manifest.platform -cne 'windows-x64' -or !$manifest.files) {
+        Fail-OEP '發行清單格式不符。' $manifestPath $sourcePath
+    }
+    $version = Version-OEP $manifest.version (Relative-OEP $manifestPath $sourcePath)
     Verify-OEP $sourcePath $manifest.files $manifestName
-    $manifestHash = Hash-OEP $manifestPath
+    $manifestHash = Hash-OEP $manifestPath $sourcePath
     @{ root = $sourcePath; manifest = $manifest; version = $version; hash = $manifestHash }
 }
 function Stage-ReleaseOEP($Release, $target, $stage) {
@@ -239,18 +287,25 @@ function Stage-ReleaseOEP($Release, $target, $stage) {
     $manifestHash = $Release.hash
     $sourcePath = $Release.root
     if (Test-Path -LiteralPath $target) {
-        Verify-OEP $target $manifest.files $manifestName
-        if ((Hash-OEP (Join-Path $target $manifestName)) -ne $manifestHash) { Fail-OEP '相同版本的發行清單不同。' }
+        Verify-StagedRelease $Release $target
     } else {
+        Check-OEP '建立發行版本的安裝目錄失敗。' $target
         [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         foreach ($relative in @($manifest.files.path) + $manifestName) {
             $destination = Entry-OEP $stage $relative
+            Check-OEP '複製或解除封鎖發行檔案失敗。' (Join-Path $target $relative)
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
             [IO.File]::Copy((Entry-OEP $sourcePath $relative), $destination)
             if ($relative -match '\.(?:ps1|vbs)$') { Unblock-File -LiteralPath $destination }
         }
-        Verify-OEP $stage $manifest.files $manifestName
-        if ((Hash-OEP (Join-Path $stage $manifestName)) -ne $manifestHash) { Fail-OEP '發行清單在複製時變更。' }
+        Verify-StagedRelease $Release $stage
+        Check-OEP '將暫存目錄移入發行版本目錄失敗。' $target
         [IO.Directory]::Move($stage, $target)
     }
+}
+function Verify-StagedRelease($Release, $Target) {
+    $manifestName = 'config/release.manifest.json'
+    Verify-OEP $Target $Release.manifest.files $manifestName
+    $path = Join-Path $Target $manifestName
+    if ((Hash-OEP $path $Target) -cne $Release.hash) { Fail-OEP '相同版本的發行清單不同。' $path $Target }
 }

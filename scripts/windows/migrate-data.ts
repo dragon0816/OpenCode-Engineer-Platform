@@ -5,6 +5,7 @@ import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
+import { diagnosticPath } from './snapshot-paths.mjs';
 
 function describe(path: string) {
   using db = new DatabaseSync(path, { readOnly: true });
@@ -14,6 +15,8 @@ function describe(path: string) {
   return { userVersion: db.prepare('PRAGMA user_version').get()?.user_version, counts };
 }
 
+let failurePath = '.';
+let failureCheck = '讀取資料根目錄參數失敗。';
 try {
   const root = process.argv[2];
   if (!root) throw new Error('Missing data root');
@@ -28,13 +31,17 @@ try {
     Object.entries(migrations).flatMap(([name, migrate]) => {
       const key = directory + name;
       const path = join(root, key);
+      failurePath = key;
+      failureCheck = '遷移前讀取 SQLite 結構及筆數失敗。';
       if (!existsSync(path)) return [];
       const before = describe(path);
+      failureCheck = '套用 SQLite 結構遷移失敗。請檢查版本、權限和剩餘空間。';
       migrate(path);
+      failureCheck = '遷移後讀取 SQLite 結構及筆數失敗。';
       return [[key, { before, after: describe(path) }]];
     })));
   console.log(JSON.stringify(result));
 } catch {
-  console.error('資料庫遷移失敗。請檢查資料庫版本、權限和剩餘空間。');
+  console.error(`【${diagnosticPath(failurePath)}】新版資料庫遷移失敗。${failureCheck}`);
   process.exitCode = 1;
 }

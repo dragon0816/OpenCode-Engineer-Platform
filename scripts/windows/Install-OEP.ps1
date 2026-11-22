@@ -8,7 +8,7 @@ param(
     [switch]$AllowDowngrade
 )
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    [Console]::Error.WriteLine('PowerShell 7 is required. Run winget install --id Microsoft.PowerShell --exact, then rerun the installer with pwsh.')
+    [Console]::Error.WriteLine('【scripts/windows/Install-OEP.ps1】需要 PowerShell 7。請安裝後使用 pwsh 重新執行。')
     exit 1
 }
 . "$PSScriptRoot/OEP-Maintenance.ps1"
@@ -22,6 +22,7 @@ try {
     Guard-OEP $InstallRoot
     Guard-OEP $DataRoot
     Separate-OEP $InstallRoot $DataRoot
+    $script:failureLogRoot = $InstallRoot
     $sourcePath = Root-OEP $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Source)
     Separate-OEP $sourcePath $InstallRoot
     Separate-OEP $sourcePath $DataRoot
@@ -35,13 +36,14 @@ try {
     $currentPath = Root-OEP (Join-Path $InstallRoot 'current.json')
     if (Test-Path -LiteralPath $currentPath) {
         $current = Read-OEP $currentPath
-        if ($version -lt (Version-OEP $current.version) -and !$AllowDowngrade) { Fail-OEP '已安裝較新版本。若確定要降版，請加上 -AllowDowngrade。' }
+        if ($version -lt (Version-OEP $current.version) -and !$AllowDowngrade) { Fail-OEP '已安裝較新版本。若確定要降版，請加上 -AllowDowngrade。' $currentPath }
     }
     $target = Root-OEP (Join-Path $InstallRoot $manifest.version)
     if (!$PSCmdlet.ShouldProcess($target, '安裝 OEP')) { return }
 
     $stage = Join-Path $InstallRoot ('.install-' + [guid]::NewGuid())
     Stage-ReleaseOEP $release $target $stage
+    Check-OEP '建立資料根目錄失敗。' $DataRoot
     [void][IO.Directory]::CreateDirectory($DataRoot)
     Publish-OEPShortcuts $target $DataRoot
     Write-OEP $currentPath @{
@@ -51,7 +53,7 @@ try {
     }
     Write-Output 'OEP 安裝完成。請從開始功能表開啟 OEP。'
 } catch {
-    [Console]::Error.WriteLine($script:failure)
+    Report-OEPFailure '安裝失敗'
     exit 1
 } finally {
     foreach ($temp in @($scratch, $stage)) {
