@@ -14,6 +14,7 @@ const transitions: Record<RunState, RunState[]> = {
   verified: [],
 };
 
+export const runLedgerVersion = 1;
 export const webLedgerVersion = 3;
 type WebMigration = { migrate: (db: DatabaseSync) => void; verify: (db: DatabaseSync) => void };
 
@@ -31,15 +32,16 @@ export class Ledger {
   }
 
   private migrate(file: string, web?: WebMigration) {
+    const expectedVersion = web ? webLedgerVersion : runLedgerVersion;
     const current = () => {
       const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
-      if (version > (web ? webLedgerVersion : 1)) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
+      if (version > expectedVersion) throw new Error('執行紀錄資料庫版本比程式新。請使用新版程式或先回退資料。');
       if (version < 0) throw new Error('執行紀錄資料庫版本無效。');
       return version;
     };
     const version = current();
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 4000;');
-    if (version === (web ? webLedgerVersion : 1)) {
+    if (version === expectedVersion) {
       web?.verify(this.db);
       return;
     }
@@ -48,7 +50,7 @@ export class Ledger {
       const version = current();
       if (version === 0) {
         this.db.exec(readFileSync(atRepo('apps/adapter/migrations/001_runs.sql'), 'utf8'));
-        this.db.exec('PRAGMA user_version = 1');
+        this.db.exec(`PRAGMA user_version = ${runLedgerVersion}`);
       }
       if (web && version < 2) {
         this.db.exec(readFileSync(atRepo('apps/adapter/migrations/002_attachments.sql'), 'utf8'));

@@ -1,4 +1,6 @@
-const storeFiles = ['runs.sqlite', 'web.sqlite', 'telegram-chat.sqlite', 'knowledge.sqlite', 'telegram.sqlite'];
+import { dataMigrations } from './data-migrations.ts';
+
+const storeFiles = Object.keys(dataMigrations);
 const knownDatabases = new Set([
   ...['', 'web/'].flatMap((prefix) => storeFiles.map((name) => prefix + name)),
   'web/profile/data/opencode/opencode.db',

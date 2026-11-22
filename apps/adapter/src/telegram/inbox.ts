@@ -12,6 +12,7 @@ export type Message = {
 export type Update = { update_id: number; message?: Message };
 export type Intake = { bot: Bot; id: number; topic: number; payload: string };
 export type Lane = 'work' | 'command';
+export const telegramInboxVersion = 1;
 const laneOf = (bot: Bot, text: unknown): Lane => typeof text === 'string' &&
   (bot === 'main' ? /^\/ask(?:\s|$)/.test(text) : text.trim() === '/status') ? 'command' : 'work';
 
@@ -32,10 +33,10 @@ export class TelegramInbox {
 
   private migrate() {
     const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
-    if (version > 1) throw new Error('Telegram 資料庫版本比程式新。請使用新版程式或先回退資料。');
+    if (version > telegramInboxVersion) throw new Error('Telegram 資料庫版本比程式新。請使用新版程式或先回退資料。');
     if (version < 0) throw new Error('Telegram 資料庫版本無效。');
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
-    if (version === 1) return;
+    if (version === telegramInboxVersion) return;
     this.transaction(() => {
       this.db.exec(`CREATE TABLE IF NOT EXISTS cursor(bot TEXT PRIMARY KEY, next INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS inbox(bot TEXT, id INTEGER, topic INTEGER NOT NULL,
@@ -45,7 +46,7 @@ export class TelegramInbox {
         due INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(bot,id));`);
       const columns = this.db.prepare('PRAGMA table_info(inbox)').all();
       if (!columns.some((column) => column.name === 'firstSeen')) this.addInboxColumns();
-      this.db.exec('CREATE INDEX IF NOT EXISTS inbox_open ON inbox(bot,lane,topic,id) WHERE done=0; PRAGMA user_version=1');
+      this.db.exec(`CREATE INDEX IF NOT EXISTS inbox_open ON inbox(bot,lane,topic,id) WHERE done=0; PRAGMA user_version=${telegramInboxVersion}`);
     });
   }
 

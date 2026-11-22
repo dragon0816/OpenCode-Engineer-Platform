@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { legacyAgentRows } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 
 // Tables present before any upgrade-tracked addition; everything else must be allow-listed.
@@ -19,9 +20,10 @@ function allowedEmptyTables(name: string) {
   return [...body[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
 }
 
-function run(file: string, args: string[], failure?: RegExp) {
+function run(file: string, args: string[], failure?: RegExp, release?: string) {
   const result = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', file, ...args],
-    { encoding: 'utf8', timeout: 15_000 });
+    { encoding: 'utf8', timeout: 15_000, cwd: release,
+      env: release ? { ...process.env, OEP_REPO_ROOT: release } : process.env });
   assert.ifError(result.error);
   assert.equal(result.status, failure ? 1 : 0, result.stderr);
   if (failure) assert.match(result.stderr, failure);
@@ -94,6 +96,12 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     }
     assert.ok(existsSync(join(web, 'agents/bi/model-work')));
     reconcile();
+    {
+      using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
+      db.exec('PRAGMA user_version=1');
+      reconcile(/【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/);
+      db.exec('PRAGMA user_version=2');
+    }
     const repeat = JSON.parse(migrate(data));
     for (const { before, after } of Object.values(repeat) as { before: unknown; after: unknown }[]) {
       assert.deepEqual(after, before);
@@ -159,6 +167,32 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     writeFileSync(path, bytes);
     assert.deepEqual(readFileSync(join(data, artifactPath)), readFileSync(join(copy, artifactPath)));
     reconcile();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('same-version repair reconciles the historical candidate schema and rejects a wrong version', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-phase3b-repair-'));
+  try {
+    const data = join(root, 'data');
+    const copy = join(root, 'backup');
+    const release = join(root, 'candidate');
+    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0']) {
+      cpSync(path, join(release, path), { recursive: true });
+    }
+    const store = join(release, knowledgeStorePath);
+    writeFileSync(store, historicalKnowledgeStore(readFileSync(store, 'utf8')));
+    const { web } = seedPhase3bFixture(data);
+    backup(data, copy);
+    const migration = JSON.parse(run('scripts/windows/migrate-data.ts', [data], undefined, release));
+    const knowledge = migration['web/knowledge.sqlite'];
+    assert.equal(knowledge.before.userVersion, 1);
+    assert.deepEqual(knowledge.after, knowledge.before);
+    const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure, release);
+    reconcile();
+
+    using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
+    db.exec('PRAGMA user_version=2');
+    reconcile(/【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

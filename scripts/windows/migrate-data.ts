@@ -1,11 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
-import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
-import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
-import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { prepareBiWorkspace } from '../../apps/adapter/src/runs/agent-ledger.ts';
+import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath } from './snapshot-paths.mjs';
 
 function describe(path: string) {
@@ -21,15 +18,8 @@ let failureCheck = '讀取資料根目錄參數失敗。';
 try {
   const root = process.argv[2];
   if (!root) throw new Error('Missing data root');
-  const migrations = {
-    'runs.sqlite': (path: string) => new Ledger(path).close(),
-    'web.sqlite': (path: string) => new WebStore(path).close(),
-    'telegram-chat.sqlite': (path: string) => new WebStore(path).close(),
-    'knowledge.sqlite': (path: string) => new KnowledgeStore(path).close(),
-    'telegram.sqlite': (path: string) => new TelegramInbox(path, false).db.close(),
-  };
   const result = Object.fromEntries(['', 'web/'].flatMap((directory) =>
-    Object.entries(migrations).flatMap(([name, migrate]) => {
+    Object.entries(dataMigrations).flatMap(([name, { migrate }]) => {
       const key = directory + name;
       const path = join(root, key);
       failurePath = key;

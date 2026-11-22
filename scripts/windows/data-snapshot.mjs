@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, lsta
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
-import { webLedgerVersion } from '../../apps/adapter/src/runs/ledger.ts';
+import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 
 const [mode, root, destination] = process.argv.slice(2);
@@ -213,7 +213,8 @@ function verifyEmptyAdditions(name, counts, tables) {
 
 async function verifyNewCentralStore(name, next, before) {
   const chat = name.replace(/web\.sqlite$/, 'telegram-chat.sqlite');
-  if (name === chat || !name.endsWith('web.sqlite') || !Object.hasOwn(before, chat) || next.userVersion !== webLedgerVersion) {
+  if (name === chat || !name.endsWith('web.sqlite') || !Object.hasOwn(before, chat) ||
+      next.userVersion !== dataMigrations['web.sqlite'].version) {
     throw new SnapshotError(name, '升級比對失敗。出現未預期的受管資料庫。');
   }
   await check(name, '升級比對失敗。無法驗證新建的中央工作台資料庫。', () => useDatabase(join(root, name), (db) => {
@@ -248,10 +249,12 @@ async function reconcileUpgrade() {
     if (!same(prior.revisions, next.revisions) || !same(prior.publicationCounts, next.publicationCounts)) {
       throw new SnapshotError(name, '升級比對失敗。發布修訂雜湊或修訂筆數不符。');
     }
-    const channel = basename(name) === 'telegram-chat.sqlite';
-    const web = channel || basename(name) === 'web.sqlite';
-    const knowledge = basename(name) === 'knowledge.sqlite';
-    if (web && next.userVersion !== webLedgerVersion || knowledge && next.userVersion !== 2) {
+    const file = basename(name).toLowerCase();
+    const channel = file === 'telegram-chat.sqlite';
+    const web = channel || file === 'web.sqlite';
+    const knowledge = file === 'knowledge.sqlite';
+    const migration = dataMigrations[file];
+    if (migration && next.userVersion !== migration.version) {
       throw new SnapshotError(name, '升級比對失敗。SQLite user_version 與新版不符。');
     }
     const seedWeb = web && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;

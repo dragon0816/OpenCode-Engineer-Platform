@@ -10,6 +10,9 @@ import { evidenceRanker, indexedTerms, matchQuery, normalizedPassage } from './r
 import { canonical, compareRepositoryPublications, digestPattern, string, sha256, validateSnapshot } from './snapshot.ts';
 import type { Snapshot } from './snapshot.ts';
 
+const vaultClassificationsVersion = 2;
+export const knowledgeSchemaVersion = vaultClassificationsVersion;
+
 const benchmarksMigration = `
   CREATE TABLE IF NOT EXISTS benchmark_sets (
     vault TEXT NOT NULL, name TEXT NOT NULL, questions TEXT NOT NULL, PRIMARY KEY(vault, name)
@@ -87,10 +90,10 @@ export class KnowledgeStore {
           const version = this.version(false);
           if (version === 0) this.db.exec(schema);
           this.db.exec(ingestMigration + jobsMigration + benchmarksMigration);
-          if (version < 2) {
+          if (version < vaultClassificationsVersion) {
             this.db.exec(vaultClassificationsMigration);
             if (this.db.prepare('PRAGMA foreign_key_check').get()) throw new Error('Knowledge foreign keys are invalid');
-            this.db.exec('PRAGMA user_version=2');
+            this.db.exec(`PRAGMA user_version=${vaultClassificationsVersion}`);
           }
         });
       }
@@ -106,7 +109,7 @@ export class KnowledgeStore {
 
   private version(readOnly: boolean) {
     const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-    if (version > 2) throw new Error('知識資料庫版本比程式新。請使用新版程式或先回退資料。');
+    if (version > knowledgeSchemaVersion) throw new Error('知識資料庫版本比程式新。請使用新版程式或先回退資料。');
     if (version < 0 || (version === 0 && readOnly)) throw new Error('知識資料庫版本無效。');
     return version;
   }

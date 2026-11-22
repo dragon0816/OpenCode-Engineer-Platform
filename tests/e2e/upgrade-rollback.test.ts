@@ -11,6 +11,7 @@ import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { canonical, sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { goldFixture } from '../fixtures/knowledge/gold.ts';
+import { historicalKnowledgeStore, knowledgeStorePath as storeFile } from '../fixtures/upgrade/historical-knowledge.ts';
 import { seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { maintenanceFixture } from './maintenance-fixture.ts';
 
@@ -25,15 +26,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     const manifest = JSON.parse(strFromU8(files[manifestName]));
     const [major, minor, patch] = manifest.version.split('.').map(Number);
     const version = [major, minor, patch + 1].join('.');
-    const storeFile = 'packages/knowledge/src/store.ts';
-    const storeCode = strFromU8(files[storeFile]);
-    const versionGuard = 'if (version > 2)';
-    const sliceMigration = /^          if \(version < 2\) \{[\s\S]*?^          }$/m;
-    assert.ok(storeCode.includes(versionGuard));
-    assert.match(storeCode, sliceMigration);
-    // The old test package has the v1 reader and writer and opens the pinned historical DDL.
-    const oldStoreCode = storeCode.replace(versionGuard, 'if (version > 1)')
-      .replace(sliceMigration, "          if (version === 0) this.db.exec('PRAGMA user_version=1');");
+    const oldStoreCode = historicalKnowledgeStore(strFromU8(files[storeFile]));
     function fixtureZip(release: string, changed: string, files: Record<string, Uint8Array>) {
       const metadata = { ...manifest, version: release, files: manifest.files.map((file: { path: string }) =>
         (file.path === changed || file.path === storeFile) ? { ...file, sha256: sha256(files[file.path]), size: files[file.path].length } : file) };
@@ -207,10 +200,31 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
     assert.ok(!existsSync(join(fixture.install, failedVersion)));
     assert.deepEqual(readFileSync(currentLicense), currentBytes);
     assert.deepEqual(readFileSync(previousTarget), previousBytes);
+
+    const wrongSchemaVersion = [major, minor, patch + 3].join('.');
+    const wrongSchema = fixtureZip(wrongSchemaVersion, migrationFile, {
+      ...files,
+      [migrationFile]: strToU8(strFromU8(files[migrationFile]) + `
+        const db = new DatabaseSync(join(process.argv[2], 'web', 'knowledge.sqlite'));
+        db.exec('PRAGMA user_version=1'); db.close();`),
+    });
+    assert.match(fixture.run('Upgrade-OEP', ['-Source', wrongSchema.path],
+      /【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/), /已回退至/);
+    restored();
+    assert.equal(read(journalPath).migration['web/knowledge.sqlite'].after.userVersion, 2);
+    assert.ok(!existsSync(join(fixture.install, wrongSchemaVersion)));
+
     const damaged = currentLicense;
     appendFileSync(damaged, 'damaged');
     fixture.run('Upgrade-OEP', ['-Source', v1, '-AllowSameVersion']);
     assert.equal(sha256(readFileSync(damaged)), sha256(files.LICENSE));
+    assert.equal(read(pointer).version, oldVersion);
+    const journal = read(journalPath);
+    assert.equal(journal.state, 'committed');
+    assert.equal(journal.repair, true);
+    const repairedKnowledge = journal.migration['web/knowledge.sqlite'];
+    assert.equal(repairedKnowledge.before.userVersion, 1);
+    assert.deepEqual(repairedKnowledge.after, repairedKnowledge.before);
   } finally { fixture.cleanup(); }
 });
 
