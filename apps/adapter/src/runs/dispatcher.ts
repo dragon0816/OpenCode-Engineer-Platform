@@ -5,6 +5,7 @@ type Recovery = Result | 'never-started';
 type Handler = {
   available?: (item: WorkItem) => boolean;
   execute: (item: WorkLease, start: () => void, signal: AbortSignal) => Promise<Result>;
+  retryBeforeStart?: (item: WorkLease, now: number) => number | undefined;
   recover?: (item: WorkLease) => Promise<Recovery | undefined>;
   canResolve?: (item: WorkLease, outcome: ResolvedOutcome) => Promise<boolean>;
   resolved?: (item: WorkLease, outcome: ResolvedOutcome) => void;
@@ -144,9 +145,12 @@ export class Dispatcher {
     try {
       result = await handler.execute(item, start, this.stop.signal);
     } catch {
-      if (this.stop.signal.aborted && !started) {
-        this.items.requeue(item);
-        return;
+      if (!started) {
+        const retryAt = this.stop.signal.aborted ? this.clock() : handler.retryBeforeStart?.(item, this.clock());
+        if (retryAt !== undefined) {
+          this.items.requeue(item, retryAt);
+          return;
+        }
       }
       result = started ? { state: 'indeterminate', reason: 'outcome-unknown' } : { state: 'failed', reason: 'dispatch-failed' };
     }

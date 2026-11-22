@@ -6,7 +6,7 @@ import { channelText } from '../channels/catalog.ts';
 
 export const workDeadline = 120_000;
 export const maxWorkAttempts = 20;
-const retryInterval = 6000;
+export const retryInterval = 6000;
 const pollSeconds = 25;
 const maxResponseBytes = 8 * 1024 * 1024;
 

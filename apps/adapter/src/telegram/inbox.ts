@@ -130,6 +130,13 @@ export class TelegramInbox extends ChannelSpool {
     return this.db.prepare("SELECT work_id AS id FROM channel_inbound WHERE status='handed_off' AND work_id IS NOT NULL").all();
   }
 
+  reschedule(destination: Destination, event: number, workId: string, due: number, limit: number) {
+    return Boolean(this.db.prepare(`UPDATE channel_inbound SET attempts=attempts+1,due_at=? WHERE
+      account_id=? AND agent_id=? AND binding_revision=? AND conversation_key=? AND event_key=?
+      AND work_id=? AND status='handed_off' AND attempts<?`).run(due, destination.accountId, destination.agentId,
+      destination.bindingRevision, destination.conversationKey, String(event), workId, limit).changes);
+  }
+
   notify(bot: Bot, id: string, topic: number, text: string, locale: ChannelLocale = 'zh-TW') {
     this.enqueueOutbound({ ...legacyBinding(bot), conversationKey: topicKey(topic), effectKey: id, locale, text });
   }

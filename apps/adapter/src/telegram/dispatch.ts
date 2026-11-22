@@ -5,6 +5,7 @@ import type { Dispatcher } from '../runs/dispatcher.ts';
 import type { WorkItem } from '../runs/work-items.ts';
 import type { TelegramAccounts } from './accounts.ts';
 import type { Intake, Message, TelegramInbox } from './inbox.ts';
+import { maxWorkAttempts, retryInterval } from './poller.ts';
 import { turnId } from './router.ts';
 import type { TelegramRouter } from './router.ts';
 
@@ -33,6 +34,11 @@ export function dispatchTelegram(dispatcher: Dispatcher, inbox: TelegramInbox, c
 
   dispatcher.register(kind, {
     available: (item) => Boolean(connection(item) && receipt(item)?.status === 'handed_off'),
+    retryBeforeStart(item, now) {
+      const { destination, id } = envelope(item);
+      const due = Math.min(item.expiresAt!, now + retryInterval);
+      if (due > now && inbox.reschedule(destination, id, item.id, due, maxWorkAttempts)) return due;
+    },
     async execute(item, start, stop) {
       const saved = receipt(item);
       const live = connection(item);
@@ -58,7 +64,8 @@ export function dispatchTelegram(dispatcher: Dispatcher, inbox: TelegramInbox, c
         return { state: 'failed', reason: 'channel-handler-incomplete' };
       }
       finish(item, reply);
-      return { state: 'succeeded' };
+      const run = item.runId && chat.workRunState(item);
+      return { state: run === 'cancelled' || run === 'failed' ? run : 'succeeded' };
     },
     async recover(item) {
       const saved = receipt(item);

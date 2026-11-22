@@ -111,7 +111,14 @@ export class WorkItems {
           (item.effect_class='write' AND held.effect_class='write' AND held.agent_id=item.agent_id)
           OR json_extract(held.payload,'$.serialKey')=json_extract(item.payload,'$.serialKey')))
         ORDER BY CASE source WHEN 'direct' THEN 0 WHEN 'delegation' THEN 1 ELSE 2 END, enqueued_at, id`);
-      const candidate = (rows.all(now, now) as WorkRow[]).map(decode).find(available);
+      let candidate: WorkItem | undefined;
+      for (const row of rows.iterate(now, now) as Iterable<WorkRow>) {
+        const item = decode(row);
+        if (available(item)) {
+          candidate = item;
+          break;
+        }
+      }
       let claimed: WorkLease | undefined;
       if (candidate) {
         const leaseId = randomUUID();
@@ -141,9 +148,9 @@ export class WorkItems {
       .run(outcome, reason ?? null, Number(retain), Number(retain), id, leaseId).changes);
   }
 
-  requeue({ id, leaseId }: WorkLease) {
-    return Boolean(this.db.prepare(`UPDATE agent_work_items SET state='queued',lease_id=NULL,lease_until=NULL,reason_code=NULL
-      WHERE id=? AND lease_id=? AND state='running'`).run(id, leaseId).changes);
+  requeue({ id, leaseId }: WorkLease, readyAt?: number) {
+    return Boolean(this.db.prepare(`UPDATE agent_work_items SET state='queued',lease_id=NULL,lease_until=NULL,reason_code=NULL,
+      ready_at=COALESCE(?,ready_at) WHERE id=? AND lease_id=? AND state='running'`).run(readyAt ?? null, id, leaseId).changes);
   }
 
   cancel(id: string) {

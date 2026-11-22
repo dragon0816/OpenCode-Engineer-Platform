@@ -189,6 +189,8 @@ export default {
   'server.session-route-not-found': "找不到會話或要求的操作。",
   'server.session-storage-full': "此會話已達檔案容量上限。",
   'server.session-unavailable': "OpenCode 暫時無法使用。已儲存的工作與附件仍可查看。",
+  'server.work-resolution-invalid': "請提供有效的工作、租約及處理結果。",
+  'server.work-resolution-unavailable': "這項工作已變更，或目前無法確認安全停止。",
   'server.source-not-found': "找不到原始檔。",
   'server.turn-empty-response': "模型沒有回覆內容。請重送訊息。",
   'server.turn-failed': "這次處理未完成。請再試一次。",

@@ -124,8 +124,12 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       for (const name of ['web/web.sqlite', 'web/telegram-chat.sqlite']) {
         const { before, after } = read(journalPath).migration[name];
         assert.equal(before.userVersion, 2);
-        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 4 : 3);
+        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 5 : 3);
         assert.equal(after.counts.session_ownership, 2);
+        if (name === 'web/web.sqlite') {
+          assert.equal(Object.hasOwn(before.counts, 'agent_work_items'), false);
+          assert.equal(after.counts.agent_work_items, 0);
+        }
       }
       const old = spawnSync(process.execPath, ['--input-type=module', '-e',
         'const { KnowledgeStore } = await import(process.argv[1]); new KnowledgeStore(process.argv[2]).close();',

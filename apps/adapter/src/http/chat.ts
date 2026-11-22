@@ -368,8 +368,9 @@ export class ChatService {
     const limits = this.store.turnLimits();
     const stop = new AbortController();
     const waiting = AbortSignal.any([this.stop.signal, signal, stop.signal]);
+    let timedOut = false;
     const done = this.modelSeat.run(async () => {
-      await this.execute(session, run, input, limits, waiting, start, channel);
+      timedOut = await this.execute(session, run, input, limits, waiting, start, channel);
       if (this.store.get(run.id).state === 'indeterminate') await this.inspectRuntime(workId, run);
     }, waiting);
     this.executing.set(run.id, { stop, done });
@@ -383,6 +384,7 @@ export class ChatService {
     }
     const state = this.store.get(run.id).state;
     if (state === 'verified') return 'succeeded';
+    if (state === 'cancelled' && timedOut) return 'timed_out';
     if (state === 'cancelled' || state === 'indeterminate') return state;
     return 'failed';
   }
@@ -412,6 +414,10 @@ export class ChatService {
         message.content.some((part) => part.type === 'text' && part.text.trim()));
       return { succeeded: session.outcome === 'succeeded' && answer };
     } catch { /* Keep the model seat held until the upstream runtime can be checked. */ }
+  }
+
+  workRunState(item: WorkItem) {
+    return item.runId && this.store.hasTurn(item.runId) ? this.store.get(item.runId).state : undefined;
   }
 
   async recoverTurn(item: WorkLease) {
@@ -454,7 +460,10 @@ export class ChatService {
     const execution = this.executing.get(id);
     if (execution && active.has(run.state)) {
       execution.stop.abort();
-      await execution.done;
+      if (run.state === 'accepted') {
+        this.store.change(id, 'cancelled', { finishedAt: Date.now() });
+        this.notify(session.id);
+      } else await execution.done;
     } else if (run.state === 'accepted') {
       const work = this.dispatcher.items.byRun(this.store.runStore, id);
       if (!work || this.dispatcher.cancel(work.id)) {
@@ -477,7 +486,11 @@ export class ChatService {
       exceeded ??= message;
       boundary.abort();
     };
-    const timeout = setTimeout(() => stopAtLimit('已停止：達到回合時限。'), limits.timeoutSeconds * 1000);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      stopAtLimit('已停止：達到回合時限。');
+    }, limits.timeoutSeconds * 1000);
     const signal = AbortSignal.any([this.stop.signal, cancelled, boundary.signal]);
     let state: 'verified' | 'failed' | 'indeterminate' | 'cancelled' = 'failed';
     let error: string | undefined;
@@ -566,8 +579,8 @@ export class ChatService {
         },
       });
       const text = input.text + marker + additional + nonceMarker(nonce);
-      update('running');
       start();
+      update('running');
       sent = true;
       this.recovering.add(run.id);
       const admission = await submitOnce(client, { sessionID, id: run.submissionID!, text, files: parts.files });
@@ -634,8 +647,10 @@ export class ChatService {
     }
     const modelCalls = this.runtime.gatewaySince(cursor);
     try {
-      this.store.change(run.id, state, { ...result, finishedAt: Date.now(), errors: error ? [error] : [],
-        modelRequestRange: { after: cursor, through: this.runtime.gatewayCursor() }, modelCalls });
+      if (this.store.get(run.id).state !== 'cancelled') {
+        this.store.change(run.id, state, { ...result, finishedAt: Date.now(), errors: error ? [error] : [],
+          modelRequestRange: { after: cursor, through: this.runtime.gatewayCursor() }, modelCalls });
+      }
       appendFileSync(this.audit, `${JSON.stringify({ runID: run.id, sessionID, submissionID: run.submissionID, alias: run.alias,
         state, error, elapsedMs: Date.now() - run.createdAt, modelCalls, artifact: result.artifact })}\n`);
     } finally {
@@ -643,6 +658,7 @@ export class ChatService {
       this.recovering.delete(run.id);
       this.notify(session.id);
     }
+    return timedOut;
   }
 
   download(session: WebSession, id: string) {

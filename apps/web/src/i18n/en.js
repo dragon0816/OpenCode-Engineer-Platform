@@ -189,6 +189,8 @@ export default {
   'server.session-route-not-found': "The session or requested operation wasn’t found.",
   'server.session-storage-full': "This session has reached its storage limit.",
   'server.session-unavailable': "OpenCode is temporarily unavailable. Saved jobs and attachments are still available.",
+  'server.work-resolution-invalid': "Provide a valid work item, lease, and resolution.",
+  'server.work-resolution-unavailable': "The work item changed or it is still unclear whether execution has stopped.",
   'server.source-not-found': "Source file not found.",
   'server.turn-empty-response': "The model returned an empty reply. Send the message again.",
   'server.turn-failed': "The turn couldn’t finish. Try again.",

@@ -98,11 +98,23 @@ export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: Knowle
   });
 
   const jobKey = (job: string) => 'bi-job:' + job;
+  const nextAttempt = (base: string, retry: (item: WorkItem) => boolean) => {
+    let sourceKey = base;
+    let prior = dispatcher.items.find('direct', sourceKey);
+    while (prior && retry(prior)) {
+      sourceKey = base + ':' + prior.id;
+      prior = dispatcher.items.find('direct', sourceKey);
+    }
+    return { sourceKey, prior };
+  };
+  const canRetry = ({ state }: WorkItem) => state === 'failed' || state === 'cancelled' || state === 'timed_out';
   const submit = (job: string, candidate?: Candidate) => {
     if (!store) throw new Error('Knowledge is unavailable');
     key(job);
-    const existing = !candidate && (dispatcher.items.find('direct', jobKey(job)) || dispatcher.items.find('schedule', jobKey(job)));
-    return existing || dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey: jobKey(job), effectClass: 'write',
+    const { sourceKey, prior } = nextAttempt(jobKey(job), canRetry);
+    const scheduled = !prior && !candidate && dispatcher.items.find('schedule', jobKey(job));
+    const existing = !candidate && (prior || scheduled && !canRetry(scheduled) && scheduled);
+    return existing || dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey, effectClass: 'write',
       payload: { kind: 'bi-job', job, candidate } });
   };
   const wait = async (item: WorkItem, signal?: AbortSignal) => {
@@ -128,7 +140,9 @@ export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: Knowle
     supplement(id: number, input: unknown, signal: AbortSignal) {
       const supplement = bi.validateSupplement(id, input);
       const hash = createHash('sha256').update(supplement).digest('hex');
-      const item = dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey: `bi-supplement:${id}:${hash}`,
+      const { sourceKey } = nextAttempt(`bi-supplement:${id}:${hash}`,
+        (prior) => canRetry(prior) || prior.state === 'succeeded' && bi.canSupplement(id));
+      const item = dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey,
         effectClass: 'write', payload: { kind: 'bi-source', sourceId: id, supplement } });
       return wait(item, signal);
     },
@@ -137,7 +151,8 @@ export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: Knowle
       const id = key(input.id);
       const draft = input.action === 'stage-change' ? input.draft as ChangeSet : undefined;
       const vault = key(draft?.vault?.id ?? input.vault);
-      const sourceKey = draft ? 'bi-review:' + id + ':' + createHash('sha256').update(JSON.stringify(draft)).digest('hex') :
+      const sourceKey = draft ? nextAttempt('bi-review:' + id + ':' + createHash('sha256').update(JSON.stringify(draft)).digest('hex'),
+        canRetry).sourceKey :
         'bi-proposal:' + randomUUID();
       const item = dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey, effectClass: 'write',
         payload: { kind: 'bi-review', review: { id, vault, draft, proposal: draft ? undefined : input } } });
@@ -147,7 +162,14 @@ export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: Knowle
         return reviewResult.get(item.id) ?? { id };
       } finally { reviewResult.delete(item.id); }
     },
-    recoverSource(id: number) {
+    recoverSource(id: number, recordedWork: unknown) {
+      if (typeof recordedWork === 'string') {
+        const prior = dispatcher.items.get(recordedWork);
+        if (prior?.reasonCode === 'owner-resolved' && (prior.state === 'cancelled' || prior.state === 'failed')) {
+          bi.stopUnverified(id, prior.id);
+        }
+        return;
+      }
       dispatcher.enqueue({ agentId: 'bi', source: 'direct', sourceKey: 'bi-stage:' + id, effectClass: 'write',
         payload: { kind: 'bi-source', sourceId: id } });
     },

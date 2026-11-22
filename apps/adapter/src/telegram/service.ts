@@ -55,9 +55,9 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     try {
       inbound.reconcile();
       scheduler?.reconcile();
-      const ready = inbox.db.prepare(`SELECT s.id FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
-        WHERE s.state='ready' AND s.supplement IS NOT NULL AND o.work_id IS NULL ORDER BY s.id`).all();
-      for (const row of ready) bi.recoverSource(Number(row.id));
+      const ready = inbox.db.prepare(`SELECT s.id,o.work_id FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
+        WHERE s.state='ready' AND (s.supplement IS NOT NULL OR o.work_id IS NOT NULL) ORDER BY s.id`).all();
+      for (const row of ready) bi.recoverSource(Number(row.id), row.work_id);
       bi.recoverJobs();
       if (accounts.connections.has('telegram-bi')) inbox.notifyReviews(knowledge?.reconciliation().intents ?? [], ledger.channelLocale('bi'));
     } catch { /* Persisted work remains available to the next cycle. */ }

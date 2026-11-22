@@ -29,7 +29,7 @@ function seed(t: TestContext) {
     web.close();
     rmSync(path, { recursive: true, force: true });
   });
-  return { file, path, items: web.workItems };
+  return { file, path, web, items: web.workItems };
 }
 
 function request(id: string, source: WorkRequest['source'] = 'direct', agentId = 'main',
@@ -242,18 +242,42 @@ test('the production Telegram handoff preserves one conversation across lanes wh
   }
 });
 
-test('the resolution API requires a paired owner, CSRF, and the current lease', async (t) => {
-  const { path, items } = seed(t);
-  items.enqueue({ ...request('work'), payload: { kind: 'delegation-placeholder', privateInput: 'Synthetic private input' } });
+test('restart inspects the turn in OpenCode and the owner API resolves it only after the runtime is idle', async (t) => {
+  const { path, web, items } = seed(t);
+  const { resolve: modelRan, promise: waitForModel } = Promise.withResolvers<void>();
+  const modelSeat = new ModelSeat();
+  const checked = new Set<string>();
+  let upstreamActive = true;
+  const now = Date.now();
+  const session = { id: 'local-session', upstreamID: 'synthetic-session', agent: 'inspector', alias: 'synthetic', createdAt: now } as const;
+  web.createSession(session);
+  web.saveTurn(session.id, { id: 'run', mode: 'web-chat', state: 'accepted', createdAt: now, workspace: path,
+    sessionID: session.upstreamID, submissionID: 'synthetic-submission', retries: 0, errors: [], alias: 'synthetic' }, 'synthetic');
+  items.enqueue({ ...request('work'), run: { store: 'web', id: 'run' },
+    payload: { kind: 'web-turn', sessionId: session.id, input: 'Synthetic private input' } });
   const lease = items.claim(() => true)!;
   items.markStarted(lease);
-  items.finish(lease, 'indeterminate');
+  web.change('run', 'running');
   const runtime = {
-    root: path, alias: 'synthetic', aliases: ['synthetic'], redact: (text: string) => text,
+    root: path, alias: 'synthetic', aliases: ['synthetic'], redact: (text: string) => text, modelSeat,
     endpoint: { request: async () => new Response(null, { status: 503 }) },
+    client: {
+      session: {
+        get: async () => ({ id: session.upstreamID }),
+        active: async () => { checked.add('active'); return upstreamActive ? { [session.upstreamID]: true } : {}; },
+        inbox: { list: async () => { checked.add('inbox'); return []; } },
+      },
+      permission: { list: async () => [] },
+      message: { list: async () => { checked.add('messages'); return { data: [] }; } },
+    },
   } as unknown as Runtime;
   const app = await startAdapter(path, runtime, () => {});
   try {
+    assert.deepEqual(checked, new Set(['active', 'inbox', 'messages']));
+    assert.equal(web.get('run').state, 'indeterminate');
+    assert.equal(items.get(lease.id)?.state, 'indeterminate');
+    let acquired = false;
+    void modelSeat.run(async () => { acquired = true; modelRan(); });
     const launch = new URL(app.pairURL());
     const { origin } = launch;
     const url = origin + '/api/work-items';
@@ -274,8 +298,16 @@ test('the resolution API requires a paired owner, CSRF, and the current lease', 
     assert.equal((await post(decision, { cookie })).status, 403);
     const headers = { cookie, 'x-oep-csrf': csrf };
     assert.equal((await post({ ...decision, leaseId: 'old' }, headers)).status, 409);
+    assert.equal((await post(decision, headers)).status, 409);
+    assert.equal(acquired, false);
+    upstreamActive = false;
     assert.equal((await post(decision, headers)).status, 200);
     assert.equal(items.get(lease.id)?.state, 'cancelled');
     assert.equal(items.get(lease.id)?.leaseId, null);
-  } finally { await app.close(); }
+    assert.equal(web.get('run').state, 'cancelled');
+    await waitForModel;
+  } finally {
+    modelSeat.release(lease.id);
+    await app.close();
+  }
 });
