@@ -1086,7 +1086,7 @@ export default {
   'ui.export-question-set': "匯出題集",
   'ui.export-selected-notes': "匯出選取的筆記",
   'ui.external-model-service': "外部模型服務",
-  'ui.external-operators-manage-the-model-gateway-and': "外部維運人員負責管理模型閘道及更新憑證。",
+  'ui.external-operators-manage-the-model-gateway-and': "公司的模型服務與連線金鑰由 IT 管理，這裡無法修改。",
   'ui.external-operators-start-and-restart-the-model': "模型閘道由外部維運，啟動、重啟與憑證更新由維運端處理。",
   'ui.external-tools': "外部工具",
   'ui.external-tools-use-mcp-local-programs-connect': "外部工具使用 MCP。本機程式透過 stdio 連線，憑證以環境變數傳入。遠端服務使用 HTTPS 與 HTTP 標頭。",

@@ -1086,7 +1086,7 @@ export default {
   'ui.export-question-set': "Export question set",
   'ui.export-selected-notes': "Export selected notes",
   'ui.external-model-service': "External model service",
-  'ui.external-operators-manage-the-model-gateway-and': "External operators manage the model gateway and update credentials.",
+  'ui.external-operators-manage-the-model-gateway-and': "Your company's IT manages the model service and its access key. They can't be changed here.",
   'ui.external-operators-start-and-restart-the-model': "External operators start and restart the model gateway and update its credentials.",
   'ui.external-tools': "External Tools",
   'ui.external-tools-use-mcp-local-programs-connect': "External tools use MCP. Local programs connect over stdio and receive credentials through environment variables. Remote services use HTTPS and HTTP headers.",
