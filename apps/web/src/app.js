@@ -2361,11 +2361,17 @@ const plugins = bindPlugins((view, title, entry) => {
   if (narrowNavigation.matches) setSidebar(false);
   title.focus();
   return true;
-}, openFeaturePreview);
+}, openFeaturePreview, async (id) => {
+  const opener = find('open-review');
+  opener.click();
+  try { await knowledge?.openBiReview(id, opener, new AbortController().signal); }
+  catch (error) { setText(find('review-status'), errorText(error)); }
+});
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   find(id).addEventListener('click', () => { find('review-view').hidden = true; });
 }
 find('open-review').addEventListener('click', () => {
+  plugins.hide();
   for (const id of ['knowledge-view', 'jobs-view', 'chat-view']) find(id).hidden = true;
   find('review-view').hidden = false;
   find('review-title').focus();

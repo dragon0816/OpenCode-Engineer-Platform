@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { zipSync } from 'fflate';
 import { strictJSON, verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
 import { archiveLimit, entryLimit, fileLimit, manifestLimit, payloadPath } from '../../apps/adapter/src/plugins/zip.ts';
 import { checkDirectory, openWorkspaceFile } from '../../apps/adapter/src/runs/workspace.ts';
 
-function main(args) {
-  const [input, output] = args;
+export function packPlugin(input) {
   const root = resolve(input);
   checkDirectory(root);
   const manifest = strictJSON(openWorkspaceFile(root, 'manifest.json', manifestLimit).data);
@@ -36,18 +36,21 @@ function main(args) {
   if (existsSync(join(root, 'payload'))) addPayload([]);
   archive['manifest.json'] = Buffer.from(JSON.stringify({ ...manifest, files }, null, 2) + '\n');
   const packed = Buffer.from(zipSync(archive, { level: 0, mtime: new Date(2000, 0, 1) }));
-  const { digest } = verifyPackage(packed);
-  writeFileSync(output, packed, { flag: 'wx' });
-  console.log('Packed OEP plugin SHA-256 ' + digest);
+  return verifyPackage(packed);
 }
 
-const args = process.argv.slice(2);
-if (args.length !== 2 || !args[1].endsWith('.oepplugin')) {
-  console.error('Usage: node scripts/plugins/package.mjs <source-directory> <output.oepplugin>');
-  process.exit(1);
-}
-try { main(args); }
-catch (error) {
-  console.error('Plugin packaging failed' + (error?.code ? ' (' + error.code + ')' : '. Check the source manifest and payload.'));
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const [input, output, ...extra] = process.argv.slice(2);
+  if (!input || !output?.endsWith('.oepplugin') || extra.length) {
+    console.error('Usage: node scripts/plugins/package.mjs <source-directory> <output.oepplugin>');
+    process.exit(1);
+  }
+  try {
+    const { bytes, digest } = packPlugin(input);
+    writeFileSync(output, bytes, { flag: 'wx' });
+    console.log('Packed OEP plugin SHA-256 ' + digest);
+  } catch (error) {
+    console.error('Plugin packaging failed' + (error?.code ? ' (' + error.code + ')' : '. Check the source manifest and payload.'));
+    process.exitCode = 1;
+  }
 }

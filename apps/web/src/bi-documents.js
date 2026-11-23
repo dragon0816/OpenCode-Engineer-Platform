@@ -16,7 +16,7 @@ const candidateStates = {
   'awaiting-review': message('biDocument.candidate.awaiting-review'),
   'needs-attention': message('biDocument.candidate.needs-attention'),
 };
-const issues = {
+export const biDocumentIssues = {
   'ocr': message('biDocument.issue.ocr'),
   'pdf-unavailable': message('biDocument.issue.pdf-unavailable'),
   'pdf-encrypted': message('biDocument.issue.pdf-encrypted'),
@@ -36,7 +36,9 @@ const issues = {
   'invalid-name': message('biDocument.issue.invalid-name'),
   'conflicting-value': message('biDocument.issue.conflicting-value'),
   'duplicate': message('biDocument.issue.duplicate'),
+  'isolation-unavailable': message('plugins.isolation-unavailable'),
 };
+const issues = biDocumentIssues;
 
 export function bindBiDocuments(openReview) {
   const panel = find('panel');

@@ -1,4 +1,5 @@
 import { errorText, request } from './api.js';
+import { openBiBuilder } from './bi-builder.js';
 import { getLocale, message, setText } from './i18n.js';
 
 const find = (id) => document.getElementById(id);
@@ -62,11 +63,11 @@ function permissionRows(permissions) {
   ];
 }
 
-function pageAPI(plugin, token) {
+function pageAPI(plugin, token, signal) {
   const path = `/api/plugins/${plugin.id}/runtime`;
   return {
-    call: (method, params) => request(path, { data: { method, params }, pluginToken: token }),
-    source: (file) => request(path + '/sources', { bytes: file, pluginToken: token, pluginFile: file.name }),
+    call: (method, params) => request(path, { data: { method, params }, pluginToken: token, signal }),
+    source: (file) => request(path + '/sources', { bytes: file, pluginToken: token, pluginFile: file.name, signal }),
     panel: (id) => request(path + '/panels/' + id, { pluginToken: token }),
     async stream(id, signal, update) {
       const response = await fetch(path + '/events/' + id, { headers: { 'X-OEP-Plugin': token }, signal });
@@ -91,7 +92,7 @@ const jobLabels = {
   cancelled: message('plugins.job-cancelled'), 'timed-out': message('plugins.job-timed-out'),
 };
 
-export function bindPlugins(showView, openPanel) {
+export function bindPlugins(showView, openPanel, openBiReview) {
   const rail = find('open-capabilities');
   const capabilityView = find('capabilities-view');
   const pageView = find('plugin-page-view');
@@ -107,6 +108,7 @@ export function bindPlugins(showView, openPanel) {
   let activePage;
   let fileTarget;
   let busy = false;
+  const biDraft = {};
 
   function chooseFile(id) {
     if (busy) return;
@@ -134,8 +136,10 @@ export function bindPlugins(showView, openPanel) {
       const view = await request(`/api/plugins/${plugin.id}/pages/${page.id}/${plugin.digest}`);
       if (activePage !== selection) return;
       pageContent.replaceChildren(...view.paragraphs.map((text) => element('p', localized(text))));
-      if (view.actions?.length) {
-        const api = pageAPI(plugin, view.token);
+      const api = pageAPI(plugin, view.token, selection.stop.signal);
+      if (view.biBuilder) {
+        await openBiBuilder(pageActions, api, selection.stop.signal, (id) => openBiReview(id), biDraft);
+      } else if (view.actions?.length) {
         pageActions.replaceChildren(...view.actions.map((action) => jobAction(api, action, view.approvedSources, selection.stop.signal)));
       }
     } catch (error) {
@@ -211,6 +215,8 @@ export function bindPlugins(showView, openPanel) {
   }
 
   function render() {
+    const fallback = find('bi-document-panel');
+    fallback.hidden = installed.some(({ id }) => id === 'oep.bi-knowledge');
     for (const entry of document.querySelectorAll('[data-plugin-page]')) entry.remove();
     for (const plugin of installed.filter(({ status }) => status === 'enabled')) {
       for (const page of plugin.pages) {

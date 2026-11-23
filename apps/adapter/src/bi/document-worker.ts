@@ -13,6 +13,12 @@ export class DocumentWorkerError extends Error {
   constructor(issue: WorkerIssue) { super(issue); this.issue = issue; }
 }
 
+export function documentResult<T>(value: unknown): T {
+  const payload = value as { result?: T; error?: WorkerIssue } | null;
+  if (payload?.result !== undefined) return payload.result;
+  throw new DocumentWorkerError(payload?.error && workerIssues.has(payload.error) ? payload.error : 'invalid');
+}
+
 export function documentWorker<T>(args: string[], input: Buffer, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {
     signal.throwIfAborted();
@@ -24,11 +30,8 @@ export function documentWorker<T>(args: string[], input: Buffer, signal: AbortSi
         reject(signal.aborted ? signal.reason : new DocumentWorkerError(error.killed ? 'limit' : 'invalid'));
         return;
       }
-      try {
-        const payload = JSON.parse(output) as { result?: T; error?: WorkerIssue };
-        if (payload.result !== undefined) resolve(payload.result);
-        else reject(new DocumentWorkerError(payload.error && workerIssues.has(payload.error) ? payload.error : 'invalid'));
-      } catch { reject(new DocumentWorkerError('invalid')); }
+      try { resolve(documentResult<T>(JSON.parse(output))); }
+      catch (error) { reject(error instanceof DocumentWorkerError ? error : new DocumentWorkerError('invalid')); }
     });
     worker.stdin?.on('error', () => { /* The worker exit controls the result. */ });
     worker.stdin?.end(input);

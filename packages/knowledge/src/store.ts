@@ -12,6 +12,9 @@ import type { Snapshot } from './snapshot.ts';
 import { migrateBiOwnership, recoverBiTelegramSource, reviewProvenanceRow, verifyBiOwnership } from './bi/ownership.ts';
 import type { BiProvenance } from './bi/ownership.ts';
 
+type RepositoryReview = { vault: Snapshot['vault']; repositorySnapshot: Snapshot; allowModel: boolean; parent: string | null };
+type ReviewDraft = Candidate | ChangeSet | RepositoryReview;
+
 const vaultClassificationsVersion = 2;
 const biOwnershipVersion = 3;
 export const knowledgeSchemaVersion = biOwnershipVersion;
@@ -342,7 +345,12 @@ const schema = this.reviewSchema(vault, base);
     return row as { parent: string | null; status: string; publication: string | null } | undefined;
   }
 
-  private reviewSnapshot(input: Candidate | ChangeSet, revision: string, parent?: string) {
+  private reviewSnapshot(input: ReviewDraft, revision: string, parent?: string) {
+    if ('repositorySnapshot' in input) {
+      if (input.parent !== (parent ?? null)) throw new Error('Published base has changed');
+      return validateSnapshot({ ...input.repositorySnapshot, vault: input.vault,
+        publication: { revision, publishedAt: new Date().toISOString(), publisher: 'local-owner', ...(parent && { parent }) } });
+    }
     const base = parent && 'parent' in input ? this.snapshot(input.vault.id, parent) : undefined;
     const benchmarksMigration = `
   CREATE TABLE IF NOT EXISTS benchmark_sets (
@@ -356,7 +364,8 @@ const schema = this.reviewSchema(input.vault.id, base);
       : materialize(input, schema, revision, parent);
   }
 
-  private stageCandidate(id: string, input: Candidate | ChangeSet, provenance: BiProvenance) {
+  private stageCandidate(id: string, input: ReviewDraft, provenance: BiProvenance, repository = false) {
+    if (('repositorySnapshot' in input) !== repository) throw new Error('Repository drafts require the local repository reader');
     const original = canonical(input);
     const existing = this.db.prepare('SELECT original FROM reviews WHERE id=?').get(key(id));
     if (existing) {
@@ -383,6 +392,13 @@ const schema = this.reviewSchema(input.vault.id, base);
 
   stage(id: string, input: Candidate | ChangeSet, provenance: BiProvenance = { origin: 'owner' }) {
     return this.transaction(() => this.stageCandidate(id, input, provenance));
+  }
+
+  stageRepository(id: string, input: RepositoryReview, provenance: BiProvenance) {
+    if (input.vault.kind !== 'bi' || input.repositorySnapshot.vault.kind !== 'bi' || !input.repositorySnapshot.repository) {
+      throw new Error('Expected a BI repository publication');
+    }
+    return this.transaction(() => this.stageCandidate(id, input, provenance, true));
   }
 
   enqueueBi(id: string, input: Candidate, origin: BiProvenance['origin'] = 'owner', workId?: string) {
@@ -517,7 +533,7 @@ const schema = this.reviewSchema(input.vault.id, base);
     const review = this.review(id);
     const vault = String(review.vault);
     const previous = review.parent === null ? null : this.snapshot(vault, String(review.parent));
-    const draft = JSON.parse(String(review.draft)) as Candidate | ChangeSet;
+    const draft = JSON.parse(String(review.draft)) as ReviewDraft;
     const candidate = this.reviewSnapshot(draft, 'review-' + sha256(id), previous?.publication.revision);
     return {
       previous: previous && { sources: previous.sources, cards: previous.cards, passages: previous.passages, relationships: previous.relationships },
@@ -529,7 +545,10 @@ const schema = this.reviewSchema(input.vault.id, base);
     this.transaction(() => {
       const review = this.review(id);
       if (review.status !== 'pending' || review.edit !== edit) throw new Error('Review has changed');
-      const original = JSON.parse(String(review.original)) as Candidate | ChangeSet;
+      const original = JSON.parse(String(review.original)) as ReviewDraft;
+      if ('repositorySnapshot' in original || Object.hasOwn(draft, 'repositorySnapshot')) {
+        throw new Error('Repository drafts are immutable');
+      }
       if ('parent' in original !== ('parent' in draft)) throw new Error('Draft format cannot change');
       const sourceIdentity = (input: Candidate | ChangeSet) => 'parent' in input
         ? { parent: input.parent, sources: input.sources }
@@ -573,7 +592,7 @@ const schema = this.reviewSchema(input.vault.id, base);
       if ((parent ?? null) !== review.parent) throw new Error('Published base has changed');
       const revision = 'review-' + sha256(id);
       if (this.publication(vault, revision)) throw new Error('Revision already exists');
-      const draft = JSON.parse(String(review.draft)) as Candidate | ChangeSet;
+      const draft = JSON.parse(String(review.draft)) as ReviewDraft;
       const snapshot = this.reviewSnapshot(draft, revision, parent);
       fault?.('before-blob');
       this.writeSnapshot(snapshot, Buffer.from(String(review.draft)), draft.allowModel === true,
@@ -592,10 +611,13 @@ const schema = this.reviewSchema(input.vault.id, base);
       const vault = String(review.vault);
       const publication = this.db.prepare(`SELECT p.* FROM inactive_vaults i JOIN vaults v ON v.id=i.vault
         JOIN publications p ON p.id=v.publication WHERE v.id=?`).get(vault) as Publication | undefined;
-      if (!publication || publication.revision !== review.publication || publication.index_hash !== publication.manifest_hash ||
-          this.readSnapshot(publication).schema.sha256 !== this.reviewSchema(vault, this.readSnapshot(publication)).sha256) {
+      if (!publication || publication.revision !== review.publication || publication.index_hash !== publication.manifest_hash) {
         throw new Error('Review cannot be reactivated');
       }
+      const snapshot = this.readSnapshot(publication);
+      const draft = JSON.parse(String(review.draft)) as ReviewDraft;
+      const schema = 'repositorySnapshot' in draft ? draft.repositorySnapshot.schema : this.reviewSchema(vault, snapshot);
+      if (schema.sha256 !== snapshot.schema.sha256) throw new Error('Review cannot be reactivated');
       this.activate(vault, publication.id);
     });
   }

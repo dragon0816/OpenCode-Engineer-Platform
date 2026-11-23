@@ -212,7 +212,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       const editor = inputLabel(metadata, message('review.review-draft-json'), 'textarea');
       editor.rows = 12;
       editor.value = JSON.stringify(draft, null, 2);
-      editor.readOnly = row.status !== 'pending';
+      editor.readOnly = row.status !== 'pending' || Boolean(draft.repositorySnapshot);
       const feedback = element('p');
       feedback.setAttribute('role', 'status');
       const controls = element('div');
@@ -261,7 +261,7 @@ export function bindReview(anchor, onPublish, openPreview) {
         }
       }
       if (row.status === 'pending') {
-        action('edit', message('review.save-edits'), () => ({ draft: JSON.parse(editor.value) }), metadata);
+        if (!editor.readOnly) action('edit', message('review.save-edits'), () => ({ draft: JSON.parse(editor.value) }), metadata);
         action('approve', message('jobs.approve'), () => {
           if (JSON.stringify(JSON.parse(editor.value)) !== JSON.stringify(draft)) throw new LocalizedError(message('review.save-the-draft-first'));
           return {};

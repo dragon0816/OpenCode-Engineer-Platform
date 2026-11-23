@@ -8,6 +8,7 @@ import { unzipSync, zipSync } from 'fflate';
 import { decodeText, detect } from '../phase0/secret-scan.mjs';
 import { complianceArtifacts, npmComponent, openCodeComponent, productionPackages, pythonComponents } from './compliance.mjs';
 import { bundleRuntimes } from './bundled.mjs';
+import { biArtifact, packBiPlugin, writeBiPlugin } from '../plugins/bi.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const read = (path) => readFileSync(join(root, path));
@@ -27,7 +28,8 @@ const exact = new Set([
   'scripts/phase0/windows-job.cs', 'scripts/knowledge/migrate.ts', 'scripts/knowledge/verify-aep-bi.py',
   'tests/oracles/verify_xlsx.py', 'tests/oracles/requirements.txt', 'tests/fixtures/d08/oracle.json',
   'tests/fixtures/knowledge/gold.ts', 'tests/fixtures/knowledge/gold.v1.json', 'tests/fixtures/knowledge/gold.v2.json',
-  'workers/office/xlsx_to_text.py', 'workers/files/windows_write.py', 'workers/files/windows_probe.py', 'docs/OPERATIONS.md', 'docs/validation/p2-windows-web.md', 'workers/office/reference_extractors.py', 'workers/files/windows_reference.py', 'workers/bi/worker.py', 'workers/bi/convert.py', 'workers/bi/html_markdown.py', 'workers/bi/extract.py', 'workers/bi/catalog.py', 'workers/bi/staging.py',
+  'workers/office/xlsx_to_text.py', 'workers/files/windows_write.py', 'workers/files/windows_probe.py', 'docs/OPERATIONS.md', 'docs/validation/p2-windows-web.md', 'workers/office/reference_extractors.py', 'workers/files/windows_reference.py', 'workers/bi/worker.py',
+  'scripts/plugins/bi.mjs', 'scripts/plugins/package.mjs',
 ]);
 
 function verified(bytes, expected) {
@@ -106,10 +108,15 @@ async function main() {
     const files = Object.create(null);
     const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0');
     for (const path of tracked.filter((name) => exact.has(name) ||
-      /^(apps|packages|scripts\/windows)\//.test(name) && !/\.test\.[^/]+$/.test(name))) {
+      /^(apps|packages|scripts\/windows|plugins\/bi-knowledge)\//.test(name) && !/\.test\.[^/]+$/.test(name))) {
       if (!lstatSync(join(root, path)).isFile()) throw new Error('發行來源必須是一般檔案。');
       files[path] = read(path);
     }
+    const bi = packBiPlugin();
+    for (const [path, bytes] of bi.payload) {
+      if (path.startsWith('payload/')) files['plugins/bi-knowledge/' + path] = bytes;
+    }
+    files[biArtifact] = bi.bytes;
     for (const path of ['package.json', 'package-lock.json']) writeFileSync(join(scratch, path), files[path]);
     execFileSync(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
       { cwd: scratch, stdio: 'ignore' });
@@ -141,6 +148,7 @@ async function main() {
     mkdirSync(resolve(output), { recursive: true });
     const filename = 'OEP-' + version + '-windows-x64' + (bundled ? '-bundled' : '') + '.zip';
     writeFileSync(resolve(output, filename), zip);
+    writeBiPlugin(output, bi.bytes);
     const sums = readdirSync(resolve(output)).filter((name) => /^OEP-\d+\.\d+\.\d+-windows-x64(?:-bundled)?\.zip$/.test(name))
       .sort().map((name) => sha256(name === filename ? zip : readFileSync(resolve(output, name))) + '  ' + name + '\n');
     writeFileSync(resolve(output, 'SHA256SUMS'), sums.join(''));

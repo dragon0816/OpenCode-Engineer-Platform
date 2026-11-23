@@ -21,11 +21,18 @@ type FileKind = 'pdf' | 'html' | 'text';
 type Input = { ref: string; bytes: Buffer } | { url: string };
 type Source = { ref: string; title?: string; url?: string; fetchedAt?: string; sha256?: string; documentId?: string };
 type SchemaTarget = { vault: string; title: string; schema: Snapshot['schema']; install: boolean };
-type State = 'converting' | 'extracting' | 'validating' | 'awaiting-review' | 'needs-attention' | 'failed';
-type Cause = WorkerIssue | 'link' | 'model' | 'interrupted' | 'base-changed' | 'no-candidates';
+type State = 'converting' | 'extracting' | 'validating' | 'validated' | 'awaiting-review' | 'needs-attention' | 'failed';
+type Cause = WorkerIssue | 'link' | 'model' | 'interrupted' | 'base-changed' | 'no-candidates' | 'isolation-unavailable';
 export type ExtractionStatus = { id: string; source: Source; schema: string; state: State; completedChunks: number;
   totalChunks: number; candidates: DocumentCandidate[]; issue?: Cause; reviewId?: string; reused?: boolean;
-  baseRevision?: string | null; reviewState?: string };
+  baseRevision?: string | null; reviewState?: string; vault?: string; title?: string; publication?: string;
+  summary?: Counts;
+  repository?: Counts & { tag: string; withoutEvidence: number; digestVerified: boolean; sizeVerified: boolean } };
+type Counts = { cards: number; sources: number; passages: number; relationships: number };
+type RepositoryDraft = Parameters<Knowledge['reviewStore']['stageRepository']>[1];
+type Pending = { id: string; receipt: string; draft: ChangeSet | RepositoryDraft };
+type StoredStatus = ExtractionStatus & { pending?: Pending };
+type BuildOptions = { worker: typeof documentWorker; signal: AbortSignal; title?: string };
 
 export const documentFileLimit = 10 * 1024 * 1024;
 const typeForExtension = new Map<string, FileKind>([
@@ -35,6 +42,8 @@ export const biDocumentFile = (name: string) => typeForExtension.get(extname(nam
 const fallback = reviewSchema('document-note', '1', ['content']);
 const choiceId = ({ vault, schema }: SchemaTarget) => sha256(canonical([vault, schema.sha256]));
 const json = (value: unknown) => Buffer.from(JSON.stringify(value));
+const counts = (snapshot: Snapshot): Counts => ({ cards: snapshot.cards.length, sources: snapshot.sources.length,
+  passages: snapshot.passages.length, relationships: snapshot.relationships.length });
 const localTarget = (schema: Snapshot['schema']): SchemaTarget =>
   ({ vault: 'bi-document-' + schema.sha256, title: schema.id, schema, install: true });
 
@@ -99,7 +108,7 @@ export class DocumentExtraction {
         fields: schema.document.fields as string[], builtin: schema.sha256 === fallback.sha256 }));
   }
 
-  async importSchemas(path: unknown, signal = this.stop.signal) {
+  async importSchemas(path: unknown, signal = this.stop.signal, worker = documentWorker) {
     if (typeof path !== 'string' || !isLocalAbsoluteFolder(path)) throw new Error('Choose a local BI repository folder');
     const folder = new RepositoryFolder(path);
     const records: [string, Record<string, unknown>][] = [];
@@ -116,7 +125,8 @@ export class DocumentExtraction {
       }
     }
     visit('schemas', 0);
-    const projected = await documentWorker<SchemaStructure[]>(['schema'], json(records), signal);
+    const projected = await worker<SchemaStructure[]>(['schema'], json(records), signal);
+    signal.throwIfAborted();
     const schemas = new Map<string, Snapshot['schema']>();
     for (const { id, version, fields } of projected) {
       if (!fields.length) continue;
@@ -138,44 +148,109 @@ export class DocumentExtraction {
 
   status(id: string): ExtractionStatus | undefined {
     const row = this.database().prepare('SELECT status FROM runs WHERE id=?').get(id);
-    return row && this.withReviewState(String(row.status));
+    if (!row) return;
+    const status = this.withReviewState(String(row.status));
+    if (status.vault && status.publication) {
+      const snapshot = this.knowledge.reviewStore.snapshot(status.vault, status.publication);
+      if (snapshot) status.summary = counts(snapshot);
+    }
+    return status;
   }
 
-  recent(): ExtractionStatus[] {
-    return this.database().prepare('SELECT status FROM runs ORDER BY rowid DESC LIMIT 12').all()
+  recent(pluginBuilds = false): ExtractionStatus[] {
+    return this.database().prepare(`SELECT status FROM runs WHERE (json_type(status,'$.vault') IS NOT NULL)=?
+      ORDER BY rowid DESC LIMIT 12`).all(Number(pluginBuilds))
       .map(({ status }) => this.withReviewState(String(status)));
   }
 
   private withReviewState(body: string): ExtractionStatus {
-    const status = JSON.parse(body) as ExtractionStatus;
+    const { pending: _pending, ...status } = JSON.parse(body) as StoredStatus;
     const review = status.reviewId && this.knowledge.reviewStore.reviewReceipt(status.reviewId);
     if (review) status.reviewState = review.publication ? 'published' : review.status;
+    if (review && review.publication) status.publication = review.publication;
     return status;
   }
 
-  private save(status: ExtractionStatus, receipt?: string) {
+  private save(status: StoredStatus, receipt?: string) {
     this.database().prepare(`INSERT INTO runs VALUES (?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET status=excluded.status,state=excluded.state,receipt=coalesce(excluded.receipt,runs.receipt)`)
       .run(status.id, JSON.stringify(status), status.state, receipt ?? null);
   }
 
-  start(input: Input, schema: unknown, consent: boolean) {
+  submit(id: string) {
+    const row = this.database().prepare('SELECT status FROM runs WHERE id=?').get(id);
+    if (!row) throw new Error('Unknown BI build');
+    const { pending, ...status } = JSON.parse(String(row.status)) as StoredStatus;
+    if (status.reviewId) return this.status(id)!;
+    if (status.state !== 'validated' || !pending) throw new Error('Validate the BI build first');
+    const store = this.knowledge.reviewStore;
+    const provenance = { origin: 'owner', sourceKey: pending.receipt } as const;
+    if (!store.hasReview(pending.id, pending.draft.vault.id, provenance)) {
+      if ('repositorySnapshot' in pending.draft) store.stageRepository(pending.id, pending.draft, provenance);
+      else stageReviewProposal(store, pending.id, pending.draft, provenance);
+    }
+    this.recordReview(status, pending.id, pending.receipt);
+    return this.status(id)!;
+  }
+
+  private recordReview(status: ExtractionStatus, reviewId: string, receipt: string) {
+    for (const candidate of status.candidates) if (candidate.state === 'pass') candidate.state = 'awaiting-review';
+    status.reviewId = reviewId;
+    status.state = 'awaiting-review';
+    this.save(status, receipt);
+  }
+
+  importRepository(folder: string, consent: boolean, customTitle?: string) {
+    if (this.running || !isLocalAbsoluteFolder(folder)) throw new Error('Choose a local BI repository folder');
+    const { snapshot, original, digestVerified, sizeVerified } = this.knowledge.readRepository(folder);
+    const title = customTitle ? string(customTitle, 'title', 100).trim() : snapshot.vault.title;
+    const vault = 'bi-import-' + sha256(canonical([snapshot.vault.id, customTitle?.trim() ?? '']));
+    const store = this.knowledge.reviewStore;
+    const current = store.snapshot(vault);
+    const parent = current?.publication.revision ?? null;
+    const receipt = sha256(canonical([vault, snapshot.publication.revision, sha256(original), consent]));
+    const reviewId = 'import-' + sha256(canonical([receipt, parent]));
+    const evidenced = new Set(snapshot.passages.map(({ cardId }) => cardId));
+    const repository = { ...counts(snapshot), tag: snapshot.repository!.tag, digestVerified, sizeVerified,
+      withoutEvidence: snapshot.cards.filter(({ id }) => !evidenced.has(id)).length };
+    const status: ExtractionStatus = { id: randomUUID(), source: { ref: snapshot.vault.title }, schema: snapshot.schema.id,
+      state: 'validated', completedChunks: 0, totalChunks: 0, candidates: [], vault, title, baseRevision: parent, repository };
+    const draft = { vault: { ...snapshot.vault, id: vault, title }, repositorySnapshot: snapshot, allowModel: consent, parent };
+    const prior = this.database().prepare('SELECT status FROM runs WHERE receipt=? ORDER BY rowid DESC LIMIT 1').get(receipt);
+    if (prior) {
+      const previous = this.withReviewState(String(prior.status));
+      if ((parent && previous.publication === parent) || (previous.baseRevision === parent &&
+          (!previous.reviewId || previous.reviewState === 'pending' || previous.reviewState === 'approved'))) {
+        return this.status(previous.id)!;
+      }
+    }
+    this.save({ ...status, pending: { id: reviewId, receipt, draft } }, receipt);
+    return this.status(status.id)!;
+  }
+
+  start(input: Input, schema: unknown, consent: boolean, options?: BuildOptions) {
     this.stop.signal.throwIfAborted();
+    options?.signal.throwIfAborted();
     if (this.running) throw new Error('Extraction already active');
-    const target = typeof schema === 'string' ? this.targets().get(schema) : undefined;
+    let target = typeof schema === 'string' ? this.targets().get(schema) : undefined;
     if (!target || !(target.schema.document.fields as string[]).length) throw new Error('Schema unavailable');
+    if (options?.title !== undefined) {
+      const title = string(options.title, 'title', 100).trim();
+      target = { ...target, title, vault: 'bi-build-' + sha256(canonical([title, target.schema.sha256])), install: true };
+    }
     const ref = 'url' in input ? this.publicUrl(input.url) : input.ref;
     string(ref, 'source', 2048);
     if ('bytes' in input && (!biDocumentFile(ref) || !input.bytes.length || input.bytes.length > documentFileLimit)) {
       throw new Error('Unsupported input');
     }
     const status: ExtractionStatus = { id: randomUUID(), source: { ref }, schema: target.schema.id, state: 'converting',
-      completedChunks: 0, totalChunks: 0, candidates: [] };
+      completedChunks: 0, totalChunks: 0, candidates: [], ...(options && { vault: target.vault, title: target.title }) };
     this.save(status);
-    this.running = this.execute(input, target, consent, status).catch((error: unknown) => {
+    this.running = this.execute(input, target, consent, status, options).catch((error: unknown) => {
       status.state = 'failed';
-      status.issue = this.stop.signal.aborted ? 'interrupted' :
-        error instanceof DocumentWorkerError || error instanceof ExtractionError ? error.issue : 'invalid';
+      status.issue = this.stop.signal.aborted || options?.signal.aborted ? 'interrupted' :
+        error instanceof DocumentWorkerError || error instanceof ExtractionError ? error.issue :
+          error instanceof Error && error.message === 'isolation-unavailable' ? 'isolation-unavailable' : 'invalid';
       this.save(status);
     }).finally(() => { this.running = undefined; });
     return this.status(status.id)!;
@@ -188,12 +263,14 @@ export class DocumentExtraction {
     return url.href;
   }
 
-  private async convert(input: Input, source: Source, signal: AbortSignal) {
+  private async convert(input: Input, source: Source, signal: AbortSignal, worker: typeof documentWorker, explicitUrl: boolean) {
     let bytes: Buffer;
     let kind: FileKind;
     let charset = '';
     if ('url' in input) {
-      const fetched = await this.fetchPage(input.url, this.origins(), signal).catch(() => { throw new ExtractionError('link'); });
+      const url = this.publicUrl(input.url);
+      const origins = explicitUrl ? new Set([new URL(url).origin]) : this.origins();
+      const fetched = await this.fetchPage(url, origins, signal).catch(() => { throw new ExtractionError('link'); });
       source.ref = source.url = fetched.url;
       source.fetchedAt = fetched.fetchedAt;
       bytes = fetched.bytes;
@@ -208,7 +285,7 @@ export class DocumentExtraction {
     const db = this.database();
     const existing = db.prepare('SELECT projection FROM documents WHERE id=?').get(source.documentId);
     const projection = existing ? JSON.parse(String(existing.projection)) as Projection :
-      await documentWorker<Projection>(['convert', kind, charset], bytes, signal);
+      await worker<Projection>(['convert', kind, charset], bytes, signal);
     if (projection.sha256 !== source.sha256) throw new ExtractionError('invalid');
     if (!existing) db.prepare('INSERT OR IGNORE INTO documents VALUES (?,?)').run(source.documentId, JSON.stringify(projection));
     source.title = projection.title || source.ref;
@@ -230,9 +307,11 @@ export class DocumentExtraction {
     throw new ExtractionError('model');
   }
 
-  private async execute(input: Input, target: SchemaTarget, consent: boolean, status: ExtractionStatus) {
-    const signal = AbortSignal.any([this.stop.signal, AbortSignal.timeout(12 * 60_000)]);
-    const segments = await this.convert(input, status.source, signal);
+  private async execute(input: Input, target: SchemaTarget, consent: boolean, status: ExtractionStatus, options?: BuildOptions) {
+    const signal = AbortSignal.any([this.stop.signal, AbortSignal.timeout(12 * 60_000), ...(options ? [options.signal] : [])]);
+    const worker = options?.worker ?? documentWorker;
+    const segments = await this.convert(input, status.source, signal, worker, Boolean(options));
+    signal.throwIfAborted();
     const store = this.knowledge.reviewStore;
     const { vault, schema } = target;
     if (target.install) store.installReviewSchema(vault, schema.id, schema.version, schema.document.fields);
@@ -251,7 +330,7 @@ export class DocumentExtraction {
     if (priorId && earlier && (earlier.publication || earlier.parent === base.parent) && store.hasReview(priorId, vault, provenance)) {
       reusableReview = priorId;
     } else if (store.hasReview(reviewId, vault, provenance)) reusableReview = reviewId;
-    if (reusableReview || (prior?.state === 'needs-attention' && prior.baseRevision === base.parent)) {
+    if (reusableReview || (!options && prior?.state === 'needs-attention' && prior.baseRevision === base.parent)) {
       if (prior) {
         status.completedChunks = prior.completedChunks;
         status.totalChunks = prior.totalChunks;
@@ -267,7 +346,7 @@ export class DocumentExtraction {
       this.save(status, receipt);
       return;
     }
-    const plan = await documentWorker<Plan>(['plan'], json(segments), signal);
+    const plan = await worker<Plan>(['plan'], json(segments), signal);
     status.state = 'extracting';
     status.totalChunks = plan.chunks.length;
     this.save(status);
@@ -281,7 +360,7 @@ export class DocumentExtraction {
     }
     status.state = 'validating';
     this.save(status);
-    const identities = await documentWorker<string[]>(['identities'], json(partials.map(({ name }) => ['record', name])), signal);
+    const identities = await worker<string[]>(['identities'], json(partials.map(({ name }) => ['record', name])), signal);
     status.candidates = consolidate(partials, identities, fields);
     const publishedFields = new Set(base.cards.map(card => canonical(card.fields)));
     const publishedKeys = new Set(base.cards.filter(({ type }) => type === 'record').map(({ key }) => key));
@@ -333,10 +412,12 @@ export class DocumentExtraction {
     // The same materializer runs again inside the review transaction and on publish.
     materializeChange(draft, base.parent ? store.snapshot(vault, base.parent) : undefined, schema,
       'verify-' + status.id, hash => store.reviewSource(hash));
-    stageReviewProposal(store, reviewId, draft, provenance);
-    for (const candidate of accepted) candidate.state = 'awaiting-review';
-    status.reviewId = reviewId;
-    status.state = 'awaiting-review';
-    this.save(status, receipt);
+    if (options) {
+      status.state = 'validated';
+      this.save({ ...status, pending: { id: reviewId, receipt, draft } }, receipt);
+    } else {
+      stageReviewProposal(store, reviewId, draft, provenance);
+      this.recordReview(status, reviewId, receipt);
+    }
   }
 }

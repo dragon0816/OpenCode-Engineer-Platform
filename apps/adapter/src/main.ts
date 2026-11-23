@@ -47,7 +47,7 @@ import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/
 import type { CredentialEnvironment } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { publicReference } from './runs/local-references.ts';
-import type { ReferencePicker } from './runs/reference-picker.ts';
+import { pickLocalReference, type ReferencePicker } from './runs/reference-picker.ts';
 import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 import type { TelegramEnvironment } from './telegram/accounts.ts';
@@ -81,6 +81,7 @@ const assets = new Map([
   ['/knowledge-browser.js', ['src/knowledge-browser.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
   ['/bi-documents.js', ['src/bi-documents.js', 'text/javascript; charset=utf-8']],
+  ['/bi-builder.js', ['src/bi-builder.js', 'text/javascript; charset=utf-8']],
   ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
   ['/i18n.js', ['src/i18n.js', 'text/javascript; charset=utf-8']],
   ['/i18n/en.js', ['src/i18n/en.js', 'text/javascript; charset=utf-8']],
@@ -131,7 +132,8 @@ function secureHeaders(response: ServerResponse) {
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
   requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions,
-  mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker, pluginOptions?: { dataRoot?: string; version?: string }) {
+  mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker,
+  pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3] }) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -176,7 +178,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const extraction = runtime.knowledge && new DocumentExtraction(join(root, 'bi-documents.sqlite'), runtime.knowledge,
-    () => new Set(telegram.approvedBiOrigins()), undefined,
+    () => new Set(telegram.approvedBiOrigins()), pluginOptions?.fetchBiPage,
     () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined);
   let receivingBiDocument = false;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
@@ -184,7 +186,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     const session = sessions.get(sessionId);
     if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
     return externalSources.pluginFile(session, source, hash);
-  });
+  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference });
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
     (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);

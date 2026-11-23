@@ -196,6 +196,17 @@ button[type="submit"]:enabled { color: var(--primary-text); background: var(--pr
 #knowledge-repository { border-bottom: 1px solid var(--line); margin: 0 0 var(--space-3); padding-bottom: var(--space-3); }
 #knowledge-repository-form { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 #knowledge-folder { min-width: 0; }
+.bi-builder { display: grid; gap: 1rem; max-width: 56rem; overflow-wrap: anywhere; }
+.bi-builder > section { display: grid; gap: .65rem; padding: .85rem; border: 1px solid var(--line); border-radius: .65rem; }
+.bi-builder h3, .bi-builder p { margin: 0; }
+.bi-builder label { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.bi-builder label > :is(input:not([type="checkbox"]), select) { min-width: 0; flex: 1 1 15rem; }
+.bi-builder button { justify-self: start; max-width: 100%; white-space: normal; }
+.bi-builder progress { width: 100%; }
+#bi-builder-steps { display: flex; flex-wrap: wrap; gap: .65rem 2rem; margin: 0; padding-left: 1.7rem; }
+#bi-builder-steps [aria-current="step"] { font-weight: 700; text-decoration: underline; text-underline-offset: .22em; }
+#bi-builder-history { display: grid; gap: .35rem; margin: 0; padding-left: 1.2rem; }
+#bi-builder-history li > span { margin-inline-start: .55rem; }
 #knowledge-repository-status { margin-top: var(--space-2); white-space: pre-line; }
 #knowledge-repository-status:empty { display: none; }
 .knowledge dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); }

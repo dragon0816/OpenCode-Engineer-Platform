@@ -5,14 +5,19 @@ import { dirname, join } from 'node:path';
 import { readApprovedLink } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { sourceUploadLimit } from '../../../../packages/knowledge/src/ingest.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
+import type { DocumentExtraction } from '../bi/document-extraction.ts';
+import { documentResult } from '../bi/document-worker.ts';
 import { proposeReview } from '../http/review.ts';
+import type { ReferencePicker } from '../runs/reference-picker.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from '../runs/workspace.ts';
 import { digestPattern, sha256, strictJSON, type VerifiedPlugin } from './package.ts';
 import { runPython } from './python.ts';
 import type { PluginRegistry } from './registry.ts';
 import { PluginError, requirePlugin } from './zip.ts';
 
-type Grant = { id: string; owner: string; generation: string; plugin: VerifiedPlugin; expires: number; sources: Map<string, Source> };
+type Grant = { id: string; page: string; owner: string; generation: string; plugin: VerifiedPlugin; expires: number;
+  sources: Map<string, Source>; stop: AbortController };
+type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker };
 type Source = { id: string; name: string; sha256: string; confidential: boolean; bytes: Buffer };
 type Proposal = { draft: string; source: string; proposal: string };
 type State = 'starting' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed-out';
@@ -27,6 +32,9 @@ const expiresAfter = 30 * 60_000;
 const terminal = (state: State) => state !== 'starting' && state !== 'running';
 const describeSource = ({ bytes, ...source }: Source) => ({ ...source, size: bytes.length });
 const failure = (error: unknown) => error instanceof PluginError ? error.code : 'operation-failed';
+const biPlugin = 'oep.bi-knowledge';
+const biPage = biPlugin + '.build';
+const biWorker = biPlugin + '.document';
 
 function text(input: unknown, max: number) {
   requirePlugin(typeof input === 'string' && input.trim() && input.length <= max, 'runtime-input');
@@ -67,19 +75,22 @@ export class PluginRuntime {
   private readonly registry: PluginRegistry;
   private readonly root: string;
   private readonly knowledge: Runtime['knowledge'];
+  private readonly bi?: BiBuilder;
   private readonly reference: (session: string, source: string, sha256: string) =>
     { name: string; bytes: Buffer; confidential: boolean };
 
-  constructor(registry: PluginRegistry, root: string, knowledge: Runtime['knowledge'], reference: PluginRuntime['reference']) {
+  constructor(registry: PluginRegistry, root: string, knowledge: Runtime['knowledge'], reference: PluginRuntime['reference'],
+    bi?: BiBuilder) {
     this.registry = registry;
     this.root = root;
     this.knowledge = knowledge;
     this.reference = reference;
+    this.bi = bi;
     registry.onDeactivate = (plugin) => this.deactivate(plugin);
   }
 
   private deactivate(plugin: string) {
-    for (const [token, grant] of this.grants) if (grant.id === plugin) this.grants.delete(token);
+    for (const [token, grant] of this.grants) if (grant.id === plugin) this.retire(token);
     for (const [key, job] of this.jobs) {
       if (job.plugin !== plugin) continue;
       job.controller.abort('cancelled');
@@ -90,7 +101,7 @@ export class PluginRuntime {
 
   async close() {
     this.closed = true;
-    this.grants.clear();
+    for (const token of this.grants.keys()) this.retire(token);
     for (const job of this.jobs.values()) {
       job.controller.abort('cancelled');
       for (const stream of job.streams) stream.end();
@@ -99,17 +110,24 @@ export class PluginRuntime {
     this.jobs.clear();
   }
 
+  private retire(token: string) {
+    this.grants.get(token)?.stop.abort('cancelled');
+    this.grants.delete(token);
+  }
+
   page(pluginId: string, component: string, digest: string, owner: string) {
     const { plugin, generation } = this.registry.active(pluginId, digest);
     requirePlugin(plugin.manifest.components.pages.some(({ id }) => id === component), 'page-not-found');
     const view = plugin.views.find(({ id }) => id === component)!;
     const now = Date.now();
-    for (const [token, grant] of this.grants) if (grant.expires <= now) this.grants.delete(token);
+    for (const [token, grant] of this.grants) if (grant.expires <= now) this.retire(token);
     const verified = [...this.grants.values()].find((grant) => grant.id === pluginId && grant.generation === generation)?.plugin ?? plugin;
-    if (this.grants.size >= 16) this.grants.delete(this.grants.keys().next().value!);
+    if (this.grants.size >= 16) this.retire(this.grants.keys().next().value!);
     const token = randomUUID();
-    this.grants.set(token, { id: pluginId, owner, generation, plugin: verified, expires: now + expiresAfter, sources: new Map() });
-    return { ...view, token, approvedSources: plugin.manifest.permissions.sourceBroker === 'approved-sources' };
+    this.grants.set(token, { id: pluginId, page: component, owner, generation, plugin: verified, expires: now + expiresAfter,
+      sources: new Map(), stop: new AbortController() });
+    return { ...view, token, approvedSources: plugin.manifest.permissions.sourceBroker === 'approved-sources',
+      ...(this.bi && pluginId === biPlugin && component === biPage && { biBuilder: true }) };
   }
 
   authorize(plugin: string, owner: string, token: string) {
@@ -165,8 +183,6 @@ export class PluginRuntime {
   private start(grant: Grant, params: Record<string, unknown>) {
     const worker = grant.plugin.manifest.components.pythonWorkers.find(({ id }) => id === params.worker);
     requirePlugin(worker, 'runtime-forbidden');
-    const active = [...this.jobs.values()].filter(({ update }) => !terminal(update.state));
-    requirePlugin(active.length < 3 && !active.some((job) => job.plugin === grant.id), 'runtime-busy');
     const selected = params.sources ?? [];
     requirePlugin(Array.isArray(selected) && selected.length <= 16 && new Set(selected).size === selected.length, 'runtime-input');
     const sources = new Map(selected.map((key) => {
@@ -176,6 +192,13 @@ export class PluginRuntime {
     }));
     const input = params.input ?? {};
     requirePlugin(Buffer.byteLength(JSON.stringify(input)) <= 32_000, 'runtime-input');
+    return this.launch(grant, worker, input, sources).update;
+  }
+
+  private launch(grant: Grant, worker: VerifiedPlugin['manifest']['components']['pythonWorkers'][number], input: unknown,
+    sources: Map<string, Source>, documentSignal?: AbortSignal) {
+    const active = [...this.jobs.values()].filter(({ update }) => !terminal(update.state));
+    requirePlugin(active.length < 3 && !active.some((job) => job.plugin === grant.id), 'runtime-busy');
     if (this.jobs.size >= 32) {
       const oldest = [...this.jobs].find(([, job]) => terminal(job.update.state));
       if (oldest) this.jobs.delete(oldest[0]);
@@ -186,12 +209,15 @@ export class PluginRuntime {
       done: Promise.resolve(), streams: new Set(), models: 0, writes: 0, drafts: 0 };
     this.jobs.set(update.id, job);
     let timer = setTimeout(() => controller.abort('timed-out'), 30_000);
-    const signal = controller.signal;
+    const signal = documentSignal ? AbortSignal.any([controller.signal, documentSignal]) : controller.signal;
     job.done = runPython(this.root, grant.plugin, worker, input, signal, () => {
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort('timed-out'), worker.timeoutMs);
       this.emit(job, { state: 'running' });
-    }, (method, params) => this.call(grant, method, params, job)).then(async (result) => {
+    }, (method, params) => {
+      requirePlugin(!documentSignal || method === 'sources.read', 'runtime-forbidden');
+      return this.call(grant, method, params, job);
+    }, documentSignal ? 2 * 1024 * 1024 : undefined).then(async (result) => {
       this.active(grant);
       signal.throwIfAborted();
       const review = job.proposal && await this.propose(grant, job, job.proposal);
@@ -206,7 +232,65 @@ export class PluginRuntime {
       job.proposal = undefined;
       if (!this.registry.current(grant.id, grant.generation)) this.jobs.delete(update.id);
     });
-    return update;
+    return job;
+  }
+
+  private async build(grant: Grant, method: string, params: Record<string, unknown>) {
+    const permissions = grant.plugin.manifest.permissions;
+    const worker = grant.plugin.manifest.components.pythonWorkers.find(({ id }) => id === biWorker);
+    requirePlugin(this.bi && grant.id === biPlugin && grant.page === biPage && worker &&
+      permissions.operations.includes('review.submit') && permissions.operations.includes('publish.request') &&
+      permissions.modelBroker === 'approved-gateway' && permissions.sourceBroker === 'approved-sources', 'runtime-forbidden');
+    const { extraction, picker } = this.bi;
+    const { signal } = grant.stop;
+    signal.throwIfAborted();
+    const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal) => {
+      this.active(grant);
+      parent.throwIfAborted();
+      const source = { id: randomUUID(), sha256: sha256(bytes), bytes, name: operation, confidential: false };
+      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent);
+      await job.done;
+      parent.throwIfAborted();
+      requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
+      return documentResult<T>(job.update.result);
+    };
+    switch (method) {
+      case 'bi.catalog': return { choices: extraction.choices(), runs: extraction.recent(true) };
+      case 'bi.pick': {
+        requirePlugin(params.locale === 'en' || params.locale === 'zh-TW', 'runtime-input');
+        return { folder: (await picker('folder', params.locale, signal))[0] };
+      }
+      case 'bi.schemas': return extraction.importSchemas(params.folder, signal, run);
+      case 'bi.repository': {
+        requirePlugin(!extraction.busy(), 'runtime-busy');
+        requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        return extraction.importRepository(text(params.folder, 2048), params.allowModel,
+          params.title === undefined ? undefined : text(params.title, 100));
+      }
+      case 'bi.start': {
+        requirePlugin(!extraction.busy(), 'runtime-busy');
+        requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        const title = params.title === undefined ? undefined : text(params.title, 100);
+        const options = { worker: run, signal, title };
+        if (params.url !== undefined) {
+          requirePlugin(params.source === undefined, 'runtime-input');
+          return extraction.start({ url: text(params.url, 2048) }, params.schema, params.allowModel, options);
+        }
+        const source = grant.sources.get(id(params.source));
+        requirePlugin(source && !source.confidential, 'runtime-forbidden');
+        const status = extraction.start({ ref: source.name, bytes: source.bytes }, params.schema, params.allowModel, options);
+        grant.sources.delete(source.id);
+        return status;
+      }
+      case 'bi.status':
+      case 'bi.submit': {
+        const key = id(params.id);
+        const status = extraction.status(key);
+        requirePlugin(status?.vault, 'runtime-forbidden');
+        return method === 'bi.submit' ? extraction.submit(key) : status;
+      }
+      default: throw new PluginError('runtime-forbidden');
+    }
   }
 
   private metadata(grant: Grant) {
@@ -377,7 +461,9 @@ export class PluginRuntime {
         const status = await this.call(grant, 'reviews.status', params);
         return { status, route: '#review' };
       }
-      default: throw new PluginError('runtime-forbidden');
+      default:
+        if (method.startsWith('bi.')) return this.build(grant, method, params);
+        throw new PluginError('runtime-forbidden');
     }
   }
 }
