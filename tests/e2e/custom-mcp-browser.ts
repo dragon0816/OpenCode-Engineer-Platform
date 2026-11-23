@@ -19,7 +19,7 @@ import type { WireRequest } from './synthetic-completion.ts';
 const root = dataDirectory();
 const marker = process.argv.includes('--leaks') ? 'synthetic-mcp-' + randomUUID() : '';
 const pidFile = join(root, 'mcp-fixture-pid');
-let credentialReference: string | undefined;
+const credentials = new Map<string, string>();
 const powershell = (script: string) => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
 const noMarker = (value: string | Buffer) => {
@@ -67,7 +67,13 @@ async function openRuntime() {
     },
   }, profile, definitions);
   restart = Promise.withResolvers<void>();
-  adapter = await startAdapter(root, runtime, () => undefined, false, restart.resolve);
+  adapter = await startAdapter(root, runtime, () => undefined, false, restart.resolve, undefined, undefined, {
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
+    writeCredential(name, value) {
+      if (value === null) credentials.delete(name);
+      else credentials.set(name, value);
+    },
+  });
 }
 async function closeRuntime() {
   try { await adapter?.close(); } finally {
@@ -213,12 +219,12 @@ try {
   if (marker) {
     const id = await evaluate<string>("document.querySelector('#mcp-servers h4').id.replace('mcp-server-', '')");
     assert.match(id, /^[a-f0-9]{32}$/);
-    credentialReference = `OEP_MCP_${id.toUpperCase()}_SYNTHETIC_MCP`;
     const result = await evaluate<string>(`import('/api.js').then(async ({ request }) => JSON.stringify(await request(
       '/api/settings/mcp/custom', { data: { action: 'credential', id: ${JSON.stringify(id)}, name: 'SYNTHETIC_MCP',
         value: ${JSON.stringify(marker)} } })))`);
     noMarker(result);
     assert.deepEqual(JSON.parse(result), { configured: true });
+    assert.ok(credentials.get(`OEP_MCP_${id.toUpperCase()}_SYNTHETIC_MCP`) === marker, 'Credential reached the isolated store');
   }
   let probePid: string | undefined;
   await screenshots('restart');
@@ -335,10 +341,6 @@ try {
   console.log('Chromium MCP add, catalog test, apply, persistence, edit, disable, and remove verified.');
 } finally {
   completeTurn.resolve();
-  try {
-    try { await page.close(); } finally { await closeRuntime(); }
-    if (marker) scan(root);
-  } finally {
-    if (credentialReference) powershell(`[Environment]::SetEnvironmentVariable('${credentialReference}',$null,'User')`);
-  }
+  try { await page.close(); } finally { await closeRuntime(); }
+  if (marker) scan(root);
 }

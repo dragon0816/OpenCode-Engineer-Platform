@@ -39,6 +39,7 @@ import { convertWorkbook, isAttachmentImage, uploadType, uuid } from './runs/att
 import { projects, WebStore } from './runs/web-store.ts';
 import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
+import type { CredentialEnvironment } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
 import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
@@ -112,7 +113,8 @@ function secureHeaders(response: ServerResponse) {
 }
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
-  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void) {
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void,
+  mcpCredentials?: CredentialEnvironment) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -495,7 +497,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (testingMcp) throw new HttpError(409, 'probe-busy');
       testingMcp = true;
       try {
-        const results = await testCustomMcp(server);
+        const results = await testCustomMcp(server, mcpCredentials?.readCredentials);
         send(response, 200, results.ok ? results :
           { ...results, reasonDetail: webMessage(codeForFallback(results.reason) ?? 'mcp-probe-failed') });
       } catch {
@@ -519,7 +521,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
             try { validateHeaderValue(entry.name, input.value); }
             catch { throw new HttpError(400, 'invalid-header-credential'); }
           }
-          try { saveCustomMcpCredential(entry.reference, input.value); }
+          try { saveCustomMcpCredential(entry.reference, input.value, mcpCredentials?.writeCredential); }
           catch (error) {
             if (error instanceof WebMessageError) throw new HttpError(400, error.detail.code, error.detail.params);
             throw new HttpError(400, 'credential-save-failed');
@@ -570,7 +572,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         } else throw new HttpError(400, 'invalid-server-action');
       }
       const servers = store.customMcpServers();
-      const configured = configuredCustomMcpCredentials(servers.flatMap(({ environment }) => environment.map(({ reference }) => reference)));
+      const credentialNames = servers.flatMap(({ environment }) => environment.map(({ reference }) => reference));
+      const configured = configuredCustomMcpCredentials(credentialNames, mcpCredentials?.readCredentials);
       const applied = runtime.customMcp ?? [];
       const matches = (server: typeof servers[number]) => applied.some((entry) => {
         const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;

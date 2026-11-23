@@ -3,15 +3,14 @@ import { legacyAllowlistRef, legacyChannels, telegramCredentialRef } from '../ch
 import type { ChannelAccount, ChannelHandler } from '../channels/accounts.ts';
 import { HttpError } from '../http/errors.ts';
 import { readUserCredentials, writeUserCredential } from '../runs/custom-mcp-credentials.ts';
+import type { CredentialEnvironment } from '../runs/custom-mcp-credentials.ts';
 import type { WebStore } from '../runs/web-store.ts';
 import type { Intake, TelegramInbox } from './inbox.ts';
 import { TelegramApi, TelegramPoller, TelegramTransport } from './poller.ts';
 import { TelegramSetup, validOwner, validToken } from './setup.ts';
 import type { VerifiedBot } from './setup.ts';
 
-export type TelegramEnvironment = {
-  readCredentials(names: string[]): Record<string, string | undefined>;
-  writeCredential?(name: string, value: string | null): void;
+export type TelegramEnvironment = Pick<CredentialEnvironment, 'readCredentials'> & Partial<Pick<CredentialEnvironment, 'writeCredential'>> & {
   createApi(value: string): TelegramApi;
 };
 
