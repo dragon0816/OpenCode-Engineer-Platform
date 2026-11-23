@@ -1,7 +1,7 @@
 name: Windows release verification
 on:
   push:
-    branches: [main]
+    branches: [main, ci/fix-0.10-runner]
   pull_request:
     branches: [main]
 permissions:
