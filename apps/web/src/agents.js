@@ -1,5 +1,6 @@
 import { bindFilePicker, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
 import { errorText, projectLabel, request } from './api.js';
+import { classificationControl } from './external-helpers.js';
 
 const steps = ['basic', 'model', 'knowledge', 'ability', 'channel', 'trigger', 'confirm'];
 const detailTabs = ['basic', 'model', 'knowledge', 'channel', 'trigger', 'ability'];
@@ -131,6 +132,13 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       const path = node('code', workspace.relativeRoot);
       path.setAttribute('data-ui-content', '');
       folder.append(' ', path);
+      const classification = node('div', undefined, 'external-classification');
+      const name = resolveText(workspaceName(workspace));
+      classificationControl(classification, workspace.classification, name, async () => {
+        await request('/api/classification/workspace', { data: { workspaceId: workspace.id, classification: 'public' } });
+        workspace.classification = 'public';
+      }, () => classificationControl(classification, 'public', name));
+      folder.append(classification);
       if (workspace.folders.length) {
         const reads = node('ul');
         for (const read of workspace.folders) {

@@ -1,5 +1,6 @@
 import { joinText, message, optionText, setText, t } from './i18n.js';
 import { request } from './api.js';
+import { classificationControl } from './external-helpers.js';
 
 const find = (id) => document.getElementById(id);
 function node(tag, text) {
@@ -58,7 +59,7 @@ function highlight(parent, content, query) {
   parent.append(snippet.slice(cursor), start + snippet.length < content.length ? '…' : '');
 }
 
-export function bindKnowledgeBrowser(refreshVaults, openPreview) {
+export function bindKnowledgeBrowser(refreshVaults, openPreview, externalCitation) {
   const root = find('knowledge-browser');
   const form = find('knowledge-filters');
   const results = find('knowledge-cards');
@@ -92,6 +93,14 @@ export function bindKnowledgeBrowser(refreshVaults, openPreview) {
       body.prepend(excerpt);
     }
     if (passage.cardId) body.append(button(message('cards.open-card'), (event) => void openCard(passage.cardId, event.currentTarget)));
+    const save = externalCitation?.(passage, active);
+    if (save) {
+      const classification = node('div');
+      classification.className = 'external-classification';
+      classificationControl(classification, 'unclassified', passage.id, save,
+        () => classificationControl(classification, 'public', passage.id));
+      body.append(classification);
+    }
   }
 
   async function openCard(id, opener) {

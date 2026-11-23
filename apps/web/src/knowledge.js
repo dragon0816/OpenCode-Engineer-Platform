@@ -3,6 +3,7 @@ import { bindKnowledgeQuality } from './knowledge-quality.js';
 import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
 import { errorText, request, RequestError, sampleKnowledgeID, serverText } from './api.js';
+import { classificationControl } from './external-helpers.js';
 
 const tabPreference = 'oep.knowledge.tab';
 const vaultPreference = 'oep.knowledge.vault';
@@ -26,8 +27,17 @@ const messages = {
   'evidence-changed-or-cancelled': message('knowledge.the-knowledge-base-release-changed-during-the'),
 };
 
-export function bindKnowledge(openPreview, closePreviews) {
-  const browser = bindKnowledgeBrowser(() => refreshVaults(), openPreview);
+export function bindKnowledge(openPreview, closePreviews, sessionPath) {
+  const browser = bindKnowledgeBrowser(() => refreshVaults(), openPreview, (passage, vaultId) => {
+    const path = sessionPath();
+    const revision = models.get(vaultId)?.revision;
+    if (!path || !revision || !passage.sha256) return;
+    return async () => {
+      const route = path + '/external-sources';
+      const source = await request(route, { data: { kind: 'citation', vault: vaultId, revision, passage: passage.id, sha256: passage.sha256 } });
+      await request(route + '/' + source.id, { data: { sha256: source.sha256, classification: 'public' } });
+    };
+  });
   const quality = bindKnowledgeQuality(browser.openPassage, messages);
   const review = bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
@@ -97,6 +107,12 @@ export function bindKnowledge(openPreview, closePreviews) {
   function describe() {
     answer.replaceChildren();
     const selected = models.get(vault.value);
+    const classification = find('vault-classification');
+    classification.replaceChildren();
+    if (selected) classificationControl(classification, selected.classification, selected.title, async () => {
+      await request('/api/classification/vault', { data: { vault: selected.id, revision: selected.revision, classification: 'public' } });
+      selected.classification = 'public';
+    }, () => describe());
     details.replaceChildren();
     technical.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);

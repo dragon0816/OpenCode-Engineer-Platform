@@ -9,6 +9,8 @@ import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import { DelegationLedger } from './delegation-ledger.ts';
+import { migrateExternalHelpers, verifyExternalHelpers } from './external-schema.ts';
+import { ExternalLedger, externalProvider } from './external-ledger.ts';
 import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
@@ -120,6 +122,7 @@ export class WebStore extends Ledger {
   private readonly executionChanges = new Set<() => void>();
   private readonly centralWorkItems?: WorkItems;
   private readonly centralDelegations?: DelegationLedger;
+  private readonly centralExternal?: ExternalLedger;
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -133,12 +136,14 @@ export class WebStore extends Ledger {
         if (!telegram && version < 4) migrateChannelAccounts(db);
         if (!telegram && version < 5) migrateWorkItems(db);
         if (!telegram && version < 6) migrateDelegations(db);
+        if (!telegram && version < 7) migrateExternalHelpers(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
         if (!telegram) {
           verifyWorkItems(db);
           verifyDelegations(db);
+          verifyExternalHelpers(db);
         }
       },
     });
@@ -146,6 +151,7 @@ export class WebStore extends Ledger {
     if (!telegram) {
       this.centralWorkItems = new WorkItems(this.db);
       this.centralDelegations = new DelegationLedger(this.db, this.centralWorkItems);
+      this.centralExternal = new ExternalLedger(this.db);
     }
   }
 
@@ -159,6 +165,11 @@ export class WebStore extends Ledger {
   get delegations() {
     if (!this.centralDelegations) throw new Error('Delegations are stored in the central Web ledger');
     return this.centralDelegations;
+  }
+
+  get external() {
+    if (!this.centralExternal) throw new Error('External helpers are stored in the central Web ledger');
+    return this.centralExternal;
   }
 
   verifyLegacyChannel(config: LegacyChannel, fingerprint: string, sealLegacyOwner: () => boolean) {
@@ -219,7 +230,8 @@ export class WebStore extends Ledger {
   agents() {
     return this.db.prepare(`SELECT id, role, builtin_key AS builtin, state, name, introduction, instructions,
       avatar IS NOT NULL AS hasAvatar, default_model_id AS defaultModel, reply_locale AS replyLocale,
-      config_revision AS revision FROM agents ORDER BY builtin_key IS NULL, id<>'main', created_at, id`).all() as {
+      config_revision AS revision FROM agents WHERE id NOT IN ('external-codex-cli','external-claude-code')
+      ORDER BY builtin_key IS NULL, id<>'main', created_at, id`).all() as {
         id: string; role: 'orchestrator' | 'specialist'; builtin: 'main' | 'bi' | null; state: 'active' | 'archived';
         name: string; introduction: string; instructions: string; hasAvatar: number; defaultModel: string | null;
         replyLocale: 'zh-TW' | 'en'; revision: number;
@@ -227,7 +239,7 @@ export class WebStore extends Ledger {
   }
 
   agentWorkspaces(agentID: string) {
-    return this.db.prepare(`SELECT id, layout, relative_root AS relativeRoot, is_default AS isDefault FROM agent_workspaces
+    return this.db.prepare(`SELECT id, layout, relative_root AS relativeRoot, is_default AS isDefault, classification FROM agent_workspaces
       WHERE agent_id=? ORDER BY is_default DESC,id`).all(agentID).map((row) => ({
       ...row as { id: string; layout: string; relativeRoot: string; isDefault: number },
       folders: this.db.prepare('SELECT folder FROM workspace_read_folders WHERE workspace_id=? ORDER BY folder')
@@ -332,7 +344,7 @@ export class WebStore extends Ledger {
   }
 
   defaultWorkspace(agentID: string) {
-    if (!/^[a-z\d][a-z\d_-]{0,79}$/.test(agentID)) return;
+    if (externalProvider(agentID) || !/^[a-z\d][a-z\d_-]{0,79}$/.test(agentID)) return;
     return this.db.prepare(`SELECT w.id FROM agent_workspaces w JOIN agents a ON a.id=w.agent_id
       WHERE a.id=? AND w.is_default=1 AND a.state='active' AND
         ((a.id='main' AND w.id='legacy-default' AND w.relative_root='web') OR
@@ -683,9 +695,16 @@ export class WebStore extends Ledger {
     return Number(row?.bytes);
   }
 
-  saveAttachment(sessionID: string, record: Attachment) {
+  saveAttachment(sessionID: string, record: Attachment, ownerUpload = false) {
     const bytes = record.original.bytes + (record.projection?.bytes ?? 0);
-    this.db.prepare('INSERT INTO attachments VALUES (?, ?, ?, ?)').run(record.id, sessionID, bytes, JSON.stringify(record));
+    const save = () => this.db.prepare('INSERT INTO attachments VALUES (?, ?, ?, ?)').run(record.id, sessionID, bytes, JSON.stringify(record));
+    if (ownerUpload && this.centralExternal) {
+      this.transaction(() => {
+        save();
+        const owner = this.db.prepare("SELECT workspace_id FROM session_ownership WHERE session_id=? AND origin='web'").get(sessionID);
+        if (typeof owner?.workspace_id === 'string') this.external.addSource(sessionID, owner.workspace_id, { kind: 'attachment', attachmentId: record.id });
+      });
+    } else save();
   }
 
   deleteAttachment(sessionID: string, id: string) {

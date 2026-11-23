@@ -1,8 +1,10 @@
 import { errorText, request } from './api.js';
 import { formatDate, message, resolveText, setText, t } from './i18n.js';
+import { confirmExternal } from './external-helpers.js';
 
 const statuses = {
   queued: message('delegations.status.queued'),
+  awaiting_confirmation: message('externalHelpers.confirm.awaiting'),
   running: message('delegations.status.running'),
   succeeded: message('delegations.status.succeeded'),
   needs_input: message('delegations.status.needs_input'),
@@ -37,10 +39,14 @@ const reasons = {
   'restart-reconciliation': () => message('delegations.event.restart-reconciliation'),
   requests: (metrics) => message('delegations.event.requests', metrics),
   tools: (metrics) => message('delegations.event.tools', metrics),
+  'external-owner-confirmed': () => message('externalHelpers.confirm.recorded'),
+  'external-confirmation-required': () => message('externalHelpers.confirm.awaiting'),
+  'external-owner-selection': () => message('externalHelpers.confirm.selected'),
+  'external-gate-passed': () => message('externalHelpers.gate.passed'),
 };
 const statusText = (status) => statuses[status] ?? message('delegations.status.indeterminate');
 const route = (id) => '/api/delegations/' + id;
-const pending = (status) => status === 'running' || status === 'queued';
+const pending = (status) => status === 'running' || status === 'queued' || status === 'awaiting_confirmation';
 
 export function bindDelegationResults({ node, action, openPreview, openRunTab, openReview, toolCard, showError, refresh }) {
   function control(label, id, key, handler) {
@@ -80,7 +86,8 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
   function renderRun(body, detail, context, signal) {
     const focused = body.contains(document.activeElement) && document.activeElement;
     const tools = new Map([...body.querySelectorAll('.tool-card')].map((tool) => [tool.dataset.tool, tool]));
-    body.replaceChildren(node('p', statusText(detail.receipt.status)));
+    const awaiting = detail.receipt.status === 'queued' && detail.externalApproval?.decision === null;
+    body.replaceChildren(node('p', statusText(awaiting ? 'awaiting_confirmation' : detail.receipt.status)));
     const { run, events, result, receipt } = detail;
     if (run?.model) body.append(node('p', message('delegations.model', { model: run.model })));
     if (run?.task) {
@@ -177,6 +184,8 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
     header.append(title, node('span', statusText(item.status), 'delegation-status'));
     if (item.unread) header.append(node('span', message('delegations.unread'), 'delegation-unread'));
     section.append(header);
+    if (item.externalConfirmation) section.append(node('p',
+      item.externalConfirmation.decision === 'confirmed' ? message('externalHelpers.confirm.recorded') : message('externalHelpers.confirm.selected')));
     if (!pending(item.status)) {
       const status = node('p', message('delegations.completion', { status: statusText(item.status) }));
       status.setAttribute('role', 'status');
@@ -208,6 +217,9 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
       if (item.unread) void seen(context, id);
     });
     actions.append(open);
+    if (item.status === 'awaiting_confirmation') actions.append(control(message('externalHelpers.confirm.review'), id, 'confirm',
+      (event) => void confirmExternal(id, resolveText(name), event.currentTarget, context.abort.signal, () => refresh(context))
+        .catch((error) => { if (!context.abort.signal.aborted) showError(error); })));
     if (item.reviewRef) actions.append(reviewControl(item, context));
     if (item.unread) actions.append(control(message('delegations.mark-read'), id, 'read', () => void seen(context, id)));
     if (pending(item.status)) actions.append(control(message('delegations.cancel'), id, 'cancel', async (event) => {

@@ -742,3 +742,34 @@ summary { cursor: pointer; }
 .delegation-timeline li + li { margin-block-start: .4rem; }
 .delegation-timeline time { margin-inline-end: .55rem; }
 .delegation-transcript { margin-block: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.external-classification {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem;
+  margin-block: .35rem;
+  overflow-wrap: anywhere;
+}
+.external-dialog {
+  inline-size: min(36rem, calc(100vw - 2rem));
+  max-block-size: calc(100dvh - 2rem);
+  padding: 1rem;
+  color: inherit;
+}
+.external-dialog form > div:first-child > label,
+#external-helper-settings fieldset > label {
+  display: block;
+  margin-block: .6rem;
+}
+.external-dialog input[type="checkbox"],
+#external-helper-settings input[type="checkbox"] { margin-inline-end: .4rem; }
+.external-dialog textarea,
+.external-dialog select,
+.external-dialog input:not([type="checkbox"]) {
+  display: block;
+  max-inline-size: 100%;
+}
+.external-dialog textarea { inline-size: 100%; min-block-size: 6rem; }
+.external-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.external-dialog li small { margin-inline-start: .4rem; }
+#external-helper-settings fieldset { min-inline-size: 0; margin-block: .75rem; }

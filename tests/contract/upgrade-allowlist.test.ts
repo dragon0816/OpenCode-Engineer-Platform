@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { legacyAgentRows, migrateAgentLedger } from '../../apps/adapter/src/runs/agent-ledger.ts';
 import { migrateChannelAccounts } from '../../apps/adapter/src/channels/accounts.ts';
+import { migrateDelegations } from '../../apps/adapter/src/runs/delegation-schema.ts';
 import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
@@ -52,7 +53,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
         .map((row) => row.name);
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
-      ...allowedEmptyTables('webV6Empty'), 'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
+      ...allowedEmptyTables('webV6Empty'), ...allowedEmptyTables('webV7Empty'), 'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -101,7 +102,7 @@ test('the slice 3b central fixture upgrades from v4 without changing accounts or
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
     assert.equal(result.before.userVersion, 4);
     assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
-    assert.equal(result.after.userVersion, 6);
+    assert.equal(result.after.userVersion, 7);
     assert.equal(result.after.counts.agent_work_items, 0);
     run(snapshot, ['reconcile-upgrade', data, copy]);
     using db = new DatabaseSync(file);
@@ -126,7 +127,7 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
     }
     backup(data, copy);
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 6]);
+    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 7]);
     assert.deepEqual([result.before.counts.agent_work_items, result.after.counts.agent_work_items], [1, 1]);
     for (const table of allowedEmptyTables('webV6Empty')) {
       assert.equal(Object.hasOwn(result.before.counts, table), false);
@@ -140,6 +141,45 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('the v6 delegation fixture preserves internal receipts and starts external helpers unclassified and disabled', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-external-upgrade-'));
+  try {
+    const data = join(root, 'data');
+    const copy = join(root, 'backup');
+    const { web } = seedPhase3bFixture(data);
+    const file = join(web, 'web.sqlite');
+    {
+      using db = new DatabaseSync(file);
+      db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
+      migrateAgentLedger(db, file, false);
+      migrateChannelAccounts(db);
+      db.exec(readFileSync(new URL('../fixtures/upgrade/phase3b-web-v5.sql', import.meta.url), 'utf8'));
+      migrateDelegations(db);
+      db.exec(readFileSync(new URL('../fixtures/upgrade/phase3i-web-v6.sql', import.meta.url), 'utf8'));
+      db.exec('COMMIT');
+    }
+    backup(data, copy);
+    const { before, after } = JSON.parse(migrate(data))['web/web.sqlite'];
+    assert.deepEqual([before.userVersion, after.userVersion], [6, 7]);
+    assert.deepEqual([before.counts.delegations, after.counts.delegations], [1, 1]);
+    for (const table of allowedEmptyTables('webV7Empty')) {
+      assert.equal(Object.hasOwn(before.counts, table), false);
+      assert.equal(after.counts[table], 0);
+    }
+    run(snapshot, ['reconcile-upgrade', data, copy]);
+    const store = new WebStore(file);
+    try {
+      assert.equal(store.external.settings('codex_cli').enabled, false);
+      assert.equal(store.external.settings('claude_code').enabled, false);
+      assert.equal(store.external.workspace('legacy-default'), 'unclassified');
+      assert.equal(store.delegations.get('synthetic-delegation')?.status, 'succeeded');
+    } finally { store.close(); }
+    using db = new DatabaseSync(file);
+    db.exec('DROP INDEX external_snapshots_parent');
+    run(snapshot, ['reconcile-upgrade', data, copy], /【web\/web.sqlite】.*無法讀取 SQLite/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data', () => {
   const root = mkdtempSync(join(tmpdir(), 'oep-phase3b-upgrade-'));
   try {
@@ -149,7 +189,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 6], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 7], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);

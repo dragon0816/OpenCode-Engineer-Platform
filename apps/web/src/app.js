@@ -9,6 +9,7 @@ import { bindJobs, loadJobSummary } from './jobs.js';
 import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
+import { classificationControl, loadExternalSettings, openExternalIntake } from './external-helpers.js';
 
 initializeLocale();
 
@@ -101,6 +102,9 @@ function runningID(context) {
 }
 
 function setControls() {
+  const external = find('prepare-external-helper');
+  external.hidden = !current || sessionScopes.get(current.id)?.agentId !== 'main';
+  external.disabled = sending || stopped || Boolean(runningID(current));
   const inactive = sessionAgent(current?.id)?.state === 'archived';
   const cancellable = !stopped && Boolean(runningID(current));
   send.hidden = cancellable;
@@ -359,7 +363,7 @@ function renderPanel(context) {
   const { state, selected, path } = context;
   find('panel-tools').hidden = !state.session.tools?.includes('oep_knowledge_ask');
   updateAttachmentCount();
-  const fileKey = JSON.stringify([state.attachments, state.runs, [...selected]]);
+  const fileKey = JSON.stringify([state.attachments, state.runs, state.workspaceClassification, [...selected]]);
   if (context.fileKey === fileKey) return;
   context.fileKey = fileKey;
   const resources = find('chat-resources');
@@ -389,6 +393,11 @@ function renderPanel(context) {
     if (attachment.converted) entry.append(node('small', message('chat.converted-to-csv-with-worksheet-names-and')));
     const url = `${path}/attachments/${attachment.id}`;
     addFileDetails(entry, attachment, url, context, true);
+    const classification = node('div', undefined, 'external-classification');
+    classificationControl(classification, attachment.classification, attachment.name, attachment.sourceId ? () =>
+      request(path + '/external-sources/' + attachment.sourceId, { data: { sha256: attachment.sha256, classification: 'public' },
+        signal: context.abort.signal }) : null, () => refresh(context));
+    entry.append(classification);
     addResource(attachment, url);
     attachmentList.append(entry);
   }
@@ -398,6 +407,9 @@ function renderPanel(context) {
     const artifact = { ...run.artifact, createdAt: run.finishedAt ?? run.createdAt };
     const url = `${path}/artifacts/${run.id}`;
     addFileDetails(entry, artifact, url, context);
+    const classification = node('div', undefined, 'external-classification');
+    classificationControl(classification, state.workspaceClassification === 'confidential' ? 'confidential' : 'unclassified', artifact.name);
+    entry.append(classification);
     addResource(artifact, url);
     artifactList.append(entry);
   }
@@ -1193,6 +1205,10 @@ function displayProjectFolders() {
   const active = projectFolders.find((entry) => entry.id === folderProject.value);
   if (!active) return;
   setText(find('project-working-root'), message('chat.working-folder-path', { path: active.workingRoot }));
+  classificationControl(find('project-classification'), active.classification, resolveText(projectLabel(active)), async () => {
+    await request('/api/classification/workspace', { data: { workspaceId: 'legacy-' + active.id, classification: 'public' } });
+    active.classification = 'public';
+  }, () => displayProjectFolders());
   find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
     const row = node('li');
     row.append(node('span', folder));
@@ -1827,6 +1843,7 @@ function loadActiveSettingsSection() {
   if (activeSettingsSection === 'channels') void loadChannels();
   if (activeSettingsSection === 'mcp') void loadMcpSettings();
   if (activeSettingsSection === 'integrations') void loadTelegramStatus();
+  if (activeSettingsSection === 'external-helpers') void loadExternalSettings(find('external-helper-settings'), find('external-helper-settings-status'));
 }
 
 function switchSettingsSection(section) {
@@ -2167,6 +2184,26 @@ find('composer').addEventListener('submit', async (event) => {
     refresh(context);
   }
 });
+find('prepare-external-helper').addEventListener('click', (event) => {
+  const context = current;
+  void openExternalIntake(event.currentTarget, context, async (id, publicInputId, specialistId) => {
+    if (current !== context || sending) throw new LocalizedError(message('externalHelpers.intake.sessionChanged'));
+    sending = true;
+    setControls();
+    try {
+      await request(context.path + '/turns', { data: { id, attachments: [], workbook: false,
+        text: t('externalHelpers.intake.intent', { publicInputId, specialistId, requestKey: id }) } });
+      if (!context.state?.runs.some((run) => run.id === id)) {
+        context.pendingID = id;
+        context.pendingAt = Date.now();
+      }
+    } finally {
+      sending = false;
+      setControls();
+      refresh(context);
+    }
+  }).catch(showError);
+});
 async function stopTurn() {
   const context = current;
   const id = runningID(context);
@@ -2289,7 +2326,7 @@ try {
   agent.disabled = stop.disabled = find('new-agent').disabled = false;
   bindJobs(openFeaturePreview);
   if (bootstrap.knowledge) {
-    knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false));
+    knowledge = bindKnowledge(openFeaturePreview, () => closePanel(false), () => current?.path);
     find('open-review').hidden = false;
   }
   find('open-chat').addEventListener('click', () => {

@@ -608,6 +608,36 @@ const schema = this.reviewSchema(input.vault.id, base);
     });
   }
 
+  vaultClassification(vault: string) {
+    if (!this.publication(vault)) return;
+    const row = this.db.prepare('SELECT classification,updated_at AS revision FROM vault_classifications WHERE vault_id=?').get(vault);
+    return { label: (row?.classification ?? 'unclassified') as 'public' | 'confidential' | 'unclassified', revision: Number(row?.revision ?? 0) };
+  }
+
+  classifyVault(vault: string, revision: string, label: 'public' | 'confidential' | 'unclassified') {
+    return this.transaction(() => {
+      if (this.publication(vault)?.revision !== revision) return 'changed';
+      const current = this.vaultClassification(vault);
+      if (current?.label === 'confidential' && label !== 'confidential') return 'confidential';
+      if (current?.label !== label) this.db.prepare('INSERT OR REPLACE INTO vault_classifications VALUES (?,?,?)')
+        .run(vault, label, Math.max(Date.now(), (current?.revision ?? 0) + 1));
+      return 'saved';
+    });
+  }
+
+  externalCitation(vault: string, revision: string, passageId: string) {
+    const publication = this.publication(vault);
+    if (!publication || !this.isCurrent(vault, revision, publication.manifest_hash, true)) return;
+    const snapshot = this.readSnapshot(publication);
+    const passage = snapshot.passages.find(({ id }) => id === passageId);
+    const source = passage && snapshot.sources.find(({ id }) => id === passage.sourceId);
+    if (!passage || !source?.sha256) return;
+    const bytes = this.blob(passage.sha256);
+    if (sha256(bytes) !== passage.sha256 || sha256(passage.text) !== passage.sha256) return;
+    return { bytes, sha256: passage.sha256, publicationHash: publication.manifest_hash,
+      sourceId: source.id, sourceVersion: source.version, sourceHash: source.sha256 };
+  }
+
   benchmarkSets(vault: string) {
     if (!this.publication(vault)) return;
     return this.db.prepare('SELECT name, questions FROM benchmark_sets WHERE vault=? ORDER BY name').all(vault)
