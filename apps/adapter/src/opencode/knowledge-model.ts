@@ -11,7 +11,8 @@ export function knowledgeModel(relay: { baseURL: string; key: string }, alias: s
 }
 
 export async function knowledgeCompletion(relay: { baseURL: string; key: string }, alias: string,
-  prompt: string, input: unknown, signal: AbortSignal, beforeRequest?: () => void, maxTokens = 1024): Promise<Awaited<ReturnType<KnowledgeModel>>> {
+  prompt: string, input: unknown, signal: AbortSignal, beforeRequest?: () => void, maxTokens = 1024,
+  image?: { url: string; detail: 'low' | 'high' }): Promise<Awaited<ReturnType<KnowledgeModel>>> {
   try {
     signal.throwIfAborted();
     beforeRequest?.();
@@ -20,12 +21,12 @@ export async function knowledgeCompletion(relay: { baseURL: string; key: string 
       headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model: alias, stream: false, max_tokens: maxTokens, messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: JSON.stringify(input) },
+        { role: 'user', content: image ? [{ type: 'text', text: String(input) }, { type: 'image_url', image_url: image }] : JSON.stringify(input) },
       ] }),
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+      if (image ? [400, 415, 422].includes(response.status) : response.status >= 400 && response.status < 500 && response.status !== 429) {
         return { failure: 'gateway-rejected', retryable: false };
       }
       return { failure: 'unavailable', retryable: response.status === 429 || response.status >= 500 };

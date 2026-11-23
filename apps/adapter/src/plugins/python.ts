@@ -136,7 +136,7 @@ export async function recoverPythonJobs(root: string) {
 }
 
 export async function runPython(root: string, plugin: VerifiedPlugin, worker: Worker, input: unknown, signal: AbortSignal,
-  ready: () => void, rpc: RPC, resultLimit = frameLimit) {
+  ready: () => void, rpc: RPC, resultLimit = frameLimit, ocrFrameLimit = frameLimit) {
   requirePlugin(process.platform === 'win32' && process.env.SystemRoot, 'isolation-unavailable');
   const parent = join(root, 'plugin-workers');
   mkdirSync(parent, { recursive: true });
@@ -187,6 +187,7 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
     let sequence = 0;
     let result: unknown;
     let returned = false;
+    const bufferLimit = Math.max(resultLimit, ocrFrameLimit);
     try {
       send({ port: (probe.address() as AddressInfo).port, sentinel });
       for await (const piece of child.stdout as AsyncIterable<Buffer>) {
@@ -194,7 +195,7 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
         buffer = Buffer.concat([buffer, piece]);
         let newline: number;
         while ((newline = buffer.indexOf(10)) !== -1) {
-          requirePlugin(newline <= resultLimit && !returned, 'worker-protocol');
+          requirePlugin(newline <= bufferLimit && !returned, 'worker-protocol');
           const frame = JSON.parse(buffer.subarray(0, newline).toString('utf8')) as Record<string, unknown>;
           buffer = buffer.subarray(newline + 1);
           if (!started) {
@@ -203,11 +204,13 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
             ready();
             send({ entry: worker.entry, input });
           } else if (frame && Object.hasOwn(frame, 'result') && Object.keys(frame).length === 1) {
+            requirePlugin(newline <= resultLimit, 'worker-protocol');
             result = frame.result;
             returned = true;
             child.stdin.end();
           } else {
-            requirePlugin(newline <= frameLimit && ++sequence <= maxCalls && frame?.jsonrpc === '2.0' && frame.id === sequence &&
+            const limit = frame?.method === 'bi.ocr' ? ocrFrameLimit : frameLimit;
+            requirePlugin(newline <= limit && ++sequence <= maxCalls && frame?.jsonrpc === '2.0' && frame.id === sequence &&
               typeof frame.method === 'string' && frame.params && typeof frame.params === 'object' &&
               !Array.isArray(frame.params) && Object.keys(frame).length === 4, 'worker-protocol');
             const envelope = { jsonrpc: '2.0', id: sequence };
@@ -218,7 +221,7 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
             }
           }
         }
-        requirePlugin(buffer.length <= resultLimit, 'worker-protocol');
+        requirePlugin(buffer.length <= bufferLimit, 'worker-protocol');
       }
       const code = await finished;
       signal.throwIfAborted();

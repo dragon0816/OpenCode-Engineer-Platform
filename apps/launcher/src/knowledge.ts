@@ -2,6 +2,7 @@ import { appendFileSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { knowledgeCompletion, knowledgeModel } from '../../adapter/src/opencode/knowledge-model.ts';
 import { startGateway } from '../../adapter/src/opencode/gateway.ts';
+import { ocrVision } from '../../adapter/src/opencode/ocr-vision.ts';
 import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
 import type { AskRequest } from '../../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../../packages/knowledge/src/repository.ts';
@@ -93,6 +94,7 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
       return (inTurn ? nested : modelSeat).run(() => limited.ask(input, signal, undefined, authorized), signal);
     };
     return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
+      ocrVision: ocrVision(relay, modelSeat, options.aliases, defaultAlias),
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
       readRepository: (folder: string) => readRepository(folder, path),
       propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias(), beforeRequest?: () => void, maxTokens?: number) =>

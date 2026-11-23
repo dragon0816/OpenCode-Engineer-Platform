@@ -1,7 +1,7 @@
 {
   "format": "oep.plugin/v1",
   "id": "oep.bi-knowledge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": {
     "en": "BI Knowledge",
     "zh-TW": "BI 知識庫"
@@ -27,13 +27,17 @@
     "pythonWorkers": [
       {
         "id": "oep.bi-knowledge.document",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "entry": "document.py",
-        "timeoutMs": 30000,
+        "timeoutMs": 600000,
         "dependencies": [
           {
             "distribution": "pypdf",
             "module": "pypdf"
+          },
+          {
+            "distribution": "pypdfium2",
+            "module": "pypdfium2"
           }
         ]
       }

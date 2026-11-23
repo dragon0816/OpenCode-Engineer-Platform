@@ -34,6 +34,10 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
       if (path.startsWith('payload/')) assert.deepEqual(Buffer.from(files['plugins/bi-knowledge/' + path]), data);
     }
     assert.match(Buffer.from(files['THIRD_PARTY_LICENSES.md']).toString('utf8'), /pypdf 6\.21\.4/);
+    assert.match(Buffer.from(files['NOTICE']).toString('utf8'), /pypdfium2 5\.15\.2/);
+    assert.ok(JSON.parse(Buffer.from(files['sbom.cdx.json'])).components.some(({ purl }) => purl === 'pkg:pypi/pypdfium2@5.15.2'));
+    assert.ok(files['scripts/windows/bi-ocr.ps1']?.length);
+    if (bundled) assert.ok(files['vendor/python/Lib/site-packages/pypdfium2_raw/pdfium.dll']?.length);
     const second = unzipSync(archives[1]);
     for (const path of ['sbom.cdx.json', 'THIRD_PARTY_LICENSES.md', 'NOTICE']) {
       assert.ok(files[path]?.length);
@@ -62,7 +66,7 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
       const pin = JSON.parse(Buffer.from(files['config/opencode.pin.json']));
       assert.equal(upstream, 'opencode ' + pin.tag);
       if (bundled) execFileSync(join(unpacked, 'vendor/python/python.exe'), ['-I', '-c',
-        'import openpyxl, defusedxml, et_xmlfile, pypdf; assert openpyxl.__version__ == "3.1.5" and pypdf.__version__ == "6.21.4"'], options);
+        'import openpyxl, defusedxml, et_xmlfile, pypdf, pypdfium2; assert openpyxl.__version__ == "3.1.5" and pypdf.__version__ == "6.21.4"; doc = pypdfium2.PdfDocument.new(); page = doc.new_page(72, 72); assert page.render().width == 72'], options);
       const node = bundled ? join(unpacked, 'vendor/node/node.exe') : process.execPath;
       execFileSync(node, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
         "await import('./apps/launcher/src/web.ts'); const { goldFixture } = await import('./tests/fixtures/knowledge/gold.ts'); goldFixture();"],

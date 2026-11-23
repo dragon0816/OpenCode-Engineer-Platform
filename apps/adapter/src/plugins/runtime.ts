@@ -6,6 +6,8 @@ import { readApprovedLink } from '../../../../packages/knowledge/src/bi/link-int
 import { sourceUploadLimit } from '../../../../packages/knowledge/src/ingest.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import type { DocumentExtraction } from '../bi/document-extraction.ts';
+import { ocrFrameLimit, parseOcr } from '../bi/document-ocr.ts';
+import type { DocumentOcr } from '../bi/document-ocr.ts';
 import { documentResult } from '../bi/document-worker.ts';
 import { proposeReview } from '../http/review.ts';
 import type { ReferencePicker } from '../runs/reference-picker.ts';
@@ -196,7 +198,7 @@ export class PluginRuntime {
   }
 
   private launch(grant: Grant, worker: VerifiedPlugin['manifest']['components']['pythonWorkers'][number], input: unknown,
-    sources: Map<string, Source>, documentSignal?: AbortSignal) {
+    sources: Map<string, Source>, documentSignal?: AbortSignal, recognize?: DocumentOcr) {
     const active = [...this.jobs.values()].filter(({ update }) => !terminal(update.state));
     requirePlugin(active.length < 3 && !active.some((job) => job.plugin === grant.id), 'runtime-busy');
     if (this.jobs.size >= 32) {
@@ -215,9 +217,14 @@ export class PluginRuntime {
       timer = setTimeout(() => controller.abort('timed-out'), worker.timeoutMs);
       this.emit(job, { state: 'running' });
     }, (method, params) => {
+      if (recognize && method === 'bi.ocr') {
+        this.active(grant);
+        signal.throwIfAborted();
+        return recognize(params, signal);
+      }
       requirePlugin(!documentSignal || method === 'sources.read', 'runtime-forbidden');
       return this.call(grant, method, params, job);
-    }, documentSignal ? 2 * 1024 * 1024 : undefined).then(async (result) => {
+    }, documentSignal ? 2 * 1024 * 1024 : undefined, recognize ? ocrFrameLimit : undefined).then(async (result) => {
       this.active(grant);
       signal.throwIfAborted();
       const review = job.proposal && await this.propose(grant, job, job.proposal);
@@ -244,11 +251,11 @@ export class PluginRuntime {
     const { extraction, picker } = this.bi;
     const { signal } = grant.stop;
     signal.throwIfAborted();
-    const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal) => {
+    const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal, recognize?: DocumentOcr) => {
       this.active(grant);
       parent.throwIfAborted();
       const source = { id: randomUUID(), sha256: sha256(bytes), bytes, name: operation, confidential: false };
-      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent);
+      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent, recognize);
       await job.done;
       parent.throwIfAborted();
       requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
@@ -271,7 +278,9 @@ export class PluginRuntime {
         requirePlugin(!extraction.busy(), 'runtime-busy');
         requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
         const title = params.title === undefined ? undefined : text(params.title, 100);
-        const options = { worker: run, signal, title };
+        const ocr = parseOcr(params.ocr);
+        requirePlugin(params.ocr === undefined || ocr, 'runtime-input');
+        const options = { worker: run, signal, title, ocr };
         if (params.url !== undefined) {
           requirePlugin(params.source === undefined, 'runtime-input');
           return extraction.start({ url: text(params.url, 2048) }, params.schema, params.allowModel, options);

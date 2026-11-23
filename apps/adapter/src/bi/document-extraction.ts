@@ -11,20 +11,22 @@ import { isLocalAbsoluteFolder, RepositoryFolder } from '../../../../packages/kn
 import { canonical, sha256, string } from '../../../../packages/knowledge/src/snapshot.ts';
 import type { Snapshot } from '../../../../packages/knowledge/src/snapshot.ts';
 import { stageReviewProposal } from '../http/review.ts';
+import { defaultOcr, documentFileLimit, documentOcr, ocrLocator } from './document-ocr.ts';
+import type { OcrOptions } from './document-ocr.ts';
 import { consolidate, modelCandidates, verifyCandidate } from './document-validation.ts';
 import type { DocumentCandidate } from './document-validation.ts';
 import { documentWorker, DocumentWorkerError } from './document-worker.ts';
-import type { Chunk, Plan, Projection, SchemaStructure, WorkerIssue } from './document-worker.ts';
+import type { Chunk, PageStatus, Plan, Projection, SchemaStructure, WorkerIssue } from './document-worker.ts';
 
 type Knowledge = NonNullable<Runtime['knowledge']>;
-type FileKind = 'pdf' | 'html' | 'text';
+type FileKind = 'pdf' | 'html' | 'text' | 'image';
 type Input = { ref: string; bytes: Buffer } | { url: string };
 type Source = { ref: string; title?: string; url?: string; fetchedAt?: string; sha256?: string; documentId?: string };
 type SchemaTarget = { vault: string; title: string; schema: Snapshot['schema']; install: boolean };
 type State = 'converting' | 'extracting' | 'validating' | 'validated' | 'awaiting-review' | 'needs-attention' | 'failed';
 type Cause = WorkerIssue | 'link' | 'model' | 'interrupted' | 'base-changed' | 'no-candidates' | 'isolation-unavailable';
 export type ExtractionStatus = { id: string; source: Source; schema: string; state: State; completedChunks: number;
-  totalChunks: number; candidates: DocumentCandidate[]; issue?: Cause; reviewId?: string; reused?: boolean;
+  totalChunks: number; candidates: DocumentCandidate[]; pages?: PageStatus[]; issue?: Cause; reviewId?: string; reused?: boolean;
   baseRevision?: string | null; reviewState?: string; vault?: string; title?: string; publication?: string;
   summary?: Counts;
   repository?: Counts & { tag: string; withoutEvidence: number; digestVerified: boolean; sizeVerified: boolean } };
@@ -32,11 +34,12 @@ type Counts = { cards: number; sources: number; passages: number; relationships:
 type RepositoryDraft = Parameters<Knowledge['reviewStore']['stageRepository']>[1];
 type Pending = { id: string; receipt: string; draft: ChangeSet | RepositoryDraft };
 type StoredStatus = ExtractionStatus & { pending?: Pending };
-type BuildOptions = { worker: typeof documentWorker; signal: AbortSignal; title?: string };
+type BuildOptions = { worker: typeof documentWorker; signal: AbortSignal; title?: string; ocr?: OcrOptions };
 
-export const documentFileLimit = 10 * 1024 * 1024;
+export { documentFileLimit };
 const typeForExtension = new Map<string, FileKind>([
   ['.pdf', 'pdf'], ['.html', 'html'], ['.htm', 'html'], ['.txt', 'text'], ['.md', 'text'], ['.markdown', 'text'],
+  ['.png', 'image'], ['.jpeg', 'image'], ['.jpg', 'image'],
 ]);
 export const biDocumentFile = (name: string) => typeForExtension.get(extname(name).toLowerCase());
 const fallback = reviewSchema('document-note', '1', ['content']);
@@ -263,13 +266,14 @@ export class DocumentExtraction {
     return url.href;
   }
 
-  private async convert(input: Input, source: Source, signal: AbortSignal, worker: typeof documentWorker, explicitUrl: boolean) {
+  private async convert(input: Input, status: ExtractionStatus, signal: AbortSignal, worker: typeof documentWorker, options?: BuildOptions) {
+    const { source } = status;
     let bytes: Buffer;
     let kind: FileKind;
     let charset = '';
     if ('url' in input) {
       const url = this.publicUrl(input.url);
-      const origins = explicitUrl ? new Set([new URL(url).origin]) : this.origins();
+      const origins = options ? new Set([new URL(url).origin]) : this.origins();
       const fetched = await this.fetchPage(url, origins, signal).catch(() => { throw new ExtractionError('link'); });
       source.ref = source.url = fetched.url;
       source.fetchedAt = fetched.fetchedAt;
@@ -281,14 +285,30 @@ export class DocumentExtraction {
       kind = biDocumentFile(input.ref)!;
     }
     source.sha256 = sha256(bytes);
-    source.documentId = sha256(canonical(['v1', kind, charset, source.sha256]));
+    const id = sha256(canonical(['v1', kind, charset, source.sha256]));
     const db = this.database();
-    const existing = db.prepare('SELECT projection FROM documents WHERE id=?').get(source.documentId);
-    const projection = existing ? JSON.parse(String(existing.projection)) as Projection :
-      await worker<Projection>(['convert', kind, charset], bytes, signal);
+    const existing = db.prepare('SELECT projection FROM documents WHERE id=?').get(id);
+    const cached = existing && JSON.parse(String(existing.projection)) as Projection;
+    const ocr = options?.ocr ?? (options ? defaultOcr : { ...defaultOcr, mode: 'local' as const });
+    const recognize = kind === 'pdf' || kind === 'image' ? documentOcr(ocr, this.knowledge.ocrVision, this.model?.()) : undefined;
+    const reuse = cached && (kind !== 'pdf' || cached.pages);
+    const projection = reuse ? cached : await worker<Projection>(['convert', kind, charset], bytes, signal, recognize &&
+      (async (params, workerSignal) => {
+        const { status: pageStatus, warning, ocr, ...result } = await recognize(params, workerSignal);
+        const page = { locator: `page:${params.page}`, status: pageStatus, warning, ocr };
+        (status.pages ??= []).push(page);
+        this.save(status);
+        return { status: pageStatus, warning, ocr, ...result };
+      }));
     if (projection.sha256 !== source.sha256) throw new ExtractionError('invalid');
-    if (!existing) db.prepare('INSERT OR IGNORE INTO documents VALUES (?,?)').run(source.documentId, JSON.stringify(projection));
+    status.pages = projection.pages?.length ? projection.pages : undefined;
     source.title = projection.title || source.ref;
+    if (!projection.segments.length) throw new ExtractionError('ocr');
+    const recognized = projection.pages?.some(({ status }) => status !== 'text-layer');
+    // Keep existing text receipts stable. A new recognition can change both the text and its evidence provenance.
+    source.documentId = recognized ? sha256(canonical(['ocr-v1', id,
+      projection.segments.map(({ locator, text, ocr }) => [locator, text, ocr ?? null])])) : id;
+    if (!reuse) db.prepare('INSERT OR REPLACE INTO documents VALUES (?,?)').run(source.documentId, JSON.stringify(projection));
     return projection.segments;
   }
 
@@ -310,7 +330,7 @@ export class DocumentExtraction {
   private async execute(input: Input, target: SchemaTarget, consent: boolean, status: ExtractionStatus, options?: BuildOptions) {
     const signal = AbortSignal.any([this.stop.signal, AbortSignal.timeout(12 * 60_000), ...(options ? [options.signal] : [])]);
     const worker = options?.worker ?? documentWorker;
-    const segments = await this.convert(input, status.source, signal, worker, Boolean(options));
+    const segments = await this.convert(input, status, signal, worker, options);
     signal.throwIfAborted();
     const store = this.knowledge.reviewStore;
     const { vault, schema } = target;
@@ -395,14 +415,14 @@ export class DocumentExtraction {
     for (const candidate of accepted) {
       const cardId = 'card-' + candidate.id;
       draft.addCards.push({ id: cardId, key: candidate.id, type: 'record', title: candidate.name, version: '1', fields: candidate.fields });
-      for (const [field, { segment, locator, start, quote }] of Object.entries(candidate.evidence)) {
+      for (const [field, { segment, locator, start, quote, ocr }] of Object.entries(candidate.evidence)) {
         let sourceId = uploads.get(segment);
         if (!sourceId) {
           sourceId = 'source-' + reviewId + '-' + (segment + 1);
           const bytes = Buffer.from(segments[segment].text);
           const hash = sha256(bytes);
           store.uploadReviewSource(hash, bytes);
-          draft.sources.push({ id: sourceId, ref: status.source.ref, sha256: hash, locator });
+          draft.sources.push({ id: sourceId, ref: status.source.ref, sha256: hash, locator: ocrLocator(locator, ocr) });
           uploads.set(segment, sourceId);
         }
         draft.evidence.push({ sourceId, cardId, field, start, end: start + quote.length });
