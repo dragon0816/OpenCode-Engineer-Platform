@@ -279,3 +279,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 工程設定檔和原始碼可作為 UTF-8 附件，附加資料以等寬原始文字顯示。
 - [x] 助理回覆的巢狀清單支援粗體、斜體、行內程式碼與連結。 [驗收紀錄](reviews/UX_OWNER_TEST_ROUND2_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup` 並合併。
+## 聽寫與麥克風權限
+
+- [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
+- [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
+- [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
