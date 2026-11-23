@@ -1,5 +1,5 @@
 import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
-import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
+import { connect, errorText, projectLabel, request, RequestError, serverText, uploadAttachment } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions, saveAnnotation } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -1314,26 +1314,29 @@ async function upload(files) {
   setControls();
   let succeeded = 0;
   const failures = [];
-  for (const file of files) {
-    if (current !== context || stopped) break;
-    if (file.size > 20 * 1024 * 1024) { failures.push(message('chat.name-this-file-exceeds-20-mb-choose', { name: file.name })); continue; }
-    setText(uploadStatus, message('chat.uploading-name', { name: file.name }));
-    try {
-      const result = await request(`${context.path}/attachments`, { file });
-      context.selected.add(result.id);
-      succeeded++;
-    } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
+  try {
+    for (const file of files) {
+      if (current !== context || stopped) break;
+      if (file.size > 20 * 1024 * 1024) { failures.push(message('chat.name-this-file-exceeds-20-mb-choose', { name: file.name })); continue; }
+      setText(uploadStatus, message('chat.uploading-name', { name: file.name }));
+      try {
+        const result = await uploadAttachment(context.path, file);
+        context.selected.add(result.id);
+        succeeded++;
+      } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
+    }
+    if (current === context && !stopped) {
+      setText(uploadStatus, joinText([
+        succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '',
+        failures.length ? message('chat.attach-files-failed', { count: failures.length }) : '',
+      ], ' '));
+      if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
+      refresh(context);
+    }
+  } finally {
+    uploadBusy = false;
+    setControls();
   }
-  if (current === context && !stopped) {
-    setText(uploadStatus, joinText([
-      succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '',
-      failures.length ? message('chat.attach-files-failed', { count: failures.length }) : '',
-    ], ' '));
-    if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
-    refresh(context);
-  }
-  uploadBusy = false;
-  setControls();
 }
 
 function namePastedFile(file) {

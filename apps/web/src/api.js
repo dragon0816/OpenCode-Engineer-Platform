@@ -41,7 +41,7 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
   } else if (file) {
     headers['Content-Type'] = file.type || 'application/octet-stream';
     headers['X-OEP-Filename'] = encodeURIComponent(file.name);
-    body = file;
+    body = file.content;
   }
   if (csrf && (body !== undefined || /^\/api\/agents(?:\/|$)/.test(path) ||
       ['/api/settings/channels', '/api/settings/delegation-budgets'].includes(path))) headers['X-OEP-CSRF'] = csrf;
@@ -60,6 +60,36 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     throw new RequestError(response.status, result?.errorPath ? joinText([result.errorPath, text]) : text, result?.errorDetail);
   }
   return result;
+}
+
+export async function uploadAttachment(sessionPath, file) {
+  const report = (code) => request(sessionPath + '/attachment-diagnostics', {
+    data: { code }, signal: AbortSignal.timeout(2000),
+  }).catch(() => undefined);
+  if (!file.name.isWellFormed()) throw new LocalizedError(message('server.filename-invalid'));
+  let content;
+  try { content = await file.arrayBuffer(); }
+  catch (error) {
+    if (error instanceof DOMException && ['NotFoundError', 'NotReadableError', 'SecurityError'].includes(error.name)) {
+      void report('upload-client-file-read');
+      throw new LocalizedError(message('api.upload-file-unreadable'));
+    }
+    void report('upload-client-unexpected');
+    throw new LocalizedError(message('api.could-not-complete-the-operation-try-again'));
+  }
+  try {
+    const result = await request(sessionPath + '/attachments', { file: { name: file.name, type: file.type, content } });
+    if (typeof result?.id !== 'string') throw new LocalizedError(message('api.could-not-read-the-oep-response-make'));
+    return result;
+  } catch (error) {
+    if (error instanceof RequestError) throw error;
+    if (error instanceof LocalizedError) {
+      void report('upload-client-response');
+      throw error;
+    }
+    void report('upload-client-unexpected');
+    throw new LocalizedError(message('api.could-not-complete-the-operation-try-again'));
+  }
 }
 
 export async function connect() {

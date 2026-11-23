@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { until } from '../../scripts/phase0/probe-http.ts';
 import { benchmarkJson, benchmarkNames } from '../fixtures/benchmark-upload.ts';
 import type { chromium } from './chromium.ts';
 import { selectLocale } from './gui-locales.ts';
@@ -32,6 +33,15 @@ export async function verifyBenchmarkUploads(page: Page, audit: string, click: (
     assert.match(await page.evaluate<string>(`${status}.textContent`), /已上傳 1/);
     assert.equal(await page.evaluate("document.querySelector('#error').hidden"), true);
   };
+  await page.evaluate(`${picker}.addEventListener('click', event => {
+    const input = event.currentTarget;
+    input.dataset.observedPickerClicks = Number(input.dataset.observedPickerClicks ?? 0) + 1;
+  });`);
+  const openPicker = async () => {
+    const count = await page.evaluate<number>(`Number(${picker}.dataset.observedPickerClicks ?? 0)`);
+    await click('#pick');
+    assert.equal(await page.evaluate<number>(`Number(${picker}.dataset.observedPickerClicks)`), count + 1);
+  };
   await page.command('Page.setInterceptFileChooserDialog', { enabled: true });
   try {
     for (const name of benchmarkNames) {
@@ -46,7 +56,7 @@ export async function verifyBenchmarkUploads(page: Page, audit: string, click: (
           return !${prompt}.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
         })()`), true);
         await expectBenchmark(name, ++count);
-        await click('#pick');
+        await openPicker();
         await page.evaluate(`(() => {
           ${data}
           ${picker}.files = data.files;
@@ -56,13 +66,44 @@ export async function verifyBenchmarkUploads(page: Page, audit: string, click: (
       }
       const path = join(audit, name);
       writeFileSync(path, benchmarkJson);
-      await click('#pick');
+      await openPicker();
       await page.command('DOM.setFileInputFiles', { nodeId, files: [path] });
       await expectBenchmark(name, ++count);
       await page.evaluate(`${rows(name)}.forEach(row => row.querySelector('input').click())`);
     }
   } finally { await page.command('Page.setInterceptFileChooserDialog', { enabled: false }); }
   console.log('Benchmark JSON uploads passed in Chromium (paste, drop and file picker).');
+
+  const diagnosticFile = join(audit, 'web-uploads.jsonl');
+  const failure = async (name: string, error: string, message: string, code: string) => {
+    const read = `Object.defineProperty(File.prototype, 'arrayBuffer', {
+      configurable: true, value: () => Promise.reject(${error})
+    });`;
+    await page.evaluate(read);
+    try { assert.equal(await paste(page, name, benchmarkJson, ''), true); }
+    finally { await page.evaluate("delete File.prototype.arrayBuffer"); }
+    await page.ready(`!document.querySelector('#error').hidden &&
+      document.querySelector('#error').textContent.includes(${JSON.stringify(name + ' · ' + message)})`);
+    assert.equal(await page.evaluate(`${rows(name)}.length`), 0);
+    await until(async () => {
+      if (!existsSync(diagnosticFile)) return;
+      const entries = readFileSync(diagnosticFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      const entry = entries.find((entry) => entry.code === code);
+      if (!entry) return;
+      assert.deepEqual(entry, { event: 'attachment-upload-failed', code, at: new Date(entry.at).toISOString() });
+      return true;
+    });
+  };
+  await failure('unreadable (1).json', 'new DOMException("synthetic private path", "NotReadableError")',
+    '無法讀取這個檔案。請確認檔案仍可存取，再重新附加。', 'upload-client-file-read');
+  await selectLocale(page, 'en');
+  await page.ready(`document.querySelector('#error').textContent.includes("Couldn’t read this file. Check that it’s accessible and attach it again.")`);
+  await selectLocale(page, 'zh-TW');
+  await failure('unexpected (1).json', 'new Error("合成私密錯誤")', 'OEP 無法完成操作。請稍後再試。', 'upload-client-unexpected');
+  const retry = '合成重試 (1).json';
+  assert.equal(await paste(page, retry, benchmarkJson, 'application/json'), true);
+  await expectBenchmark(retry, 1);
+  await page.evaluate(`${rows(retry)}[0].querySelector('input').click()`);
 }
 
 export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean, captureEngineering: boolean) {

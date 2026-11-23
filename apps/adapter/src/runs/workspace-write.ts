@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { atRepo } from '../../../launcher/src/paths.ts';
-import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
+import { checkDirectory, openWorkspaceFile, scopedPath, WorkspacePathError } from './workspace.ts';
 
 export type OutputDirectory = { root: string; inode: string };
 const filesWorker = () => atRepo('workers/files/windows_write.py');
-const unavailable = () => new Error('Workspace output is unavailable');
+const unavailable = () => new WorkspacePathError('Workspace output is unavailable');
 const outputName = /^[a-z\d][a-z\d._-]{0,119}$/;
 
 function runWorker(operation: 'mkdir' | 'write' | 'copy', folder: OutputDirectory, name: string, data?: Buffer) {

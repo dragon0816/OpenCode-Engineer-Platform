@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import type { SessionPromptInput } from '@opencode/client';
 import { atRepo } from '../../../launcher/src/paths.ts';
 import { HttpError } from '../http/errors.ts';
 import type { Attachment, WebStore } from './web-store.ts';
-import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
-import { writeWorkspaceFile } from './workspace-write.ts';
+import { checkDirectory, openWorkspaceFile, scopedPath, WorkspacePathError } from './workspace.ts';
+import { createWorkspaceOutput, writeWorkspaceFile } from './workspace-write.ts';
 
 export const MiB = 1024 * 1024;
 export const maxUpload = 20 * MiB;
@@ -108,6 +108,32 @@ export function publicAttachment(record: Attachment) {
     createdAt: Number(BigInt(record.original.created) / 1_000_000n), sha256: record.original.sha256, converted: Boolean(record.projection), projectionSha256: record.projection?.sha256 };
 }
 
+function restoreEmptyDirectory(parent: string, name: string) {
+  const path = scopedPath(parent, name);
+  if (process.platform === 'win32') {
+    // Create relative to the verified parent handle, so a swapped parent cannot redirect the write.
+    try { createWorkspaceOutput(parent, name); }
+    catch (error) {
+      if (!(error instanceof WorkspacePathError) || !lstatSync(path, { throwIfNoEntry: false })) throw error;
+    }
+  } else {
+    checkDirectory(parent);
+    try { mkdirSync(path, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  }
+}
+
+function attachmentDirectory(workspace: string) {
+  const folder = scopedPath(workspace, 'attachments');
+  if (!lstatSync(folder, { throwIfNoEntry: false })) {
+    // File-only backups omit empty directories even when the session record survives.
+    if (!lstatSync(workspace, { throwIfNoEntry: false })) restoreEmptyDirectory(dirname(workspace), basename(workspace));
+    restoreEmptyDirectory(workspace, 'attachments');
+  }
+  checkDirectory(folder);
+  return folder;
+}
+
 export class AttachmentService {
   private pending = 0;
   private readonly store: WebStore;
@@ -137,12 +163,14 @@ export class AttachmentService {
       }
       const id = randomUUID();
       const paths: string[] = [];
-      checkDirectory(join(workspace, 'attachments'));
+      const folder = attachmentDirectory(workspace);
       const save = (name: string, bytes: Buffer) => {
         const path = scopedPath(workspace, name);
         const temporary = scopedPath(workspace, `attachments/staging-${randomUUID()}.tmp`);
-        writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 });
+        const fd = openSync(temporary, 'wx', 0o600);
         paths.push(temporary);
+        try { writeFileSync(fd, bytes); }
+        finally { closeSync(fd); }
         renameSync(temporary, path);
         paths[paths.length - 1] = path;
         return openWorkspaceFile(workspace, name, maxUpload).identity;
@@ -155,7 +183,7 @@ export class AttachmentService {
         return publicAttachment(record);
       } catch (error) {
         try {
-          checkDirectory(join(workspace, 'attachments'));
+          checkDirectory(folder);
           for (const path of paths) unlinkSync(path);
         } catch { /* Startup removes unreferenced files. */ }
         throw error;
