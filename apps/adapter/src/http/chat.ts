@@ -17,7 +17,7 @@ import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
 import { AttachmentService, publicAttachment } from '../runs/attachments.ts';
-import { openWorkspaceFile, checkDirectory, scopedPath } from '../runs/workspace.ts';
+import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile, scopedPath } from '../runs/workspace.ts';
 import { channelText } from '../channels/catalog.ts';
 import type { Destination } from '../channels/transport.ts';
 import type { ProjectID, WebSession, WebStore } from '../runs/web-store.ts';
@@ -106,7 +106,7 @@ export class ChatService {
     this.ledger = ledger;
     this.runtime = runtime;
     this.modelSeat = runtime.modelSeat ?? new ModelSeat();
-    this.root = root;
+    this.root = canonicalWorkspaceDirectory(root);
     this.audit = audit;
     this.notify = notify;
     this.attachments = new AttachmentService(store);

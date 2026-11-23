@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import fs, { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import { HttpError } from '../../apps/adapter/src/http/errors.ts';
@@ -10,11 +10,10 @@ import type { WebMessageCode } from '../../apps/adapter/src/http/messages.ts';
 import { AttachmentService, convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { failRun, finishWorkbook, verifyWorkbookReceipt } from '../../apps/adapter/src/runs/excel.ts';
 import { Ledger } from '../../apps/adapter/src/runs/ledger.ts';
-import { openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
+import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile, scopedPath } from '../../apps/adapter/src/runs/workspace.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { publishWorkbook } from '../../apps/adapter/src/runs/web-workbook.ts';
 import { runFiles, workbookInput } from '../../apps/adapter/src/runs/controlled-files.ts';
-import { checkDirectory } from '../../apps/adapter/src/runs/workspace.ts';
 
 function rejectsWith(status: number, code: WebMessageCode) {
   return (error: unknown) => {
@@ -29,6 +28,32 @@ function directory() {
   mkdirSync('.phase0', { recursive: true });
   return mkdtempSync(join(process.cwd(), '.phase0', 'workspace-'));
 }
+
+test('workspace data roots accept DOS short names and reject junctions', { skip: process.platform !== 'win32' }, (t) => {
+  const root = directory();
+  try {
+    const data = join(root, 'long workspace data root');
+    mkdirSync(data);
+    const alias = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-c', [
+      'import ctypes, sys',
+      'short_name = ctypes.windll.kernel32.GetShortPathNameW',
+      'buffer = ctypes.create_unicode_buffer(32768)',
+      'if not 0 < short_name(sys.argv[1], buffer, len(buffer)) < len(buffer): sys.exit(1)',
+      'sys.stdout.buffer.write(buffer.value.encode("utf-8"))',
+    ].join('\n'), data], { windowsHide: true, encoding: 'utf8', timeout: 8_000 });
+    assert.ifError(alias.error);
+    assert.equal(alias.status, 0, alias.stderr);
+    const junction = join(root, 'linked workspace data root');
+    symlinkSync(data, junction, 'junction');
+    assert.throws(() => canonicalWorkspaceDirectory(junction), /unsafe/);
+    if (basename(alias.stdout).toLowerCase() === basename(data)) {
+      t.diagnostic('This volume did not create an 8.3 alias for the fixture.');
+      return;
+    }
+    assert.equal(canonicalWorkspaceDirectory(alias.stdout).toLowerCase(), data.toLowerCase());
+    assert.throws(() => checkDirectory(alias.stdout), /unsafe/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('workspace opens by identity and refuses traversal, UNC, ADS, reparse paths and handle races', (t) => {
   const root = directory();

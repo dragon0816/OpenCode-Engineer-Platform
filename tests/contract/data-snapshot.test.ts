@@ -75,9 +75,6 @@ test('snapshot diagnostics name a broken OEP database in the console and journal
     const diagnostic = '【web/web.sqlite】SQLite 結構、筆數或發布修訂讀取失敗。';
     assert.equal(direct.stderr.trim(), diagnostic);
     const journal = join(install, 'upgrade.journal.json');
-    writeFileSync(journal, JSON.stringify({
-      format: 1, id: 'a'.repeat(32), state: 'prepared', dataRoot: data,
-    }));
     const result = spawnSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', [
       '. ./scripts/windows/OEP-Maintenance.ps1',
       '. ./scripts/windows/OEP-Snapshot.ps1',
@@ -85,10 +82,13 @@ test('snapshot diagnostics name a broken OEP database in the console and journal
       '$InstallRoot = Root-OEP $env:OEP_TEST_INSTALL',
       '$DataRoot = Root-OEP $env:OEP_TEST_DATA',
       'Guard-OEP $InstallRoot; Guard-OEP $DataRoot; Separate-OEP $InstallRoot $DataRoot',
+      // Upgrade-OEP writes the normalized root, which can expand a short TEMP path.
+      "$JournalPath = Join-Path $InstallRoot 'upgrade.journal.json'",
+      "Write-OEP $JournalPath @{ format = 1; id = 'a' * 32; state = 'prepared'; dataRoot = $DataRoot }",
       '$script:failureLogRoot = $InstallRoot',
       "try { Invoke-Snapshot 'describe' $DataRoot $env:OEP_TEST_REPORT } catch {",
       "    Report-OEPFailure '升級失敗'",
-      "    Record-UpgradeFailure (Join-Path $InstallRoot 'upgrade.journal.json') $DataRoot '升級失敗'",
+      "    Record-UpgradeFailure $JournalPath $DataRoot '升級失敗'",
       "    $pending = Join-Path $DataRoot 'locked.tmp'",
       '    $held = [IO.File]::Open($pending, "Create", "ReadWrite", "None")',
       '    try { Clear-OEPArtifact $pending } finally { $held.Dispose() }',
