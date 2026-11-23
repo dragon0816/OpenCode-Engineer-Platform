@@ -56,6 +56,7 @@ const assets = new Map([
   ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
   ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
+  ['/plugins.js', ['src/plugins.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/telegram-setup.js', ['src/telegram-setup.js', 'text/javascript; charset=utf-8']],

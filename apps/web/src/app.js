@@ -9,6 +9,7 @@ import { bindJobs, loadJobSummary } from './jobs.js';
 import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
+import { bindPlugins } from './plugins.js';
 import { classificationControl, loadExternalSettings, openExternalIntake } from './external-helpers.js';
 
 initializeLocale();
@@ -1500,6 +1501,7 @@ function openAgent(id, copy, opener) {
   agentOpener = opener;
   leaveModelSection();
   closePanel(false);
+  plugins.hide();
   for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view', 'settings-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review', 'open-settings']) find(id).removeAttribute('aria-current');
   agentView.hidden = false;
@@ -2084,6 +2086,7 @@ find('mcp-open-knowledge-settings').addEventListener('click', () => {
 function showSettings() {
   if (!agentEditor.leave()) return;
   closePanel(false);
+  plugins.hide();
   for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view']) find(id).hidden = true;
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).removeAttribute('aria-current');
   settingsView.hidden = false;
@@ -2109,18 +2112,20 @@ for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) {
       event.stopImmediatePropagation();
       return;
     }
-    if (settingsView.hidden) return;
-    if (!discardSettings()) {
-      event.stopImmediatePropagation();
-      return;
+    if (!settingsView.hidden) {
+      if (!discardSettings()) {
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (activeSettingsSection === 'model') leaveModelSection();
+      settingsView.hidden = true;
+      settingsEntry.removeAttribute('aria-current');
+      if (id === 'open-chat') {
+        find('chat-view').hidden = false;
+        find(id).setAttribute('aria-current', 'page');
+      }
     }
-    if (activeSettingsSection === 'model') leaveModelSection();
-    settingsView.hidden = true;
-    settingsEntry.removeAttribute('aria-current');
-    if (id === 'open-chat') {
-      find('chat-view').hidden = false;
-      find(id).setAttribute('aria-current', 'page');
-    }
+    plugins.hide();
   }, { capture: true });
 }
 for (const button of settingsSections) {
@@ -2168,6 +2173,19 @@ function syncNavigation() {
     if (visible === 'open-chat') sessionTitle.focus();
   }
 }
+const plugins = bindPlugins((view, title, entry) => {
+  if (stopped || !settingsView.hidden && !discardSettings() || !agentEditor.leave()) return false;
+  leaveModelSection();
+  closePanel(false);
+  plugins.hide();
+  for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view', 'settings-view']) find(id).hidden = true;
+  for (const button of find('rail-functions').querySelectorAll('[aria-current]')) button.removeAttribute('aria-current');
+  view.hidden = false;
+  entry.setAttribute('aria-current', 'page');
+  if (narrowNavigation.matches) setSidebar(false);
+  title.focus();
+  return true;
+});
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   find(id).addEventListener('click', () => { find('review-view').hidden = true; });
 }
@@ -2583,6 +2601,7 @@ try {
     find('chat-view').hidden = false;
   });
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
+  plugins.connect();
   window.setInterval(() => {
     if (!stopped && !document.hidden) void refreshAgents().catch(() => {});
   }, 10_000);
