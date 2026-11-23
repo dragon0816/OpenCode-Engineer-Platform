@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -78,6 +78,13 @@ function absolutePath(value: string) {
 type ReferenceResult = { text?: string; chunkSha256?: string; entries?: { name: string; kind: string }[]; next: number | string | null };
 type Inspection = { identity: ReferenceIdentity; directory: boolean };
 type WorkerReply = { error: WebMessageCode } | Inspection | { result: ReferenceResult | { error: WebMessageCode }; member: ReferenceIdentity };
+type ExternalSelection = { files: { path: string; data: string; identity: ReferenceIdentity }[] } |
+  { error: 'reference-changed' | 'reference-unavailable' | 'external-input-limit' };
+
+function covers(parent: LocalReference, path: string) {
+  const tail = relative(parent.path, path);
+  return tail === '' || parent.directory && !isAbsolute(tail) && tail !== '..' && !tail.startsWith('..' + sep);
+}
 
 export class LocalReferences {
   private readonly ledger: ReferenceLedger;
@@ -147,11 +154,30 @@ export class LocalReferences {
 
   list(session: string) { return this.ledger.list(session); }
 
-  confidential(path: string) {
-    return this.ledger.protectedLocations().some((file) => {
-      const tail = relative(file.path, path);
-      return tail === '' || file.directory && !isAbsolute(tail) && tail !== '..' && !tail.startsWith('..' + sep);
-    });
+  confidential(path: string, selection?: LocalReference) {
+    return this.ledger.protectedLocations().some((file) => covers(file, path) || selection && covers(selection, file.path));
+  }
+
+  // The helper release callback is synchronous. Use the same pinned Windows reader at admission and release.
+  externalSelection(file: LocalReference, maxBytes: number, maxFileBytes: number, maxFiles: number): ExternalSelection {
+    const unavailable = { error: 'reference-unavailable' } as const;
+    if (process.platform !== 'win32') return unavailable;
+    const result = spawnSync(process.env.OEP_PYTHON || 'python',
+      ['-I', '-B', atRepo('workers/files/windows_reference.py')], {
+        input: JSON.stringify({ path: file.path, protected: this.protected, action: 'external', expected: file.identity,
+          directory: file.directory, maxBytes, maxFileBytes, maxFiles }),
+        encoding: 'utf8', windowsHide: true, timeout: 12_000, maxBuffer: Math.ceil(maxBytes / 3) * 4 + 2 * 1024 * 1024,
+        env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH },
+      });
+    if (result.status !== 0) return unavailable;
+    let selection: ExternalSelection;
+    try { selection = JSON.parse(result.stdout) as ExternalSelection; }
+    catch { return unavailable; }
+    if ('files' in selection && file.directory && selection.files.some(({ path, identity }) => {
+      const approved = this.ledger.member(file.id, path.toLowerCase());
+      return approved && JSON.stringify(approved) !== JSON.stringify(identity);
+    })) return { error: 'reference-changed' };
+    return selection;
   }
 
   async reconfirm(session: string, file: LocalReference, current: () => boolean) {

@@ -41,7 +41,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     (id) => accounts.connections.get(id)?.client, () => {
       const model = ledger.executionProfile('bi', 'bi')?.defaultModel;
       return model && runtime.aliases.includes(model) ? model : undefined;
-    });
+    }, (id) => ledger.agentModelSource(id) !== 'gateway');
   const inbound = dispatchTelegram(dispatcher, inbox, chat, router, accounts, (id) => ledger.channelLocale(id), runtime.redact);
   const knowledge = runtime.knowledge?.reviewStore;
   const notices = delegationNotices(inbox, ledger, sessions, runtime.redact);

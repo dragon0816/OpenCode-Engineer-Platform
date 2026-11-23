@@ -81,6 +81,25 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     assert.equal((await post('/api/sessions', { agent: 'shell' })).status, 400);
     const bootstrap = await (await fetch(`${origin}/api/bootstrap`, { headers: { cookie } })).json();
     assert.equal(bootstrap.csrf, csrf);
+    const helpersPath = '/api/settings/external-helpers';
+    assert.equal((await fetch(origin + helpersPath)).status, 401);
+    assert.equal((await post(helpersPath + '/recheck', { provider: 'codex_cli' }, { 'x-oep-csrf': 'bad' })).status, 403);
+    const helpers = await (await fetch(origin + helpersPath, { headers: { cookie } })).json();
+    assert.equal(helpers.length, 2);
+    for (const { provider, enabled, confirmEachRun, termsConfirmed, revision, status } of helpers) {
+      assert.equal(enabled, false);
+      assert.equal(confirmEachRun, false);
+      assert.deepEqual(status, { isolation: 'unavailable', installation: 'unknown', login: 'unknown' });
+      const probe = await post(helpersPath + '/recheck', { provider });
+      assert.equal(probe.status, 200);
+      assert.deepEqual(await probe.json(), status);
+      const blocked = await post(helpersPath, { provider, enabled: true, confirmEachRun, termsConfirmed, revision, warningAccepted: true });
+      assert.equal(blocked.status, 409);
+      assert.equal((await blocked.json()).errorDetail.code, 'external-isolation-unavailable');
+    }
+    assert.equal((await fetch(origin + helpersPath + '/policy')).status, 401);
+    const policy = await (await fetch(origin + helpersPath + '/policy', { headers: { cookie } })).json();
+    assert.deepEqual(policy, { strictMode: false, revision: 0 });
     assert.equal((await fetch(origin + '/api/settings/model')).status, 401);
     assert.equal((await post('/api/settings/model', { alias: 'synthetic-api' }, { 'x-oep-csrf': 'bad' })).status, 403);
     assert.equal((await post('/api/settings/model', { alias: 'unapproved-alias' })).status, 400);

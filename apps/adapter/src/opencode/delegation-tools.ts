@@ -33,7 +33,7 @@ export const delegationTools = [{
   readOnly: true,
 }, {
   name: delegateTool,
-  description: 'Queue a specialist task. For an external coding helper use only specialistId, the owner-provided publicInputId, and requestKey. Reuse the key when retrying.',
+  description: 'Queue a specialist task. For an external-source specialist, use only the user’s exact task words and the attachment or local reference IDs selected for this message. Reuse the key when retrying.',
   properties: {
     specialistId: { type: 'string', pattern: agentPattern },
     task: { type: 'string', minLength: 1, maxLength: 4000 },
@@ -46,6 +46,6 @@ export const delegationTools = [{
     { required: ['task'], not: { required: ['publicInputId'] } },
     { required: ['publicInputId'], not: { anyOf: [{ required: ['task'] }, { required: ['attachmentIds'] }] } },
   ],
-  validate: (args: Record<string, unknown>) => externalProvider(args.specialistId) ? externalDelegationArgs(args) : delegationArgs(args),
+  validate: (args: Record<string, unknown>) => externalDelegationArgs(args) || delegationArgs(args),
   readOnly: false,
 }];

@@ -237,7 +237,7 @@
           </section>
           <section id="settings-external-helpers" aria-labelledby="settings-external-helpers-title" hidden>
             <h2 id="settings-external-helpers-title" data-i18n="externalHelpers.settings.title"></h2>
-            <p class="settings-help" data-i18n="externalHelpers.settings.intakeOnly"></p>
+            <p class="settings-help" data-i18n="externalHelpers.settings.signInHelp"></p>
             <div id="external-helper-settings"></div>
             <p id="external-helper-settings-status" role="status"></p>
           </section>
@@ -282,7 +282,10 @@
             <p class="settings-help" data-i18n="ui.add-external-tools-and-choose-which-projects"></p>
             <div class="mcp-toolbar">
               <h3 data-i18n="ui.custom-servers"></h3>
-              <button type="button" id="mcp-add" data-i18n="ui.add-server"></button>
+              <div class="settings-actions">
+                <button type="button" id="mcp-add" data-i18n="ui.add-server"></button>
+                <button type="button" id="mcp-import" data-i18n="tools.mcp-import"></button>
+              </div>
             </div>
             <div class="mcp-restart" id="mcp-restart-bar" hidden>
               <p data-i18n="ui.settings-saved-restart-the-runtime-to-apply"></p>
@@ -313,9 +316,33 @@
                 </div>
                 <div id="mcp-remote-fields" hidden>
                   <label><span data-i18n="ui.secure-connection-url"></span> <input name="url" type="url" maxlength="2048"></label>
+                  <label><span data-i18n="tools.mcp-authentication"></span>
+                    <select name="authentication">
+                      <option value="none" data-i18n="tools.mcp-auth-none"></option>
+                      <option value="headers" data-i18n="tools.mcp-auth-headers"></option>
+                      <option value="oauth" data-i18n="tools.mcp-auth-oauth"></option>
+                    </select>
+                  </label>
                   <label><input name="localService" type="checkbox"> <span data-i18n="ui.allow-connections-to-local-or-private-network"></span></label>
                 </div>
-                <fieldset>
+                <fieldset id="mcp-oauth-fields" hidden>
+                  <legend data-i18n="tools.mcp-auth-oauth"></legend>
+                  <p data-i18n="tools.mcp-oauth-help"></p>
+                  <label><span data-i18n="tools.mcp-oauth-client-mode"></span>
+                    <select name="oauthClient">
+                      <option value="dynamic" data-i18n="tools.mcp-oauth-dynamic"></option>
+                      <option value="static" data-i18n="tools.mcp-oauth-static"></option>
+                    </select>
+                  </label>
+                  <div id="mcp-oauth-client-fields" hidden>
+                    <p id="mcp-oauth-saved" data-i18n="tools.mcp-oauth-saved" hidden></p>
+                    <label><span data-i18n="tools.mcp-oauth-id"></span> <input name="oauthClientId" maxlength="1024" autocomplete="off"></label>
+                    <label><span data-i18n="tools.mcp-oauth-secret"></span> <input name="oauthClientSecret" type="password" maxlength="1024" autocomplete="new-password"></label>
+                  </div>
+                  <label><span data-i18n="tools.mcp-oauth-scopes"></span> <textarea name="oauthScopes" rows="2" maxlength="6000" aria-describedby="mcp-oauth-scopes-help"></textarea></label>
+                  <p id="mcp-oauth-scopes-help" data-i18n="tools.mcp-oauth-scopes-help"></p>
+                </fieldset>
+                <fieldset id="mcp-credentials">
                   <legend id="mcp-credential-title" data-i18n="ui.program-credential-fields"></legend>
                   <p data-i18n="ui.values-are-stored-in-windows-user-credentials"></p>
                   <div id="mcp-credential-rows"></div>
@@ -336,6 +363,9 @@
                     <label><span data-i18n="ui.execution"></span> <input name="execution" type="number" min="100" max="120000" required></label>
                   </div>
                   <p id="mcp-form-diagnostic" hidden></p>
+                  <label><span data-i18n="tools.mcp-import-json"></span> <textarea name="snippet" rows="4" maxlength="16000" aria-describedby="mcp-import-help" autocomplete="off" spellcheck="false"></textarea></label>
+                  <p id="mcp-import-help" data-i18n="tools.mcp-import-help"></p>
+                  <button type="button" id="mcp-import-apply" data-i18n="tools.mcp-import-apply"></button>
                 </details>
                 <label><input name="enabled" type="checkbox"> <span data-i18n="ui.enable-server"></span></label>
                 <p id="mcp-form-status" role="status"></p>
@@ -415,9 +445,8 @@
                 </div>
               </details>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
-              <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
             </div>
-            <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status session-model-fallback" disabled></select></label>
+            <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status session-model-fallback session-external-model-reason" disabled></select></label>
             <div class="composer-input-options">
               <button id="microphone" type="button" aria-pressed="false" hidden data-i18n="ui.start-dictation"></button>
               <label id="workbook-option" hidden><input id="workbook" type="checkbox"> <span data-i18n="ui.create-excel-file"></span></label>
@@ -431,6 +460,8 @@
           <small id="session-model-hint" hidden><a id="choose-more-models" href="#settings-model" data-i18n="model.choose-more"></a></small>
           <small id="session-model-status" role="status"></small>
           <small id="session-model-fallback" role="status"></small>
+          <small id="session-external-model-status" hidden><span id="session-external-model-reason" role="status"></span>
+            <button id="session-external-model-settings" type="button" data-i18n="externalHelpers.settings.title"></button></small>
           <small id="upload-status" role="status"></small>
           <button id="attach-pasted-paths" type="button" data-i18n="references.attach-paste" hidden></button>
         </div>

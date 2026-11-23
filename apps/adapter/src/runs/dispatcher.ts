@@ -6,6 +6,7 @@ type Handler = {
   available?: (item: WorkItem) => boolean;
   execute: (item: WorkLease, start: () => void, signal: AbortSignal) => Promise<Result>;
   retryBeforeStart?: (item: WorkLease, now: number) => number | undefined;
+  recoverBeforeStart?: boolean;
   recover?: (item: WorkLease) => Promise<Recovery | undefined>;
   canResolve?: (item: WorkLease, outcome: ResolvedOutcome) => Promise<boolean>;
   resolved?: (item: WorkLease, outcome: ResolvedOutcome) => void;
@@ -167,16 +168,16 @@ export class Dispatcher {
 
   private async recover() {
     for (const item of this.items.withLease()) {
-      if (item.state === 'running' && item.reasonCode === null) {
+      const handler = this.handlers.get(item.payload.kind);
+      if (item.state === 'running' && item.reasonCode === null && !handler?.recoverBeforeStart) {
         this.items.requeue(item);
         continue;
       }
       let result: Recovery | undefined;
-      try { result = await this.handlers.get(item.payload.kind)?.recover?.(item); }
+      try { result = await handler?.recover?.(item); }
       catch { /* Inaccessible state cannot prove that the work is safe to replay. */ }
       if (item.state === 'indeterminate') {
         if (result && result !== 'never-started' && (result.state === 'succeeded' || result.state === 'failed' || result.state === 'cancelled')) {
-          const handler = this.handlers.get(item.payload.kind);
           if (handler?.resolve?.(item, result.state)) handler.resolved?.(item, result.state);
         }
         continue;

@@ -43,6 +43,16 @@ const reasons = {
   'external-confirmation-required': () => message('externalHelpers.confirm.awaiting'),
   'external-owner-selection': () => message('externalHelpers.confirm.selected'),
   'external-gate-passed': () => message('externalHelpers.gate.passed'),
+  'external-budget-unavailable': () => message('externalHelpers.event.budgetUnavailable'),
+  'external-budget-charged': () => message('externalHelpers.event.budgetCharged'),
+  'external-job-stopped': () => message('externalHelpers.event.jobStopped'),
+  'external-copy-discarded': () => message('externalHelpers.event.copyDiscarded'),
+  'external-copy-unsafe': () => message('externalHelpers.event.copyUnsafe'),
+  'external-output-limit': () => message('externalHelpers.event.outputLimit'),
+  'external-cli-output-limit': () => message('externalHelpers.event.outputLimit'),
+  'external-cli-invalid-output': () => message('externalHelpers.event.invalidOutput'),
+  'external-cli-failed': () => message('externalHelpers.event.cliFailed'),
+  'external-stop-unverified': () => message('externalHelpers.event.stopUnverified'),
 };
 const statusText = (status) => statuses[status] ?? message('delegations.status.indeterminate');
 const route = (id) => '/api/delegations/' + id;
@@ -193,6 +203,8 @@ export function bindDelegationResults({ node, action, openPreview, openRunTab, o
     }
     if (item.completedDuringCancellation) section.append(node('p', message('delegations.event.completed-during-cancellation')));
     if (item.reviewRef) section.append(node('p', message('delegations.submitted')));
+    else if (item.changes) section.append(node('p', item.changes.count
+      ? message('externalHelpers.result.changes', { count: item.changes.count }) : message('externalHelpers.result.noChanges')));
     else if (item.summary) {
       const summary = node('p', item.summary);
       summary.setAttribute('data-ui-content', '');

@@ -1,18 +1,21 @@
 import { Ajv } from 'ajv';
-import { sendRemoteMcp } from '../../../../scripts/windows/custom-mcp-remote.mjs';
-import { assistantMcpPaused, customMcpName, customMcpTool, validateCustomRemoteMcp } from '../runs/custom-mcp.ts';
+import { createHash } from 'node:crypto';
+import { sendRemoteMcp, statelessMcpVersion } from '../../../../scripts/windows/custom-mcp-remote.mjs';
+import { assistantMcpPaused, customMcpName, customMcpTool, oauthBinding, oauthMcpTool, validateCustomRemoteMcp } from '../runs/custom-mcp.ts';
 import type { CustomMcp, CustomRemoteMcp } from '../runs/custom-mcp.ts';
 import { readCustomMcpCredentials } from '../runs/custom-mcp-credentials.ts';
 import { projects } from '../runs/web-store.ts';
 import type { ProjectID } from '../runs/web-store.ts';
 import { containsTransport, objectRecord, stripTransport, transportField } from './tool-transport.ts';
 import type { ToolValidator } from './tool-tickets.ts';
+import type { McpOAuth } from './mcp-oauth.ts';
+import { WebMessageError } from '../http/errors.ts';
 
 export type RemoteMcpTransport = typeof sendRemoteMcp;
 type RemoteStatus = 'connected' | 'failed' | 'needs_auth';
 type Tool = { name: string; description: string; inputSchema: Record<string, unknown>; validate: ToolValidator };
 type Connected = {
-  definition: CustomRemoteMcp; tools: Tool[];
+  definition: CustomRemoteMcp; tools: (Tool & { upstreamName: string })[];
   call: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
 };
 
@@ -46,12 +49,65 @@ function redact(value: unknown, secrets: readonly string[], gatewayRedact: (valu
     [redact(key, secrets, gatewayRedact), redact(item, secrets, gatewayRedact)]));
 }
 
+type Send = (method: string, phase: keyof CustomRemoteMcp['timeouts'], id?: number, params?: unknown,
+  stop?: AbortSignal, secrets?: Set<string>) => Promise<unknown>;
+
+function remoteSender(definition: CustomRemoteMcp, headers: Record<string, string>, transport: RemoteMcpTransport, oauth?: McpOAuth) {
+  const session: { id?: string; version?: string } = {};
+  const send: Send = async (method, phase, id, params, stop, secrets = new Set()) => {
+    const timeout = AbortSignal.timeout(Math.min(definition.timeouts[phase], phase === 'execution' ? 120_000 : 8_000));
+    const signal = stop ? AbortSignal.any([stop, timeout]) : timeout;
+    signal.throwIfAborted();
+    const message = { jsonrpc: '2.0' as const, id, method, params };
+    if (definition.oauth && !oauth) throw new WebMessageError('mcp-oauth-login-required');
+    const reply = definition.oauth ? await oauth!.send(definition, message, session, signal, secrets, transport)
+      : await transport(definition, message, session, headers, signal);
+    if (id !== undefined && (!reply || reply.error !== undefined)) {
+      throw Object.assign(new Error('Remote tool unavailable'), { rpcCode: objectRecord(reply?.error)?.code });
+    }
+    return reply?.result;
+  };
+  return { send, async catalog(secrets: Set<string>) {
+    const list = async () => {
+      const catalog = objectRecord(await send('tools/list', 'catalog', 2, {}, undefined, secrets));
+      if (!Array.isArray(catalog?.tools)) throw new Error('Remote catalog unavailable');
+      return catalog.tools.slice(0, 50);
+    };
+    if (definition.oauth) {
+      session.version = statelessMcpVersion;
+      try { return await list(); }
+      catch (error) {
+        const failure = objectRecord(error);
+        if (failure?.status !== 400 && ![-32022, -32600, -32601].some((code) => code === failure?.rpcCode)) throw error;
+        delete session.version;
+      }
+    }
+    const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
+      clientInfo: { name: 'OEP assistant broker', version: '1' } }, undefined, secrets))?.protocolVersion;
+    if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
+    await send('notifications/initialized', 'startup', undefined, undefined, undefined, secrets);
+    return list();
+  } };
+}
+
+export async function probeOAuthMcp(definition: CustomRemoteMcp, oauth: McpOAuth, gatewayRedact: (value: string) => string) {
+  const secrets = new Set<string>();
+  const catalog = await remoteSender(definition, {}, sendRemoteMcp, oauth).catalog(secrets);
+  const hidden = [...secrets];
+  return catalog.flatMap((tool) => {
+    const entry = objectRecord(tool);
+    if (typeof entry?.name !== 'string' || redact(entry.name, hidden, gatewayRedact) !== entry.name) return [];
+    return [{ name: entry.name.slice(0, 200), description: typeof entry.description === 'string'
+      ? String(redact(entry.description, hidden, gatewayRedact)).slice(0, 500) : '' }];
+  });
+}
+
 export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatewayRedact: (value: string) => string,
-  transport: RemoteMcpTransport = sendRemoteMcp) {
+  transport: RemoteMcpTransport = sendRemoteMcp, oauth?: McpOAuth) {
   const validator = new Ajv({ strict: true, ownProperties: true, addUsedSchema: false });
   const status = new Map<string, RemoteStatus>();
   const servers: Connected[] = [];
-  const invocations = new Map<string, Connected>();
+  const invocations = new Map<string, { server: Connected; upstreamName: string }>();
   const tools: Tool[] = [];
 
   await Promise.all(definitions.map(async (server) => {
@@ -67,35 +123,26 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
         status.set(server.id, 'needs_auth');
         return;
       }
-      const secrets = Object.values(headers);
-      const scrub = (value: unknown) => stripTransport(redact(value, secrets, gatewayRedact));
-      const session = {};
-      const send = async (method: string, phase: keyof CustomRemoteMcp['timeouts'], id?: number, params?: unknown, stop?: AbortSignal) => {
-        const timeout = AbortSignal.timeout(Math.min(definition.timeouts[phase], phase === 'execution' ? 120_000 : 8_000));
-        const signal = stop ? AbortSignal.any([stop, timeout]) : timeout;
-        signal.throwIfAborted();
-        const reply = await transport(definition, { jsonrpc: '2.0', id, method, params }, session, headers, signal);
-        if (id !== undefined && (!reply || reply.error !== undefined)) throw new Error('Remote tool unavailable');
-        return reply?.result;
-      };
-      const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
-        clientInfo: { name: 'OEP assistant broker', version: '1' } }))?.protocolVersion;
-      if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
-      await send('notifications/initialized', 'startup');
-      const catalog = objectRecord(await send('tools/list', 'catalog', 2, {}));
-      if (!Array.isArray(catalog?.tools)) throw new Error('Remote catalog unavailable');
-      const verified: Tool[] = [];
+      const secrets = new Set(Object.values(headers));
+      const remote = remoteSender(definition, headers, transport, oauth);
+      const catalog = await remote.catalog(secrets);
+      const scrub = (value: unknown, values = secrets) => stripTransport(redact(value, [...values], gatewayRedact));
+      const verified: Connected['tools'] = [];
       const namesSeen = new Set<string>();
-      for (const entry of catalog.tools.slice(0, 50)) {
+      const aliases = new Set<string>();
+      for (const entry of catalog) {
         const tool = objectRecord(entry);
         const name = tool?.name;
-        if (typeof name !== 'string' || !customMcpTool.test(name)) continue;
+        if (typeof name !== 'string' || !(definition.oauth ? oauthMcpTool : customMcpTool).test(name) || scrub(name) !== name) continue;
         if (namesSeen.has(name)) throw new Error('Ambiguous remote tool catalog');
         namesSeen.add(name);
         const inputSchema = objectRecord(tool?.inputSchema);
         if (inputSchema?.type !== 'object' || containsTransport(inputSchema) || !safeSchema(inputSchema)) continue;
         const serialized = JSON.stringify(inputSchema);
         if (serialized.length > 8192 || JSON.stringify(scrub(inputSchema)) !== serialized) continue;
+        const alias = definition.oauth && (name.length > 20 || !customMcpTool.test(name))
+          ? `x_${createHash('sha256').update(name).digest('hex').slice(0, 18)}` : name;
+        if (aliases.has(alias)) throw new Error('Ambiguous remote tool alias');
         try {
           const check = validator.compile(inputSchema);
           const validate = (args: Record<string, unknown>) => {
@@ -104,23 +151,41 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
               JSON.stringify(scrub(args)) === payload && check(args);
           };
           const description = typeof tool?.description === 'string' ? String(scrub(tool.description)).slice(0, 300) : 'Run the approved remote tool.';
-          verified.push({ name, description, inputSchema, validate });
+          aliases.add(alias);
+          verified.push({ name: `${customMcpName(definition.id)}_${alias}`, upstreamName: name,
+            description: alias === name ? description : `${name}. ${description}`, inputSchema, validate });
         } catch { /* Invalid or unsupported schemas are excluded individually. */ }
       }
       if (!verified.length) throw new Error('No verified remote tools');
       let nextID = 3;
       const connected: Connected = { definition, tools: verified, async call(name, args, signal) {
-        return scrub(await send('tools/call', 'execution', nextID++, { name, arguments: args }, signal));
+        const values = new Set(secrets);
+        try {
+          const result = await remote.send('tools/call', 'execution', nextID++, { name, arguments: args }, signal, values);
+          if (objectRecord(result)?.resultType === 'input_required') {
+            return { isError: true, message: 'This remote tool requires an interactive confirmation that OEP cannot complete.' };
+          }
+          return scrub(result, values);
+        }
+        catch (error) {
+          if (!definition.oauth || !(error instanceof WebMessageError) || signal.aborted) throw error;
+          const message = error.detail.code === 'mcp-oauth-scope' ? 'This remote tool needs additional permissions. Update the OAuth scopes in External tools and sign in again.'
+            : error.detail.code === 'mcp-oauth-token' ? 'The remote service could not refresh its OAuth session. Try again later.'
+              : 'Sign in to this remote service in OEP External tools, then try again.';
+          return { isError: true, message };
+        }
       } };
       status.set(server.id, 'connected');
       servers.push(connected);
-    } catch { status.set(server.id, 'failed'); }
+    } catch (error) {
+      status.set(server.id, server.oauth && error instanceof WebMessageError && error.detail.code === 'mcp-oauth-login-required'
+        ? 'needs_auth' : 'failed');
+    }
   }));
   for (const server of servers.sort((a, b) => a.definition.id.localeCompare(b.definition.id))) {
-    for (const tool of server.tools) {
-      const name = `${customMcpName(server.definition.id)}_${tool.name}`;
-      invocations.set(name, server);
-      tools.push({ ...tool, name });
+    for (const { upstreamName, ...tool } of server.tools) {
+      invocations.set(tool.name, { server, upstreamName });
+      tools.push(tool);
     }
   }
 
@@ -131,15 +196,16 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
       return servers.flatMap(({ definition, tools: discovered }) => {
         const grant = grants.find(({ id }) => id === definition.id);
         if (!grant?.enabled || grant.transport !== 'remote' || assistantMcpPaused(grant) || grant.url !== definition.url ||
+          oauthBinding(grant) !== oauthBinding(definition) ||
           JSON.stringify(grant.environment) !== JSON.stringify(definition.environment) ||
           !grant.appliesToProjects.includes(project) || !definition.appliesToProjects.includes(project)) return [];
-        return discovered.filter(({ name }) => !definition.deniedTools.includes(name) && !grant.deniedTools.includes(name))
-          .map(({ name }) => `${customMcpName(definition.id)}_${name}`);
+        return discovered.filter(({ upstreamName }) => !definition.deniedTools.includes(upstreamName) && !grant.deniedTools.includes(upstreamName))
+          .map(({ name }) => name);
       });
     },
     async invoke(name: string, args: Record<string, unknown>, signal: AbortSignal) {
-      const server = invocations.get(name);
-      return server?.call(name.slice(customMcpName(server.definition.id).length + 1), args, signal);
+      const invocation = invocations.get(name);
+      return invocation?.server.call(invocation.upstreamName, args, signal);
     },
   };
 }

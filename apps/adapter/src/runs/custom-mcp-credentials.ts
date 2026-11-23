@@ -2,7 +2,9 @@ import { WebMessageError } from '../http/errors.ts';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-const referenceName = /^OEP_MCP_[A-F0-9]{32}_[A-Z_][A-Z0-9_]{0,63}$/;
+const referenceName = /^OEP_MCP_(?:[A-F0-9]{32}_[A-Z_][A-Z0-9_]{0,63}|OAUTH_[A-F0-9]{32})$/;
+
+export const mcpOAuthCredentialName = (id: string) => `OEP_MCP_OAUTH_${id.toUpperCase()}`;
 
 export type CredentialEnvironment = {
   readCredentials(names: string[]): Record<string, string | undefined>;
@@ -20,6 +22,12 @@ function run(script: string, input: object) {
 }
 
 const readInput = "$ErrorActionPreference='Stop'; [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); $inputData=[Console]::In.ReadToEnd() | ConvertFrom-Json; ";
+
+export function protectMcpOAuthData(direction: 'Protect' | 'Unprotect', value: string): string {
+  return run(readInput + 'Add-Type -AssemblyName System.Security; ' +
+    `$bytes=[Security.Cryptography.ProtectedData]::${direction}([Convert]::FromBase64String($inputData.value), $null, ` +
+    '[Security.Cryptography.DataProtectionScope]::CurrentUser); [Convert]::ToBase64String($bytes)', { value }).trim();
+}
 
 export function configuredCustomMcpCredentials(names: string[], read?: CredentialEnvironment['readCredentials']): Set<string> {
   if (names.some((name) => !referenceName.test(name))) throw new WebMessageError('credential-name');
