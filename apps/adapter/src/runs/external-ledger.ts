@@ -10,12 +10,14 @@ export type Provider = keyof typeof helpers;
 export const isProvider = (value: unknown): value is Provider => typeof value === 'string' && Object.hasOwn(helpers, value);
 export const externalProvider = (id: unknown) => (Object.keys(helpers) as Provider[]).find((key) => helpers[key].id === id);
 export type HelperSettings = { provider: Provider; enabled: boolean; confirmEachRun: boolean; termsConfirmed: boolean; revision: number };
-export type SourceDescriptor =
+export type SourceSubmission =
   | { kind: 'attachment'; attachmentId: string }
   | { kind: 'workspace'; folder: string; path: string }
   | { kind: 'owner_text'; text: string }
   | { kind: 'derived'; text: string; sources: string[] }
   | { kind: 'citation'; vault: string; revision: string; passage: string; sha256: string };
+export type SourceDescriptor = Exclude<SourceSubmission, { kind: 'derived' }> |
+  (Extract<SourceSubmission, { kind: 'derived' }> & { sourceVersions: string[] });
 export type ExternalSource = { id: string; sessionId: string; workspaceId: string; descriptor: SourceDescriptor };
 export type SnapshotFile = { sourceId: string; kind: SourceDescriptor['kind']; name: string; sha256: string; bytes: number;
   provenance: unknown; parents: SnapshotFile[]; projection?: { sha256: string; bytes: number } };

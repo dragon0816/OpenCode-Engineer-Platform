@@ -1,7 +1,7 @@
 import { digestPattern, identifier, sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
 import { uuid } from '../runs/attachments.ts';
 import { DelegationError, type Classification } from '../runs/delegation-ledger.ts';
-import { helpers, isProvider, type SourceDescriptor } from '../runs/external-ledger.ts';
+import { helpers, isProvider, type SourceSubmission } from '../runs/external-ledger.ts';
 import { HttpError } from './errors.ts';
 import type { WebMessageCode } from './messages.ts';
 
@@ -30,7 +30,7 @@ export function externalWorkspaceInput(input: Record<string, unknown>) {
   return { workspaceId, classification };
 }
 
-export function sourceInput(input: Record<string, unknown>): SourceDescriptor {
+export function sourceInput(input: Record<string, unknown>): SourceSubmission {
   if (input.kind === 'workspace') {
     const { kind, folder, path, ...extra } = input;
     if (hashInput(folder) && typeof path === 'string' && path.length <= 1024 && !Object.keys(extra).length) return { kind, folder, path };

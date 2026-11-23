@@ -5,7 +5,8 @@ import type { KnowledgeStore } from '../../../../packages/knowledge/src/store.ts
 import type { ChatService } from '../http/chat.ts';
 import { maxUpload, MiB } from './attachments.ts';
 import { DelegationError, type Classification } from './delegation-ledger.ts';
-import { helpers, type ExternalSource, type Provider, type Snapshot, type SnapshotFile, type SourceDescriptor } from './external-ledger.ts';
+import { helpers, type ExternalSource, type Provider, type Snapshot, type SnapshotFile, type SourceDescriptor,
+  type SourceSubmission } from './external-ledger.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 
@@ -19,8 +20,11 @@ const isInside = (root: string, path: string) => {
 const blockedName = /(?:^|\/)(?:\.(?:git|env|ssh|claude|codex)(?:[./]|$)|(?:AGENTS|CLAUDE)\.md(?:\/|$)|\.mcp\.json$|(?:credentials|secrets)(?:[./]|$))|\.(?:pem|pfx|key)$/i;
 const blockedText = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[\s"'=])(?:sk-(?:proj-|ant-)?[a-z\d_-]{24,}|gh[pousr]_[a-z\d]{30,})\b/i;
 const publicOnly = (label: Classification) => {
-  if (label !== 'public') throw new DelegationError('external-' + label);
+  if (label === 'confidential') throw new DelegationError('external-confidential');
+  if (label === 'unclassified') throw new DelegationError('external-unclassified');
 };
+const sourceVersion = (file: SnapshotFile): string =>
+  sha256(canonical([file.sourceId, file.sha256, file.projection?.sha256 ?? null, file.parents.map(sourceVersion)]));
 
 export class ExternalSources {
   private readonly store: WebStore;
@@ -41,15 +45,18 @@ export class ExternalSources {
     return owner.workspaceID;
   }
 
-  register(session: WebSession, value: SourceDescriptor) {
+  register(session: WebSession, value: SourceSubmission) {
     const workspace = this.workspace(session);
-    if (value.kind === 'derived' && value.sources.some((id) => !this.store.external.source(session.id, id))) {
-      throw new DelegationError('external-provenance-missing');
-    }
     if (value.kind === 'attachment') throw new DelegationError('external-provenance-missing');
-    const source = { id: '', sessionId: session.id, workspaceId: workspace, descriptor: value };
-    this.read(session, source, new Map(), new Set());
-    return this.store.external.addSource(session.id, workspace, value);
+    const cache = new Map<string, Resolved>();
+    const descriptor: SourceDescriptor = value.kind !== 'derived' ? value : { ...value, sourceVersions: value.sources.map((id) => {
+      const parent = this.store.external.source(session.id, id);
+      if (!parent) throw new DelegationError('external-provenance-missing');
+      return sourceVersion(this.read(session, parent, cache, new Set()).file);
+    }) };
+    const source = { id: '', sessionId: session.id, workspaceId: workspace, descriptor };
+    this.read(session, source, cache, new Set());
+    return this.store.external.addSource(session.id, workspace, descriptor);
   }
 
   classify(session: WebSession, id: string, expectedHash: string, label: Classification) {
@@ -65,7 +72,9 @@ export class ExternalSources {
     const source = this.store.external.source(session.id, id);
     if (!source) throw new DelegationError('external-provenance-missing');
     const { file, label } = this.read(session, source, new Map(), new Set());
-    return { id, name: file.name, sha256: file.sha256, bytes: file.bytes, kind: file.kind, classification: label,
+    const { descriptor } = source;
+    const name = descriptor.kind === 'citation' ? [descriptor.vault, descriptor.passage].join(' · ') : file.name;
+    return { id, name, sha256: file.sha256, bytes: file.bytes, kind: file.kind, classification: label,
       ownClassification: this.store.external.label(source, file.sha256) ?? 'unclassified' };
   }
 
@@ -114,8 +123,8 @@ export class ExternalSources {
       return this.read(session, source, resolved, new Set());
     });
     const [taskFile, ...files] = entries.map(({ file }) => file);
-    const hashes = (node: SnapshotFile): unknown => [node.sha256, node.projection?.sha256 ?? null, node.parents.map(hashes)];
-    if (previous && JSON.stringify([previous.task, ...previous.inputs].map(hashes)) !== JSON.stringify([taskFile, ...files].map(hashes))) {
+    if (previous && JSON.stringify([previous.task, ...previous.inputs].map(sourceVersion)) !==
+        JSON.stringify([taskFile, ...files].map(sourceVersion))) {
       throw new DelegationError('external-changed');
     }
     publicOnly(strictest(entries.map(({ label }) => label)));
@@ -193,7 +202,10 @@ export class ExternalSources {
           if (!parent) throw new DelegationError('external-provenance-missing');
           parents.push(this.read(session, parent, cache, chain));
         }
-        if (!parents.length) throw new DelegationError('external-provenance-missing');
+        if (!parents.length || descriptor.sourceVersions?.length !== parents.length) throw new DelegationError('external-provenance-missing');
+        if (parents.some(({ file }, index) => descriptor.sourceVersions[index] !== sourceVersion(file))) {
+          throw new DelegationError('external-changed');
+        }
       }
       provenance = { origin: descriptor.kind };
     }
@@ -205,6 +217,8 @@ export class ExternalSources {
     const inherited = strictest([ledger.workspace(workspaceId) ?? 'unclassified', rootLabel, ...parents.map(({ label }) => label)]);
     if (marking) publicOnly(inherited);
     const label = strictest([inherited, ledger.label(source, hash) ?? 'unclassified']);
+    const cacheBytes = [...cache.values()].reduce((size, value) => size + value.data.length + (value.projection?.length ?? 0), 0);
+    if (cacheBytes + data.length + (projection?.length ?? 0) > 80 * MiB) throw new DelegationError('external-input-limit');
     const result = { file: { sourceId: source.id, kind: descriptor.kind, name, sha256: hash, bytes: data.length,
       provenance: { ...provenance, workspaceId, workspaceRevision: ledger.workspaceRevision(workspaceId), labelRevision: ledger.labelRevision(source, hash) },
       parents: parents.map(({ file }) => file), ...(projection && { projection: { bytes: projection.length, sha256: sha256(projection) } }) },

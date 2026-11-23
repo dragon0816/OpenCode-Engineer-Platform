@@ -114,11 +114,15 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
     assert.equal(knowledge.classifyVault(vault, revision, 'public'), 'saved');
     ledger.approveVault(vault, revision, knowledge.vaultClassification(vault)!.revision);
     mark(citation);
+    store.saveKnowledgeSettings('', false);
+    assert.throws(() => prepare([citation]), code('provenance-missing'));
+    store.saveKnowledgeSettings('', true);
 
     const snapshot = prepare([file, attachment, derived, citation]);
     assert.equal(snapshot.manifest.inputs[0].sha256, sha256(fileBytes));
     assert.deepEqual(snapshot.manifest.inputs[2].parents.map(({ sourceId }) => sourceId), [file, attachment]);
-    assert.ok(Buffer.from(snapshot.content).subarray(0, taskText.length).equals(Buffer.from(taskText)));
+    assert.deepEqual(Buffer.from(snapshot.content),
+      Buffer.concat([Buffer.from(taskText), fileBytes, bytes, Buffer.from('Derived synthetic text'), Buffer.from(passage.text)]));
     const admit = (value = snapshot, target: string = specialistId) => delegations.admit(session, value.parentRunId,
       { specialistId: target, publicInputId: value.id, requestKey: randomUUID() });
     assert.throws(() => admit(snapshot, helpers.claude_code.id), code('provenance-missing'));
@@ -143,8 +147,15 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
       challenge: value.challenge, digest: value.digest, settingsRevision: value.settingsRevision });
     assert.throws(() => delegations.confirm(changeId, binding(changeDetails)), code('changed'));
     assert.throws(() => delegations.confirm(id, confirmation), code('changed'));
+    assert.throws(() => prepare([derived]), code('changed'));
+    const original = await attachmentService.upload(session.id, workspace, 'altered.txt', 'text/plain', bytes.length, async () => bytes);
+    const altered = ledger.attachmentSource(session.id, original.id)!;
+    mark(altered);
+    writeFileSync(join(workspace, 'attachments', original.id + '.source'), 'Synthetic changed attachment');
+    assert.throws(() => prepare([altered]), code('changed'));
     assert.equal(sent.length, 0);
     mark(file);
+    assert.throws(() => mark(derived), code('changed'));
     const replacement = prepare([file, attachment, citation]);
     const accepted = admit(replacement).delegationId;
     const approved = binding(delegations.ownerDetails(accepted)!);
