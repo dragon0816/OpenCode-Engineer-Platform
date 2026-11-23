@@ -1,6 +1,6 @@
 import { bindFilePicker, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
 import { errorText, projectLabel, request } from './api.js';
-import { classificationControl, groupModelOptions, modelChoice, openExternalLogin } from './external-helpers.js';
+import { classificationControl, gatewayModelOption, groupModelOptions, modelChoice, openExternalLogin } from './external-helpers.js';
 import { cancelTelegramSetup, setupReady, telegramSetup } from './telegram-setup.js';
 
 const steps = ['basic', 'model', 'knowledge', 'ability', 'channel', 'trigger', 'confirm'];
@@ -172,7 +172,8 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
   function model(parent) {
     const select = field(parent, 'defaultModel', node('select'), 'agent-model');
     const choices = [optionText(message('agents.follow-global'), ''), ...snapshot.models.map((alias) =>
-      optionText(snapshot.appliedModels.includes(alias) ? alias : message('agents.model-pending', { model: alias }), alias))];
+      gatewayModelOption(alias, snapshot.modelNotes, snapshot.appliedModels.includes(alias) ?
+        alias : message('agents.model-pending', { model: alias })))];
     if (draft.defaultModel && !snapshot.models.includes(draft.defaultModel)) {
       choices.push(optionText(message('agents.model-unavailable', { model: draft.defaultModel }), draft.defaultModel));
     }
