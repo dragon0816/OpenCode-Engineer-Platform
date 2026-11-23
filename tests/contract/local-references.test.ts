@@ -7,10 +7,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { HttpError } from '../../apps/adapter/src/http/errors.ts';
+import { AttachmentService } from '../../apps/adapter/src/runs/attachments.ts';
+import { ExternalSources } from '../../apps/adapter/src/runs/external-sources.ts';
 import { LocalReferences, referenceReadArgs } from '../../apps/adapter/src/runs/local-references.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { workbook } from '../../apps/adapter/src/runs/workbook.ts';
 import { workbookFixture } from '../e2e/synthetic-excel.ts';
+import { sha256 } from '../../packages/knowledge/src/snapshot.ts';
 
 function rejects(code: string) {
   return (error: unknown) => error instanceof HttpError && error.detail.code === code;
@@ -59,6 +62,7 @@ test('reference grants pin large files and folder members, verify identity and a
   writeFileSync(privateFile, 'synthetic restricted');
   symlinkSync(data, join(folder, 'escape'), 'junction');
   writeFileSync(join(folder, '.env'), 'synthetic credential fixture');
+  writeFileSync(join(folder, '.git-credentials'), 'synthetic credential fixture');
   const notes = join(folder, '中文.json');
   writeFileSync(notes, '{"message":"合成資料"}');
   const book = join(folder, 'sample.xlsx');
@@ -121,7 +125,7 @@ test('reference grants pin large files and folder members, verify identity and a
   await assert.rejects(() => references.read(session.id, confirmed, { reference: confirmed.id, path: 'escape/secret.csv' }),
     rejects('reference-unavailable'));
   for (const rejected of [privateFile, root, join(system, 'kernel.fixture'), join(folder, 'escape', 'secret.csv'),
-    join(folder, '.env'), '\\\\synthetic-host\\share\\file.csv', '\\\\?\\C:\\fixture.csv', file + ':alternate']) {
+    join(folder, '.env'), join(folder, '.git-credentials'), '\\\\synthetic-host\\share\\file.csv', '\\\\?\\C:\\fixture.csv', file + ':alternate']) {
     await assert.rejects(() => references.attach(session.id, [rejected], () => true), rejects('reference-unavailable'));
   }
   const changed = openSync(file, 'r+');
@@ -130,9 +134,14 @@ test('reference grants pin large files and folder members, verify identity and a
   await assert.rejects(() => references.read(session.id, large, { reference: large.id, length: 5 }), rejects('reference-changed'));
   const classified = references.classify(session.id, confirmed, 'confidential');
   assert.equal(references.confidential(notes), true);
+  store.addProjectFolder('default', folder);
+  const external = new ExternalSources(store, { attachments: new AttachmentService(store), references, workspace: () => data }, data);
+  const exportMember = () => external.register(session, { kind: 'workspace', folder: sha256(folder), path: 'big.csv' });
+  assert.throws(exportMember, /external-confidential/);
   references.remove(session.id, classified);
   assert.equal(references.get(session.id, directory.id), undefined);
   assert.equal(references.confidential(notes), true);
+  assert.throws(exportMember, /external-confidential/);
   await assert.rejects(() => references.read(session.id, classified, { reference: directory.id, list: true }), rejects('reference-changed'));
   accepted = false;
   assert.deepEqual(await references.pick(session.id, 'file', 'zh-TW', signal, () => true), []);

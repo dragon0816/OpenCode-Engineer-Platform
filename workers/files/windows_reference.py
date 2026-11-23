@@ -26,8 +26,9 @@ SPECIAL = re.compile(
     r"^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)"
     r"|[~][0-9]+(?:\.|$)|[<>:\"/\\|?*\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]", re.I)
 CREDENTIAL = re.compile(
-    r"^(?:\.(?:git|ssh|aws|azure|gnupg|kube|docker|config|codex|claude|env|netrc|npmrc|pypirc)(?:\.|$)"
-    r"|(?:credentials|secrets|login data|local state|ntuser)(?:[. -]|$))"
+    r"^(?:\.(?:git|ssh|aws|azure|gnupg|kube|docker|config|codex|claude|env|netrc|npmrc|pypirc|mcp)(?:\.|$)"
+    r"|\.(?:git-credentials|pgpass|vault-token|terraform\.d)$"
+    r"|(?:credentials|secrets|login data|local state|ntuser|id_rsa|id_ed25519)(?:[. -]|$))"
     r"|\.(?:pem|pfx|p12|key|kdbx)$", re.I)
 
 get_drive_type = api(win, "GetDriveTypeW", w.UINT, w.LPCWSTR)
@@ -52,7 +53,8 @@ def parts(path):
     root = drive + "\\"
     names = tail[1:].split("\\")
     if (not DRIVE.fullmatch(root) or not tail.startswith("\\") or not all(map(valid_part, names))
-            or names[0].lower() in {"system volume information", "$recycle.bin", "recovery", "boot", "config.msi"}):
+            or names[0].lower() in {"system volume information", "$recycle.bin", "recovery", "boot", "config.msi",
+                                    "bootmgr", "hiberfil.sys", "pagefile.sys", "swapfile.sys"}):
         raise ValueError("Invalid location")
     return root, names
 
