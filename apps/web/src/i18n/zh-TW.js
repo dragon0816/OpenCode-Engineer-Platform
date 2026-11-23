@@ -695,6 +695,7 @@ export default {
   'server.session-attachment-not-found': "此會話中找不到附件。",
   'server.session-delete-busy': "請等這次處理結束後再刪除會話。",
   'server.invalid-model-selection': "請勾選 1 至 {max} 個清單中的模型，並從中選擇預設模型。",
+  'server.invalid-model-note': "請為清單中的模型輸入有效的備註（最多 160 字元）。",
   'server.model-check-busy': "模型檢查進行中，請稍後重試。",
   'server.session-not-found': "找不到會話。",
   'server.session-route-not-found': "找不到會話或要求的操作。",

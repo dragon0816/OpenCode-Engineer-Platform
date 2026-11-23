@@ -1,11 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { atRepo } from '../../../launcher/src/paths.ts';
 import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src/run.ts';
 import type { Agent } from '../opencode/sessions.ts';
 import { maxSelectedModels } from '../opencode/gateway.ts';
+import type { GatewayModelCatalog } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
-import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
+import { Ledger, modelNotesVersion, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import { DelegationLedger, migrateBudgetChoice, verifyBudgetChoice } from './delegation-ledger.ts';
@@ -36,7 +39,6 @@ export type AgentSettings = {
   avatar?: { bytes: Buffer; mime: string } | null; knowledgeReads?: string[]; mcpGrants?: string[];
 };
 type WebOwner = { agentId: string; workspaceID: string; origin?: 'delegation' };
-type ModelCatalog = { ids: string[]; discoveredAt: number };
 
 const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
       id TEXT PRIMARY KEY REFERENCES web_sessions(id),
@@ -151,6 +153,7 @@ export class WebStore extends Ledger {
         if (!telegram && (version < 9 || version === 10)) migrateAgentModelSources(db);
         if (!telegram && version < 10) migrateReferences(db);
         if (!telegram && version < pluginRegistryVersion) migratePlugins(db);
+        if (!telegram && version < modelNotesVersion) db.exec(readFileSync(atRepo('apps/adapter/migrations/013_model_notes.sql'), 'utf8'));
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -163,6 +166,7 @@ export class WebStore extends Ledger {
           verifyReferences(db);
           verifyAgentModelSources(db);
           verifyPluginRegistry(db);
+          db.prepare('SELECT alias, mapped_model, note FROM web_model_notes LIMIT 0');
         }
       },
     });
@@ -669,13 +673,21 @@ export class WebStore extends Ledger {
     });
   }
 
-  modelCatalog(): ModelCatalog | undefined {
+  modelCatalog() {
     const row = this.db.prepare('SELECT ids, discovered_at FROM web_model_catalog WHERE id = 1').get();
     if (row) return { ids: JSON.parse(String(row.ids)) as string[], discoveredAt: Number(row.discovered_at) };
   }
 
   modelChoices(builtIns: readonly string[]) {
     return [...new Set([...(this.modelCatalog()?.ids ?? []), ...builtIns])];
+  }
+
+  modelNotes(aliases: readonly string[]) {
+    const find = this.db.prepare('SELECT mapped_model, note FROM web_model_notes WHERE alias = ?');
+    return Object.fromEntries(aliases.flatMap((alias) => {
+      const row = find.get(alias) as { mapped_model: string | null; note: string | null } | undefined;
+      return row ? [[alias, { mappedModel: row.mapped_model, note: row.note }] as const] : [];
+    }));
   }
 
   modelSelection(builtIns: readonly string[], fallback = builtIns[0]) {
@@ -685,17 +697,31 @@ export class WebStore extends Ledger {
     return { ids, defaultAlias: saved && ids.includes(saved) ? saved : ids.includes(fallback) ? fallback : ids[0] };
   }
 
-  saveModelSelection(ids: unknown, alias: unknown, builtIns: readonly string[]) {
+  saveModelSelection(ids: unknown, alias: unknown, builtIns: readonly string[], notes: Record<string, string> = {}) {
     const choices = this.modelChoices(builtIns);
     if (!Array.isArray(ids) || !ids.length || ids.length > maxSelectedModels || new Set(ids).size !== ids.length ||
         !ids.every((id) => typeof id === 'string' && choices.includes(id)) || typeof alias !== 'string' || !ids.includes(alias)) return false;
-    this.transaction(() => this.writeModelSelection(ids, alias));
+    this.transaction(() => {
+      this.writeModelNotes(choices, notes);
+      this.writeModelSelection(ids, alias);
+    });
     return true;
   }
 
-  saveModelCatalog(catalog: ModelCatalog, builtIns: readonly string[]) {
+  saveModelNotes(notes: Record<string, string>, builtIns: readonly string[]) {
+    this.transaction(() => {
+      this.writeModelNotes(this.modelChoices(builtIns), notes);
+      this.auditSettings('model');
+    });
+  }
+
+  saveModelCatalog(catalog: GatewayModelCatalog, builtIns: readonly string[]) {
     this.transaction(() => {
       this.db.prepare('INSERT OR REPLACE INTO web_model_catalog VALUES (1, ?, ?)').run(JSON.stringify(catalog.ids), catalog.discoveredAt);
+      this.db.exec('DELETE FROM web_model_notes WHERE note IS NULL; UPDATE web_model_notes SET mapped_model = NULL WHERE mapped_model IS NOT NULL');
+      const map = this.db.prepare(`INSERT INTO web_model_notes (alias, mapped_model) VALUES (?, ?)
+        ON CONFLICT(alias) DO UPDATE SET mapped_model = excluded.mapped_model`);
+      for (const [alias, model] of Object.entries(catalog.mappedModels ?? {})) map.run(alias, model);
       const selection = this.modelSelection(builtIns);
       const choices = new Set([...catalog.ids, ...builtIns]);
       const remaining = selection.ids.filter((id) => choices.has(id));
@@ -710,6 +736,15 @@ export class WebStore extends Ledger {
     this.db.prepare('INSERT OR REPLACE INTO web_model_selection VALUES (1, ?)').run(JSON.stringify(ids));
     this.db.prepare('INSERT OR REPLACE INTO web_model_settings VALUES (1, ?)').run(alias);
     this.auditSettings('model');
+  }
+
+  private writeModelNotes(choices: readonly string[], notes: Record<string, string>) {
+    const edits = Object.entries(notes);
+    if (!edits.length) return;
+    if (edits.some(([id]) => !choices.includes(id))) throw new HttpError(400, 'invalid-model-note');
+    const write = this.db.prepare(`INSERT INTO web_model_notes (alias, note) VALUES (?, ?)
+      ON CONFLICT(alias) DO UPDATE SET note = excluded.note`);
+    for (const [id, note] of edits) write.run(id, note);
   }
 
   saveSessionAlias(id: string, alias: string) {

@@ -281,6 +281,7 @@ const messages = {
   'session-attachment-not-found': "此會話中找不到附件。",
   'session-delete-busy': "請等這次處理結束後再刪除會話。",
   'invalid-model-selection': "請勾選 1 至 {max} 個清單中的模型，並從中選擇預設模型。",
+  'invalid-model-note': "請為清單中的模型輸入有效的備註（最多 160 字元）。",
   'model-check-busy': "模型檢查進行中，請稍後重試。",
   'session-not-found': "找不到會話。",
   'session-route-not-found': "找不到會話或要求的操作。",

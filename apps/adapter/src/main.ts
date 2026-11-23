@@ -204,8 +204,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const sameModels = (ids: readonly string[]) => ids.length === runtime.aliases.length && ids.every((id) => runtime.aliases.includes(id));
   const modelSettings = () => {
     const selection = modelSelection();
+    const choices = store.modelChoices(runtime.builtInAliases);
     return { defaultAlias: runtime.alias, aliases: runtime.aliasHealth(), credentialsConfigured: true,
-      selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices: store.modelChoices(runtime.builtInAliases),
+      selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices,
+      modelNotes: store.modelNotes([...new Set([...choices, ...runtime.aliases])]),
       discoveredAt: store.modelCatalog()?.discoveredAt ?? null, maxSelected: maxSelectedModels,
       restartRequired: !sameModels(selection.ids), canRestart: Boolean(requestRestart) };
   };
@@ -459,14 +461,24 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (path === '/api/settings/model') {
       if (method === 'POST') {
-        const input = await body(request);
+        const input = await body(request, 256 * 1024);
+        const fields = Object.keys(input);
         const selection = modelSelection();
-        if (Object.keys(input).length === 1 && 'alias' in input) {
+        if (fields.length === 1 && 'alias' in input) {
           const alias = approvedAlias(input.alias);
           if (!selection.ids.includes(alias)) throw new HttpError(400, 'unapproved-model');
           store.saveDefaultAlias(alias);
         } else {
-          if (Object.keys(input).length !== 2 || !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases)) {
+          const notes = Object.hasOwn(input, 'notes') ? input.notes : {};
+          if (!notes || typeof notes !== 'object' || Array.isArray(notes) ||
+              Object.values(notes).some((note) => typeof note !== 'string' || note.length > 160 ||
+                /[\r\n\t\u2028\u2029]/.test(note) || runtime.redact(note) !== note)) {
+            throw new HttpError(400, 'invalid-model-note');
+          }
+          const edits = Object.fromEntries(Object.entries(notes).map(([id, note]) => [id, (note as string).trim()]));
+          if (fields.length === 1 && 'notes' in input) store.saveModelNotes(edits, runtime.builtInAliases);
+          else if (fields.some((key) => !['selected', 'alias', 'notes'].includes(key)) ||
+              !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases, edits)) {
             throw new HttpError(400, 'invalid-model-selection', { max: maxSelectedModels });
           }
         }

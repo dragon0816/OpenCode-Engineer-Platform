@@ -18,6 +18,7 @@ export const maxDiscoveredModels = 256;
 export const maxSelectedModels = 8;
 export type GatewayTrace = ModelCall;
 type GatewayConnection = { url: string; key: string; fetch?: typeof fetch };
+export type GatewayModelCatalog = { ids: string[]; discoveredAt: number; mappedModels?: Record<string, string> };
 
 export function gatewaySettings() {
   let url = process.env.OEP_LITELLM_BASE_URL;
@@ -63,7 +64,7 @@ function observeCompletion(frames: unknown[]) {
   return observation;
 }
 
-function gatewayEndpoint(options: GatewayConnection, endpoint: string) {
+function gatewayEndpoint(options: GatewayConnection, endpoint: string, versioned = true) {
   let configured: URL;
   try { configured = new URL(options.url); }
   catch { throw new Error('Gateway URL is invalid'); }
@@ -71,19 +72,59 @@ function gatewayEndpoint(options: GatewayConnection, endpoint: string) {
       configured.search || configured.hash || !options.key) throw new Error('Gateway configuration is invalid');
   const base = configured.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
   const target = new URL(configured);
-  target.pathname = `${base}/v1/${endpoint}`;
+  target.pathname = `${base}${versioned ? '/v1' : ''}/${endpoint}`;
   return { target, markers: [options.key, options.url, configured.origin, configured.host, configured.hostname] };
 }
 
-export async function discoverGatewayModels(options: GatewayConnection, signal = AbortSignal.timeout(8_000)) {
+async function gatewayDiscoveryJson(target: URL, options: GatewayConnection, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const response = await (options.fetch ?? fetch)(target, {
+    method: 'GET', redirect: 'manual', signal, headers: { authorization: `Bearer ${options.key}` },
+  });
+  if (response.status !== 200) { await response.body?.cancel(); return; }
+  return upstreamJson(await boundedUpstreamText(response));
+}
+
+function mappedGatewayModel(params: { model?: unknown; api_base?: unknown; api_key?: unknown } | undefined,
+  redact: ReturnType<typeof redactFields>) {
+  if (!params) return null;
+  const raw = params.model;
+  if (typeof raw !== 'string' || !/^[a-z\d_][a-z\d_./:+~-]{0,159}$/i.test(raw) ||
+      raw.includes('://') || redact(raw) !== raw) return null;
+  const model = raw.replace(/^[a-z\d_-]+\//i, '');
+  const host = typeof params.api_base === 'string' ? URL.parse(params.api_base)?.hostname : undefined;
+  const upstreamKey = typeof params.api_key === 'string' ? params.api_key : '';
+  if (redactFields([host ?? '', upstreamKey])(raw) !== raw ||
+      /(?:^|\/)(?:localhost|(?:[a-z\d-]+\.)+[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3})(?=[:/]|$)/i.test(model)) return null;
+  return /^[a-z\d_][a-z\d_.+~-]*(?:[/:][a-z\d_][a-z\d_.+~-]*)*$/i.test(model) ? model : null;
+}
+
+async function discoverMappedModels(options: GatewayConnection, ids: Set<string>, signal: AbortSignal) {
+  for (const versioned of [true, false]) {
+    const { target, markers } = gatewayEndpoint(options, 'model/info', versioned);
+    if (target.protocol !== 'https:' && !['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)) return;
+    try {
+      const value = await gatewayDiscoveryJson(target, options, signal) as { data?: unknown } | null | undefined;
+      if (!Array.isArray(value?.data)) continue;
+      const redact = redactFields(markers);
+      const models = new Map<string, string | null>();
+      for (const row of value.data) {
+        const name = row?.model_name;
+        if (typeof name !== 'string' || !ids.has(name)) continue;
+        const mapped = mappedGatewayModel(row.litellm_params, redact);
+        // A model group can route to several deployments. A single ID is meaningful only if they agree.
+        models.set(name, !models.has(name) || models.get(name) === mapped ? mapped : null);
+      }
+      if (models.size) return Object.fromEntries([...models].filter((entry): entry is [string, string] => entry[1] !== null && entry[0] !== entry[1]));
+    } catch { /* Model info is optional. Discard upstream failures and try the other route. */ }
+  }
+}
+
+export async function discoverGatewayModels(options: GatewayConnection, signal = AbortSignal.timeout(8_000)): Promise<GatewayModelCatalog | undefined> {
   try {
     const { target, markers } = gatewayEndpoint(options, 'models');
     const redact = redactFields(markers);
-    const response = await (options.fetch ?? fetch)(target, {
-      method: 'GET', redirect: 'manual', signal, headers: { authorization: `Bearer ${options.key}` },
-    });
-    if (response.status !== 200) { await response.body?.cancel(); return; }
-    const value = upstreamJson(await boundedUpstreamText(response)) as { object?: unknown; data?: unknown } | null;
+    const value = await gatewayDiscoveryJson(target, options, signal) as { object?: unknown; data?: unknown } | null | undefined;
     if (value?.object !== 'list' || !Array.isArray(value.data)) return;
     const ids = new Set<string>();
     for (const row of value.data) {
@@ -93,7 +134,11 @@ export async function discoverGatewayModels(options: GatewayConnection, signal =
       }
       if (ids.size === maxDiscoveredModels) break;
     }
-    if (ids.size) return { ids: [...ids], discoveredAt: Date.now() };
+    if (ids.size) {
+      const mappedModels = await discoverMappedModels(options, ids, signal);
+      return { ids: [...ids], discoveredAt: Date.now(),
+        ...(mappedModels && Object.keys(mappedModels).length ? { mappedModels } : {}) };
+    }
   } catch { /* Return a fixed failure without upstream details or credentials. */ }
 }
 
