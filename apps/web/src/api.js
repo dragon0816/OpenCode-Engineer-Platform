@@ -28,7 +28,7 @@ export function errorText(error, fallback = message('api.could-not-complete-the-
   return typeof text === 'string' && /\p{Script=Han}/u.test(text) ? () => getLocale() === 'zh-TW' ? text : resolveText(fallback) : fallback;
 }
 
-export async function request(path, { data, file, bytes, sha256, signal } = {}) {
+export async function request(path, { data, file, bytes, sha256, signal, pluginToken, pluginFile } = {}) {
   const headers = {};
   let body;
   if (data !== undefined) {
@@ -43,6 +43,8 @@ export async function request(path, { data, file, bytes, sha256, signal } = {}) 
     headers['X-OEP-Filename'] = encodeURIComponent(file.name);
     body = file;
   }
+  if (pluginToken) headers['X-OEP-Plugin'] = pluginToken;
+  if (pluginFile) headers['X-OEP-Filename'] = encodeURIComponent(pluginFile);
   if (csrf && (body !== undefined || /^\/api\/agents(?:\/|$)/.test(path) ||
       ['/api/settings/channels', '/api/settings/delegation-budgets'].includes(path))) headers['X-OEP-CSRF'] = csrf;
   let response;

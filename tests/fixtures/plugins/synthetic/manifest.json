@@ -6,17 +6,17 @@
   "publisher": "Synthetic OEP fixture",
   "oepCompatibility": ">=0.7.0 <0.9.0",
   "permissions": {
-    "operations": ["worker.run"],
-    "dataScope": "none",
+    "operations": ["worker.run", "data.read", "data.write", "progress.emit", "review.submit", "publish.request"],
+    "dataScope": "plugin-workspace",
     "workers": ["oep.synthetic.worker"],
-    "modelBroker": "none",
-    "sourceBroker": "none"
+    "modelBroker": "approved-gateway",
+    "sourceBroker": "approved-sources"
   },
   "components": {
     "skills": [],
     "workflows": [],
     "pythonWorkers": [{ "id": "oep.synthetic.worker", "version": "1.0.0", "entry": "worker.py" }],
-    "dataSchemas": [],
+    "dataSchemas": [{ "id": "oep.synthetic.schema", "version": "1.0.0", "entry": "schema.json" }],
     "pages": [{
       "id": "oep.synthetic.page",
       "version": "1.0.0",
@@ -24,8 +24,14 @@
       "titleKey": "page.title",
       "strings": { "en": "en.json", "zh-TW": "zh-TW.json" }
     }],
-    "panels": [],
-    "reviewTypes": [],
-    "collections": []
+    "panels": [{
+      "id": "oep.synthetic.panel", "version": "1.0.0", "entry": "panel.json", "titleKey": "panel.title",
+      "strings": { "en": "panel-en.json", "zh-TW": "panel-zh.json" }
+    }],
+    "reviewTypes": [{ "id": "oep.synthetic.review", "version": "1.0.0", "schema": "oep.synthetic.schema" }],
+    "collections": [{
+      "id": "oep.synthetic.results", "version": "1.0.0", "schema": "oep.synthetic.schema", "uniqueKey": "measurement",
+      "readScope": "plugin-workspace", "writeScope": "plugin-workspace", "requiresReview": true
+    }]
   }
 }

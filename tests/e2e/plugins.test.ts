@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
+import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { sampleID, samplePage, samplePlugin } from '../fixtures/plugins/package.ts';
 import { chromium } from './chromium.ts';
 import { dataDirectory } from './test-data.ts';
@@ -95,5 +96,68 @@ test('Chromium installs an unsigned plugin with consent and mounts the bilingual
   } finally {
     await page?.close();
     await app.close();
+  }
+});
+
+test('Chromium streams a synthetic plugin build and opens its panel and owner review', { timeout: 120_000 }, async () => {
+  const root = dataDirectory();
+  const web = join(root, 'web');
+  mkdirSync(web);
+  const reviewStore = new KnowledgeStore(join(root, 'knowledge.sqlite'));
+  const runtime = {
+    root, version: '2.3.2', alias: 'synthetic-plugin', aliases: ['synthetic-plugin'], builtInAliases: ['synthetic-plugin'],
+    aliasHealth: () => [], redact: (value: string) => value, knowledge: { reviewStore, overview: () => reviewStore.overview() },
+    endpoint: { request: async () => new Response(null, { status: 503 }) },
+  } as unknown as Runtime;
+  const app = await startAdapter(web, runtime, () => {}, false, undefined, undefined, undefined, undefined,
+    { dataRoot: root, version: '0.8.0' });
+  let page: Awaited<ReturnType<typeof chromium>> | undefined;
+  try {
+    const archive = join(root, 'runtime.oepplugin');
+    const source = join(root, 'source.txt');
+    writeFileSync(archive, samplePlugin({ runtime: true }));
+    writeFileSync(source, 'The synthetic amplifier bandwidth is 32 MHz.');
+    page = await chromium(join(root, 'chromium'));
+    await page.command('Page.navigate', { url: app.pairURL() });
+    await page.ready('document.querySelector("#open-capabilities")?.disabled === false');
+    await page.evaluate('document.querySelector("#open-capabilities").click()');
+    await page.ready('!document.querySelector("#capabilities-view").hidden');
+    const setFile = async (selector: string, file: string) => {
+      const { root } = await page!.command<{ root: { nodeId: number } }>('DOM.getDocument');
+      const { nodeId } = await page!.command<{ nodeId: number }>('DOM.querySelector', { nodeId: root.nodeId, selector });
+      assert.ok(nodeId);
+      await page!.command('DOM.setFileInputFiles', { nodeId, files: [file] });
+    };
+    await setFile('#plugin-file', archive);
+    await page.ready('document.querySelector("#plugin-dialog").open');
+    await page.evaluate('document.querySelector("#plugin-dialog input").click(); document.querySelector("#plugin-dialog button:last-child").click()');
+    await page.ready('!document.querySelector("#plugin-dialog").open && !!document.querySelector("[data-plugin-page]")');
+    await page.evaluate('document.querySelector("[data-plugin-page]").click()');
+    await page.ready('document.querySelector("#plugin-page-actions").textContent.includes("建置合成知識庫")');
+    await page.evaluate('[...document.querySelectorAll("#plugin-page-actions button")].find(b => b.textContent === "開啟詳細資料面板").click()');
+    await page.ready('document.querySelector("#file-preview").textContent.includes("合成擷取詳細資料")');
+    await page.evaluate('const picker = document.querySelector("#menu-locale"); picker.value = "en"; picker.dispatchEvent(new Event("change"))');
+    await page.ready('document.querySelector("#plugin-page-actions").textContent.includes("Build synthetic knowledge") && document.querySelector("#file-preview").textContent.includes("Synthetic extraction details")');
+    await setFile('#plugin-page-actions input[type=file]', source);
+    await page.evaluate(`(() => {
+      const actions = document.querySelector('#plugin-page-actions');
+      const track = actions.querySelector('progress');
+      window.pluginProgress = [];
+      new MutationObserver(() => window.pluginProgress.push(track.value)).observe(track, { attributes: true, attributeFilter: ['value'] });
+      actions.querySelector('input:not([type=file])').value = 'Chromium synthetic build';
+      [...actions.querySelectorAll('button')].find(b => b.textContent === 'Build synthetic knowledge').click();
+    })()`);
+    await page.ready('document.querySelector("#plugin-page-actions [role=status]").textContent === "Worker completed."', 45_000);
+    const values = await page.evaluate<number[]>('window.pluginProgress');
+    assert.ok(values.includes(100));
+    assert.ok(values.some((value) => value > 0 && value < 100));
+    await page.evaluate('[...document.querySelectorAll("#plugin-page-actions button")].find(b => b.textContent === "Open owner review").click()');
+    await page.ready('!document.querySelector("#review-view").hidden && document.querySelector("#review-bi-pending").textContent.includes("Chromium synthetic build")');
+    assert.equal(reviewStore.reviews()[0].status, 'pending');
+    assert.equal(reviewStore.overview().length, 0);
+  } finally {
+    await page?.close();
+    await app.close();
+    reviewStore.close();
   }
 });

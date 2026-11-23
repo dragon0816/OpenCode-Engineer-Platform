@@ -62,12 +62,42 @@ function permissionRows(permissions) {
   ];
 }
 
-export function bindPlugins(showView) {
+function pageAPI(plugin, token) {
+  const path = `/api/plugins/${plugin.id}/runtime`;
+  return {
+    call: (method, params) => request(path, { data: { method, params }, pluginToken: token }),
+    source: (file) => request(path + '/sources', { bytes: file, pluginToken: token, pluginFile: file.name }),
+    panel: (id) => request(path + '/panels/' + id, { pluginToken: token }),
+    async stream(id, signal, update) {
+      const response = await fetch(path + '/events/' + id, { headers: { 'X-OEP-Plugin': token }, signal });
+      if (!response.ok || !response.body) throw new Error('Plugin stream unavailable');
+      let pending = '';
+      for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
+        pending += chunk;
+        let end;
+        while ((end = pending.indexOf('\n\n')) !== -1) {
+          const frame = pending.slice(0, end);
+          pending = pending.slice(end + 2);
+          if (frame.startsWith('data: ')) update(JSON.parse(frame.slice(6)));
+        }
+      }
+    },
+  };
+}
+
+const jobLabels = {
+  starting: message('plugins.job-starting'), running: message('plugins.job-running'),
+  succeeded: message('plugins.job-succeeded'), failed: message('plugins.job-failed'),
+  cancelled: message('plugins.job-cancelled'), 'timed-out': message('plugins.job-timed-out'),
+};
+
+export function bindPlugins(showView, openPanel) {
   const rail = find('open-capabilities');
   const capabilityView = find('capabilities-view');
   const pageView = find('plugin-page-view');
   const pageTitle = find('plugin-page-title');
   const pageContent = find('plugin-page-content');
+  const pageActions = find('plugin-page-actions');
   const file = find('plugin-file');
   const installFile = find('install-plugin');
   const list = find('plugins-list');
@@ -86,6 +116,7 @@ export function bindPlugins(showView) {
   }
 
   function hide() {
+    activePage?.stop.abort();
     activePage = undefined;
     capabilityView.hidden = true;
     pageView.hidden = true;
@@ -95,18 +126,88 @@ export function bindPlugins(showView) {
 
   async function openPage(plugin, page, opener) {
     if (!showView(pageView, pageTitle, opener)) return;
-    const selection = activePage = { id: page.id, digest: plugin.digest };
+    const selection = activePage = { id: page.id, digest: plugin.digest, stop: new AbortController() };
     setText(pageTitle, localized(page.title));
     setText(pageContent, message('plugins.loading'));
+    pageActions.replaceChildren();
     try {
       const view = await request(`/api/plugins/${plugin.id}/pages/${page.id}/${plugin.digest}`);
       if (activePage !== selection) return;
       pageContent.replaceChildren(...view.paragraphs.map((text) => element('p', localized(text))));
+      if (view.actions?.length) {
+        const api = pageAPI(plugin, view.token);
+        pageActions.replaceChildren(...view.actions.map((action) => jobAction(api, action, view.approvedSources, selection.stop.signal)));
+      }
     } catch (error) {
       if (activePage !== selection) return;
       setText(pageContent, errorText(error));
       void refresh().catch(() => {});
     }
+  }
+
+  function jobAction(api, action, approvedSources, signal) {
+    const form = element('div', undefined, 'plugin-actions');
+    const source = element('input');
+    source.type = 'file';
+    const label = element('label');
+    label.append(element('span', message('plugins.job-source')), source);
+    const title = element('input');
+    title.maxLength = 100;
+    const titleLabel = element('label');
+    titleLabel.append(element('span', message('plugins.draft-title')), title);
+    const progress = element('progress');
+    progress.max = 100;
+    progress.value = 0;
+    progress.hidden = true;
+    const state = element('p');
+    state.setAttribute('role', 'status');
+    const openReview = button(message('plugins.open-review'), () => find('open-review').click());
+    openReview.hidden = true;
+    let job;
+    const cancel = button(message('ui.cancel'), async () => {
+      cancel.disabled = true;
+      try { await api.call('jobs.cancel', { id: job }); }
+      catch (error) { setText(state, errorText(error)); }
+    });
+    cancel.hidden = true;
+    const start = button(localized(action.label), async () => {
+      start.disabled = true;
+      openReview.hidden = true;
+      try {
+        const files = [];
+        if (source.files[0]) files.push((await api.source(source.files[0])).id);
+        const input = {};
+        if (action.reviewType) {
+          input.draft = (await api.call('drafts.create', { reviewType: action.reviewType, title: title.value.trim() })).id;
+        }
+        signal.throwIfAborted();
+        const created = await api.call('jobs.start', { worker: action.worker, sources: files, input });
+        job = created.id;
+        cancel.disabled = false;
+        cancel.hidden = progress.hidden = false;
+        await api.stream(job, signal, (update) => {
+          progress.value = update.percent;
+          setText(state, update.error === 'isolation-unavailable' ? message('plugins.isolation-unavailable') : jobLabels[update.state]);
+          openReview.hidden = !update.review || find('open-review').hidden;
+        });
+      } catch (error) {
+        if (!signal.aborted) setText(state, errorText(error));
+      } finally { start.disabled = false; cancel.hidden = true; }
+    });
+    if (approvedSources) form.append(label);
+    if (action.reviewType) form.append(titleLabel);
+    form.append(start, cancel);
+    if (action.panel) form.append(button(message('plugins.open-panel'), async (event) => {
+      const opener = event.currentTarget;
+      try {
+        const view = await api.panel(action.panel);
+        if (signal.aborted) return;
+        const panel = openPanel(action.panel, localized(view.title), opener);
+        panel.body.replaceChildren(...view.paragraphs.map((text) => element('p', localized(text))));
+      } catch (error) { setText(state, errorText(error)); }
+    }));
+    form.append(progress, state, openReview);
+    return form;
   }
 
   function render() {

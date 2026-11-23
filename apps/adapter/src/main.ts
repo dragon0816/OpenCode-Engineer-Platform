@@ -49,6 +49,8 @@ import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
 import { agentManagement } from './http/agents.ts';
 import { servePlugins } from './plugins/http.ts';
+import { PluginRuntime } from './plugins/runtime.ts';
+import { recoverPythonJobs } from './plugins/python.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -139,6 +141,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return registry;
     } catch (error) { store.close(); throw error; }
   })();
+  try { await recoverPythonJobs(pluginOptions?.dataRoot ?? root); }
+  catch (error) { store.close(); throw error; }
   const dispatcher = new Dispatcher(store.workItems);
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].filter((session) => store.sessionOwner(session)?.origin === 'web')
@@ -156,6 +160,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
+  const pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
+    const session = sessions.get(sessionId);
+    if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
+    return externalSources.pluginFile(session, source, hash);
+  });
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
   delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram);
@@ -209,7 +218,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     const { csrf } = auth.authorize(request,
       path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl || Boolean(telegramHistory));
     if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
-      await servePlugins(plugins, path, request, response, csrf, () => body(request));
+      await servePlugins(plugins, pluginRuntime, path, request, response, csrf, () => body(request, 256 * 1024));
       return;
     }
     if (telegramHistory) {
@@ -1072,6 +1081,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       });
     });
   } catch (error) {
+    await pluginRuntime.close();
     await dispatcher.close();
     await telegram.close();
     await events.close();
@@ -1083,11 +1093,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     async close() {
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const stopped = chat.close();
+      const pluginStopped = pluginRuntime.close();
       await events.close();
       server.closeAllConnections();
       await closed;
       await dispatcher.close();
-      await Promise.all([stopped, telegram.close(), ...active]);
+      await Promise.all([stopped, pluginStopped, telegram.close(), ...active]);
       store.close();
     },
   };

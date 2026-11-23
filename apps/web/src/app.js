@@ -2185,7 +2185,7 @@ const plugins = bindPlugins((view, title, entry) => {
   if (narrowNavigation.matches) setSidebar(false);
   title.focus();
   return true;
-});
+}, openFeaturePreview);
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   find(id).addEventListener('click', () => { find('review-view').hidden = true; });
 }

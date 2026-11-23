@@ -1,1 +1,7 @@
-{"format":"oep.plugin.page/v1","paragraphs":["page.body"]}
+{
+  "format": "oep.plugin.page/v1",
+  "paragraphs": ["page.body"],
+  "actions": [{
+    "worker": "oep.synthetic.worker", "labelKey": "page.run", "panel": "oep.synthetic.panel", "reviewType": "oep.synthetic.review"
+  }]
+}
