@@ -19,6 +19,24 @@ const states = {
   rejected: message('jobs.rejected'),
   published: message('jobs.published'),
 };
+const pageStates = {
+  'text-layer': message('biOcr.status.text-layer'),
+  local: message('biOcr.status.local-ocr'),
+  model: message('biOcr.status.model'),
+  failed: message('biOcr.status.failed'),
+};
+const pageWarnings = {
+  'render-failed': message('biOcr.warning.render-failed'),
+  'local-unavailable': message('biOcr.warning.local-unavailable'),
+  'local-failed': message('biOcr.warning.local-failed'),
+  'local-low-text': message('biOcr.warning.local-low-text'),
+  'vision-no-model': message('biOcr.warning.vision-no-model'),
+  'vision-unsupported': message('biOcr.warning.vision-unsupported'),
+  'vision-unavailable': message('biOcr.warning.vision-unavailable'),
+  'vision-rejected': message('biOcr.warning.vision-rejected'),
+  'vision-failed': message('biOcr.warning.vision-failed'),
+  'vision-budget': message('biOcr.warning.vision-budget'),
+};
 
 function element(tag, text, id) {
   const node = document.createElement(tag);
@@ -176,9 +194,8 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
     if (result.pages?.length) {
       const list = element('ul');
       for (const page of result.pages) list.append(element('li', joinText([
-        message('biOcr.page', { page: page.locator.split(':')[1],
-          status: message('biOcr.status.' + (page.status === 'local' ? 'local-ocr' : page.status)) }),
-        page.ocr?.engine, page.warning && message('biOcr.warning.' + page.warning),
+        message('biOcr.page', { page: page.locator.split(':')[1], status: pageStates[page.status] }),
+        page.ocr?.engine, pageWarnings[page.warning],
       ])));
       pageReport.append(element('p', result.source.title || result.source.ref), list);
     }
