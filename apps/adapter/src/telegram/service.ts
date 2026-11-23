@@ -89,6 +89,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
       return true;
     },
     configured: () => accounts.connections.size > 0,
+    approvedBiOrigins: (): string[] => JSON.parse(router.bi.config('origins') || '[]'),
     runBi: (id: string, candidate?: Candidate, signal?: AbortSignal) => bi.run(id, candidate, signal),
     reviewBi: bi.review,
     channels: () => accounts.list(),

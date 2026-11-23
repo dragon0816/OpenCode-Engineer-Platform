@@ -321,6 +321,27 @@ const schema = this.reviewSchema(vault, base);
       allowModel: this.publication(vault)?.allow_model === 1 };
   }
 
+  reviewTargets() {
+    const titled = new Map(this.db.prepare(`
+      SELECT p.vault, p.title FROM vaults v JOIN publications p ON p.id=v.publication
+      WHERE ${this.activeFilter} AND p.kind='bi' ORDER BY p.title, p.vault
+    `).all().map(({ vault, title }) => [String(vault), String(title)]));
+    const heads = this.db.prepare(`SELECT h.vault FROM review_schema_heads h
+      WHERE NOT EXISTS (SELECT 1 FROM vaults v WHERE v.id=h.vault) ORDER BY h.vault`).all();
+    const targets = new Set([...titled.keys(), ...heads.map(({ vault }) => String(vault))]);
+    return [...targets].flatMap((id) => {
+      try {
+        const base = this.reviewBase(id);
+        return [{ vault: id, title: titled.get(id) ?? id, schema: base.schema }];
+      } catch { return []; }
+    });
+  }
+
+  reviewReceipt(id: string) {
+    const row = this.db.prepare('SELECT parent,status,publication FROM reviews WHERE id=?').get(key(id));
+    return row as { parent: string | null; status: string; publication: string | null } | undefined;
+  }
+
   private reviewSnapshot(input: Candidate | ChangeSet, revision: string, parent?: string) {
     const base = parent && 'parent' in input ? this.snapshot(input.vault.id, parent) : undefined;
     const benchmarksMigration = `
@@ -507,7 +528,7 @@ const schema = this.reviewSchema(input.vault.id, base);
       if ('parent' in original !== ('parent' in draft)) throw new Error('Draft format cannot change');
       const sourceIdentity = (input: Candidate | ChangeSet) => 'parent' in input
         ? { parent: input.parent, sources: input.sources }
-        : input.sources.map(({ id, ref, original }) => ({ id, ref, original }));
+        : input.sources.map(({ id, ref, original, locator }) => ({ id, ref, original, ...(locator !== undefined && { locator }) }));
       if (canonical(draft.vault) !== canonical(original.vault) ||
           canonical(sourceIdentity(draft)) !== canonical(sourceIdentity(original))) {
         throw new Error('Original sources and vault cannot change');

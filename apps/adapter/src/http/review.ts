@@ -59,6 +59,15 @@ const proposalInstructions = 'Propose one engineering card from the supplied sou
   'Return only JSON: {"title":"short title","fields":{"fieldName":{"value":"field value","quote":"verbatim contiguous source quote"}}}. ' +
   'Supply every requested field. Preserve exact spacing and punctuation in each quote. If a field lacks evidence, return {}.';
 
+export function stageReviewProposal(store: Pick<KnowledgeStore, 'reviewBase' | 'stage'>, id: string,
+  draft: ChangeSet, provenance?: BiProvenance) {
+  const current = store.reviewBase(draft.vault.id);
+  if (current.parent !== draft.parent || current.schema.sha256 !== draft.schema ||
+      current.vault && current.vault.kind !== 'bi') throw new Error('BI review base changed');
+  store.stage(id, draft, provenance);
+  return { id };
+}
+
 export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | 'reviewSource' | 'stage'>, input: Record<string, unknown>,
   complete: (prompt: string, input: unknown, signal: AbortSignal) => ReturnType<typeof knowledgeCompletion>, signal: AbortSignal,
   provenance?: BiProvenance) {
@@ -95,11 +104,10 @@ export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | '
   }
   if (rejected.length) return { rejected };
   if (typeof response.title !== 'string' || !response.title.trim()) throw new Error('Proposal title missing');
-  store.stage(id, {
+  return stageReviewProposal(store, id, {
     vault: base.vault, parent: base.parent, schema: base.schema.sha256, allowModel: base.allowModel,
     addCards: [{ id: cardId, type: 'record', key: cardId, title: response.title, version: '1', fields: Object.fromEntries(values) }],
     updateCards: [], removeCards: [], sources: [{ id: sourceId, ref: String(input.ref), sha256: hash }],
     evidence, relationships: [],
   }, provenance);
-  return { id };
 }

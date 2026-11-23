@@ -4,7 +4,7 @@ import type { Snapshot } from './snapshot.ts';
 export type Candidate = {
   vault: Snapshot['vault'];
   schema: string;
-  sources: { id: string; ref: string; original: string; markdown: string }[];
+  sources: { id: string; ref: string; original: string; markdown: string; locator?: string }[];
   cards: Snapshot['cards'];
   relationships: Snapshot['relationships'];
   evidence: { sourceId: string; cardId?: string; field?: string; start: number; end: number }[];
@@ -35,6 +35,7 @@ export function materialize(value: unknown, schema: Snapshot['schema'], revision
         start < 0 || end <= start || end > source.markdown.length) throw new Error('Invalid evidence range');
     const id = passagePrefix + 'passage-' + index;
     const text = source.markdown.slice(start, end);
+    const locator = source.locator === undefined ? 'markdown:' + start + '-' + end : string(source.locator, 'source.locator', 2048);
     if (input.vault.kind === 'bi') {
       const card = cardsById.get(cardId ?? '');
       if (!card || typeof field !== 'string' || !Object.hasOwn(card.fields, field)) throw new Error('Invalid field evidence');
@@ -44,8 +45,7 @@ export function materialize(value: unknown, schema: Snapshot['schema'], revision
       ids.push(id);
       byField.set(field, ids);
     }
-    return { id, sourceId, ...(cardId !== undefined && { cardId }),
-      locator: 'markdown:' + start + '-' + end, text, sha256: sha256(text) };
+    return { id, sourceId, ...(cardId !== undefined && { cardId }), locator, text, sha256: sha256(text) };
   });
   if (!passagePrefix && !passages.length) throw new Error('Evidence is required');
   const allowed = schema.document.fields as string[];
@@ -86,7 +86,7 @@ export type ChangeSet = {
   addCards: Candidate['cards'];
   updateCards: Candidate['cards'];
   removeCards: string[];
-  sources: { id: string; ref: string; sha256: string }[];
+  sources: { id: string; ref: string; sha256: string; locator?: string }[];
   evidence: Candidate['evidence'];
   relationships: Candidate['relationships'];
   allowModel?: boolean;
@@ -114,9 +114,9 @@ export function materializeChange(change: ChangeSet, parent: Snapshot | undefine
     if (!(schema.document.fields as string[]).includes(field ?? '')) throw new Error('Invalid field evidence');
     evidenceOnly.add(card.id);
   }
-  const sources = change.sources.map(({ id, ref, sha256 }) => {
+  const sources = change.sources.map(({ id, ref, sha256, locator }) => {
     const text = readSource(sha256);
-    return { id, ref, original: text, markdown: text };
+    return { id, ref, original: text, markdown: text, locator };
   });
   const delta = materialize({
     vault: change.vault, schema: change.schema, sources,

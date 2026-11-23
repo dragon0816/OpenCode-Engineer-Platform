@@ -420,3 +420,6 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 擁有者以 AEP 權利人身分授權，將 AEP 的 BI 擷取相關程式（`feature_plugins/bi_knowledge` 的轉換、擷取、暫存、驗證等 Python 模組）直接移入 OEP 的 BI Knowledge Plugin，改寫成 OEP 的 Plugin worker 與服務接口，並在檔案標頭與 `docs/` 保留來源註記（AEP repo 與 commit）。只移程式，不移 AEP 的資料、fixture、設定或憑證；移入內容須通過 OEP 的 scan 與授權檢查（AEP 內含第三方授權的檔案依其原授權處理）。
 - **理由：** 擁有者要求於週四 demo 從原始文件自動擷取卡片；AEP 已完整開發此流程，沿用可縮短時程並保持品質一致。
 - **捨棄的替代方案：** 只參考行為重新實作（原規則；時程不足）。
+## 2026-11-23 BI 文件擷取工作程序
+- 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
+- PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
