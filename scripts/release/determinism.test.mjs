@@ -37,7 +37,10 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
     assert.match(Buffer.from(files['NOTICE']).toString('utf8'), /pypdfium2 5\.15\.2/);
     assert.ok(JSON.parse(Buffer.from(files['sbom.cdx.json'])).components.some(({ purl }) => purl === 'pkg:pypi/pypdfium2@5.15.2'));
     assert.ok(files['scripts/windows/bi-ocr.ps1']?.length);
-    if (bundled) assert.ok(files['vendor/python/Lib/site-packages/pypdfium2_raw/pdfium.dll']?.length);
+    if (bundled) {
+      assert.ok(files['vendor/python/Lib/site-packages/pypdfium2_raw/pdfium.dll']?.length);
+      assert.ok(files['vendor/python/Lib/site-packages/pypdfium2-5.15.2.dist-info/licenses/BUILD_LICENSES/cibw_musl/libgcc_and_libstdc++.txt']?.length);
+    }
     const second = unzipSync(archives[1]);
     for (const path of ['sbom.cdx.json', 'THIRD_PARTY_LICENSES.md', 'NOTICE']) {
       assert.ok(files[path]?.length);
