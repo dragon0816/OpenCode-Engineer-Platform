@@ -18,7 +18,7 @@ export function parseAsk(value: unknown): AskRequest | undefined {
   return { vault, question: question.trim() };
 }
 
-function proposed(input: AskInput, content: string) {
+export function verifyKnowledgeAnswer(input: AskInput, content: string) {
   let value: unknown;
   try { value = JSON.parse(content.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i, '$1')); }
   catch { return; }
@@ -88,7 +88,7 @@ export class KnowledgeAsk {
           if (!signal.aborted && result.retryable && attempt === 0) continue;
           return { state: 'error', reason: result.failure, ...scope } as const;
         }
-        const verified = proposed({ question, revision, passages }, result.content);
+        const verified = verifyKnowledgeAnswer({ question, revision, passages }, result.content);
         onAttempt?.(verified?.state === 'verified' ? 'answered' : verified?.state === 'abstain' ? 'abstained' : 'invalid-citation');
         if (!current()) {
           return { state: 'error', reason: 'evidence-changed-or-cancelled', ...scope } as const;

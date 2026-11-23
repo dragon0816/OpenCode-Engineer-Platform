@@ -7,7 +7,9 @@ def process(operation, args, data):
     from catalog import project
     from convert import SOURCE_BYTES, ConversionError, convert
     from extract import plan
+    from recipes import records
     from staging import card_identity
+    from worktree import replay
 
 
     try:
@@ -17,6 +19,10 @@ def process(operation, args, data):
             result = convert(args[0], data, args[1])
         elif operation == "plan":
             result = plan(json.loads(data))
+        elif operation == "rules":
+            result = records(**json.loads(data))
+        elif operation == "worktree":
+            result = replay(**json.loads(data))
         elif operation == "schema":
             result = [schema for path, document in json.loads(data) for schema in project(path, document)]
         elif operation == "identities":

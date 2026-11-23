@@ -103,14 +103,21 @@ export class RepositoryFolder {
 
   json(file: string) {
     try {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(this.bytes(file, maxRecordBytes));
-      const json: unknown = JSON.parse(text);
+      const json: unknown = JSON.parse(this.utf8(file));
       if (!json || typeof json !== 'object' || Array.isArray(json)) throw new SyntaxError();
       return json as Record<string, unknown>;
     } catch (error) {
       if (error instanceof SyntaxError || error instanceof TypeError) {
         throw new RepositoryError(file, 'Invalid UTF-8 JSON record.');
       }
+      throw fileError(file, error);
+    }
+  }
+
+  utf8(file: string) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(this.bytes(file, maxRecordBytes)); }
+    catch (error) {
+      if (error instanceof TypeError) throw new RepositoryError(file, 'Invalid UTF-8 record.');
       throw fileError(file, error);
     }
   }
