@@ -441,6 +441,8 @@ summary { cursor: pointer; }
 #knowledge-settings label + label { margin-top: var(--space-3); }
 #atlas-url { font: inherit; padding: var(--space-2) var(--space-2); border-radius: 7px; color: inherit; background: var(--surface); }
 #microphone-settings-status:not(:empty) { margin-top: var(--space-2); }
+#microphone[aria-disabled="true"] { opacity: 0.65; cursor: default; }
+#microphone-settings-url { inline-size: 100%; }
 @media (max-width: 800px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   #settings-nav { display: none; }

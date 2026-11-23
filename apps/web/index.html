@@ -631,6 +631,23 @@
         <button autofocus data-i18n="agents.close-telegram-history"></button>
       </form>
     </dialog>
+    <dialog id="microphone-permission" class="settings-dialog" aria-labelledby="microphone-permission-title">
+      <h2 id="microphone-permission-title" data-i18n="voice.enable-microphone-access"></h2>
+      <p id="microphone-permission-status" role="status"></p>
+      <ol>
+        <li data-i18n="voice.open-site-info"></li>
+        <li data-i18n="voice.allow-microphone"></li>
+        <li data-i18n="voice.reload-or-recheck"></li>
+      </ol>
+      <p id="microphone-copy-help" data-i18n="voice.paste-settings-url" hidden></p>
+      <input id="microphone-settings-url" type="text" readonly hidden data-i18n-aria-label="voice.settings-url">
+      <p id="microphone-copy-status" role="status" hidden></p>
+      <div class="settings-actions">
+        <button id="recheck-microphone" type="button" autofocus data-i18n="voice.recheck"></button>
+        <button id="copy-microphone-settings" type="button" aria-describedby="microphone-copy-help" data-i18n="voice.copy-settings-url" hidden></button>
+        <button id="close-microphone-permission" type="button" data-i18n="voice.close-help"></button>
+      </div>
+    </dialog>
     </main>
     <aside class="sidebar files" id="chat-files" data-i18n-aria-label="ui.details" hidden>
       <div class="panel-header">
