@@ -5,6 +5,8 @@ import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { canonical, sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
 import { telegramCredentialRef } from '../channels/accounts.ts';
 import { assistantMcpPaused } from '../runs/custom-mcp.ts';
+import { helpers, isProvider, type Provider } from '../runs/external-ledger.ts';
+import type { ExternalDelegations } from '../runs/external-delegations.ts';
 import type { AgentSettings, WebStore } from '../runs/web-store.ts';
 import { checkDirectory } from '../runs/workspace.ts';
 import type { startTelegram } from '../telegram/service.ts';
@@ -13,7 +15,7 @@ import { HttpError } from './errors.ts';
 
 const invalid = () => new HttpError(400, 'agent-settings-invalid');
 const stale = () => new HttpError(409, 'agent-revision-conflict');
-const fields = ['name', 'introduction', 'instructions', 'defaultModel', 'replyLocale', 'avatar', 'knowledgeReads', 'mcpGrants'];
+const fields = ['name', 'introduction', 'instructions', 'defaultModel', 'modelSource', 'replyLocale', 'avatar', 'knowledgeReads', 'mcpGrants'];
 type Input = Record<string, unknown>;
 
 function parseSettings(input: Input, redact: Runtime['redact'], requireName: boolean): AgentSettings {
@@ -27,7 +29,11 @@ function parseSettings(input: Input, redact: Runtime['redact'], requireName: boo
     if (redact(value) !== value) throw new HttpError(400, 'assistant-credentials');
     result[field] = value.trim();
   }
-  const { defaultModel, replyLocale } = input;
+  const { defaultModel, modelSource, replyLocale } = input;
+  if (modelSource !== undefined) {
+    if (modelSource !== 'gateway' && !isProvider(modelSource)) throw invalid();
+    result.modelSource = modelSource;
+  }
   if (defaultModel !== undefined) {
     if (defaultModel !== null && typeof defaultModel !== 'string') throw invalid();
     result.defaultModel = defaultModel;
@@ -62,7 +68,8 @@ function bindInput(value: unknown) {
   return { action: 'bind', credentialRef, accountId, bindingRevision, handler: 'chat' };
 }
 
-export function agentManagement(root: string, store: WebStore, runtime: Runtime, telegram: ReturnType<typeof startTelegram>) {
+export function agentManagement(root: string, store: WebStore, runtime: Runtime, telegram: ReturnType<typeof startTelegram>,
+  external: ExternalDelegations) {
   function choices() {
     const selection = store.modelSelection(runtime.builtInAliases, runtime.alias);
     const models = selection.ids;
@@ -73,12 +80,23 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
       paused: assistantMcpPaused(server) || server.transport !== 'remote' || URL.parse(server.url)?.protocol !== 'https:', enabled: server.enabled,
       projects: server.appliesToProjects, pending: !runtime.customMcp?.some((applied) => canonical(applied) === canonical(server)),
     }));
-    const revision = sha256(JSON.stringify([selection, vaults.map(({ id, revision }) => [id, revision]),
+    const externalModels = (Object.keys(helpers) as Provider[]).map((provider) => {
+      const { enabled, revision, termsConfirmed } = store.external.settings(provider);
+      const status = external.status(provider);
+      return { provider, name: helpers[provider].name, enabled, revision, termsConfirmed, status,
+        available: enabled && status.isolation === 'verified' && status.installation === 'detected' && status.login === 'signedIn' };
+    });
+    const revision = sha256(JSON.stringify([selection, externalModels.map(({ provider, revision }) => [provider, revision]),
+      vaults.map(({ id, revision }) => [id, revision]),
       definitions.map(({ id, updatedAt }) => [id, updatedAt]), store.agents().map(({ id, revision }) => [id, revision])]));
-    return { revision, models, appliedModels: runtime.aliases, vaults, tools };
+    return { revision, models, externalModels, appliedModels: runtime.aliases, vaults, tools };
   }
 
   function validate(settings: AgentSettings, available: ReturnType<typeof choices>, id?: string) {
+    if (isProvider(settings.modelSource) && settings.modelSource !== (id && store.agentModelSource(id)) &&
+        !available.externalModels.some(({ provider, enabled }) => provider === settings.modelSource && enabled)) {
+      throw new HttpError(409, 'external-disabled');
+    }
     if (settings.defaultModel != null && !available.models.includes(settings.defaultModel)) {
       throw new HttpError(400, 'unapproved-model');
     }

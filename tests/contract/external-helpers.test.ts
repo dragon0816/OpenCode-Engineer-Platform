@@ -28,15 +28,18 @@ test('external helpers default off and Claude requires persisted owner terms con
     const claude = store.external.settings('claude_code');
     assert.equal(codex.enabled, false);
     assert.equal(claude.enabled, false);
-    assert.equal(codex.confirmEachRun, true);
-    assert.equal(claude.confirmEachRun, true);
+    assert.equal(codex.confirmEachRun, false);
+    assert.equal(claude.confirmEachRun, false);
+    assert.deepEqual(store.external.policy(), { strictMode: false, revision: 0 });
     assert.throws(() => store.external.saveSettings({ ...claude, enabled: true }), code('terms-required'));
-    const saved = store.external.saveSettings({ ...codex, enabled: true, confirmEachRun: false });
+    const saved = store.external.saveSettings({ ...codex, enabled: true, confirmEachRun: true });
+    const strict = store.external.savePolicy(true, 0);
     store.external.saveSettings({ ...claude, enabled: true, termsConfirmed: true });
     assert.throws(() => store.external.saveSettings({ ...codex, enabled: false }), code('settings-changed'));
     store.close();
     store = new WebStore(path);
     assert.deepEqual(store.external.settings(provider), saved);
+    assert.deepEqual(store.external.policy(), strict);
     assert.equal(store.external.settings('claude_code').termsConfirmed, true);
     assert.equal(store.external.settings('claude_code').enabled, true);
   } finally {
@@ -62,10 +65,12 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
     const attachmentService = new AttachmentService(store);
     const sources = new ExternalSources(store, { attachments: attachmentService, workspace: () => workspace }, root, knowledge);
     const sent: Snapshot[] = [];
-    const delegations = new ExternalDelegations(store, dispatcher, sources, () => {}, (snapshot) => { sent.push(snapshot); });
+    const delegations = new ExternalDelegations(store, dispatcher, sources, () => {}, { synthetic: (snapshot) => { sent.push(snapshot); } });
     const ledger = store.external;
     ledger.ensureTarget(provider);
-    ledger.saveSettings({ ...ledger.settings(provider), enabled: true });
+    ledger.saveSettings({ ...ledger.settings(provider), enabled: true, confirmEachRun: true });
+    const setStrict = (strict: boolean) => ledger.savePolicy(strict, ledger.policy().revision);
+    setStrict(true);
     ledger.classifyWorkspace(specialistId, 'public');
     ledger.classifyWorkspace('legacy-default', 'public');
     store.addProjectFolder('default', project);
@@ -74,6 +79,9 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
     const mark = (id: string) => sources.classify(session, id, sources.inspect(session, id).sha256, 'public');
     const prepare = (inputs: string[] = [], runId = randomUUID()) => sources.create(session, runId, provider, task, inputs);
     assert.throws(() => prepare(), code('unclassified'));
+    setStrict(false);
+    assert.equal(prepare().manifest.task.sha256, sha256(taskText));
+    setStrict(true);
     mark(task);
     const fileBytes = Buffer.from('Synthetic example before editing');
     const path = join(project, 'example.txt');
@@ -95,12 +103,16 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
     const second = await attachmentService.upload(session.id, workspace, 'confidential.txt', 'text/plain', bytes.length, async () => bytes);
     const confidential = ledger.attachmentSource(session.id, second.id)!;
     sources.classify(session, confidential, second.sha256, 'confidential');
-    assert.throws(() => prepare([confidential]), code('confidential'));
+    assert.throws(() => prepare([confidential]), { ...code('confidential'), item: 'confidential.txt' });
     assert.throws(() => mark(confidential), code('confidential'));
     const restricted = sources.register(session, { kind: 'derived', text: 'Derived from confidential', sources: [derived, confidential] });
     assert.equal(sources.inspect(session, restricted).classification, 'confidential');
     assert.throws(() => mark(restricted), code('confidential'));
     assert.throws(() => prepare([restricted]), code('confidential'));
+    setStrict(false);
+    assert.throws(() => prepare([confidential]), { ...code('confidential'), item: 'confidential.txt' });
+    assert.throws(() => prepare([restricted]), code('confidential'));
+    setStrict(true);
 
     const { snapshot: publication } = goldFixture();
     publication.sources.forEach((source) => { source.sha256 = sha256(source.id); });

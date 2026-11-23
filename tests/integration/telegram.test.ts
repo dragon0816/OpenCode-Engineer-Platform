@@ -20,6 +20,7 @@ import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
 import { BiScheduler } from '../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../packages/knowledge/src/ingest.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
+import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
 
 function folder() {
   mkdirSync('.phase0', { recursive: true });
@@ -51,6 +52,7 @@ test('paired channel settings verify a third bot, route specialist sessions and 
   const firstPrompt = Promise.withResolvers<void>();
   const releaseStalePoll = Promise.withResolvers<void>();
   let thirdEvent = 1;
+  let thirdText: string | undefined;
   let conflicted = false;
   let holdPoll = false;
   let stalePollPending = false;
@@ -79,7 +81,7 @@ test('paired channel settings verify a third bot, route specialist sessions and 
         update_id = 99;
       }
       reply([{ update_id, message: { chat: { type: 'private', id: 42 }, from: { id: 42 }, message_thread_id: 7,
-        text: id === 72 ? '/status' : 'Synthetic input ' + id + ' event ' + update_id } }]);
+        text: id === 72 ? '/status' : id === 73 && thirdText ? thirdText : 'Synthetic input ' + id + ' event ' + update_id } }]);
     } else {
       sends.push({ bot: id, text: input.text, topic: input.message_thread_id });
       reply({ message_id: sends.length });
@@ -121,10 +123,11 @@ test('paired channel settings verify a third bot, route specialist sessions and 
         ({ data: (messages.get(sessionID) ?? []).filter((item) => !type || type === item.type) }) },
     },
   } as unknown as Runtime;
+  const helper = memoryHelper(root);
   const start = () => startAdapter(root, runtime, () => {}, true, undefined, {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials[name]])),
     createApi: (value) => new TelegramApi(value, 'http://127.0.0.1:' + address.port),
-  });
+  }, { executor: helper.executor, intakeFixture: () => ({ installation: 'detected', isolation: 'verified', login: 'signedIn' }) });
   let adapter: Awaited<ReturnType<typeof start>> | undefined;
   const ready = (check: () => unknown) => until(async () => check() ? true : undefined, 16_000);
   try {
@@ -236,6 +239,30 @@ test('paired channel settings verify a third bot, route specialist sessions and 
     assert.equal(receives.get(73)!.at(-1), 3);
     assert.equal(prompts.length, 3);
     assert.equal(sends.length, 5);
+    {
+      using db = new DatabaseSync(join(root, 'web.sqlite'));
+      db.prepare('INSERT INTO agent_model_sources (agent_id,source) VALUES (?,?)').run('main', 'codex_cli');
+    }
+    thirdEvent = 3;
+    await ready(() => sends.some(({ bot, text }) => bot === 73 && text.includes('尚未啟用')));
+    assert.equal(prompts.length, 3, 'an external-source Telegram message must not reach Gateway');
+    const settings = new WebStore(join(root, 'web.sqlite'));
+    try {
+      settings.external.ensureTarget('codex_cli');
+      settings.external.saveSettings({ ...settings.external.settings('codex_cli'), enabled: true });
+      thirdEvent = 4;
+      await ready(() => sends.some(({ bot, text }) => bot === 73 && text === 'Synthetic external reply'));
+      assert.deepEqual(helper.launched, ['Synthetic input 73 event 4']);
+      settings.external.saveSettings({ ...settings.external.settings('codex_cli'), confirmEachRun: true });
+      thirdEvent = 5;
+      await ready(() => sends.some(({ bot, text }) => bot === 73 && text.includes('/confirm')));
+      assert.equal(helper.launched.length, 1);
+      thirdText = '/confirm';
+      thirdEvent = 6;
+      await ready(() => sends.filter(({ bot, text }) => bot === 73 && text === 'Synthetic external reply').length === 2);
+      assert.deepEqual(helper.launched, ['Synthetic input 73 event 4', 'Synthetic input 73 event 5']);
+      assert.equal(prompts.length, 3, 'verified external-source Telegram messages must not reach Gateway');
+    } finally { settings.close(); }
   } finally {
     firstPrompt.resolve();
     releaseStalePoll.resolve();

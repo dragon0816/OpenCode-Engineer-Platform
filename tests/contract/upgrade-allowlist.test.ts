@@ -12,6 +12,9 @@ import { migrateDelegations } from '../../apps/adapter/src/runs/delegation-schem
 import { historicalKnowledgeStore, knowledgeStorePath } from '../fixtures/upgrade/historical-knowledge.ts';
 import { artifactPath, attachmentPath, fixtureMcpId, seedPhase3bFixture } from '../fixtures/upgrade/phase3b.ts';
 import { TelegramInbox } from '../../apps/adapter/src/telegram/inbox.ts';
+import { migrateAgentModelSources } from '../../apps/adapter/src/runs/external-schema.ts';
+import { migrateReferences, ReferenceLedger } from '../../apps/adapter/src/runs/reference-ledger.ts';
+import { mcpOAuthCredentialName } from '../../apps/adapter/src/runs/custom-mcp-credentials.ts';
 
 // Tables present before any upgrade-tracked addition; everything else must be allow-listed.
 const original = new Set(['runs', 'run_events']);
@@ -40,6 +43,113 @@ const backup = (data: string, copy: string) => {
   run(snapshot, ['describe', copy, join(copy, 'backup.manifest.json')]);
 };
 
+const v8Session = '11111111-1111-4111-8111-111111111111';
+const v10Reference = { id: '22222222-2222-4222-8222-222222222222', revision: 'synthetic-revision',
+  path: 'C:\\Synthetic-OEP\\sample.txt', name: 'sample.txt', directory: false, mime: 'text/plain',
+  identity: { key: ['synthetic'], size: 0 }, hash: 'd'.repeat(64), classification: 'confidential' as const, createdAt: 1 };
+
+function seedV8(data: string, names = ['web', 'telegram-chat', 'knowledge', 'telegram', 'runs']) {
+  const web = join(data, 'web');
+  mkdirSync(web, { recursive: true });
+  for (const name of names) {
+    using db = new DatabaseSync(join(web, name + '.sqlite'));
+    db.exec(readFileSync(new URL('../fixtures/upgrade/oep-0.7.0-' + name + '.sql', import.meta.url), 'utf8'));
+  }
+  return join(web, 'web.sqlite');
+}
+
+test('0.7.0 and the intermediate ledgers reconcile to v11 and remain stable on the second run', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-integration-upgrade-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [state, prior, model, references] of [
+    ['base', 8, false, false], ['models', 9, true, false], ['references', 10, false, true], ['combined', 10, true, true],
+  ] as const) {
+    const data = join(root, state, 'data');
+    const copy = join(root, state, 'backup');
+    const file = seedV8(data);
+    {
+      using db = new DatabaseSync(file);
+      if (model) {
+        migrateAgentModelSources(db);
+        migrateAgentModelSources(db);
+        db.exec("INSERT INTO agent_model_sources VALUES ('main','codex_cli');");
+      }
+      if (references) {
+        migrateReferences(db);
+        migrateReferences(db);
+        new ReferenceLedger(db, (work) => work()).add(v8Session, [v10Reference]);
+      }
+      db.exec(`PRAGMA user_version=${prior}`);
+    }
+    backup(data, copy);
+    const first = JSON.parse(migrate(data));
+    const second = JSON.parse(migrate(data));
+    const versions = { web: [prior, 11], 'telegram-chat': [3, 3], knowledge: [3, 3], telegram: [2, 2], runs: [1, 1] };
+    for (const [store, expected] of Object.entries(versions)) {
+      const name = `web/${store}.sqlite`;
+      const { before, after } = first[name];
+      assert.deepEqual([before.userVersion, after.userVersion], expected);
+      assert.deepEqual(second[name], { before: after, after });
+    }
+    assert.equal(first['web/web.sqlite'].after.counts.agent_model_sources, Number(model));
+    assert.equal(first['web/web.sqlite'].after.counts.local_references, Number(references));
+    run(snapshot, ['reconcile-upgrade', data, copy]);
+    const store = new WebStore(file);
+    try {
+      assert.equal(store.agentModelSource('main'), model ? 'codex_cli' : 'gateway');
+      assert.equal(store.annotations(v8Session)[0].note, 'Synthetic owner note');
+      assert.deepEqual(store.references?.get(v8Session, v10Reference.id), references ? v10Reference : undefined);
+    } finally { store.close(); }
+  }
+});
+
+test('OAuth credential references and protected token files follow the snapshot rules during migration', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-oauth-snapshot-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const data = join(root, 'data');
+  const copy = join(root, 'backup');
+  const names = join(root, 'names.json');
+  const file = seedV8(data, ['web']);
+  const dynamicId = 'ab'.repeat(16);
+  {
+    using db = new DatabaseSync(file);
+    const save = db.prepare('INSERT INTO mcp_servers VALUES (?,?,1,1)');
+    for (const [id, client] of [[fixtureMcpId, 'static'], [dynamicId, 'dynamic']]) {
+      save.run(id, JSON.stringify({ id, transport: 'remote', environment: [], oauth: { client, scopes: [] } }));
+    }
+  }
+  const tokenPath = join('web', 'mcp-oauth', `${fixtureMcpId}.dpapi`);
+  mkdirSync(join(data, 'web', 'mcp-oauth'));
+  writeFileSync(join(data, tokenPath), 'Synthetic opaque OAuth state');
+  run(snapshot, ['credentials', data, names]);
+  assert.deepEqual(JSON.parse(readFileSync(names, 'utf8')), [mcpOAuthCredentialName(fixtureMcpId)]);
+  backup(data, copy);
+  assert.equal(existsSync(join(copy, tokenPath)), false);
+  assert.equal(JSON.parse(migrate(data))['web/web.sqlite'].after.counts.mcp_servers, 2);
+  run(snapshot, ['reconcile-upgrade', data, copy]);
+  assert.equal(readFileSync(join(data, tokenPath), 'utf8'), 'Synthetic opaque OAuth state');
+});
+
+test('a failure in reference DDL rolls back both new Web steps and permits a clean retry', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-integration-rollback-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = seedV8(root, ['web']);
+  {
+    using db = new DatabaseSync(file);
+    db.exec('CREATE TABLE local_reference_audit (incompatible INTEGER)');
+  }
+  assert.throws(() => new WebStore(file), /no such column: reference_id/);
+  {
+    using db = new DatabaseSync(file);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 8);
+    assert.deepEqual(db.prepare(`SELECT name FROM sqlite_schema WHERE name='agent_model_sources' OR name LIKE 'local_reference%'
+      ORDER BY name`).all().map(({ name }) => name), ['local_reference_audit']);
+    assert.equal(db.prepare('SELECT note FROM web_message_annotations').get()?.note, 'Synthetic owner note');
+    db.exec('DROP TABLE local_reference_audit');
+  }
+  assert.equal(JSON.parse(migrate(root))['web/web.sqlite'].after.userVersion, 11);
+});
+
 test('every web store table is accepted by the upgrade reconciliation allowlist', () => {
   mkdirSync('.phase0', { recursive: true });
   const root = mkdtempSync(join(process.cwd(), '.phase0', 'upgrade-allowlist-'));
@@ -54,6 +164,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
       ...allowedEmptyTables('webV6Empty'), ...allowedEmptyTables('webV7Empty'), ...allowedEmptyTables('webV8Empty'),
+      ...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty'),
       'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
@@ -103,7 +214,7 @@ test('the slice 3b central fixture upgrades from v4 without changing accounts or
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
     assert.equal(result.before.userVersion, 4);
     assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
-    assert.equal(result.after.userVersion, 8);
+    assert.equal(result.after.userVersion, 11);
     assert.equal(result.after.counts.agent_work_items, 0);
     run(snapshot, ['reconcile-upgrade', data, copy]);
     using db = new DatabaseSync(file);
@@ -128,7 +239,7 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
     }
     backup(data, copy);
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 8]);
+    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 11]);
     assert.deepEqual([result.before.counts.agent_work_items, result.after.counts.agent_work_items], [1, 1]);
     for (const table of allowedEmptyTables('webV6Empty')) {
       assert.equal(Object.hasOwn(result.before.counts, table), false);
@@ -161,7 +272,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
     }
     backup(data, copy);
     const { before, after } = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([before.userVersion, after.userVersion], [6, 8]);
+    assert.deepEqual([before.userVersion, after.userVersion], [6, 11]);
     assert.deepEqual([before.counts.delegations, after.counts.delegations], [1, 1]);
     for (const table of allowedEmptyTables('webV7Empty')) {
       assert.equal(Object.hasOwn(before.counts, table), false);
@@ -171,11 +282,16 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
       assert.equal(Object.hasOwn(before.counts, table), false);
       assert.equal(after.counts[table], 0);
     }
+    for (const table of [...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty')]) {
+      assert.equal(Object.hasOwn(before.counts, table), false);
+      assert.equal(after.counts[table], 0);
+    }
     run(snapshot, ['reconcile-upgrade', data, copy]);
     const store = new WebStore(file);
     try {
       assert.equal(store.external.settings('codex_cli').enabled, false);
       assert.equal(store.external.settings('claude_code').enabled, false);
+      assert.deepEqual(store.agents().map(({ modelSource }) => modelSource), ['gateway', 'gateway']);
       assert.equal(store.external.workspace('legacy-default'), 'unclassified');
       assert.equal(store.delegations.get('synthetic-delegation')?.status, 'succeeded');
       const budget = store.delegations.budgets();
@@ -197,7 +313,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 8], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 11], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);

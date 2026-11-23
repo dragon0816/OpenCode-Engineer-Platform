@@ -7,6 +7,7 @@ import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { testCustomMcp } from '../../launcher/src/custom-mcp-probe.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
+import { openBrowser } from '../../launcher/src/browser.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
 import { benchmarkQuestions } from '../../../packages/knowledge/src/benchmark.ts';
@@ -17,13 +18,16 @@ import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowle
 import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { brokerMcpName } from './opencode/permissions.ts';
+import { McpOAuth } from './opencode/mcp-oauth.ts';
+import { probeOAuthMcp } from './opencode/remote-mcp-broker.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
-import { ExternalDelegations } from './runs/external-delegations.ts';
+import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external-delegations.ts';
+import { helperReady } from './runs/external-cli.ts';
 import { ExternalSources } from './runs/external-sources.ts';
-import { externalProvider, helpers, type Provider, type Snapshot } from './runs/external-ledger.ts';
-import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperSettings, identifiers, invalidExternal,
+import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -34,13 +38,16 @@ import { reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError, WebMessageError } from './http/errors.ts';
 import { codeForFallback, describeRepositoryIssue, webMessage } from './http/messages.ts';
 import { WebEvents } from './http/events.ts';
-import { download, sendDownload, upload } from './http/files.ts';
+import { download, reportClientUpload, sendDownload, upload, uploadFailure } from './http/files.ts';
 import { convertWorkbook, isAttachmentImage, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { assistantMcpPaused, customMcpTool, oauthMcpTool, oauthSettings, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import type { CustomMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import type { CredentialEnvironment } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
+import { publicReference } from './runs/local-references.ts';
+import type { ReferencePicker } from './runs/reference-picker.ts';
 import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile } from './runs/workspace.ts';
 import { startTelegram } from './telegram/service.ts';
 import type { TelegramEnvironment } from './telegram/accounts.ts';
@@ -55,6 +62,7 @@ const assets = new Map([
   ['/commands.js', ['src/commands.js', 'text/javascript; charset=utf-8']],
   ['/message-operations.js', ['src/message-operations.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
+  ['/local-paths.js', ['src/local-paths.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/telegram-setup.js', ['src/telegram-setup.js', 'text/javascript; charset=utf-8']],
@@ -89,15 +97,17 @@ async function body(request: IncomingMessage, limit = 128 * 1024) {
 }
 
 function parseTurn(input: Record<string, unknown>): Turn {
-  const { id, text, attachments, workbook, replyTo } = input;
-  if (Object.keys(input).some((key) => !['id', 'text', 'attachments', 'workbook', 'replyTo'].includes(key)) ||
+  const { id, text, attachments, workbook, replyTo, externalConfirmation } = input;
+  if (Object.keys(input).some((key) => !['id', 'text', 'attachments', 'workbook', 'replyTo', 'externalConfirmation'].includes(key)) ||
+      (externalConfirmation !== undefined && !hashInput(externalConfirmation)) ||
       (replyTo !== undefined && (typeof replyTo !== 'string' || !replyTo || replyTo.length > 128)) || typeof id !== 'string' || !uuid.test(id) ||
       typeof text !== 'string' || !text.trim() || text.length > 16_000 ||
       !Array.isArray(attachments) || attachments.length > 10 || new Set(attachments).size !== attachments.length ||
       !attachments.every((item) => typeof item === 'string' && uuid.test(item)) || typeof workbook !== 'boolean') {
     throw new HttpError(400, 'invalid-message');
   }
-  return { id, text, attachments, workbook, ...(replyTo === undefined ? {} : { replyTo }) };
+  return { id, text, attachments, workbook, ...(replyTo === undefined ? {} : { replyTo }),
+    ...(typeof externalConfirmation === 'string' && { externalConfirmation }) };
 }
 
 function secureHeaders(response: ServerResponse) {
@@ -113,8 +123,8 @@ function secureHeaders(response: ServerResponse) {
 }
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
-  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void,
-  mcpCredentials?: CredentialEnvironment) {
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions,
+  mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -128,6 +138,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const mcpOAuth = runtime.mcpOAuth ?? new McpOAuth(root, openBrowser, mcpCredentials);
   const dispatcher = new Dispatcher(store.workItems);
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].filter((session) => store.sessionOwner(session)?.origin === 'web')
@@ -141,13 +152,16 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations); }
     catch (error) { void events.close(); store.close(); throw error; }
   })();
-  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher, delegations);
+  const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher,
+    delegations, referencePicker);
+  const uploadAudit = join(runtime.root, 'web-uploads.jsonl');
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
+  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
+    (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);
-  const management = agentManagement(root, store, runtime, telegram);
+  const management = agentManagement(root, store, runtime, telegram, external);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -172,6 +186,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   let testingMcp = false;
   let refreshingModels = false;
   const changedCredentials = new Set<string>();
+  const oauthStatus = (server: CustomMcp) => {
+    const status = mcpOAuth.status(server);
+    if (!status) return;
+    return { ...status, needsRestart: status.state === 'signed-in' && server.enabled && !assistantMcpPaused(server) &&
+      server.appliesToProjects.length > 0 && runtime.remoteMcp?.status.get(server.id) !== 'connected' };
+  };
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
@@ -249,6 +269,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (method === 'POST') {
         const { settings, warningAccepted } = helperSettings(await body(request));
         store.delegations.atomic(() => {
+          if (settings.enabled && !store.external.settings(settings.provider).enabled) external.requiresInstalled(settings.provider);
           if (settings.enabled && !store.external.settings(settings.provider).enabled && !warningAccepted) {
             throw new HttpError(400, 'external-warning-required');
           }
@@ -256,9 +277,37 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           if (settings.enabled) store.external.ensureTarget(settings.provider);
         });
       }
-      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => ({ ...store.external.settings(provider),
-        name: helpers[provider].name, targetId: helpers[provider].id,
-        classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' })));
+      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => {
+        const status = external.status(provider);
+        const settings = store.external.settings(provider);
+        return { ...settings, available: settings.enabled && helperReady(status), status,
+          name: helpers[provider].name, targetId: helpers[provider].id,
+          classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' };
+      }));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/policy') {
+      if (method === 'POST') {
+        const { strictMode, revision, ...extra } = await body(request);
+        if (typeof strictMode !== 'boolean' || typeof revision !== 'number' || !Number.isSafeInteger(revision) ||
+            revision < 0 || Object.keys(extra).length) throw invalidExternal();
+        store.delegations.atomic(() => store.external.savePolicy(strictMode, revision));
+      }
+      send(response, 200, store.external.policy());
+      return;
+    }
+    if (path === '/api/settings/external-helpers/recheck' && method === 'POST') {
+      const { provider, ...extra } = await body(request);
+      if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
+      send(response, 200, await external.refresh(provider));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/auth' && method === 'POST') {
+      const auth = helperAuth(await body(request));
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      const status = await external.authenticate(auth.provider, auth.request, AbortSignal.any([client.signal, AbortSignal.timeout(180_000)]));
+      if (!response.destroyed) send(response, 200, status);
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {
@@ -490,6 +539,13 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 202, { state: 'restarting' });
       return;
     }
+    if (path === '/api/settings/mcp/oauth' && method === 'GET') {
+      send(response, 200, Object.fromEntries(store.customMcpServers().flatMap((server) => {
+        const status = oauthStatus(server);
+        return status ? [[server.id, status]] : [];
+      })));
+      return;
+    }
     if (path === '/api/settings/mcp/test' && method === 'POST') {
       const { id } = await body(request);
       const server = store.customMcpServers().find((entry) => entry.id === id);
@@ -497,10 +553,20 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (testingMcp) throw new HttpError(409, 'probe-busy');
       testingMcp = true;
       try {
+        if (server.transport === 'remote' && server.oauth) {
+          const tools = await probeOAuthMcp(server, mcpOAuth, runtime.redact);
+          send(response, 200, { ok: true, tools });
+          return;
+        }
         const results = await testCustomMcp(server, mcpCredentials?.readCredentials);
         send(response, 200, results.ok ? results :
           { ...results, reasonDetail: webMessage(codeForFallback(results.reason) ?? 'mcp-probe-failed') });
-      } catch {
+      } catch (error) {
+        if (server.transport === 'remote' && server.oauth) {
+          const reasonDetail = error instanceof WebMessageError ? error.detail : webMessage('mcp-probe-failed');
+          send(response, 200, { ok: false, reason: reasonDetail.text, reasonDetail });
+          return;
+        }
         throw new HttpError(503, 'probe-unavailable');
       } finally { testingMcp = false; }
       return;
@@ -512,7 +578,17 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         const existing = store.customMcpServers().find(({ id }) => id === input.id);
         if (input.action !== 'create' && !existing) throw new HttpError(404, 'server-not-found');
         if (input.action === 'remove' && existing) {
+          mcpOAuth.remove(existing);
           store.removeCustomMcp(existing.id);
+        } else if ((input.action === 'oauth-login' || input.action === 'oauth-logout') && existing) {
+          if (existing.transport !== 'remote' || !existing.oauth) throw new HttpError(400, 'mcp-oauth-settings');
+          try {
+            if (input.action === 'oauth-login') await mcpOAuth.start(existing);
+            else await mcpOAuth.signOut(existing);
+          } catch (error) {
+            if (error instanceof WebMessageError) throw new HttpError(400, error.detail.code, error.detail.params);
+            throw new HttpError(503, 'mcp-oauth-login');
+          }
         } else if (input.action === 'credential' && existing) {
           const entry = existing.environment.find(({ name }) => name === input.name);
           if (!entry) throw new HttpError(404, 'credential-not-found');
@@ -531,7 +607,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           return;
         } else if (input.action === 'tool' && existing) {
           const { tool, enabled } = input;
-          if (typeof tool !== 'string' || !customMcpTool.test(tool) || typeof enabled !== 'boolean') {
+          if (typeof tool !== 'string' || !(oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
             throw new HttpError(400, 'invalid-tool-settings');
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
@@ -554,7 +630,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         } else if (input.action === 'create' || input.action === 'update') {
           const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
           try {
-            const definitionInput = { ...input, deniedTools: input.action === 'update' ? existing?.deniedTools : [] };
+            const deniedTools = input.action === 'update' ? existing?.deniedTools ?? [] : [];
+            const definitionInput = { ...input, deniedTools: input.oauth ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
             const projectIDs = projects.map((project) => project.id);
             const definition = input.transport === 'remote'
               ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
@@ -563,6 +640,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
             if (existing && !store.customMcpServers().some((server) => server.id === existing.id && server.updatedAt === existing.updatedAt)) {
               throw new HttpError(400, 'server-changed');
             }
+            mcpOAuth.configure(existing, definition, input.oauthClientId, input.oauthClientSecret);
             store.saveCustomMcp(definition);
             changedId = id;
           } catch (error) {
@@ -580,12 +658,18 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         return Object.entries(definition).every(([key, value]) =>
           JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
       });
+      const oauthStatuses = new Map(servers.map((server) => [server.id, oauthStatus(server)]));
+      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id);
+      const baseRestartRequired = servers.some(definitionChanged) ||
+        applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0;
       send(response, 200, {
         changedId,
-        restartRequired: servers.some((server) => !matches(server)) ||
-          applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
+        baseRestartRequired,
+        restartRequired: baseRestartRequired || [...oauthStatuses.values()].some((status) => status?.needsRestart),
         servers: servers.map((server) => ({
-          ...server, restartRequired: !matches(server) || changedCredentials.has(server.id),
+          ...server, restartRequired: definitionChanged(server) || Boolean(oauthStatuses.get(server.id)?.needsRestart),
+          baseRestartRequired: definitionChanged(server),
+          oauthStatus: oauthStatuses.get(server.id),
           status: assistantMcpPaused(server) ? 'paused' : !server.enabled ? 'disabled' :
             matches(server) ? runtime.remoteMcp?.status.get(server.id) ?? 'pending' : 'pending',
           environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
@@ -850,14 +934,70 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 201, publicSession(session));
       return;
     }
-    const [, key, group, id, resource, item, extra] = path.split('/');
+    const [, key, group, id, resource, item, extra, trailing] = path.split('/');
     const session = key === 'api' && group === 'sessions' && uuid.test(id ?? '') ? sessions.get(id) : undefined;
-    if (!session || !sessionOwner(session, agentID, workspaceID) || (extra !== undefined && extra !== 'preview')) {
+    if (!session || !sessionOwner(session, agentID, workspaceID) || trailing !== undefined ||
+        (extra !== undefined && extra !== 'preview' && (resource !== 'external-files' || !/^\d{1,3}$/.test(extra)))) {
       throw new HttpError(404, 'session-route-not-found');
     }
     const execution = store.executionProfile(agentID, workspaceID);
     if (method === 'POST' && !execution) {
       throw new HttpError(409, 'agent-inactive');
+    }
+    const references = chat.references!;
+    const referenceView = (file: ReturnType<typeof references.list>[number]) =>
+      publicReference(file, store.external.workspace(workspaceID), references.confidential(file.path));
+    if (resource === 'references') {
+      if (item && uuid.test(item)) {
+        const file = references.get(id, item);
+        if (!file) throw new HttpError(404, 'reference-not-found');
+        if (method === 'GET' && extra === 'preview') {
+          const signal = new AbortController();
+          response.once('close', () => signal.abort());
+          const preview = await references.read(id, file, { reference: item, ...(file.directory && { list: true }) }, signal.signal);
+          if (!response.destroyed) send(response, 200, preview);
+          return;
+        }
+        if (method !== 'POST' || extra !== undefined) throw new HttpError(404, 'route-not-found');
+        const { action, classification, revision } = await body(request);
+        if (!sessions.has(id)) throw new HttpError(404, 'session-not-found');
+        if (action === 'open') {
+          await references.openExplorer(id, file);
+          send(response, 200, {});
+          return;
+        }
+        if (revision !== file.revision) throw new HttpError(409, 'reference-changed');
+        if (action === 'remove') {
+          references.remove(id, file);
+          send(response, 200, {});
+        } else if (action === 'classify' && labelInput(classification)) {
+          if (classification !== 'confidential' && references.confidential(file.path)) throw new HttpError(409, 'external-confidential');
+          send(response, 200, referenceView(references.classify(id, file, classification)));
+        } else if (action === 'reconfirm') {
+          send(response, 200, referenceView(await references.reconfirm(id, file, () => sessions.has(id))));
+        } else throw new HttpError(400, 'reference-unavailable');
+        events.notify(id);
+        return;
+      }
+      if (method !== 'POST' || item !== undefined || extra !== undefined) throw new HttpError(404, 'route-not-found');
+      const input = await body(request);
+      const signal = new AbortController();
+      response.once('close', () => signal.abort());
+      const live = () => sessions.has(id) && Boolean(store.executionProfile(agentID, workspaceID));
+      const fields = Object.keys(input);
+      const { picker, locale, paths, folder } = input;
+      const files = fields.length === 2 && (picker === 'file' || picker === 'folder') && (locale === 'en' || locale === 'zh-TW')
+        ? await references.pick(id, picker, locale, signal.signal, live)
+        : fields.length === 1 && Array.isArray(paths) && paths.every((path) => typeof path === 'string')
+          ? await references.attach(id, paths, live, signal.signal)
+          : fields.length === 1 && typeof folder === 'string' &&
+              store.agentWorkspaces(agentID).find(({ id }) => id === workspaceID)?.folders.includes(folder)
+            ? await references.attach(id, [folder], live, signal.signal, true)
+            : undefined;
+      if (!files) throw new HttpError(400, 'reference-unavailable');
+      if (files.length) events.notify(id);
+      if (!response.destroyed) send(response, files.length ? 201 : 200, { references: files.map(referenceView) });
+      return;
     }
     if (resource === 'external-sources' && extra === undefined) {
       if (item === undefined && method === 'GET') {
@@ -876,6 +1016,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (method === 'POST' && resource === 'external-snapshot' && item === undefined && extra === undefined) {
       const { runId, provider, taskId, inputs, specialistId } = snapshotInput(await body(request));
+      external.requiresReady(provider);
       const { id: publicInputId, digest } = store.delegations.atomic(() => externalSources.create(session, runId, provider, taskId, inputs));
       send(response, 201, { publicInputId, digest, specialistId });
       return;
@@ -886,6 +1027,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         const projection = await convertWorkbook(output.data);
         response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(projection);
       } else download(response, chat, session, item);
+      return;
+    }
+    if (method === 'GET' && resource === 'external-files' && item && uuid.test(item) && /^\d{1,3}$/.test(extra ?? '')) {
+      let output;
+      try { output = chat.externalFile(session, item, Number(extra)); }
+      catch { throw new HttpError(409, 'external-changed'); }
+      if (!output) throw new HttpError(404, 'file-not-found');
+      sendDownload(response, output, 'text/plain; charset=utf-8');
       return;
     }
     if (resource === 'attachments' && item && uuid.test(item)) {
@@ -1001,10 +1150,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           ...(approval?.decision && { externalConfirmation: { decision: approval.decision, at: approval.decidedAt } }),
           published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
       });
-      send(response, 200, { ...state, attachments: state.attachments.map((file) => {
+      const uploads = state.attachments.map((file) => {
         const sourceId = store.external.attachmentSource(id, file.id);
         return { ...file, sourceId, classification: store.delegations.attachmentClassification(workspaceID, file.id, file.sha256) };
-      }), workspaceClassification: store.external.workspace(workspaceID), activity: events.cards(id), delegations });
+      });
+      send(response, 200, { ...state, attachments: [...uploads, ...references.list(id).map(referenceView)],
+        workspaceClassification: store.external.workspace(workspaceID), activity: events.cards(id), delegations });
     }
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'delegation-seen') {
@@ -1014,9 +1165,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 200, {});
     }
     else if (method === 'POST' && resource === 'attachments') {
-      const attachment = await upload(request, chat, session);
-      events.notify(session.id);
-      send(response, 201, attachment);
+      try {
+        const attachment = await upload(request, chat, session);
+        events.notify(session.id);
+        send(response, 201, attachment);
+      } catch (error) { throw uploadFailure(error, uploadAudit); }
+    } else if (method === 'POST' && resource === 'attachment-diagnostics' && item === undefined) {
+      reportClientUpload(uploadAudit, await body(request, 256));
+      send(response, 200, {});
     } else if (method === 'POST' && resource === 'turns') {
       const input = parseTurn(await body(request));
       const reference = input.replyTo && ((store.turn(id, input.id) && store.reply(input.id)) ??
@@ -1042,6 +1198,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       }
       const detail = error instanceof HttpError ? error : error instanceof DelegationError ? externalError(error) : new HttpError(503, 'unavailable');
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
+    }).finally(() => {
+      if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
+          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
+        external.recheckActive();
+      }
     });
     active.add(operation);
     void operation.finally(() => active.delete(operation));
@@ -1066,6 +1227,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   return {
     pairURL: () => auth.pairURL(),
     async close() {
+      mcpOAuth.close();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const stopped = chat.close();
       await events.close();

@@ -77,19 +77,19 @@ def check(ok):
 
 
 @contextmanager
-def child(parent, name, directory, create=False):
+def child(parent, name, directory, create=False, read=False):
     buffer = c.create_unicode_buffer(name)
     length = len(name.encode("utf-16-le"))
     text = UnicodeString(length, length + 2, c.cast(buffer, w.LPWSTR))
     # OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE. Each open resolves a single component.
     attributes = ObjectAttributes(c.sizeof(ObjectAttributes), parent, c.pointer(text), 0x1040)
     handle = w.HANDLE()
-    access = READ_ATTRIBUTES | SYNCHRONIZE | (TRAVERSE if directory else 0x10002)  # DELETE | FILE_WRITE_DATA
+    access = READ_ATTRIBUTES | SYNCHRONIZE | (TRAVERSE if directory else 1 if read else 0x10002)
     # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | directory/non-directory.
     options = 0x200020 | (1 if directory else 0x40)
     # Deny delete sharing on ancestors. Exclusive sharing on the staging file.
     status = open_child(c.byref(handle), access, c.byref(attributes), c.byref(IoStatus()), None,
-                        0, 3 if directory else 0, 2 if create else 1, options, None, 0)
+                        0, 3 if directory else 1 if read else 0, 2 if create else 1, options, None, 0)
     if status < 0:
         raise c.WinError(status_error(status))
     try:
@@ -164,15 +164,15 @@ def pinned(root, expected_inode):
         yield handle
 
 
-def prepare(root, name, expected_inode):
-    if not valid_name(name):
+def prepare(root, name, expected_inode, external=False):
+    if not valid_name(name.lower() if external else name):
         raise ValueError("Invalid output directory")
     with pinned(root, expected_inode) as handle, child(handle, name, True, create=True) as directory:
         return {"inode": str(inode(verify(directory, ntpath.join(root, name), True, exact=True)))}
 
 
-def publish(root, name, content, expected_inode, before_rename=None, maximum=MAX_BYTES):
-    if not valid_name(name) or len(content) > maximum:
+def publish(root, name, content, expected_inode, before_rename=None, maximum=MAX_BYTES, external=False):
+    if not valid_name(name.lower() if external else name) or len(content) > maximum:
         raise ValueError("Invalid output")
     with pinned(root, expected_inode) as handle:
         temporary = "staging-" + uuid.uuid4().hex + ".tmp"
@@ -199,11 +199,12 @@ def publish(root, name, content, expected_inode, before_rename=None, maximum=MAX
 if __name__ == "__main__":
     try:
         operation, location, filename, expected = sys.argv[1:]
-        if operation in ("write", "copy"):
-            maximum = MAX_COPY_BYTES if operation == "copy" else MAX_BYTES
-            result = publish(location, filename, sys.stdin.buffer.read(maximum + 1), int(expected), maximum=maximum)
-        elif operation == "mkdir":
-            result = prepare(location, filename, int(expected))
+        if operation in ("write", "copy", "external-copy"):
+            maximum = MAX_BYTES if operation == "write" else MAX_COPY_BYTES
+            result = publish(location, filename, sys.stdin.buffer.read(maximum + 1), int(expected), maximum=maximum,
+                             external=operation == "external-copy")
+        elif operation in ("mkdir", "external-mkdir"):
+            result = prepare(location, filename, int(expected), external=operation == "external-mkdir")
         else:
             raise ValueError("Unsupported operation")
         print(json.dumps(result))

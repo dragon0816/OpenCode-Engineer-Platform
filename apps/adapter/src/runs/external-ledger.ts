@@ -19,9 +19,10 @@ export type SourceSubmission =
 export type SourceDescriptor = Exclude<SourceSubmission, { kind: 'derived' }> |
   (Extract<SourceSubmission, { kind: 'derived' }> & { sourceVersions: string[] });
 export type ExternalSource = { id: string; sessionId: string; workspaceId: string; descriptor: SourceDescriptor };
-export type SnapshotFile = { sourceId: string; kind: SourceDescriptor['kind']; name: string; sha256: string; bytes: number;
+export type SnapshotFile = { sourceId: string; kind: SourceDescriptor['kind'] | 'local_reference'; name: string;
+  displayName?: string; sha256: string; bytes: number;
   provenance: unknown; parents: SnapshotFile[]; projection?: { sha256: string; bytes: number } };
-export type SnapshotManifest = { task: SnapshotFile; inputs: SnapshotFile[] };
+export type SnapshotManifest = { task: SnapshotFile; inputs: SnapshotFile[]; referenceIds?: string[] };
 export type Snapshot = { id: string; sessionId: string; parentRunId: string; provider: Provider; settingsRevision: number;
   digest: string; manifest: SnapshotManifest; content: Uint8Array };
 type Confirmation = { snapshotId: string; expiresAt: number; challenge: string;
@@ -34,8 +35,22 @@ export class ExternalLedger {
 
   settings(provider: Provider): HelperSettings {
     const row = this.db.prepare('SELECT * FROM external_helper_settings WHERE provider=?').get(provider);
-    return { provider, enabled: row?.enabled === 1, confirmEachRun: row?.confirm_each_run !== 0,
+    return { provider, enabled: row?.enabled === 1, confirmEachRun: row?.confirm_each_run === 1,
       termsConfirmed: row?.terms_confirmed === 1, revision: Number(row?.revision ?? 1) };
+  }
+
+  policy() {
+    const row = this.db.prepare(`SELECT id,section FROM web_settings_audit
+      WHERE section IN ('external-strict:on','external-strict:off') ORDER BY id DESC LIMIT 1`).get();
+    return { strictMode: row?.section === 'external-strict:on', revision: Number(row?.id ?? 0) };
+  }
+
+  savePolicy(strictMode: boolean, revision: number) {
+    const current = this.policy();
+    if (current.revision !== revision) throw new DelegationError('external-settings-changed');
+    if (current.strictMode !== strictMode) this.db.prepare('INSERT INTO web_settings_audit(section,changed_at) VALUES (?,?)')
+      .run(strictMode ? 'external-strict:on' : 'external-strict:off', Date.now());
+    return this.policy();
   }
 
   saveSettings(next: HelperSettings) {

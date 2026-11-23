@@ -77,9 +77,13 @@ def cell_value(cell, shared):
 
 
 def project(content):
+    return project_stream(io.BytesIO(content))
+
+
+def project_stream(source):
     output = io.StringIO(newline="")
     writer = csv.writer(output, lineterminator="\r\n")
-    with ZipFile(io.BytesIO(content)) as archive:
+    with ZipFile(source) as archive:
         names = validate_archive(archive)
         shared = []
         if "xl/sharedStrings.xml" in names:

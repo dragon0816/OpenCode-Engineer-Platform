@@ -4,9 +4,14 @@ import { DelegationError, type Classification } from '../runs/delegation-ledger.
 import { helpers, isProvider, type SourceSubmission } from '../runs/external-ledger.ts';
 import { HttpError } from './errors.ts';
 import type { WebMessageCode } from './messages.ts';
+import type { HelperAuthAction } from '../runs/external-cli.ts';
 
-export const externalError = (error: DelegationError) => new HttpError(
-  error.code === 'external-invalid-input' ? 400 : 409, error.code as WebMessageCode);
+const namedGate = new Set(['external-confidential', 'external-unclassified', 'external-changed']);
+export const externalError = (error: DelegationError) => {
+  const named = error.item && namedGate.has(error.code);
+  return new HttpError(error.code === 'external-invalid-input' ? 400 : 409,
+    (named ? error.code + '-item' : error.code) as WebMessageCode, named ? { name: error.item! } : undefined);
+};
 export const invalidExternal = () => new HttpError(400, 'external-invalid-input');
 export const labelInput = (value: unknown): value is Classification => value === 'unclassified' || value === 'public' || value === 'confidential';
 const id = (value: unknown): value is string => typeof value === 'string' && uuid.test(value);
@@ -21,6 +26,16 @@ export function helperSettings(input: Record<string, unknown>) {
       typeof termsConfirmed !== 'boolean' || provider === 'codex_cli' && termsConfirmed || typeof revision !== 'number' ||
       !Number.isSafeInteger(revision) || revision < 1 || warningAccepted !== undefined && warningAccepted !== true) throw invalidExternal();
   return { settings: { provider, enabled, confirmEachRun, termsConfirmed, revision }, warningAccepted };
+}
+
+export function helperAuth(input: Record<string, unknown>) {
+  const { provider, action, key, ...extra } = input;
+  if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
+  let request: HelperAuthAction;
+  if (action === 'key' && typeof key === 'string' && /^[\x21-\x7e]{8,1024}$/.test(key)) request = { action, key };
+  else if ((action === 'cli' || action === 'logout') && key === undefined) request = { action };
+  else throw invalidExternal();
+  return { provider, request };
 }
 
 export function externalWorkspaceInput(input: Record<string, unknown>) {

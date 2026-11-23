@@ -109,10 +109,10 @@ export function bindKnowledge(openPreview, closePreviews, sessionPath) {
     const selected = models.get(vault.value);
     const classification = find('vault-classification');
     classification.replaceChildren();
-    if (selected) classificationControl(classification, selected.classification, selected.title, async () => {
-      await request('/api/classification/vault', { data: { vault: selected.id, revision: selected.revision, classification: 'public' } });
-      selected.classification = 'public';
-    }, () => describe());
+    if (selected) classificationControl(classification, selected.classification, selected.title, async (label) => {
+      await request('/api/classification/vault', { data: { vault: selected.id, revision: selected.revision, classification: label } });
+      selected.classification = label;
+    }, () => describe(), true);
     details.replaceChildren();
     technical.replaceChildren();
     find('knowledge-overview-empty').hidden = Boolean(selected);

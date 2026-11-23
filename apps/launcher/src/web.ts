@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { startAdapter } from '../../adapter/src/main.ts';
+import { ExternalExecutor } from '../../adapter/src/runs/external-executor.ts';
+import { windowsExternalIsolation } from '../../adapter/src/runs/external-windows.ts';
 import { WebStore } from '../../adapter/src/runs/web-store.ts';
 import { canonicalWorkspaceDirectory, checkDirectory } from '../../adapter/src/runs/workspace.ts';
 import { acquireBrowserLauncher, openBrowser, requestedReopen } from './browser.ts';
@@ -52,7 +54,9 @@ async function launch() {
       let reopen: NodeJS.Timeout | undefined;
       try {
         if (stopping) break;
-        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve);
+        const external = process.env.NODE_TEST_CONTEXT ? undefined :
+          { executor: new ExternalExecutor(root, windowsExternalIsolation(dirname(root))) };
+        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve, undefined, external);
         requestedReopen(root);
         await openBrowser(service.pairURL());
         reopen = setInterval(() => {
