@@ -252,6 +252,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] 在 BI 專職助理的 Web 直接對話提供依會話授權的收件狀態與補件。
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 
+## Phase 3 本機附件參照
+
+- [x] 會話唯讀檔案與資料夾參照、分段讀取、檔案身分核對及分級。
+- [x] Windows 選擇視窗、貼上路徑、超過上傳容量的指引及附加資料面板。
+- [ ] 擁有者驗收原生選擇視窗前景、檔案總管與發行安裝／升級。 [驗證報告](reviews/PHASE3_FILE_REFERENCES_REPORT.md)
+
 ## Phase 3I 切片 1 分級、來源快照與交辦接單
 
 - [x] 已配對工作台可分級工作資料夾、來源檔案與知識庫。檢查來源、版本、雜湊、權限及繼承分級後，固定這次選取的公開資料。
