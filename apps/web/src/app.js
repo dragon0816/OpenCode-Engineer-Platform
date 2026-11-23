@@ -1864,7 +1864,7 @@ function applyModel(value, draft) {
     message('model.last-refresh', { date: formatDate(value.discoveredAt) }));
   setText(find('model-limit'), message('model.selection-limit', { max: value.maxSelected }));
   const health = new Map(value.aliases.map(({ alias, healthy }) => [alias, healthy]));
-  modelList.replaceChildren(...value.choices.map((alias) => {
+  modelList.replaceChildren(...value.choices.map((alias, index) => {
     const row = node('li');
     const label = node('label');
     const choice = node('input');
@@ -1872,6 +1872,7 @@ function applyModel(value, draft) {
     choice.value = alias;
     choice.checked = selectedModels.has(alias);
     const name = node('span', alias);
+    name.id = 'model-note-alias-' + index;
     name.dataset.uiContent = '';
     label.append(choice, name);
     const note = node('input');
@@ -1881,7 +1882,8 @@ function applyModel(value, draft) {
     const savedNote = value.modelNotes?.[alias];
     const prefill = savedNote?.note ?? savedNote?.mappedModel ?? '';
     note.value = modelNoteEdits.get(alias) ?? prefill;
-    setAttribute(note, 'aria-label', message('model.note-for', { model: alias }));
+    note.setAttribute('aria-describedby', name.id);
+    setAttribute(note, 'aria-label', message('model.note-placeholder'));
     setAttribute(note, 'placeholder', message('model.note-placeholder'));
     note.addEventListener('input', () => {
       const text = note.value.trim();

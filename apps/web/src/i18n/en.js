@@ -747,7 +747,6 @@ export default {
   'model.menu-models': "Model menu",
   'model.selection-limit': "Select 1 to {max} models.",
   'model.mapped-to': " → {model}",
-  'model.note-for': "Note for {model}",
   'model.note-placeholder': "Model note",
   'model.test': "Test",
   'model.test-model': "Test {model}",

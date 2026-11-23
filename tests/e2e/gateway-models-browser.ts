@@ -120,13 +120,14 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     }
     async function checkPickers(annotation: string, prefill: string) {
       for (const locale of ['zh-TW', 'en'] as const) {
+        const label = locale === 'zh-TW' ? '模型備註' : 'Model note';
         await selectLocale(browser, locale);
         await settings();
         assert.deepEqual(await evaluate(`(() => {
           const note = document.querySelector(${JSON.stringify(noteField)});
-          return { value: note.value, placeholder: note.placeholder, label: note.getAttribute('aria-label') };
-        })()`), { value: prefill, placeholder: locale === 'zh-TW' ? '模型備註' : 'Model note',
-          label: locale === 'zh-TW' ? a + ' 的備註' : 'Note for ' + a });
+          return { value: note.value, placeholder: note.placeholder, label: note.getAttribute('aria-label'),
+            model: document.getElementById(note.getAttribute('aria-describedby')).textContent };
+        })()`), { value: prefill, placeholder: label, label, model: a });
         await assertPicker('#default-alias', annotation);
         await click('#open-chat');
         await assertPicker('#session-alias', annotation);

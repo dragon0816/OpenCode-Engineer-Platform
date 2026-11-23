@@ -747,7 +747,6 @@ export default {
   'model.menu-models': "模型選單",
   'model.selection-limit': "請勾選 1 至 {max} 個模型。",
   'model.mapped-to': " → {model}",
-  'model.note-for': "{model} 的備註",
   'model.note-placeholder': "模型備註",
   'model.test': "測試",
   'model.test-model': "測試 {model}",
