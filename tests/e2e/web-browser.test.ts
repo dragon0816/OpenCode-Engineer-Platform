@@ -9,6 +9,7 @@ import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
+import { verifyComposerAttachments } from './composer-attachments-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
 import { verifyExternalHelpersInBrowser } from './external-helpers-browser.ts';
 import { dataDirectory } from './test-data.ts';
@@ -1500,6 +1501,7 @@ try {
           }
           await page.command('Emulation.clearDeviceMetricsOverride');
         }
+        await verifyComposerAttachments(page, audit, process.env.OEP_CAPTURE_COMPOSER_DROP === '1');
         await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
