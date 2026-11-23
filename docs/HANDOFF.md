@@ -58,3 +58,9 @@
 ## 主要文件
 
 `docs/PHASE3_REQUIREMENTS.md`（需求與擁有者決議，第 7–10 節）、`docs/design/PHASE3B_MULTI_AGENT_DESIGN.md`（核准設計，第 11、12 節為決議與契約關卡結論）、`docs/DECISIONS.md`、`docs/TASKS.md`、`docs/reviews/PHASE3B_SLICE*_REPORT.md`。
+
+## 2026-11-23 擁有者試用階段
+
+- 擁有者安裝版：0.6.0（含拖放貼上附件、助理管理 UX 改善）。
+- 擁有者指示：**暫停升級**，等擁有者測到一個階段、明確說可以時才升級。修正照常開發、驗證、合併到 main。
+- 試用回饋記錄在 `docs/PHASE3_REQUIREMENTS.md` 第 11 節；進行中：`ux/owner-test-round-2`（通道以助理為主、筆記刪除、文字類附件、清單內粗體）。
