@@ -353,7 +353,13 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
       };
       try {
         await install(browser, adapter.pairURL());
+        const note = await api.post('/api/settings/model', { notes: { 'synthetic-stage-model': 'Synthetic stage model note' } });
+        assert.equal(note.status, 200);
         await openBuilder(browser);
+        for (const picker of ['ingest-model', 'test-model']) {
+          assert.match(await browser.evaluate<string>(`document.querySelector('#bi-builder-${picker} option[value="synthetic-stage-model"]').textContent`),
+            /Synthetic stage model note/);
+        }
         await browser.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 850, deviceScaleFactor: 1, mobile: false });
         assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
         await fill(browser, '#bi-builder-title', 'Synthetic empty workspace');

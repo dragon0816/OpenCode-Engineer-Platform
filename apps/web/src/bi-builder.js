@@ -1,5 +1,6 @@
 import { errorText } from './api.js';
 import { biDocumentIssues } from './bi-documents.js';
+import { gatewayModelOption } from './external-helpers.js';
 import { bindFilePicker, formatDate, getLocale, joinText, message, optionText, resolveText, setText } from './i18n.js';
 
 const working = new Set(['converting', 'extracting', 'validating', 'testing']);
@@ -508,9 +509,9 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
         `${formatDate(new Date(at))()} · ${resolveText(states[state] ?? state)}`));
       panel.body.append(element('h3', message('jobs.run-history')), log);
     }
-    for (const { locator, text } of current.conversion?.preview ?? []) {
+    for (const { locator, text, ocr } of current.conversion?.preview ?? []) {
       const excerpt = element('details');
-      excerpt.append(element('summary', locator), element('p', text));
+      excerpt.append(element('summary', joinText([locator, ocr && message('biOcr.evidence', { engine: ocr.engine })])), element('p', text));
       panel.body.append(excerpt);
     }
     for (const row of current.benchmark?.results ?? []) {
@@ -569,8 +570,9 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
   }
 
   await perform(async () => {
-    const { choices, runs, aliases } = await api.call('bi.catalog');
-    for (const input of [model, testModel]) input.replaceChildren(optionText(message('biBuilder.defaultModel'), ''), ...aliases.map(alias => optionText(alias, alias)));
+    const { choices, runs, aliases, modelNotes } = await api.call('bi.catalog');
+    for (const input of [model, testModel]) input.replaceChildren(optionText(message('biBuilder.defaultModel'), ''),
+      ...aliases.map(alias => gatewayModelOption(alias, modelNotes)));
     choose(choices);
     await loadSettings();
     labelRun();

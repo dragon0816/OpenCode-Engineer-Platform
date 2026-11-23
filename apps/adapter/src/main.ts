@@ -198,7 +198,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     const session = sessions.get(sessionId);
     if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
     return externalSources.pluginFile(session, source, hash);
-  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference, inbox: telegram.inboxSchedule });
+  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference, inbox: telegram.inboxSchedule,
+    modelNotes: (aliases) => store.modelNotes(aliases) });
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
     (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);

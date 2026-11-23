@@ -14,6 +14,7 @@ import { documentResult } from '../bi/document-worker.ts';
 import { workingRepositoryLimit } from '../bi/working-repository.ts';
 import { proposeReview } from '../http/review.ts';
 import type { ReferencePicker } from '../runs/reference-picker.ts';
+import type { WebStore } from '../runs/web-store.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from '../runs/workspace.ts';
 import { digestPattern, sha256, strictJSON, type VerifiedPlugin } from './package.ts';
 import { runPython } from './python.ts';
@@ -22,7 +23,7 @@ import { PluginError, requirePlugin } from './zip.ts';
 
 type Grant = { id: string; page: string; owner: string; generation: string; plugin: VerifiedPlugin; expires: number;
   sources: Map<string, Source>; stop: AbortController };
-type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker;
+type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker; modelNotes: WebStore['modelNotes'];
   inbox?: { status(): unknown; save(vault: string, zone: string, time: string): unknown; state(value: unknown): unknown } };
 type Source = { id: string; name: string; sha256: string; confidential: boolean; bytes: Buffer };
 type Proposal = { draft: string; source: string; proposal: string };
@@ -284,11 +285,14 @@ export class PluginRuntime {
   }
 
   private async build(grant: Grant, method: string, params: Record<string, unknown>) {
-    const { extraction, picker, inbox, run } = this.biAccess(grant);
+    const { extraction, picker, inbox, modelNotes, run } = this.biAccess(grant);
     const { signal } = grant.stop;
     signal.throwIfAborted();
     switch (method) {
-      case 'bi.catalog': return { choices: extraction.choices(true), runs: extraction.recent(true), aliases: [...this.knowledge!.benchmarks.keys()] };
+      case 'bi.catalog': {
+        const aliases = [...this.knowledge!.benchmarks.keys()];
+        return { choices: extraction.choices(true), runs: extraction.recent(true), aliases, modelNotes: modelNotes(aliases) };
+      }
       case 'bi.configure': return extraction.configure(params.schema, params.stage, params.value, [...this.knowledge!.benchmarks.keys()]);
       case 'bi.questions': return extraction.questionSets(text(params.schema, 64),
         params.name === undefined ? undefined : text(params.name, 80));

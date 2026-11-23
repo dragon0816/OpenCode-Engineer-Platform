@@ -170,7 +170,7 @@ test('a failed slice migration rolls back each owned DB and resumes earlier comm
     assert.equal(version(db), 2);
     assert.equal(table(db, 'session_ownership'), undefined);
     using central = open('web');
-    assert.equal(version(central), 13);
+    assert.equal(version(central), 14);
     assert.deepEqual(values(central, 'SELECT id FROM agents ORDER BY id'), [['bi'], ['main']]);
     db.exec("DELETE FROM web_session_project WHERE id='telegram-session'");
   }
