@@ -182,7 +182,7 @@ export function classificationControl(root, label, name, save, onSaved, allowCon
   root.replaceChildren(badge);
   const mark = (value, action, warning) => button(action, (event) => {
     const view = modal(action, event.currentTarget);
-    view.body.append(node('p', message(warning, { name })));
+    view.body.append(node('p', warning));
     view.submit(action, async () => {
       await save(value);
       onSaved?.();
@@ -190,9 +190,9 @@ export function classificationControl(root, label, name, save, onSaved, allowCon
     view.open();
   });
   if (save && label !== 'public' && label !== 'confidential') root.append(mark('public',
-    message('externalHelpers.gate.markPublic'), 'externalHelpers.classificationWarning'));
+    message('externalHelpers.gate.markPublic'), message('externalHelpers.classificationWarning', { name })));
   if (save && allowConfidential && label !== 'confidential') root.append(mark('confidential',
-    message('externalHelpers.gate.markConfidential'), 'externalHelpers.confidentialWarning'));
+    message('externalHelpers.gate.markConfidential'), message('externalHelpers.confidentialWarning', { name })));
 }
 
 export async function loadExternalSettings(root, status, onChange) {

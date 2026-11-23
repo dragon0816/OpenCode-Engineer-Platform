@@ -68,7 +68,9 @@ test('assistant source choices persist and signed-out or isolated-off sources ca
       }
     }
     await json(await api.post(auth, { provider: 'codex_cli', action: 'cli' }));
-    assert.equal((await json(await api.post(path, turn), 409)).errorDetail.code, 'external-model-execution-unavailable');
+    const confirmation = (await json(await api.post(path, turn), 409)).errorDetail;
+    assert.equal(confirmation.code, 'external-confirm-turn');
+    assert.match(confirmation.params.digest, /^[a-f0-9]{64}$/);
     const current = await json(await api.get(agents));
     const draft = await json(await api.post(agents, { revision: current.revision, name: 'Synthetic helper', modelSource: 'codex_cli' }), 201);
     const store = new WebStore(join(root, 'web.sqlite'));

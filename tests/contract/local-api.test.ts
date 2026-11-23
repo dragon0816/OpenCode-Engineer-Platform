@@ -86,7 +86,7 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     assert.equal(helpers.length, 2);
     for (const { provider, enabled, confirmEachRun, termsConfirmed, revision, status } of helpers) {
       assert.equal(enabled, false);
-      assert.equal(confirmEachRun, true);
+      assert.equal(confirmEachRun, false);
       assert.deepEqual(status, { isolation: 'unavailable', installation: 'unknown', login: 'unknown' });
       const probe = await post(helpersPath + '/recheck', { provider });
       assert.equal(probe.status, 200);
@@ -95,6 +95,9 @@ test('local API restricts routing, pairing, mutations, file intake and session o
       assert.equal(blocked.status, 409);
       assert.equal((await blocked.json()).errorDetail.code, 'external-isolation-unavailable');
     }
+    assert.equal((await fetch(origin + helpersPath + '/policy')).status, 401);
+    const policy = await (await fetch(origin + helpersPath + '/policy', { headers: { cookie } })).json();
+    assert.deepEqual(policy, { strictMode: false, revision: 0 });
     assert.equal((await fetch(origin + '/api/settings/model')).status, 401);
     assert.equal((await post('/api/settings/model', { alias: 'synthetic-api' }, { 'x-oep-csrf': 'bad' })).status, 403);
     assert.equal((await post('/api/settings/model', { alias: 'unapproved-alias' })).status, 400);

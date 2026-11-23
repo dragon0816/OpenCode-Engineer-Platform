@@ -23,7 +23,7 @@ const messages = {
   'external-output-limit': "外部幫手的變更檔案超過容量上限。",
   'external-stop-unverified': "無法確認外部幫手已停止。",
   'external-budget-unavailable': "外部幫手的請求或工具額度已用盡。",
-  'external-reference-unverified': "無法驗證引用訊息的資料來源。",
+  'external-reference-unverified': "無法驗證引用內容的資料來源。",
   'external-workbook-unavailable': "這個外部模型來源無法使用 Excel 工作表模式。",
   'external-confirm-turn': "確認將這則訊息傳送給外部幫手？",
   'external-auth-busy': "登入或登出正在進行。請稍後再試。",
