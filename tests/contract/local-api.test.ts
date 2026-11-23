@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
+import { benchmarkJson, benchmarkNames } from '../fixtures/benchmark-upload.ts';
 
 test('local API restricts routing, pairing, mutations, file intake and session ownership', async () => {
   mkdirSync('.phase0', { recursive: true });
@@ -130,6 +131,30 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     assert.equal(state.attachments.length, 1);
     assert.equal(state.messages.length, 0);
     assert.ok(!JSON.stringify(state).includes(root));
+    const benchmarkUpload = (path: string, name: string, type: string) =>
+      fetch(origin + path + '/attachments', { method: 'POST',
+        headers: { ...headers, 'content-type': type, 'x-oep-filename': encodeURIComponent(name) }, body: benchmarkJson });
+    const expectBenchmark = async (path: string, name: string, type: string) => {
+      const response = await benchmarkUpload(path, name, type);
+      const result = await response.json();
+      assert.equal(response.status, 201, `${name} (${type}): ${result.errorDetail?.code ?? 'upload'}`);
+      assert.equal(result.name, name);
+      assert.equal(result.mime, 'text/plain');
+      assert.equal(result.bytes, Buffer.byteLength(benchmarkJson));
+      assert.equal(result.converted, false);
+      assert.ok(!('path' in result));
+      const preview = await fetch(origin + path + '/attachments/' + result.id + '/preview', { headers: { cookie } });
+      assert.equal(preview.status, 200);
+      assert.equal(await preview.text(), benchmarkJson);
+    };
+    for (const name of benchmarkNames) {
+      for (const type of ['application/octet-stream', 'application/json']) await expectBenchmark(a, name, type);
+    }
+    // A file-only snapshot preserves the session row but omits its empty attachment directories.
+    const restoredWorkspace = join(root, 'sessions', second.id);
+    rmdirSync(join(restoredWorkspace, 'attachments'));
+    rmdirSync(restoredWorkspace);
+    await expectBenchmark(b, benchmarkNames[0], 'application/octet-stream');
     writeFileSync(join(root, 'sessions', first.id, 'attachments', 'staging-00000000-0000-0000-0000-000000000000.tmp'), 'orphan');
     assert.equal((await post('/api/stop', {})).status, 202);
     assert.equal(stops, 1);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -10,7 +10,7 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
-import { verifyComposerAttachments } from './composer-attachments-browser.ts';
+import { verifyBenchmarkUploads, verifyComposerAttachments } from './composer-attachments-browser.ts';
 import { verifyDictation } from './dictation-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
 import { verifyExternalHelpersInBrowser } from './external-helpers-browser.ts';
@@ -1624,6 +1624,12 @@ try {
         }
         await slash('/new');
         await page.ready("document.querySelector('#command-toast').textContent.includes('已新增會話')");
+        const benchmarkSession = await page.evaluate<string>("document.querySelector('#sessions [aria-current=true]').dataset.session");
+        const benchmarkWorkspace = join(root, 'sessions', benchmarkSession);
+        // Simulate a file-only restore of an existing session that had no attachments.
+        rmdirSync(join(benchmarkWorkspace, 'attachments'));
+        rmdirSync(benchmarkWorkspace);
+        await verifyBenchmarkUploads(page, audit, click);
         await page.evaluate(`
           document.querySelector('#file-input').click = () => { window.syntheticPicker = true; };
         `);
