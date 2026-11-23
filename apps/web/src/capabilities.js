@@ -46,6 +46,7 @@ export function bindCapabilityTabs(view, loadMcp) {
     knowledge: { status: 'published-knowledge-status', render: renderKnowledge },
   };
   const busy = new Set();
+  const reads = new Map();
   let selected = 'plugins';
   let connected = false;
 
@@ -120,18 +121,21 @@ export function bindCapabilityTabs(view, loadMcp) {
     const config = sections[section];
     if (!config || busy.has(section)) return;
     const status = find(config.status);
-    busy.add(section);
+    const read = Symbol();
+    reads.set(section, read);
     try {
       const state = await request(endpoint + section);
+      if (reads.get(section) !== read) return;
       states.set(section, state);
       config.render(state);
       status.replaceChildren();
-    } catch (error) { setText(status, errorText(error)); }
-    finally { busy.delete(section); }
+    } catch (error) { if (reads.get(section) === read) setText(status, errorText(error)); }
+    finally { if (reads.get(section) === read) reads.delete(section); }
   }
 
   async function mutate(section, operation, options, focus) {
     if (busy.has(section)) return;
+    reads.delete(section);
     busy.add(section);
     const { status, render } = sections[section];
     const opener = document.activeElement;

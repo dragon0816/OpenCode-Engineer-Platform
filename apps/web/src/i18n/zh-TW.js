@@ -1,6 +1,7 @@
 export default {
   'capabilities.mcp-settings-help': '在「能力」管理自訂連線與助理授權。',
-  'capabilities.manage-skills': "管理 Skill",
+  'capabilities.manage-skills': "管理技能",
+  'capabilities.skills-after-create': '建立助理後，可在「能力」為它啟用技能。',
   'capabilities.mcp-trust': "信任這個本機工具",
   'capabilities.mcp-retrust': "重新信任此版本",
   'capabilities.mcp-trust-confirm': "要信任此執行檔以您的 Windows 帳戶執行，並開放工作區授權嗎？",
@@ -46,7 +47,7 @@ export default {
   'capabilities.knowledge-remove-confirm': "要移除 {name} 的瀏覽與助理存取權嗎？",
   'capabilities.working': "處理中…",
   'capabilities.saved': "已儲存。",
-  'capabilities.manage-mcp': "前往「能力」管理 MCP",
+  'capabilities.manage-mcp': "前往「能力」管理自訂工具",
   'server.skill-package-invalid': "請選擇包含一份 SKILL.md 與支援檔案的本機資料夾或 ZIP。",
   'server.skill-frontmatter-invalid': "SKILL.md 需要小寫名稱、最多 1,024 字元的描述，以及操作說明。",
   'server.skill-already-installed': "同名的 Skill 已安裝。",

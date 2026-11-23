@@ -20,7 +20,15 @@ export async function verifyCapabilityWorkbench(page: Awaited<ReturnType<typeof 
       for (const box of dialog.querySelectorAll('input[type=checkbox]')) box.click();
       dialog.querySelector('button:last-child').click();
     }`);
-    await page.ready('!document.querySelector("#plugin-dialog").open');
+    await page.ready(`(() => {
+      const dialog = document.querySelector('#plugin-dialog');
+      return !dialog.open || Boolean(dialog.querySelector('[role=status]')?.textContent);
+    })()`, 25_000);
+    const failed = await page.evaluate<string>(`(() => {
+      const dialog = document.querySelector('#plugin-dialog');
+      return dialog.open ? dialog.querySelector('[role=status]').textContent : '';
+    })()`);
+    assert.equal(failed, '', 'The plugin confirmation should finish successfully');
   };
   const mapping = mappingChecks(page, 'capabilities');
   await click('#open-capabilities');

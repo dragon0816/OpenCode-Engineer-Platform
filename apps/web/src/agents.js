@@ -226,7 +226,8 @@ export function bindAgents({ onChange, close, openChannels, openMcp, openSkills,
       return { ...tool, disabled: tool.paused || !tool.enabled || !eligibleProject,
         note };
     }), message('ui.external-tools'), message('agents.no-tools'));
-    if (!wizard) parent.append(agentButton(message('capabilities.manage-skills'), openSkills));
+    if (wizard) parent.append(node('p', message('capabilities.skills-after-create')));
+    else parent.append(agentButton(message('capabilities.manage-skills'), openSkills));
     if (!wizard) parent.append(agentButton(message('ui.external-tools'), openMcp));
   }
 

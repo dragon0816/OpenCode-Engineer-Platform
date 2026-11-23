@@ -26,9 +26,9 @@ test('Chromium installs an unsigned plugin with consent and mounts the bilingual
     page = await chromium(join(root, 'chromium'));
     await page.command('Page.navigate', { url: app.pairURL() });
     await page.ready('document.querySelector("#open-capabilities")?.disabled === false');
+    await page.ready('document.querySelector("#connection").textContent === "已連線"');
     await page.evaluate('document.querySelector("#open-capabilities").click()');
     await page.ready('!document.querySelector("#capabilities-view").hidden');
-    await page.ready('document.querySelector("#connection").textContent === "已連線"');
     await page.evaluate('document.querySelector("#install-plugin").focus()');
     const file = join(root, 'synthetic.oepplugin');
     const sample = samplePlugin({ range: '^2.0.0', body: '<img src=x onerror=alert(1)> Synthetic plugin content' });
@@ -121,6 +121,7 @@ test('Chromium streams a synthetic plugin build and opens its panel and owner re
     page = await chromium(join(root, 'chromium'));
     await page.command('Page.navigate', { url: app.pairURL() });
     await page.ready('document.querySelector("#open-capabilities")?.disabled === false');
+    await page.ready('document.querySelector("#connection").textContent === "已連線"');
     await page.evaluate('document.querySelector("#open-capabilities").click()');
     await page.ready('!document.querySelector("#capabilities-view").hidden');
     const setFile = async (selector: string, file: string) => {

@@ -1,6 +1,7 @@
 export default {
   'capabilities.mcp-settings-help': 'Manage custom connections and grants in Capabilities.',
   'capabilities.manage-skills': "Manage Skills",
+  'capabilities.skills-after-create': 'After creating this assistant, enable its Skills in Capabilities.',
   'capabilities.mcp-trust': "Trust this local tool",
   'capabilities.mcp-retrust': "Trust this version again",
   'capabilities.mcp-trust-confirm': "Trust this executable to run with your Windows account and make it available for workspace grants?",
@@ -46,7 +47,7 @@ export default {
   'capabilities.knowledge-remove-confirm': "Remove {name} from browsing and assistant access?",
   'capabilities.working': "Working…",
   'capabilities.saved': "Saved.",
-  'capabilities.manage-mcp': "Manage MCP in Capabilities",
+  'capabilities.manage-mcp': "Manage custom tools in Capabilities",
   'server.skill-package-invalid': "Choose a local Skill folder or ZIP containing one SKILL.md and supported files.",
   'server.skill-frontmatter-invalid': "SKILL.md needs a lowercase name, a description of at most 1,024 characters, and instructions.",
   'server.skill-already-installed': "A Skill with this name is already installed.",

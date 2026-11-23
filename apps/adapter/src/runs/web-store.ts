@@ -521,6 +521,8 @@ export class WebStore extends Ledger {
         throw new HttpError(400, 'agent-mcp-invalid');
       }
       const assistant = String(row.agent_id);
+      const granted = Boolean(this.db.prepare('SELECT 1 FROM workspace_mcp_grants WHERE workspace_id=? AND server_id=?')
+        .get(workspace, server.id));
       if (assistant === 'main' && !this.hasExplicitMainMcpGrants()) this.auditSettings('agent-mcp-main');
       this.db.prepare(`INSERT OR IGNORE INTO workspace_mcp_overrides
         SELECT w.id, ?, EXISTS (SELECT 1 FROM workspace_mcp_grants g WHERE g.workspace_id=w.id AND g.server_id=?)
@@ -536,6 +538,8 @@ export class WebStore extends Ledger {
           this.db.prepare("DELETE FROM agent_capabilities WHERE agent_id=? AND kind='mcp' AND capability_id=?").run(assistant, server.id);
         }
       }
+      if (granted !== enabled) this.db.prepare('UPDATE agents SET config_revision=config_revision+1,updated_at=? WHERE id=?')
+        .run(Date.now(), assistant);
     });
     this.capabilitiesChanged();
   }

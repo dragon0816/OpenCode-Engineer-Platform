@@ -286,7 +286,7 @@ export function bindPlugins(showView, openPanel, openBiReview, loadMcp) {
     update();
     controls.append(cancel, confirm);
     dialog.replaceChildren(heading, ...content, help, controls);
-    dialog.addEventListener('close', () => (opener?.isConnected ? opener : installFile).focus(), { once: true });
+    dialog.addEventListener('close', () => (opener?.isConnected && opener.checkVisibility() ? opener : installFile).focus(), { once: true });
     dialog.showModal();
   }
 
