@@ -80,7 +80,9 @@ export function assertLanguage(text: string, locale: Locale, scope: string) {
   // Telegram's setup labels retain its official names, field name and command.
   const localized = /^#(?:settings-channels|agent-view|channel-dialog)(?:\s|$)/.test(scope)
     ? clean.replace(/\b(?:bot|token|BotFather)\b|\/start\b|@[A-Za-z0-9_]+/g, '') : clean;
-  const word = localized.match(/\b[A-Za-z]{2,}\b/);
+  const mcp = /^#(?:settings-mcp|mcp-editor)(?:\s|$)/.test(scope)
+    ? localized.replace(/\b(?:OAuth|API key|ID)\b/g, '') : localized;
+  const word = mcp.match(/\b[A-Za-z]{2,}\b/);
   assert.ok(!word, scope + ' contains English UI text: ' + word?.[0]);
 }
 
