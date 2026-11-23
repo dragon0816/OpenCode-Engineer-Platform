@@ -31,6 +31,7 @@ const checkbox = (text, checked = false) => {
   return { input, label };
 };
 const settingsRoute = '/api/settings/external-helpers';
+const helperSetupScript = 'scripts/windows/Setup-OEPExternalHelper.ps1';
 const loginLabels = {
   signedIn: message('externalHelpers.status.signedIn'), signedOut: message('externalHelpers.status.signedOut'),
   probeFailed: message('externalHelpers.status.probeFailed'), unknown: message('externalHelpers.status.loginUnknown'),
@@ -125,6 +126,7 @@ export function openExternalLogin(setting, opener, onChange) {
   const live = node('p');
   live.setAttribute('role', 'status');
   const setup = node('p');
+  const setupScript = content('code', helperSetupScript);
   const signIn = node('button', account);
   signIn.type = 'submit';
   const device = button(message('externalHelpers.login.device'), () => change({ action: 'device' }));
@@ -197,6 +199,7 @@ export function openExternalLogin(setting, opener, onChange) {
     setText(live, loginLabel(status));
     setText(setup, status.isolation !== 'verified' ? message('externalHelpers.settings.setup') :
       !installed ? message('server.external-cli-unsupported') : !terms ? message('server.external-terms-required') : '');
+    setupScript.hidden = status.isolation === 'verified';
     signIn.disabled = device.disabled = key.disabled = keyButton.disabled = busy || !installed || !terms;
     device.hidden = isClaude;
     cancel.hidden = !exchange;
@@ -254,6 +257,7 @@ export function openExternalLogin(setting, opener, onChange) {
     } catch (error) {
       if (view.dialog.open) {
         setText(view.status, errorText(error));
+        if (error.detail?.code === 'external-auth-setup-required') view.status.append(content('code', helperSetupScript));
         try {
           status = await request(settingsRoute + '/recheck', { data: { provider: setting.provider }, signal: stop.signal });
           if (view.dialog.open) onChange?.(status);
@@ -288,7 +292,7 @@ export function openExternalLogin(setting, opener, onChange) {
     event.preventDefault();
     if (!signIn.disabled) void change({ action: 'cli' });
   });
-  view.body.append(node('p', message('externalHelpers.login.publicOnly', { provider: setting.name })), live, setup, prompt);
+  view.body.append(node('p', message('externalHelpers.login.publicOnly', { provider: setting.name })), live, setup, setupScript, prompt);
   view.actions.prepend(signIn, device, signOut, cancel);
   view.form.append(advanced);
   showPrompt();
@@ -334,7 +338,7 @@ export async function loadExternalSettings(root, status, onChange) {
       const installed = check.isolation === 'verified' && check.installation === 'detected';
       group.append(node('p', check.isolation === 'verified' ? message('externalHelpers.status.isolationVerified') :
         message('externalHelpers.status.isolationUnavailable')), node('p', detected[check.installation]), node('p', loginLabel(check)));
-      if (check.isolation !== 'verified') group.append(node('p', message('externalHelpers.settings.setup')));
+      if (check.isolation !== 'verified') group.append(node('p', message('externalHelpers.settings.setup')), content('code', helperSetupScript));
       if (check.version) group.append(node('p', message('externalHelpers.status.version', { version: check.version })));
       if (check.pinnedVersion) group.append(node('p', message('externalHelpers.status.pinnedVersion', { version: check.pinnedVersion })));
       const enabled = checkbox(message('externalHelpers.settings.enabled'), setting.enabled);

@@ -250,8 +250,10 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   await page.ready(contains('已使用供應商帳號登入'));
   await activate(device + ' + button');
   await page.ready(contains('尚未登入'));
+  await page.evaluate(`window.oepPriorLoginControl = document.querySelector(${JSON.stringify(manage('codex_cli'))})`);
   await escape();
-  await page.ready(`!document.querySelector('${dialog}')`);
+  await page.ready(`!document.querySelector('${dialog}') &&
+    document.querySelector(${JSON.stringify(manage('codex_cli'))}) !== window.oepPriorLoginControl`);
 
   await selectLocale(page, 'en');
   await activate(manage('claude_code'));
@@ -272,5 +274,6 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   await page.ready(`!document.querySelector('${dialog}') && document.activeElement === document.querySelector(${JSON.stringify(manage('claude_code'))})`);
   await selectLocale(page, 'zh-TW');
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.evaluate('document.querySelector("#close-settings").click()');
   console.log('External helper settings, confirmation, model source and sign-in passed in Chromium.');
 }

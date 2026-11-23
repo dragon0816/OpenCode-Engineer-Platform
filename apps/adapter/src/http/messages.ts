@@ -65,7 +65,7 @@ const messages = {
   'external-auth-timeout': "登入逾時。請重新登入以取得新的連結或代碼。",
   'external-auth-cancelled': "已取消登入。",
   'external-auth-code-unavailable': "本次登入已無法接收代碼。請重新登入。",
-  'external-auth-setup-required': "請以 Windows 系統管理員身分再次執行 scripts/windows/Setup-OEPExternalHelper.ps1 以更新幫手，接著重新檢查狀態。",
+  'external-auth-setup-required': "請以 Windows 系統管理員身分再次執行幫手設定指令碼以更新幫手，接著重新檢查狀態。",
   'external-warning-required': "請確認資料傳送提醒。",
   'external-input-limit': "選取的資料超過容量上限。",
   'external-confirmation-expired': "交辦確認已過期。",

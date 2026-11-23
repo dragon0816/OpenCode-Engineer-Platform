@@ -831,5 +831,7 @@ summary { cursor: pointer; }
 .external-login-prompt label { display: block; margin-block: .6rem; }
 .external-login-link { color: var(--link); }
 .external-login-prompt code { user-select: all; }
+.external-dialog code[data-ui-content],
+#external-helper-settings code[data-ui-content] { display: block; overflow-wrap: anywhere; }
 .external-dialog li small { margin-inline-start: .4rem; }
 #external-helper-settings fieldset { min-inline-size: 0; margin-block: .75rem; }
