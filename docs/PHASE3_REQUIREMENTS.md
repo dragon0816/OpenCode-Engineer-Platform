@@ -326,3 +326,7 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 ### 11.4 需要 OAuth 認證的 MCP（擁有者 2026-11-23）
 - OEP 要支援需要認證的遠端 MCP（例如 Gmail、Google Drive、Atlassian），包含 OAuth 登入。
 - 擁有者說明：LLM Gateway 由公司資料中心自建，資料送給 Gateway 模型不會外洩，因此 MCP 取得的資料（例如郵件）交給 Gateway 模型處理可接受。外部 coding agent（Codex、Claude Code）仍依 D2 只收公開資料。
+
+### 11.5 對話中的模型選擇視窗（R23，擁有者 2026-11-23）
+- 對話輸入區的模型選擇改成彈出式選擇視窗（參考 T3 Code 的使用方式，OEP 自行設計外觀）：左側來源欄（常用、LLM Gateway、Codex、Claude Code）、上方搜尋、中間模型清單（目前選擇打勾、可設常用、鍵盤快速鍵）、右側推理強度（低／中／高等，依模型支援顯示，標示預設）、底部顯示「下一則訊息生效」與設定預設。
+- 依賴：11.3 模型來源（進行中）；推理強度需確認 Gateway 與 OpenCode 對各模型的支援並經 relay 傳遞。排在 model-sources 完成後實作。
