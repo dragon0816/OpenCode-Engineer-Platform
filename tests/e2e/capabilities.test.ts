@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { zipSync } from 'fflate';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
-import { readFileTool, statusTool } from '../../apps/adapter/src/opencode/permissions.ts';
+import { biQueryTool, knowledgeTool, readFileTool, statusTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { customMcpName } from '../../apps/adapter/src/runs/custom-mcp.ts';
 import { readMcpFingerprint } from '../../apps/adapter/src/runs/mcp-trust.ts';
@@ -66,6 +66,7 @@ test('imports Skills and AEP Workflows, loads only enabled Skill text, and binds
   assert.ok(passage);
   const question = 'SYN-48B 零點校正容差是多少？';
   let seenSkill = false;
+  let boundBiVault: string | undefined;
   const synthetic: typeof fetch = async (_target, init) => {
     const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
     const user = JSON.stringify(messages.findLast(({ role }) => role === 'user')?.content);
@@ -80,6 +81,23 @@ test('imports Skills and AEP Workflows, loads only enabled Skill text, and binds
     const skill = tools?.find(({ function: fn }) => fn?.name === 'skill');
     const instructions = JSON.stringify(messages.filter(({ role }) => role === 'system'));
     const latest = messages.at(-1);
+    if (user.includes('SYNTHETIC-IMPORTED-BI')) {
+      const names = tools?.map(({ function: fn }) => fn?.name) ?? [];
+      assert.ok(names.includes(readFileTool));
+      assert.equal(names.includes(biQueryTool), Boolean(boundBiVault));
+      assert.equal(names.includes(knowledgeTool), Boolean(boundBiVault));
+      if (!boundBiVault) {
+        assert.doesNotMatch(instructions, /BI knowledge-query procedure/);
+        return completion(model, [{ role: 'assistant', content: 'Synthetic BI unavailable' }], 'stop');
+      }
+      assert.match(instructions, /BI knowledge-query procedure/);
+      assert.ok(instructions.includes(boundBiVault));
+      if (latest?.role !== 'tool') return completion(model, toolCall(0, 'imported_bi_card',
+        biQueryTool, { vault: boundBiVault, card: passage.cardId }), 'tool_calls');
+      assert.match(JSON.stringify(latest.content), /±0\.8 dB/);
+      assert.ok(JSON.stringify(latest.content).includes(boundBiVault));
+      return completion(model, [{ role: 'assistant', content: 'Synthetic imported BI verified' }], 'stop');
+    }
     if (user.includes('SYNTHETIC-SKILL-LOAD')) {
       if (latest?.role !== 'tool') {
         assert.ok(skill, 'The native skill tool is offered');
@@ -137,12 +155,20 @@ test('imports Skills and AEP Workflows, loads only enabled Skill text, and binds
       const answer = await json(await api.post(route + '/knowledge-ask', { vault, question }));
       assert.equal(answer.state, 'verified');
       assert.match(JSON.stringify(answer), /±0\.8 dB/);
+      boundBiVault = vault;
+      await turn(api, await session(api), 'SYNTHETIC-IMPORTED-BI', 'Synthetic imported BI verified');
       assert.deepEqual(await json(await api.post(cap + 'knowledge/remove', { id: vault, revision: snapshot.publication.revision })), []);
       assert.equal((await json(await api.post(route + '/knowledge-ask', { vault, question }))).reason, 'vault-unavailable');
+      boundBiVault = undefined;
+      await turn(api, await session(api), 'SYNTHETIC-IMPORTED-BI', 'Synthetic BI unavailable');
       const repository = join(root, 'BI published export');
       syntheticRepository(repository, { snapshot: { ...snapshot, vault: { ...snapshot.vault, id: 'synthetic-bi-repository' } } });
       const repos = await json(await api.post(cap + 'knowledge/repository', { folder: repository, allowModel: true }));
       assert.deepEqual(repos.map(({ id, source }: { id: string; source: string }) => [id, source]), [['synthetic-bi-repository', 'BI published export']]);
+      boundBiVault = repos[0].id;
+      const updated = await json(await api.get('/api/agents/main'));
+      await json(await api.post('/api/agents/main', { action: 'edit', knowledgeReads: [boundBiVault], revision: updated.agent.revision }));
+      await turn(api, await session(api), 'SYNTHETIC-IMPORTED-BI', 'Synthetic imported BI verified');
     } finally { await app.close(); }
   } finally { await runtime.stop(); }
 });

@@ -138,7 +138,8 @@ function secureHeaders(response: ServerResponse) {
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
   requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions,
   mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker,
-  pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3] }) {
+  pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3];
+    biScheduleClock?: () => number }) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -175,8 +176,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     try { return new DelegationService(store, root, dispatcher, (id) => events.notify(id, 'delegation')); }
     catch (error) { void events.close(); store.close(); throw error; }
   })();
+  let pluginRuntime: PluginRuntime;
   const telegram = (() => {
-    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations); }
+    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations, {
+      available: () => Boolean(pluginRuntime?.scheduledAvailable()),
+      run: (input, target, review, provenance, signal) => pluginRuntime.runScheduled(input, target, review, provenance, signal),
+    }, pluginOptions?.biScheduleClock); }
     catch (error) { void events.close(); store.close(); throw error; }
   })();
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher,
@@ -186,14 +191,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const extraction = runtime.knowledge && new DocumentExtraction(join(root, 'bi-documents.sqlite'), runtime.knowledge,
     () => new Set(telegram.approvedBiOrigins()), pluginOptions?.fetchBiPage,
-    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined);
+    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined, pluginOptions?.dataRoot ?? root);
   let receivingBiDocument = false;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  const pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
+  pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
     const session = sessions.get(sessionId);
     if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
     return externalSources.pluginFile(session, source, hash);
-  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference });
+  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference, inbox: telegram.inboxSchedule });
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
     (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);

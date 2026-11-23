@@ -6,11 +6,11 @@ import type { Card, Snapshot, Source } from './snapshot.ts';
 type Row = Record<string, SQLOutputValue>;
 type Identity = Pick<Snapshot, 'vault' | 'publication'> & { repository: NonNullable<Snapshot['repository']> };
 
-function stableId(value: string, prefix: string) {
+export function stableBiId(value: string, prefix: string) {
   return identifier.test(value) ? value : `${prefix}-${sha256(value)}`;
 }
 
-function locator(value: string, seq: string) {
+export function biEvidenceLocator(value: string, seq: string) {
   try {
     const parsed: unknown = JSON.parse(value);
     if (typeof parsed === 'string') return { label: parsed || `evidence:${seq}` };
@@ -73,7 +73,7 @@ export function readBiSnapshot(db: DatabaseSync, file: string, identity: Identit
   const cards = new Map<string, Card>();
   for (const row of read('cards', ['id', 'entity_type', 'canonical_key', 'name', 'version'], [], true)) {
     const originalId = text(row, 'id', 'cards');
-    const card: Card = { id: stableId(originalId, 'card'), type: text(row, 'entity_type', 'cards'),
+    const card: Card = { id: stableBiId(originalId, 'card'), type: text(row, 'entity_type', 'cards'),
       key: text(row, 'canonical_key', 'cards'), title: text(row, 'name', 'cards'), version: integer(row, 'version', 'cards'),
       fields: Object.create(null), fieldProvenance: Object.create(null) };
     if (cards.has(originalId)) problem('Duplicate BI card ID.');
@@ -120,7 +120,7 @@ export function readBiSnapshot(db: DatabaseSync, file: string, identity: Identit
     const card = cardAt(row, 'card_id', 'evidence');
     const { excerpt, ...provenance } = row;
     const quote = text(row, 'excerpt', 'evidence');
-    const { label, version: sourceRevision } = locator(text(row, 'locator', 'evidence'), seq);
+    const { label, version: sourceRevision } = biEvidenceLocator(text(row, 'locator', 'evidence'), seq);
     const source = text(row, 'source_id', 'evidence');
     const ref = text(row, 'source_name', 'evidence') || source || 'AEP evidence';
     const version = sourceRevision ?? identity.repository.commit;

@@ -7,13 +7,28 @@ import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { proposeReview } from '../http/review.ts';
 import type { Dispatcher } from '../runs/dispatcher.ts';
 import type { WorkItem } from '../runs/work-items.ts';
-import type { BiService } from './service.ts';
+import type { BiService, ScheduledPipeline } from './service.ts';
 
 type ReviewRequest = { id: string; vault: string; draft?: ChangeSet; proposal?: Record<string, unknown> };
 type ReviewResult = Awaited<ReturnType<typeof proposeReview>>;
 
 export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: KnowledgeStore,
-  propose?: NonNullable<Runtime['knowledge']>['propose']) {
+  propose?: NonNullable<Runtime['knowledge']>['propose'], pipeline?: ScheduledPipeline) {
+  dispatcher.register('bi-inbox', {
+    available: () => Boolean(pipeline?.available()),
+    async execute(item, start, signal) {
+      start();
+      try {
+        const staged = await bi.scheduled(String(item.payload.target), pipeline!, signal);
+        return { state: 'succeeded', reason: staged ? 'bi-inbox-reviewed' : 'bi-inbox-drained' };
+      } catch {
+        return signal.aborted ? { state: 'cancelled' } : { state: 'failed', reason: 'bi-inbox-interrupted' };
+      }
+    },
+    // Individual receipts and source states make replay safe after a partial batch.
+    recover: async () => 'never-started',
+    canResolve: async (_item, state) => state !== 'succeeded',
+  });
   const canRun = (item: WorkItem) => store?.canRunBi(String(item.payload.job)) ?? false;
   dispatcher.register('bi-job', {
     available: canRun,
@@ -123,11 +138,12 @@ export function dispatchBi(dispatcher: Dispatcher, bi: BiService, store?: Knowle
   };
 
   return {
-    occurrence({ job, schedule, candidate }: BiOccurrence) {
+    occurrence({ job, schedule, candidate, inbox }: BiOccurrence) {
       const item = dispatcher.enqueue({ agentId: 'bi', source: 'schedule', sourceKey: jobKey(job), effectClass: 'write', scheduleRef: schedule,
-        payload: { kind: 'bi-job', job, candidate } });
+        payload: inbox ? { kind: 'bi-inbox', job, target: inbox.target } : { kind: 'bi-job', job, candidate } });
+      if (inbox && item.state === 'succeeded') return item.reasonCode === 'bi-inbox-reviewed' ? 'awaiting_review' : 'succeeded';
       if (store?.biCompleted(job)) return 'awaiting_review';
-      if (item.state === 'failed' || item.state === 'cancelled') return 'blocked';
+      if (item.state === 'failed' || item.state === 'cancelled' || item.state === 'timed_out') return 'blocked';
       return 'queued';
     },
     async runOccurrence(job: string, signal: AbortSignal) {

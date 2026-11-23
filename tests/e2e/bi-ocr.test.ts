@@ -193,6 +193,7 @@ test('shows per-page OCR in the installed BI plugin in zh-TW and en, then review
       try {
         await browser.command('Page.navigate', { url: adapter.pairURL() });
         await browser.ready('document.querySelector("#open-capabilities")?.disabled === false');
+        await browser.ready('document.querySelector("#connection").textContent === "已連線"');
         await click('#open-capabilities');
         await choose('#plugin-file', resolve('dist/plugins/BI-Knowledge.oepplugin'));
         await browser.ready('document.querySelector("#plugin-dialog")?.open');
@@ -202,6 +203,7 @@ test('shows per-page OCR in the installed BI plugin in zh-TW and en, then review
         await open();
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-ocr-mode").selectedOptions[0].textContent'), /必要時使用模型辨識/);
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-ocr-language").textContent'), /繁體中文/);
+        assert.equal(await browser.evaluate('document.querySelector("#bi-builder-convert-panel").contains(document.querySelector("#bi-builder-ocr-mode"))'), true);
         await click('#bi-builder-consent');
         await choose('#bi-builder-file', mixed);
         await click('#bi-builder-run');
@@ -227,9 +229,30 @@ test('shows per-page OCR in the installed BI plugin in zh-TW and en, then review
         await selectLocale(browser, 'en', '#menu-locale');
         await open();
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-ocr-mode").textContent'), /Use model recognition when needed/);
-        await browser.evaluate('document.querySelector("#bi-builder-ocr-mode").value = "model"');
+        await browser.evaluate(`(() => {
+          document.querySelector("#bi-builder-reader").value = "image";
+          document.querySelector("#bi-builder-ocr-language").value = "en-US";
+          document.querySelector("#bi-builder-ocr-mode").value = "model";
+        })()`);
+        await click('#bi-builder-save-convert');
+        await browser.ready('document.querySelector("#bi-builder-status").textContent === "Stage settings saved"');
+        await open();
+        assert.deepEqual(await browser.evaluate(`
+          ["reader", "ocr-language", "ocr-mode"].map(id => document.querySelector("#bi-builder-" + id).value)`
+        ), ['image', 'en-US', 'model']);
+        await browser.evaluate(`(() => {
+          const mode = document.querySelector("#bi-builder-mode");
+          mode.value = "step";
+          mode.dispatchEvent(new Event("change"));
+        })()`);
         await choose('#bi-builder-file', png);
         await click('#bi-builder-run');
+        await browser.ready('document.querySelector("#bi-builder-run-ingest")?.checkVisibility() && !document.querySelector("#bi-builder-run-ingest").disabled', 60_000);
+        assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-pages").innerText'), /Page 1 · Model recognition/);
+        await open();
+        await click('#bi-builder-run-ingest');
+        await browser.ready('document.querySelector("#bi-builder-run-testing")?.checkVisibility() && !document.querySelector("#bi-builder-run-testing").disabled', 60_000);
+        await click('#bi-builder-run-testing');
         await browser.ready('document.querySelector("#bi-builder-pages")?.innerText.includes("Page 1 · Model recognition") && document.querySelector("#bi-builder-submit")?.hidden === false', 60_000);
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").innerText'), /OCR by gpt-5.4-synthetic.*MODEL setting is 23 mm/s);
         assert.equal(probes, 1);

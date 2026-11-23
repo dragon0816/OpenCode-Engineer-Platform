@@ -26,6 +26,7 @@ const channelStrings = {
     review: (id: number) => `收件 ${id} 已送審。`,
     blocked: (id: number) => `收件 ${id} 需要補件，請開啟工作台。`,
     ready: (id: number) => `收件 ${id} 正在處理。`,
+    scheduled: (id: number) => `收件 ${id} 已儲存，等待 BI 排程。`,
     sourceUnavailable: '這個對話無法存取該收件。',
     supplementUsage: '請輸入 /supplement 收件ID 補件文字',
     ownerAction: '請在工作台核准、拒絕或發布審核。',
@@ -66,6 +67,7 @@ const channelStrings = {
     review: (id: number) => `Intake ${id} was submitted for review.`,
     blocked: (id: number) => `Intake ${id} needs additional information. Open the workbench.`,
     ready: (id: number) => `Intake ${id} is being processed.`,
+    scheduled: (id: number) => `Intake ${id} was saved for the BI schedule.`,
     sourceUnavailable: 'This intake is unavailable in this conversation.',
     supplementUsage: 'Enter /supplement intakeID additional text',
     ownerAction: 'Use the workbench to approve, reject, or publish reviews.',
@@ -81,6 +83,7 @@ export function intakeStatus(locale: ChannelLocale, id: number, state: string | 
     case 'awaiting_review': return messages.review(id);
     case 'blocked': return messages.blocked(id);
     case 'ready': return messages.ready(id);
+    case 'scheduled': return messages.scheduled(id);
     default: return messages.sourceUnavailable;
   }
 }

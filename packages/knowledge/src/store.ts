@@ -266,7 +266,7 @@ export class KnowledgeStore {
     if (snapshot.repository) {
       const previous = current && this.readSnapshot(current).repository;
       const order = previous ? compareRepositoryPublications(snapshot.repository, previous) : 1;
-      if (order === 0 && current?.revision !== publication.revision) {
+      if (order === 0 && current?.revision !== publication.revision && !(reviewID && snapshot.repository.tag === 'working-copy')) {
         throw new Error('Repository publication conflicts with the active generation');
       }
       activateRepository = order >= 0;
@@ -697,6 +697,13 @@ const schema = this.reviewSchema(input.vault.id, base);
         ...(snapshot.repository && { tag: snapshot.repository.tag }),
         ready: publication.index_hash === publication.manifest_hash };
     });
+  }
+
+  biModelPublication(vault: string) {
+    const current = this.publication(vault);
+    if (current?.kind === 'bi' && current.allow_model && current.index_hash === current.manifest_hash) {
+      return { id: vault, title: current.title, revision: current.revision, hash: current.manifest_hash };
+    }
   }
 
   vaultClassification(vault: string) {

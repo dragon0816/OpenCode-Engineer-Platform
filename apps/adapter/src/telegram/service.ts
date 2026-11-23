@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
-import { BiScheduler } from '../../../../packages/knowledge/src/jobs/scheduler.ts';
+import { biInboxSchedule, BiScheduler } from '../../../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../../../packages/knowledge/src/ingest.ts';
 import { ChatService, publicSession } from '../http/chat.ts';
 import { HttpError } from '../http/errors.ts';
@@ -15,11 +15,12 @@ import { TelegramRouter } from './router.ts';
 import { verifyChannelConversations } from './channel-migration.ts';
 import { openBiReviewStore, verifyBiSourceReceipts } from '../bi/source-ownership.ts';
 import { dispatchBi } from '../bi/dispatch.ts';
+import type { ScheduledPipeline } from '../bi/service.ts';
 import { dispatchTelegram } from './dispatch.ts';
 import { delegationNotices } from './delegation-notices.ts';
 
 export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: boolean, ledger: WebStore, dispatcher: Dispatcher,
-  environment?: TelegramEnvironment, delegations?: DelegationService) {
+  environment?: TelegramEnvironment, delegations?: DelegationService, pipeline?: ScheduledPipeline, clock = Date.now) {
   const inbox = new TelegramInbox(join(root, 'telegram.sqlite'));
   let sessions: WebStore | undefined;
   try {
@@ -45,9 +46,10 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   const inbound = dispatchTelegram(dispatcher, inbox, chat, router, accounts, (id) => ledger.channelLocale(id), runtime.redact);
   const knowledge = runtime.knowledge?.reviewStore;
   const notices = delegationNotices(inbox, ledger, sessions, runtime.redact);
-  const bi = dispatchBi(dispatcher, router.bi, knowledge, runtime.knowledge?.propose);
+  const bi = dispatchBi(dispatcher, router.bi, knowledge, runtime.knowledge?.propose, pipeline);
   const scheduler = knowledge && new BiScheduler(inbox.db, knowledge, bi.occurrence,
     (schedule) => dispatcher.items.scheduleOccupied(schedule));
+  router.bi.scheduledTarget = () => scheduler?.inbox()?.target;
   const active = new Map<string, Promise<void>>();
   function launch(id: string, work: () => Promise<void>) {
     if (active.has(id)) return;
@@ -58,7 +60,7 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
   function tick() {
     try {
       inbound.reconcile();
-      scheduler?.reconcile();
+      scheduler?.reconcile(clock());
       const ready = inbox.db.prepare(`SELECT s.id,o.work_id FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
         WHERE s.state='ready' AND (s.supplement IS NOT NULL OR o.work_id IS NOT NULL) ORDER BY s.id`).all();
       for (const row of ready) bi.recoverSource(Number(row.id), row.work_id);
@@ -92,6 +94,21 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     approvedBiOrigins: (): string[] => JSON.parse(router.bi.config('origins') || '[]'),
     runBi: (id: string, candidate?: Candidate, signal?: AbortSignal) => bi.run(id, candidate, signal),
     reviewBi: bi.review,
+    inboxSchedule: {
+      status: () => scheduler?.inbox() ?? null,
+      save(vault: string, zone: string, time: string) {
+        if (!scheduler) throw new Error('BI schedule unavailable');
+        const now = clock();
+        scheduler.save(biInboxSchedule, zone, time, { kind: 'bi-inbox', target: vault }, now);
+        scheduler.state(biInboxSchedule, 'active', now);
+        return scheduler.inbox();
+      },
+      state(value: unknown) {
+        if (!scheduler || value !== 'paused' && value !== 'active') throw new Error('BI schedule unavailable');
+        scheduler.state(biInboxSchedule, value, clock());
+        return scheduler.inbox();
+      },
+    },
     channels: () => accounts.list(),
     configureChannel: (input: Record<string, unknown>, browser: string, createAgent?: () => void) => accounts.configure(input, browser, createAgent),
     archiveAgent: (id: string, revision: number, status: string) => accounts.archiveAgent(id, revision, status),
@@ -143,8 +160,8 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
         case 'state': scheduler?.state(String(input.id), input.state); break;
         case 'runNow': {
           if (!scheduler) break;
-          const job = scheduler.runNow(String(input.id));
-          return bi.runOccurrence(job, stop.signal).then(() => scheduler.reconcile());
+          const job = scheduler.runNow(String(input.id), clock());
+          return bi.runOccurrence(job, stop.signal).then(() => scheduler.reconcile(clock()));
         }
         case 'runJob': return knowledge && bi.run(String(input.id), undefined, stop.signal);
         case 'immediate': return bi.run(String(input.id), input.candidate as Candidate, stop.signal);

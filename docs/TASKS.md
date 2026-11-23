@@ -371,3 +371,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] Phase 3E 建置 Workflow 引擎。定義 capability 對應、參數與輸出驗證、受控試跑、核准、執行紀錄和失敗恢復。另接通有獨立授權的 Skill 腳本工作程序。
 - [ ] 為 loopback HTTP MCP 建立可驗證的服務執行檔身分。以公司的 MXO AI MCP 與真實儀器完成擁有者驗收。
 - [ ] 審核者補跑 Web、Excel、安裝、升級及備份。 [能力頁驗證報告](reviews/UX_CAPABILITIES_PAGE_REPORT.md)
+
+## Phase 3G BI Knowledge parity
+
+- [x] 建立獨立 Convert、Ingest、Testing 階段與設定，支援全自動及可暫停的逐步執行。
+- [x] 建立工作知識庫，重建匯出的 AEP 工作草稿，從附加資料編輯卡片並送審。
+- [x] 讓已綁定並授權模型使用的 BI 助理搜尋卡片、跟隨關聯並引用核對過的來源。
+- [x] 讓 Telegram BI 收件透過 IANA 時區排程及既有派送器轉檔、擷取並送審。 [合成驗收及展示](reviews/PHASE3G_BI_PARITY_REPORT.md)
+- [ ] 複核實際工作匯出及 Gateway，合併 OCR 與能力頁，完成審核者保留的關卡。

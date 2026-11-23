@@ -10,6 +10,7 @@ import type { Destination } from '../channels/transport.ts';
 import { proposeReview } from '../http/review.ts';
 import { maxUpload } from '../runs/attachments.ts';
 import { legacyBiReviewKey } from './source-ownership.ts';
+import { biDocumentFile, documentFileLimit, type DocumentInput } from './document-extraction.ts';
 
 const extensions = new Set(['.txt', '.md', '.csv', '.png', '.jpg', '.jpeg', '.pdf', '.xlsx']);
 const textExtensions = new Set(['.txt', '.md', '.csv']);
@@ -21,6 +22,8 @@ type ProposalStore = Pick<KnowledgeStore, 'reviewBase' | 'hasReview' | 'uploadRe
 type ProposalServices = { store: ProposalStore; complete: NonNullable<Runtime['knowledge']>['propose'] };
 type DelegatedSource = { id: string; runId: string; workId: string; model: string; task: string;
   files: { name: string; data: Buffer }[] };
+export type ScheduledPipeline = { available(): boolean;
+  run(input: DocumentInput, target: string, review: string, provenance: BiProvenance, signal: AbortSignal): Promise<string | undefined> };
 
 export function biProposalServices(knowledge: Runtime['knowledge'], model: () => string | undefined): ProposalServices | undefined {
   if (!knowledge) return;
@@ -38,6 +41,7 @@ export class BiService {
   private readonly storage: Storage;
   private readonly proposal?: ProposalServices;
   private readonly staging = new Map<number, Promise<void>>();
+  scheduledTarget?: () => string | undefined;
 
   constructor(storage: Storage, proposal?: ProposalServices) {
     this.storage = storage;
@@ -95,23 +99,32 @@ export class BiService {
     let state = this.sourceState(id);
     if (state && !this.sourceState(id, origin)) return;
     if (!state) {
-      const target = this.config('target');
+      const scheduledTarget = this.scheduledTarget?.();
+      const target = scheduledTarget ?? this.config('target');
       const isLink = !file && /^https?:\/\//i.test(text);
-      const ref = file ? file.name.slice(0, 200) : isLink ? text : 'Telegram 文字';
+      const ref = file ? file.name.slice(0, 200) : isLink ? text : scheduledTarget ? 'telegram-message.txt' : 'Telegram 文字';
       let bytes: Uint8Array | null = null;
-      state = 'ready';
+      state = scheduledTarget ? 'scheduled' : 'ready';
       let reason = '';
       try {
         if (file) {
           const extension = extname(ref).toLowerCase();
-          if (!extensions.has(extension) || Number(file.size) > maxUpload) throw new Error('Unsupported file');
-          bytes = await file.read(maxUpload, signal);
-          if (!textExtensions.has(extension)) {
+          const supported = scheduledTarget ? biDocumentFile(ref) : textExtensions.has(extension);
+          const limit = supported && scheduledTarget ? documentFileLimit : maxUpload;
+          if (!(extensions.has(extension) || supported) || Number(file.size) > limit) throw new Error('Unsupported file');
+          bytes = await file.read(limit, signal);
+          if (!supported) {
             state = 'blocked';
             reason = '原始檔已保存，請補充 UTF-8 文字供審核。';
           }
         } else if (isLink) {
-          bytes = await readApprovedLink(ref, new Set(JSON.parse(this.config('origins') || '[]')), signal);
+          const origins = new Set<string>(JSON.parse(this.config('origins') || '[]'));
+          if (scheduledTarget) {
+            const link = new URL(ref);
+            if (link.protocol !== 'https:' || link.username || link.password || ref.length > 2048 || !origins.has(link.origin)) {
+              throw new Error('Unapproved origin');
+            }
+          } else bytes = await readApprovedLink(ref, origins, signal);
         } else if (text) bytes = Buffer.from(text);
         else throw new Error('Missing source');
       } catch {
@@ -193,12 +206,15 @@ export class BiService {
 
   supplement(id: number, text: unknown, signal: AbortSignal, origin?: Destination, workId?: string) {
     const supplement = this.validateSupplement(id, text);
+    const source = this.source(id);
+    const scheduled = source?.origin === 'telegram' && source.target && this.scheduledTarget?.() === source.target;
     this.storage.transaction(() => {
       if (this.sourceState(id, origin) !== 'blocked') throw new Error('Source unavailable');
-      this.storage.db.prepare("UPDATE bi_sources SET supplement=?,state='ready',reason='' WHERE id=?").run(Buffer.from(supplement), id);
+      this.storage.db.prepare("UPDATE bi_sources SET supplement=?,state=?,reason='' WHERE id=?")
+        .run(Buffer.from(supplement), scheduled ? 'scheduled' : 'ready', id);
       if (workId) this.recordWork(id, workId);
     });
-    return this.stage(id, signal, workId);
+    return scheduled ? Promise.resolve() : this.stage(id, signal, workId);
   }
 
   private recordWork(id: number, workId: string) {
@@ -241,13 +257,44 @@ export class BiService {
   recover(id: number, workId: string) {
     const source = this.source(id);
     if (source?.work_id !== workId) return;
-    if (source.state === 'blocked' || source.state === 'awaiting_review') return source.state;
+    if (source.state === 'blocked' || source.state === 'awaiting_review' || source.state === 'scheduled') return source.state;
     const store = this.proposal?.store;
     const job = String(source.source_key);
     if (source.target ? store?.hasReview(job, String(source.target), this.provenance(source)) : store?.biCompleted(job)) {
       this.received(id, job);
       return 'awaiting_review';
     }
+  }
+
+  async scheduled(target: string, pipeline: ScheduledPipeline, signal: AbortSignal) {
+    const db = this.storage.db;
+    const items = db.prepare(`SELECT s.id FROM bi_sources s JOIN bi_source_ownership o ON o.source_id=s.id
+      WHERE s.state='scheduled' AND s.target=? AND o.origin='telegram' AND o.agent_id='bi' ORDER BY s.id LIMIT 25`).all(target);
+    let staged = 0;
+    for (const { id } of items) {
+      signal.throwIfAborted();
+      if (!pipeline.available()) throw new Error('BI inbox pipeline unavailable');
+      const source = this.source(Number(id));
+      if (source?.state !== 'scheduled') continue;
+      const provenance = this.provenance(source);
+      const review = String(source.source_key);
+      if (!this.proposal?.store.hasReview(review, target, provenance)) {
+        const payload = source.supplement ?? source.bytes;
+        const input = payload instanceof Uint8Array ? { ref: source.supplement ? String(source.ref).slice(0, 190) + '.txt' : String(source.ref),
+          bytes: Buffer.from(payload) } : { url: String(source.ref) };
+        const result = await pipeline.run(input, target, review, provenance, signal);
+        signal.throwIfAborted();
+        if (!result) {
+          db.prepare("UPDATE bi_sources SET state='blocked',reason=? WHERE id=? AND state='scheduled'")
+            .run('轉檔或擷取未產生可送審的卡片。請查看 BI 知識庫的執行詳情。', id);
+          continue;
+        }
+        if (result !== review) throw new Error('BI inbox review receipt mismatch');
+      }
+      this.received(Number(id), review);
+      staged++;
+    }
+    return staged;
   }
 
   stopUnverified(id: number, workId: string) {

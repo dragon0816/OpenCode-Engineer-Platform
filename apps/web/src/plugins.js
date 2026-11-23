@@ -141,7 +141,7 @@ export function bindPlugins(showView, openPanel, openBiReview, loadMcp) {
       pageContent.replaceChildren(...view.paragraphs.map((text) => element('p', localized(text))));
       const api = pageAPI(plugin, view.token, selection.stop.signal);
       if (view.biBuilder) {
-        await openBiBuilder(pageActions, api, selection.stop.signal, (id) => openBiReview(id), biDraft);
+        await openBiBuilder(pageActions, api, selection.stop.signal, (id) => openBiReview(id), biDraft, openPanel);
       } else if (view.actions?.length) {
         pageActions.replaceChildren(...view.actions.map((action) => jobAction(api, action, view.approvedSources, selection.stop.signal)));
       }

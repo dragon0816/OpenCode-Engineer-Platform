@@ -438,8 +438,14 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **理由：** 擁有者要求於週四 demo 從原始文件自動擷取卡片；AEP 已完整開發此流程，沿用可縮短時程並保持品質一致。
 - **捨棄的替代方案：** 只參考行為重新實作（原規則；時程不足）。
 ## 2026-11-23 BI 文件擷取工作程序
+
 - 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
 - PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
+
+### BI 建置階段與工作草稿
+
+- BI parity 沿用 Node SQLite、既有 `semver`、Python 標準程式庫及原有 `pypdf`，無新增相依。轉檔、規則擷取與 AEP commit 重建沿用外掛 broker；工作草稿與階段設定存於外掛資料區。
+- BI 助理查詢由 OEP 核心依已發布知識庫及 Gateway 授權提供。Telegram 排程共用收件及工作派送台帳，候選卡片沿用擁有者審核。OCR 與辨識相依由獨立 OCR 分支處理。 [BI parity 報告](reviews/PHASE3G_BI_PARITY_REPORT.md)
 
 ## 2026-11-23 外部 coding agent 預設用訂閱帳號登入
 
