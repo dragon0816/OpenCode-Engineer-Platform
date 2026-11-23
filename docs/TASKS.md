@@ -251,3 +251,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 切片 6 接上交辦結果卡、唯讀執行紀錄、取消、後續回合脈絡與原對話的完成及發布通知。[切片 6 驗收紀錄](reviews/PHASE3B_SLICE6_REPORT.md)
 - [ ] 在 BI 專職助理的 Web 直接對話提供依會話授權的收件狀態與補件。
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## Phase 3I 切片 1 分級、來源快照與交辦接單
+
+- [x] 已配對工作台可分級工作資料夾、來源檔案與知識庫。檢查來源、版本、雜湊、權限及繼承分級後，固定這次選取的公開資料。
+- [x] 外部幫手各自預設停用。Claude Code 需要擁有者確認商業條款。Web 主助理可使用已核准的清單識別碼接單，預設等待擁有者確認後才排隊。
+- [x] 完成繁中與英文的分級、設定警示及交辦確認介面。中央台帳升至 v7，保留 3B 內部交辦。 [切片 1 驗收紀錄](reviews/PHASE3I_SLICE1_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+- [ ] 切片 2 完成 Windows 隔離、原版 CLI 與供應商個別驗收。切片 3 完成已驗證的差異匯出、預覽及下載。
