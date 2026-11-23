@@ -103,7 +103,15 @@ function Invoke-HelperJob($Request, $Policy) {
             }
             switch -CaseSensitive ($Request.operation) {
                 'run' { $timeout = 600000 }
-                'cli' { $timeout = 170000; $mode = 'interactive' }
+                'cli' {
+                    $timeout = 170000
+                    $mode = if ($Request.relay -eq $true) { 'relay' } else { 'interactive' }
+                }
+                'device' {
+                    if ($Request.provider -ne 'codex_cli' -or $Request.relay -ne $true) { throw 'Invalid device sign-in.' }
+                    $timeout = 170000
+                    $mode = 'relay'
+                }
                 'key' { }
                 'logout' { }
                 'status' { }

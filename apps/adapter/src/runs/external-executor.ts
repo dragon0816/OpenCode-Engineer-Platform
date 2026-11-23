@@ -1,13 +1,15 @@
 import { DelegationError } from './delegation-ledger.ts';
-import { checkCliResult, cliArgs, cliAuthArgs, cliLogin, cliVersion, helperReady, unavailableHelper, type CliVersion, type HelperAuthAction,
+import { checkCliResult, cliArgs, cliAuthArgs, cliLoginDetails, cliVersion, helperReady, unavailableHelper, type CliVersion, type HelperAuthAction,
   type HelperStatus } from './external-cli.ts';
 import { createExternalCopy } from './external-copy.ts';
 import type { Provider, Snapshot } from './external-ledger.ts';
+import type { LoginRelay } from './external-login.ts';
 
 type Copy = ReturnType<ReturnType<typeof createExternalCopy>['stage']>;
 export type CliReceipt = {
   exit: number | null; stdout: string; members: number; orphans: number;
-  reason?: 'external-cli-output-limit' | 'external-cli-start-failed';
+  stderr?: string;
+  reason?: 'external-cli-output-limit' | 'external-cli-start-failed' | 'external-auth-setup-required';
 };
 export type VerifiedCli = {
   // The boundary must pin the executable object for probes and the job, not only its pathname.
@@ -15,8 +17,7 @@ export type VerifiedCli = {
   sha256: string;
   copyRoot?: string;
   probe(args: string[], signal: AbortSignal): Promise<CliReceipt>;
-  // Interactive output belongs to the provider's window. Keys enter through stdin or the helper account's credential store.
-  authenticate?(args: string[], action: HelperAuthAction, signal: AbortSignal): Promise<void>;
+  authenticate?(args: string[], action: HelperAuthAction, signal: AbortSignal, relay?: LoginRelay): Promise<void>;
   run(args: string[], copy: Pick<Copy, 'work' | 'inputs' | 'scratch' | 'prompt'>, signal: AbortSignal,
     release: () => void): Promise<CliReceipt>;
 };
@@ -39,34 +40,43 @@ export class ExternalExecutor {
   readonly #root: string;
   readonly #isolation?: ExternalIsolation;
   readonly #status = new Map<Provider, HelperStatus>();
-  readonly #authenticating = new Set<Provider>();
+  #authenticating = false;
 
   constructor(root: string, isolation?: ExternalIsolation) { this.#root = root; this.#isolation = isolation; }
 
   status(provider: Provider) { return this.#status.get(provider) ?? unavailableHelper; }
 
   async refresh(provider: Provider, signal: AbortSignal) {
-    if (this.#authenticating.has(provider)) return this.status(provider);
+    if (this.#authenticating) return this.status(provider);
     try { await this.#probe(provider, signal); }
     catch { this.#status.set(provider, unavailableHelper); }
     return this.status(provider);
   }
 
-  async authenticate(provider: Provider, action: HelperAuthAction, signal: AbortSignal) {
-    if (this.#authenticating.has(provider)) throw new DelegationError('external-auth-busy');
-    this.#authenticating.add(provider);
+  async authenticate(provider: Provider, action: HelperAuthAction, signal: AbortSignal, relay?: LoginRelay) {
+    if (this.#authenticating) throw new DelegationError('external-auth-busy');
+    this.#authenticating = true;
     try {
       const candidate = await this.#probe(provider, signal, false);
       if (this.status(provider).isolation !== 'verified') throw new DelegationError('external-isolation-unavailable');
+      if (this.status(provider).installation !== 'detected') throw new DelegationError('external-cli-unsupported');
       if (!candidate?.authenticate) throw new DelegationError('external-auth-unavailable');
-      await candidate.authenticate(cliAuthArgs(provider, action.action), action, signal);
+      try {
+        await candidate.authenticate(cliAuthArgs(provider, action.action), action, signal, relay);
+      } catch (error) {
+        if (!signal.aborted) {
+          try { await this.#probe(provider, signal); } catch { /* Preserve the sign-in error. */ }
+        }
+        throw error;
+      }
       await this.#probe(provider, signal);
+      if (relay && this.status(provider).login !== 'signedIn') throw new DelegationError('external-auth-failed');
       return this.status(provider);
     } catch (error) {
       if (error instanceof DelegationError) throw error;
       this.#status.set(provider, { ...this.status(provider), login: 'probeFailed' });
       throw new DelegationError('external-auth-failed');
-    } finally { this.#authenticating.delete(provider); }
+    } finally { this.#authenticating = false; }
   }
 
   async #probe(provider: Provider, signal: AbortSignal, checkLogin = true) {
@@ -92,15 +102,16 @@ export class ExternalExecutor {
     stopped(auth);
     signal.throwIfAborted();
     if (auth.reason || auth.exit === null) return;
-    const login = cliLogin(provider, auth.exit, auth.stdout);
-    this.#status.set(provider, { ...base, installation: 'detected', version, login });
-    if (login === 'signedIn') return candidate;
+    let details = cliLoginDetails(provider, auth.exit, auth.stdout);
+    if (details.login === 'probeFailed' && auth.stderr) details = cliLoginDetails(provider, auth.exit, auth.stderr);
+    this.#status.set(provider, { ...base, installation: 'detected', version, ...details });
+    if (details.login === 'signedIn') return candidate;
   }
 
   async execute(snapshot: Snapshot, runId: string, turns: number, signal: AbortSignal, check: () => void,
     start: (version: CliVersion) => void, audit: (reason: string, members?: number) => void, validate: () => void) {
     const provider = snapshot.provider;
-    if (this.#authenticating.has(provider)) throw new DelegationError('external-auth-busy');
+    if (this.#authenticating) throw new DelegationError('external-auth-busy');
     const candidate = await this.#probe(provider, signal);
     check();
     if (!candidate) {
@@ -115,7 +126,7 @@ export class ExternalExecutor {
     try {
       const { work, inputs, scratch, prompt, ...baseline } = copy.stage(snapshot, check);
       const receipt = await candidate.run(args, { work, inputs, scratch, prompt }, signal, () => {
-        if (released || this.#authenticating.has(provider) || !helperReady(this.status(provider))) {
+        if (released || this.#authenticating || !helperReady(this.status(provider))) {
           throw new DelegationError('external-isolation-unavailable');
         }
         check();

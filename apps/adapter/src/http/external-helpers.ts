@@ -5,6 +5,7 @@ import { helpers, isProvider, type SourceSubmission } from '../runs/external-led
 import { HttpError } from './errors.ts';
 import type { WebMessageCode } from './messages.ts';
 import type { HelperAuthAction } from '../runs/external-cli.ts';
+import { isBrowserCode } from '../runs/external-login.ts';
 
 const namedGate = new Set(['external-confidential', 'external-unclassified', 'external-changed']);
 export const externalError = (error: DelegationError) => {
@@ -29,13 +30,24 @@ export function helperSettings(input: Record<string, unknown>) {
 }
 
 export function helperAuth(input: Record<string, unknown>) {
-  const { provider, action, key, ...extra } = input;
-  if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
+  const { provider, action, key, exchange, ...extra } = input;
+  if (!isProvider(provider) || Object.keys(extra).length ||
+      exchange !== undefined && (!id(exchange) || action !== 'cli' && action !== 'device')) throw invalidExternal();
   let request: HelperAuthAction;
   if (action === 'key' && typeof key === 'string' && /^[\x21-\x7e]{8,1024}$/.test(key)) request = { action, key };
   else if ((action === 'cli' || action === 'logout') && key === undefined) request = { action };
+  else if (provider === 'codex_cli' && action === 'device' && id(exchange) && key === undefined) request = { action };
   else throw invalidExternal();
-  return { provider, request };
+  return { provider, request, exchange: typeof exchange === 'string' ? exchange : undefined };
+}
+
+export function helperAuthPrompt(input: Record<string, unknown>) {
+  const { exchange, action, code, ...extra } = input;
+  if (!id(exchange) || Object.keys(extra).length) throw invalidExternal();
+  if (action === 'poll' && code === undefined) return { exchange, action } as const;
+  if (action === 'cancel' && code === undefined) return { exchange, action } as const;
+  if (action === 'code' && isBrowserCode(code)) return { exchange, action, code } as const;
+  throw invalidExternal();
 }
 
 export function externalWorkspaceInput(input: Record<string, unknown>) {

@@ -271,10 +271,55 @@ public static class OepHelperNative
         }
     }
 
+    private static byte[] RelayOutput(Stream stream, OutputLimit limit, string prefix)
+    {
+        var buffer = new byte[4096];
+        int read;
+        while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
+        {
+            if (Interlocked.Add(ref limit.Count, read) > OutputLimit.Maximum) break;
+            Console.WriteLine(prefix + Convert.ToBase64String(buffer, 0, read));
+        }
+        return new byte[0];
+    }
+
+    private static void RelayInput(Stream stream, Task<string> first)
+    {
+        try
+        {
+            string line = first.GetAwaiter().GetResult();
+            while (line != null && line.StartsWith("code:", StringComparison.Ordinal))
+            {
+                string code = line.Substring(5);
+                if (!System.Text.RegularExpressions.Regex.IsMatch(code, @"\A[a-zA-Z0-9_~.%+=/#-]{1,512}\z")) return;
+                var bytes = Utf8.GetBytes(code + "\n");
+                try { stream.Write(bytes, 0, bytes.Length); }
+                finally { Array.Clear(bytes, 0, bytes.Length); }
+                line = Console.ReadLine();
+            }
+        }
+        catch (IOException) { }
+    }
+
+    private static void ForwardInput(StreamWriter input)
+    {
+        try
+        {
+            string code;
+            while ((code = Console.ReadLine()) != null)
+            {
+                input.WriteLine(code);
+                input.Flush();
+            }
+        }
+        catch (IOException) { }
+    }
+
     public sealed class JobReceipt
     {
         public int? exit { get; set; }
         public string stdout { get; set; }
+        public string stderr { get; set; }
         public uint members { get; set; }
         public uint orphans { get; set; }
         public string reason { get; set; }
@@ -291,23 +336,29 @@ public static class OepHelperNative
         using (var child = Start(job, executable, arguments, cwd, environment, send, receive, errors))
         {
             var limit = new OutputLimit();
+            bool relay = arguments[0] == "relay";
+            bool status = arguments.Length >= 3 && arguments[2] == "status";
+            bool capture = status || arguments.Length >= 3 && (arguments[2] == "version" || arguments[2] == "run");
+            bool oldBootstrap = false;
             int? exit = null;
             var clock = Stopwatch.StartNew();
             var command = Task.Run(() => Console.ReadLine());
             var stderr = Task.FromResult(new byte[0]);
             var stdout = Task.FromResult(new byte[0]);
             var writer = Task.CompletedTask;
+            Task control = command;
             if (!interactive)
             {
                 send.DisposeLocalCopyOfClientHandle();
                 receive.DisposeLocalCopyOfClientHandle();
                 errors.DisposeLocalCopyOfClientHandle();
-                // A single trusted byte precedes CLI output. Avoid buffering any of the CLI protocol here.
+                // The bootstrap acknowledges its mode before inheriting the pipes into the provider.
                 var ready = Task.Run(() => receive.ReadByte());
-                stderr = Task.Run(() => ReadOutput(errors, limit, false));
+                stderr = Task.Run(() => relay ? RelayOutput(errors, limit, "err:") : ReadOutput(errors, limit, status));
                 while (!ready.IsCompleted && !command.IsCompleted && !owner.HasExited && clock.ElapsedMilliseconds < milliseconds)
                     if (child.WaitForExit(20)) break;
-                if (ready.Status == TaskStatus.RanToCompletion && ready.Result == 1)
+                oldBootstrap = relay && ready.Status == TaskStatus.RanToCompletion && ready.Result == 1;
+                if (ready.Status == TaskStatus.RanToCompletion && ready.Result == (relay ? 2 : 1))
                 {
                     if (requestRelease) Console.WriteLine("ready");
                     while (requestRelease && !command.IsCompleted && !owner.HasExited && clock.ElapsedMilliseconds < milliseconds)
@@ -315,18 +366,23 @@ public static class OepHelperNative
                     if (!requestRelease || command.Status == TaskStatus.RanToCompletion && command.Result == "run")
                     {
                         if (requestRelease) command = Task.Run(() => Console.ReadLine());
-                        writer = Task.Run(() => {
-                            try { var bytes = Utf8.GetBytes(input); send.Write(bytes, 0, bytes.Length); }
-                            catch (IOException) { }
-                            finally { send.Dispose(); }
-                        });
-                        stdout = Task.Run(() => ReadOutput(receive, limit, true));
+                        if (relay) control = Task.Run(() => RelayInput(send, command));
+                        else
+                        {
+                            control = command;
+                            writer = Task.Run(() => {
+                                try { var bytes = Utf8.GetBytes(input); send.Write(bytes, 0, bytes.Length); }
+                                catch (IOException) { }
+                                finally { send.Dispose(); }
+                            });
+                        }
+                        stdout = Task.Run(() => relay ? RelayOutput(receive, limit, "out:") : ReadOutput(receive, limit, capture));
                     }
                     else send.Dispose();
                 }
                 else send.Dispose();
             }
-            while (!owner.HasExited && !command.IsCompleted && Volatile.Read(ref limit.Count) <= OutputLimit.Maximum &&
+            while (!oldBootstrap && !owner.HasExited && !control.IsCompleted && Volatile.Read(ref limit.Count) <= OutputLimit.Maximum &&
                 clock.ElapsedMilliseconds < milliseconds)
             {
                 if (!child.WaitForExit(20)) continue;
@@ -336,7 +392,8 @@ public static class OepHelperNative
             var state = job.TerminateAndWait(3000);
             if (state.Item2 != 0 || !Task.WaitAll(new[] { stdout, stderr, writer }, 2000)) throw new InvalidOperationException("Helper stop unverified.");
             return new JobReceipt { exit = exit, stdout = Convert.ToBase64String(stdout.Result), members = state.Item1,
-                orphans = state.Item2, reason = limit.Count > OutputLimit.Maximum ? "external-cli-output-limit" : null };
+                stderr = status ? Convert.ToBase64String(stderr.Result) : null, orphans = state.Item2,
+                reason = oldBootstrap ? "external-auth-setup-required" : limit.Count > OutputLimit.Maximum ? "external-cli-output-limit" : null };
         }
     }
 
@@ -433,10 +490,11 @@ public static class OepHelperNative
         {
             CheckIdentityAndAccess();
             bool interactive = args[0] == "interactive";
+            bool relay = args[0] == "relay";
             if (!interactive)
             {
                 Stream output = Console.OpenStandardOutput();
-                output.WriteByte(1);
+                output.WriteByte(relay ? (byte)2 : (byte)1);
                 output.Flush();
             }
             if (args[0] == "verify") return 0;
@@ -449,7 +507,7 @@ public static class OepHelperNative
                 Console.InputEncoding = Utf8;
                 Console.OutputEncoding = Utf8;
             }
-            string data = interactive ? null : Console.In.ReadToEnd();
+            string data = interactive || relay ? null : Console.In.ReadToEnd();
             bool removedConsoleKey = false;
             if (provider == "claude_code")
             {
@@ -460,7 +518,7 @@ public static class OepHelperNative
                     finally { Array.Clear(key, 0, key.Length); }
                     return 0;
                 }
-                if (operation == "logout" || operation == "cli")
+                if (operation == "logout" || operation == "cli" && !relay)
                 {
                     removedConsoleKey = operation == "logout" && HasCredential(ClaudeCredential);
                     DeleteCredential(ClaudeCredential);
@@ -479,7 +537,11 @@ public static class OepHelperNative
             if (provider == "claude_code" && operation == "run") AddClaudeKey(start);
             using (var child = Process.Start(start))
             {
-                if (!interactive)
+                if (relay)
+                {
+                    Task.Run(() => ForwardInput(child.StandardInput));
+                }
+                else if (!interactive)
                 {
                     using (var pipe = child.StandardInput)
                     {
@@ -487,6 +549,7 @@ public static class OepHelperNative
                     }
                 }
                 child.WaitForExit();
+                if (relay && provider == "claude_code" && operation == "cli" && child.ExitCode == 0) DeleteCredential(ClaudeCredential);
                 return removedConsoleKey && child.ExitCode == 1 ? 0 : child.ExitCode;
             }
         }
