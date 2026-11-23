@@ -154,6 +154,20 @@
 
 樣張使用合成資料。寬版為 1440 × 900，窄版為 390 × 844。
 
+### 0.6.0 擁有者驗收第二輪
+
+| 畫面 | 繁中寬版 | 英文窄版 |
+|---|---|---|
+| 設定／助理與通道 | [PNG](validation/gui/owner-round2-channels-zh-TW-wide-light.png) | [PNG](validation/gui/owner-round2-channels-en-narrow-dark.png) |
+| 設定／新增 Telegram bot | [PNG](validation/gui/owner-round2-channel-setup-zh-TW-wide-light.png) | [PNG](validation/gui/owner-round2-channel-setup-en-narrow-dark.png) |
+| 助理詳情／通道 | [PNG](validation/gui/owner-round2-detail-channel-zh-TW-wide-light.png) | [PNG](validation/gui/owner-round2-detail-channel-en-narrow-dark.png) |
+| 建立助理／通道 | [PNG](validation/gui/owner-round2-wizard-channel-zh-TW-wide-light.png) | [PNG](validation/gui/owner-round2-wizard-channel-en-narrow-dark.png) |
+| 附加資料／會話筆記 | [PNG](validation/gui/owner-round2-notes-zh-TW-wide.png) | [PNG](validation/gui/owner-round2-notes-en-narrow.png) |
+| 附加資料／工程附件原始文字 | [PNG](validation/gui/owner-round2-text-preview-zh-TW-wide.png) | [PNG](validation/gui/owner-round2-text-preview-en-narrow.png) |
+| 對話／巢狀清單 | [PNG](validation/gui/owner-round2-markdown-zh-TW-wide.png) | [PNG](validation/gui/owner-round2-markdown-en-narrow.png) |
+
+### 其他繁中樣張
+
 | 畫面 | 淺色寬版 | 深色寬版 | 淺色窄版 | 深色窄版 |
 |---|---|---|---|---|
 | 對話 | [PNG](validation/gui/conversation-light-wide.png) | [PNG](validation/gui/conversation-dark-wide.png) | [PNG](validation/gui/conversation-light-narrow.png) | [PNG](validation/gui/conversation-dark-narrow.png) |

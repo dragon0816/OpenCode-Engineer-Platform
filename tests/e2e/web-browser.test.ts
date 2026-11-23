@@ -1518,8 +1518,19 @@ try {
                 await openPanel('open-notes');
                 await page.ready("document.querySelector('#session-notes [data-delete-note]')?.checkVisibility()");
                 if (captureOwnerRound2 && (layout === 'wide' && locale === 'zh-TW' || layout === 'narrow' && locale === 'en')) {
-                  const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
-                  writeFileSync(resolve('docs/validation/gui', `owner-round2-notes-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
+                  const restoreError = await page.evaluate<boolean>(`(() => {
+                    const error = document.querySelector('#error');
+                    const visible = !error.hidden;
+                    error.hidden = true;
+                    document.querySelector('.message.assistant > div > ul')?.scrollIntoView({ block: 'center' });
+                    return visible;
+                  })()`);
+                  try {
+                    const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
+                    writeFileSync(resolve('docs/validation/gui', `owner-round2-notes-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
+                  } finally {
+                    if (restoreError) await page.evaluate("document.querySelector('#error').hidden = false");
+                  }
                 }
                 await page.evaluate(`(() => {
                   const row = [...document.querySelectorAll('#session-notes li')].find(row => row.textContent.includes(${JSON.stringify(note)}));
