@@ -238,3 +238,12 @@ test('Phase 1 workbook consumers preserve a cancelled terminal run', async () =>
     assert.deepEqual(ledger.get(id), cancelled);
   } finally { ledger.close(); }
 });
+
+test('the workbook writer is byte-identical for the same data at different times', async (t) => {
+  const { workbook } = await import('../../apps/adapter/src/runs/workbook.ts');
+  const value = [{ name: 'Synthetic', rows: [['Item', 'Limit'], ['SYN-1', 1]] }];
+  const first = Buffer.from(workbook(value));
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3 * 60_000 });
+  try { assert.deepEqual(Buffer.from(workbook(value)), first); }
+  finally { t.mock.timers.reset(); }
+});

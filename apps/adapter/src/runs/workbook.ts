@@ -32,6 +32,8 @@ function checkSheets(value: unknown): asserts value is Sheet[] {
   }
 }
 
+const workbookEntryTime = new Date(2000, 0, 1);
+
 export function workbook(value: unknown) {
   checkSheets(value);
   const entries: Record<string, Uint8Array> = {};
@@ -59,5 +61,6 @@ export function workbook(value: unknown) {
     }).join('');
     add(`xl/${part(index)}`, `<worksheet xmlns="${spreadsheet}"><sheetData>${data}</sheetData></worksheet>`);
   });
-  return zipSync(entries);
+  // A fixed entry time keeps the same workbook data byte-identical across runs.
+  return zipSync(entries, { mtime: workbookEntryTime });
 }
