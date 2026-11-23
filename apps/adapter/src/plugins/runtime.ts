@@ -2,13 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
+import { gte } from 'semver';
 import { readApprovedLink } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { sourceUploadLimit } from '../../../../packages/knowledge/src/ingest.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
-import type { DocumentExtraction } from '../bi/document-extraction.ts';
+import type { DocumentExtraction, DocumentInput } from '../bi/document-extraction.ts';
+import { ocrFrameLimit, parseOcr } from '../bi/document-ocr.ts';
+import type { DocumentOcr } from '../bi/document-ocr.ts';
+import type { BiProvenance } from '../../../../packages/knowledge/src/bi/ownership.ts';
 import { documentResult } from '../bi/document-worker.ts';
+import { workingRepositoryLimit } from '../bi/working-repository.ts';
 import { proposeReview } from '../http/review.ts';
 import type { ReferencePicker } from '../runs/reference-picker.ts';
+import type { WebStore } from '../runs/web-store.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from '../runs/workspace.ts';
 import { digestPattern, sha256, strictJSON, type VerifiedPlugin } from './package.ts';
 import { runPython } from './python.ts';
@@ -17,7 +23,8 @@ import { PluginError, requirePlugin } from './zip.ts';
 
 type Grant = { id: string; page: string; owner: string; generation: string; plugin: VerifiedPlugin; expires: number;
   sources: Map<string, Source>; stop: AbortController };
-type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker };
+type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker; modelNotes: WebStore['modelNotes'];
+  inbox?: { status(): unknown; save(vault: string, zone: string, time: string): unknown; state(value: unknown): unknown } };
 type Source = { id: string; name: string; sha256: string; confidential: boolean; bytes: Buffer };
 type Proposal = { draft: string; source: string; proposal: string };
 type State = 'starting' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed-out';
@@ -196,7 +203,7 @@ export class PluginRuntime {
   }
 
   private launch(grant: Grant, worker: VerifiedPlugin['manifest']['components']['pythonWorkers'][number], input: unknown,
-    sources: Map<string, Source>, documentSignal?: AbortSignal) {
+    sources: Map<string, Source>, documentSignal?: AbortSignal, resultLimit?: number, recognize?: DocumentOcr) {
     const active = [...this.jobs.values()].filter(({ update }) => !terminal(update.state));
     requirePlugin(active.length < 3 && !active.some((job) => job.plugin === grant.id), 'runtime-busy');
     if (this.jobs.size >= 32) {
@@ -215,9 +222,14 @@ export class PluginRuntime {
       timer = setTimeout(() => controller.abort('timed-out'), worker.timeoutMs);
       this.emit(job, { state: 'running' });
     }, (method, params) => {
+      if (recognize && method === 'bi.ocr') {
+        this.active(grant);
+        signal.throwIfAborted();
+        return recognize(params, signal);
+      }
       requirePlugin(!documentSignal || method === 'sources.read', 'runtime-forbidden');
       return this.call(grant, method, params, job);
-    }, documentSignal ? 2 * 1024 * 1024 : undefined).then(async (result) => {
+    }, resultLimit ?? (documentSignal ? 2 * 1024 * 1024 : undefined), recognize ? ocrFrameLimit : undefined).then(async (result) => {
       this.active(grant);
       signal.throwIfAborted();
       const review = job.proposal && await this.propose(grant, job, job.proposal);
@@ -235,32 +247,83 @@ export class PluginRuntime {
     return job;
   }
 
-  private async build(grant: Grant, method: string, params: Record<string, unknown>) {
+  private biAccess(grant: Grant) {
     const permissions = grant.plugin.manifest.permissions;
     const worker = grant.plugin.manifest.components.pythonWorkers.find(({ id }) => id === biWorker);
     requirePlugin(this.bi && grant.id === biPlugin && grant.page === biPage && worker &&
       permissions.operations.includes('review.submit') && permissions.operations.includes('publish.request') &&
       permissions.modelBroker === 'approved-gateway' && permissions.sourceBroker === 'approved-sources', 'runtime-forbidden');
-    const { extraction, picker } = this.bi;
-    const { signal } = grant.stop;
-    signal.throwIfAborted();
-    const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal) => {
+    const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal, recognize?: DocumentOcr) => {
       this.active(grant);
       parent.throwIfAborted();
       const source = { id: randomUUID(), sha256: sha256(bytes), bytes, name: operation, confidential: false };
-      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent);
-      await job.done;
-      parent.throwIfAborted();
-      requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
-      return documentResult<T>(job.update.result);
+      const resultLimit = operation === 'worktree' ? workingRepositoryLimit : undefined;
+      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent, resultLimit, recognize);
+      try {
+        await job.done;
+        parent.throwIfAborted();
+        requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
+        return documentResult<T>(job.update.result);
+      } finally { this.jobs.delete(job.update.id); }
     };
+    return { ...this.bi, run };
+  }
+
+  scheduledAvailable() {
+    return Boolean(!this.closed && this.bi && !this.bi.extraction.busy() && this.registry.list().some(({ id, status, version }) =>
+      id === biPlugin && status === 'enabled' && gte(version, '1.2.0')));
+  }
+
+  runScheduled(input: DocumentInput, vault: string, reviewId: string, provenance: BiProvenance, signal: AbortSignal) {
+    const active = this.registry.list().find(({ id, status, version }) => id === biPlugin && status === 'enabled' && gte(version, '1.2.0'));
+    requirePlugin(active, 'runtime-forbidden');
+    const { plugin, generation } = this.registry.active(biPlugin, active.digest);
+    const grant: Grant = { id: biPlugin, page: biPage, owner: 'scheduled-bi-inbox', plugin, generation, expires: Date.now(),
+      sources: new Map(), stop: new AbortController() };
+    const { extraction, run } = this.biAccess(grant);
+    return extraction.runScheduled(input, vault, { id: reviewId, provenance }, { worker: run, signal }, () => this.active(grant));
+  }
+
+  private async build(grant: Grant, method: string, params: Record<string, unknown>) {
+    const { extraction, picker, inbox, modelNotes, run } = this.biAccess(grant);
+    const { signal } = grant.stop;
+    signal.throwIfAborted();
     switch (method) {
-      case 'bi.catalog': return { choices: extraction.choices(), runs: extraction.recent(true) };
+      case 'bi.catalog': {
+        const aliases = [...this.knowledge!.benchmarks.keys()];
+        return { choices: extraction.choices(true), runs: extraction.recent(true), aliases, modelNotes: modelNotes(aliases) };
+      }
+      case 'bi.configure': return extraction.configure(params.schema, params.stage, params.value, [...this.knowledge!.benchmarks.keys()]);
+      case 'bi.questions': return extraction.questionSets(text(params.schema, 64),
+        params.name === undefined ? undefined : text(params.name, 80));
+      case 'bi.inbox': return inbox?.status() ?? null;
+      case 'bi.inboxschedule': {
+        const vault = text(params.vault, 192);
+        requirePlugin(inbox && extraction.scheduleTarget(vault), 'runtime-input');
+        return inbox.save(vault, text(params.zone, 100), text(params.time, 5));
+      }
+      case 'bi.inboxstate': return inbox?.state(params.state) ?? null;
       case 'bi.pick': {
         requirePlugin(params.locale === 'en' || params.locale === 'zh-TW', 'runtime-input');
         return { folder: (await picker('folder', params.locale, signal))[0] };
       }
       case 'bi.schemas': return extraction.importSchemas(params.folder, signal, run);
+      case 'bi.create':
+      case 'bi.importdraft': {
+        requirePlugin(!extraction.busy(), 'runtime-busy');
+        requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        const title = params.title === undefined ? undefined : text(params.title, 100);
+        const workspace = method === 'bi.create' ? extraction.createWorkspace(text(title, 100), params.schema, params.allowModel) :
+          await extraction.importWorkspace(text(params.folder, 2048), title, params.schema, params.allowModel, signal, run);
+        return { workspace, choices: extraction.choices(true) };
+      }
+      case 'bi.workspace': {
+        const offset = params.offset ?? 0;
+        requirePlugin(typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0, 'runtime-input');
+        return extraction.workspace(text(params.vault, 192), offset, params.card === undefined ? undefined : text(params.card, 192));
+      }
+      case 'bi.editworkspace': return extraction.editWorkspace(text(params.vault, 192), params.version, params.card, params.title, params.fields);
+      case 'bi.prepareworkspace': return extraction.prepareWorkspace(text(params.vault, 192), params.version);
       case 'bi.repository': {
         requirePlugin(!extraction.busy(), 'runtime-busy');
         requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
@@ -270,8 +333,12 @@ export class PluginRuntime {
       case 'bi.start': {
         requirePlugin(!extraction.busy(), 'runtime-busy');
         requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        const mode = params.mode ?? 'automatic';
+        requirePlugin(mode === 'automatic' || mode === 'step', 'runtime-input');
         const title = params.title === undefined ? undefined : text(params.title, 100);
-        const options = { worker: run, signal, title };
+        const ocr = parseOcr(params.ocr);
+        requirePlugin(params.ocr === undefined || ocr, 'runtime-input');
+        const options = { worker: run, signal, title, mode, ocr } as const;
         if (params.url !== undefined) {
           requirePlugin(params.source === undefined, 'runtime-input');
           return extraction.start({ url: text(params.url, 2048) }, params.schema, params.allowModel, options);
@@ -283,11 +350,14 @@ export class PluginRuntime {
         return status;
       }
       case 'bi.status':
+      case 'bi.resume':
       case 'bi.submit': {
         const key = id(params.id);
         const status = extraction.status(key);
         requirePlugin(status?.vault, 'runtime-forbidden');
-        return method === 'bi.submit' ? extraction.submit(key) : status;
+        if (method === 'bi.submit') return extraction.submit(key);
+        if (method === 'bi.resume') return extraction.resume(key, { worker: run, signal });
+        return status;
       }
       default: throw new PluginError('runtime-forbidden');
     }

@@ -415,6 +415,17 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **理由：** 擁有者同意；公司提供的簽章工具（如儀器控制）是主要使用情境，不應等待完整隔離。
 - **捨棄的替代方案：** 等隔離驗證後才全面開放本機 MCP（擁有者無法測試儀器控制）。
 
+### 週四展示版的 stdio 實作
+
+- 擁有者從「能力／MCP」信任本機執行檔。OEP 儲存 SHA-256、簽章狀態、簽署憑證主體與指紋。檔案或簽章變更會停用工具並關閉其 Job。重新信任後沿用原先逐工作區的授權，重新啟動執行環境後載入新工具目錄。
+- 信任後才可授權給助理工作區。程序使用 Windows Job 管理生命週期，並保留正常網路，供 MXO 等工具連線儀器。HTTP loopback 信任仍需獨立確認服務端的執行檔身分。
+
+## 2026-11-23 能力集中管理
+
+- 主功能「能力」集中安裝 Plugin、管理 Skill 和 MCP、預覽 AEP Workflow、匯入已發布知識庫。設定的外部工具提供連結，內建查詢工具保留整合設定入口。
+- 內附 Skill 由主助理初次啟動時啟用，桌面操作 Skill 逐一授權。每助理超過 20 個時顯示警告。OpenCode 在助理的會話工作區發現 Skill，依每回合授權載入文字。匯入的資源與腳本隨套件保存。
+- 能力匯入的知識庫沿用已發布快照、查詢同意與助理讀取授權。移除立即停止使用，保留發布歷史與稽核資料。Workflow 定義在此版唯讀，執行引擎進入後續工作。 [驗證報告](reviews/UX_CAPABILITIES_PAGE_REPORT.md)
+
 ## 2026-11-23 Plugin 安裝暫不使用簽章
 
 - **決策：** 現階段 Plugin 安裝不要求簽章或金鑰。保留 manifest 檢查、安裝時記錄套件雜湊並於啟動時重新核對（變更即停用並提供「信任目前版本」）、相容版本檢查（可覆寫）、權限同意畫面。套件格式預留日後可選的簽章欄位。
@@ -427,8 +438,14 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **理由：** 擁有者要求於週四 demo 從原始文件自動擷取卡片；AEP 已完整開發此流程，沿用可縮短時程並保持品質一致。
 - **捨棄的替代方案：** 只參考行為重新實作（原規則；時程不足）。
 ## 2026-11-23 BI 文件擷取工作程序
+
 - 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
 - PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
+
+### BI 建置階段與工作草稿
+
+- BI parity 沿用 Node SQLite、既有 `semver`、Python 標準程式庫及原有 `pypdf`，無新增相依。轉檔、規則擷取與 AEP commit 重建沿用外掛 broker；工作草稿與階段設定存於外掛資料區。
+- BI 助理查詢由 OEP 核心依已發布知識庫及 Gateway 授權提供。Telegram 排程共用收件及工作派送台帳，候選卡片沿用擁有者審核。OCR 與辨識相依由獨立 OCR 分支處理。 [BI parity 報告](reviews/PHASE3G_BI_PARITY_REPORT.md)
 
 ## 2026-11-23 外部 coding agent 預設用訂閱帳號登入
 
@@ -436,3 +453,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **理由：** 擁有者不想輸入 API key 並另外付費；擁有者已確認相關商業條款（2026-11-23 設定中勾選）。
 - **捨棄的替代方案：** 預設 Console API key（額外計費）。
 - **風險：** Anthropic 對第三方產品使用訂閱 OAuth 有限制；由擁有者承擔條款責任，OEP 只呼叫官方 CLI，不自行取得或保存訂閱 token 以外的憑證。
+
+## 2026-11-23 BI 掃描頁 OCR
+
+- BI 以 `pypdf` 逐頁讀取可用文字層。需要轉成圖片的頁面在既有 Windows AppContainer 內使用 `pypdfium2` 5.15.2。發行鎖定 Windows x64 wheel 的 SHA-256，bundled 發行含 PDFium DLL，並在 NOTICE、第三方授權及 SBOM 列出套件。Python binding 採 `Apache-2.0 OR BSD-3-Clause`，wheel 所附 PDFium 與其他元件授權一併保留。 [pypdfium2 5.15.2](https://pypi.org/project/pypdfium2/5.15.2/)
+- Windows PowerShell 5.1 提供已驗證的 WinRT 投影。宿主透過 BI 轉檔工作程序的 broker，將有界 PNG 或 JPEG 交給 `Windows.Media.Ocr`。本機 OCR 只需作業系統的辨識語言包。Gateway 圖片辨識依選用模型的探測結果啟用，沿用同一個模型請求席位。 [Windows.Media.Ocr](https://learn.microsoft.com/en-us/uwp/api/windows.media.ocr.ocrengine) · [驗證紀錄](reviews/PHASE3G_OCR_REPORT.md)

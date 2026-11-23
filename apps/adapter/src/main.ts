@@ -25,9 +25,10 @@ import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, p
 import { DelegationService } from './runs/delegation.ts';
 import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external-delegations.ts';
 import { helperReady } from './runs/external-cli.ts';
+import { LoginExchange } from './runs/external-login.ts';
 import { ExternalSources } from './runs/external-sources.ts';
 import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
-import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperSettings, identifiers, invalidExternal,
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperAuthPrompt, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -55,11 +56,14 @@ import { Dispatcher } from './runs/dispatcher.ts';
 import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
 import { agentManagement } from './http/agents.ts';
+import { capabilityManagement } from './http/capabilities.ts';
 import { DocumentExtraction } from './bi/document-extraction.ts';
 import { receiveBiDocument } from './http/bi-documents.ts';
 import { servePlugins } from './plugins/http.ts';
 import { PluginRuntime } from './plugins/runtime.ts';
 import { recoverPythonJobs } from './plugins/python.ts';
+import { monitorMcpTrust, sameStdioCommand } from './runs/mcp-trust.ts';
+import type { CustomStdioMcp } from './runs/custom-mcp.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -69,6 +73,7 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/local-paths.js', ['src/local-paths.js', 'text/javascript; charset=utf-8']],
   ['/plugins.js', ['src/plugins.js', 'text/javascript; charset=utf-8']],
+  ['/capabilities.js', ['src/capabilities.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/telegram-setup.js', ['src/telegram-setup.js', 'text/javascript; charset=utf-8']],
@@ -133,7 +138,8 @@ function secureHeaders(response: ServerResponse) {
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
   requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions,
   mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker,
-  pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3] }) {
+  pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3];
+    biScheduleClock?: () => number }) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -147,6 +153,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  try { store.capabilityLibrary().seed(); }
+  catch (error) { store.close(); throw error; }
   const mcpOAuth = runtime.mcpOAuth ?? new McpOAuth(root, openBrowser, mcpCredentials);
   const plugins = (() => {
     try {
@@ -168,8 +176,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     try { return new DelegationService(store, root, dispatcher, (id) => events.notify(id, 'delegation')); }
     catch (error) { void events.close(); store.close(); throw error; }
   })();
+  let pluginRuntime: PluginRuntime;
   const telegram = (() => {
-    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations); }
+    try { return startTelegram(root, runtime, telegramEnabled, store, dispatcher, channelEnvironment, delegations, {
+      available: () => Boolean(pluginRuntime?.scheduledAvailable()),
+      run: (input, target, review, provenance, signal) => pluginRuntime.runScheduled(input, target, review, provenance, signal),
+    }, pluginOptions?.biScheduleClock); }
     catch (error) { void events.close(); store.close(); throw error; }
   })();
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher,
@@ -179,18 +191,21 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const extraction = runtime.knowledge && new DocumentExtraction(join(root, 'bi-documents.sqlite'), runtime.knowledge,
     () => new Set(telegram.approvedBiOrigins()), pluginOptions?.fetchBiPage,
-    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined);
+    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined, pluginOptions?.dataRoot ?? root);
   let receivingBiDocument = false;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  const pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
+  pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
     const session = sessions.get(sessionId);
     if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
     return externalSources.pluginFile(session, source, hash);
-  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference });
+  }, extraction && { extraction, picker: referencePicker ?? pickLocalReference, inbox: telegram.inboxSchedule,
+    modelNotes: (aliases) => store.modelNotes(aliases) });
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
     (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram, external);
+  const loginExchanges = new Map<string, { owner: string; relay: LoginExchange }>();
+  const capabilities = capabilityManagement(store, runtime.knowledge, referencePicker ?? pickLocalReference);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -204,8 +219,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const sameModels = (ids: readonly string[]) => ids.length === runtime.aliases.length && ids.every((id) => runtime.aliases.includes(id));
   const modelSettings = () => {
     const selection = modelSelection();
+    const choices = store.modelChoices(runtime.builtInAliases);
+    const modelNotes = store.modelNotes([...new Set([...choices, ...runtime.aliases])]);
     return { defaultAlias: runtime.alias, aliases: runtime.aliasHealth(), credentialsConfigured: true,
-      selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices: store.modelChoices(runtime.builtInAliases),
+      selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices,
+      ...(Object.keys(modelNotes).length ? { modelNotes } : {}),
       discoveredAt: store.modelCatalog()?.discoveredAt ?? null, maxSelected: maxSelectedModels,
       restartRequired: !sameModels(selection.ids), canRestart: Boolean(requestRestart) };
   };
@@ -214,6 +232,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   let restarting = false;
   let testingMcp = false;
   let refreshingModels = false;
+  const trustworthy = monitorMcpTrust(runtime.mcpFingerprint);
+  function refreshLocalMcpTrust() {
+    for (const server of store.customMcpServers()) {
+      if (server.transport !== 'stdio' || !server.trust || server.trust.changed || trustworthy(server)) continue;
+      const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;
+      store.saveCustomMcp({ ...definition, enabled: false, trust: { ...server.trust, changed: true } });
+      runtime.remoteMcp?.revokeLocal(server.id);
+    }
+  }
   const changedCredentials = new Set<string>();
   const oauthStatus = (server: CustomMcp) => {
     const status = mcpOAuth.status(server);
@@ -248,6 +275,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl || Boolean(telegramHistory));
     if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
       await servePlugins(plugins, pluginRuntime, path, request, response, csrf, () => body(request, 256 * 1024));
+      return;
+    }
+    if (path.startsWith('/api/capabilities/')) {
+      const caller = new AbortController();
+      response.once('close', () => caller.abort());
+      send(response, 200, await capabilities(path, request, () => body(request), caller.signal));
       return;
     }
     if (telegramHistory) {
@@ -336,11 +369,41 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/settings/external-helpers/auth' && method === 'POST') {
-      const auth = helperAuth(await body(request));
-      const client = new AbortController();
+      const { provider, request: action, exchange } = helperAuth(await body(request, 4096));
+      if (exchange && loginExchanges.has(exchange)) throw new DelegationError('external-auth-busy');
+      const relay = exchange ? new LoginExchange() : undefined;
+      const client = relay?.client ?? new AbortController();
+      const timeout = AbortSignal.timeout(180_000);
       response.once('close', () => client.abort());
-      const status = await external.authenticate(auth.provider, auth.request, AbortSignal.any([client.signal, AbortSignal.timeout(180_000)]));
-      if (!response.destroyed) send(response, 200, status);
+      if (response.destroyed) return;
+      if (exchange && relay) loginExchanges.set(exchange, { owner: csrf, relay });
+      try {
+        const status = await external.authenticate(provider, action, AbortSignal.any([client.signal, timeout]), relay);
+        if (!response.destroyed) send(response, 200, status);
+      } catch (error) {
+        if (response.destroyed) return;
+        if (timeout.aborted) throw new DelegationError('external-auth-timeout');
+        if (client.signal.aborted) throw new DelegationError('external-auth-cancelled');
+        throw error;
+      } finally {
+        if (exchange) loginExchanges.delete(exchange);
+      }
+      return;
+    }
+    if (path === '/api/settings/external-helpers/auth/prompt' && method === 'POST') {
+      const prompt = helperAuthPrompt(await body(request, 1024));
+      const { exchange, action } = prompt;
+      const entry = loginExchanges.get(exchange);
+      const relay = entry?.owner === csrf ? entry.relay : undefined;
+      if (action === 'poll') send(response, 200, relay?.prompt ?? {});
+      else {
+        if (!relay) throw new DelegationError('external-auth-code-unavailable');
+        if (action === 'cancel') {
+          relay.client.abort();
+          relay.prompt = {};
+        } else relay.submit(prompt.code);
+        send(response, 200, {});
+      }
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {
@@ -459,14 +522,27 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (path === '/api/settings/model') {
       if (method === 'POST') {
-        const input = await body(request);
+        const input = await body(request, 256 * 1024);
+        const fields = Object.keys(input);
         const selection = modelSelection();
-        if (Object.keys(input).length === 1 && 'alias' in input) {
+        if (fields.length === 1 && 'alias' in input) {
           const alias = approvedAlias(input.alias);
           if (!selection.ids.includes(alias)) throw new HttpError(400, 'unapproved-model');
           store.saveDefaultAlias(alias);
         } else {
-          if (Object.keys(input).length !== 2 || !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases)) {
+          const notes = Object.hasOwn(input, 'notes') ? input.notes : {};
+          if (!notes || typeof notes !== 'object' || Array.isArray(notes) ||
+              Object.values(notes).some((note) => typeof note !== 'string' || note.length > 160 ||
+                /[\r\n\t\u2028\u2029]/.test(note) || runtime.redact(note) !== note)) {
+            throw new HttpError(400, 'invalid-model-note');
+          }
+          const edits = Object.fromEntries(Object.entries(notes).map(([id, note]) => [id, (note as string).trim()]));
+          if (fields.length === 1 && 'notes' in input) {
+            store.saveModelNotes(edits, runtime.builtInAliases);
+            return send(response, 200, modelSettings());
+          }
+          if (fields.some((key) => !['selected', 'alias', 'notes'].includes(key)) ||
+              !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases, edits)) {
             throw new HttpError(400, 'invalid-model-selection', { max: maxSelectedModels });
           }
         }
@@ -580,9 +656,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/settings/mcp/test' && method === 'POST') {
+      refreshLocalMcpTrust();
       const { id } = await body(request);
       const server = store.customMcpServers().find((entry) => entry.id === id);
       if (!server) throw new HttpError(404, 'server-not-found');
+      if (server.transport === 'stdio' && server.trust?.changed) throw new HttpError(409, 'mcp-trust-changed');
       if (testingMcp) throw new HttpError(409, 'probe-busy');
       testingMcp = true;
       try {
@@ -604,13 +682,21 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       } finally { testingMcp = false; }
       return;
     }
+    if (path === '/api/settings/mcp/trust-status' && method === 'GET') {
+      refreshLocalMcpTrust();
+      send(response, 200, store.customMcpServers().filter((server) => server.transport === 'stdio' && server.trust?.changed)
+        .map(({ id }) => id));
+      return;
+    }
     if (path === '/api/settings/mcp/custom') {
+      refreshLocalMcpTrust();
       let changedId: string | undefined;
       if (method === 'POST') {
         const input = await body(request);
         const existing = store.customMcpServers().find(({ id }) => id === input.id);
         if (input.action !== 'create' && !existing) throw new HttpError(404, 'server-not-found');
         if (input.action === 'remove' && existing) {
+          runtime.remoteMcp?.revokeLocal(existing.id);
           mcpOAuth.remove(existing);
           store.removeCustomMcp(existing.id);
         } else if ((input.action === 'oauth-login' || input.action === 'oauth-logout') && existing) {
@@ -638,9 +724,23 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           changedCredentials.add(existing.id);
           send(response, 200, { configured: true });
           return;
+        } else if (input.action === 'trust' && existing) {
+          if (existing.transport !== 'stdio' || input.confirmed !== true) throw new HttpError(400, 'mcp-trust-confirm');
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          let trust;
+          try { trust = runtime.mcpFingerprint(existing.command[0]); }
+          catch { throw new HttpError(422, 'mcp-trust-unavailable'); }
+          if (!existing.trust) store.clearCustomMcpGrants(existing.id);
+          store.saveCustomMcp({ ...definition, trust, enabled: true });
+          changedId = existing.id;
+        } else if (input.action === 'grant' && existing) {
+          if (typeof input.workspace !== 'string' || input.workspace.length > 80 || typeof input.enabled !== 'boolean') {
+            throw new HttpError(400, 'agent-mcp-invalid');
+          }
+          store.setCustomMcpWorkspaceGrant(existing, input.workspace, input.enabled);
         } else if (input.action === 'tool' && existing) {
           const { tool, enabled } = input;
-          if (typeof tool !== 'string' || !(oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
+          if (typeof tool !== 'string' || !(existing.transport === 'stdio' || oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
             throw new HttpError(400, 'invalid-tool-settings');
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
@@ -651,6 +751,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           store.saveCustomMcp({ ...definition, deniedTools: [...denied] });
         } else if (input.action === 'enable' && existing) {
           if (typeof input.enabled !== 'boolean') throw new HttpError(400, 'invalid-server-enabled');
+          if (input.enabled && existing.transport === 'stdio' && existing.trust?.changed) throw new HttpError(409, 'mcp-trust-changed');
           if (input.enabled && existing.transport === 'remote') {
             try { await pinCustomRemoteMcp(existing, AbortSignal.timeout(5000)); }
             catch { throw new HttpError(400, 'mcp-network-address'); }
@@ -660,13 +761,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
           store.saveCustomMcp({ ...definition, enabled: input.enabled });
+          if (!input.enabled && existing.transport === 'stdio') runtime.remoteMcp?.revokeLocal(existing.id);
         } else if (input.action === 'create' || input.action === 'update') {
           const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
           try {
             const deniedTools = input.action === 'update' ? existing?.deniedTools ?? [] : [];
-            const definitionInput = { ...input, deniedTools: input.oauth ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
+            const definitionInput = { ...input, deniedTools: input.oauth || input.transport === 'stdio'
+              ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
             const projectIDs = projects.map((project) => project.id);
-            const definition = input.transport === 'remote'
+            let definition: CustomMcp = input.transport === 'remote'
               ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
               : validateCustomStdioMcp(id, definitionInput, projectIDs);
             if (definition.transport === 'remote') await pinCustomRemoteMcp(definition, AbortSignal.timeout(5000));
@@ -674,6 +777,13 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
               throw new HttpError(400, 'server-changed');
             }
             mcpOAuth.configure(existing, definition, input.oauthClientId, input.oauthClientSecret);
+            if (existing?.transport === 'stdio' && existing.trust && definition.transport === 'stdio') {
+              const local = definition as CustomStdioMcp;
+              definition = sameStdioCommand(existing, local)
+                ? { ...local, trust: existing.trust, enabled: !existing.trust.changed && local.enabled }
+                : { ...local, trust: { ...existing.trust, changed: true }, enabled: false };
+              if (!definition.enabled) runtime.remoteMcp?.revokeLocal(existing.id);
+            } else if (existing?.transport === 'stdio') runtime.remoteMcp?.revokeLocal(existing.id);
             store.saveCustomMcp(definition);
             changedId = id;
           } catch (error) {
@@ -692,11 +802,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
       });
       const oauthStatuses = new Map(servers.map((server) => [server.id, oauthStatus(server)]));
-      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id);
+      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id) ||
+        server.transport === 'stdio' && Boolean(server.trust && !server.trust.changed && server.enabled &&
+          !runtime.remoteMcp?.status.has(server.id));
       const baseRestartRequired = servers.some(definitionChanged) ||
         applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0;
       send(response, 200, {
         changedId,
+        workspaces: store.customMcpWorkspaceGrants(),
         baseRestartRequired,
         restartRequired: baseRestartRequired || [...oauthStatuses.values()].some((status) => status?.needsRestart),
         servers: servers.map((server) => ({
@@ -1270,7 +1383,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
     }).finally(() => {
       if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
-          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
+          request.url !== '/api/settings/external-helpers/auth/prompt' &&
+          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/|capabilities\/knowledge\/)/.test(request.url ?? '')) {
         external.recheckActive();
       }
     });
@@ -1295,9 +1409,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     store.close();
     throw error;
   }
+  const trustTimer = setInterval(() => {
+    try { refreshLocalMcpTrust(); } catch { /* Request-driven refresh will retry. */ }
+  }, 2000);
+  trustTimer.unref();
   return {
     pairURL: () => auth.pairURL(),
     async close() {
+      clearInterval(trustTimer);
       mcpOAuth.close();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const stopped = chat.close();

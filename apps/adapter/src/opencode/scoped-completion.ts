@@ -69,6 +69,10 @@ export function authorizeToolCalls(frames: Record<string, unknown>[], allowed: S
     ids.add(call.id);
     const args = objectRecord(JSON.parse(call.pieces.map((part) => part.arguments ?? '').join('')));
     if (!args || containsTransport(args)) throw new Error('Invalid tool arguments');
+    if (call.name === 'skill' && (typeof args.id !== 'string' || Object.keys(args).length !== 1 ||
+      !scope.permissions.some(({ action, resource, effect }) => action === 'skill' && resource === args.id && effect === 'allow'))) {
+      throw new Error('Skill not authorized');
+    }
     if (scope.brokered?.(call.name)) {
       if (!scope.issue) throw new Error('Invalid broker tool arguments');
       brokerCalls.push({ call, args, id: call.id });

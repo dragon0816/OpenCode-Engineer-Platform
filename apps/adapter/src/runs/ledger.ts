@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { atRepo } from '../../../launcher/src/paths.ts';
 import type { RunRecord, RunState } from '../../../../packages/contracts/src/run.ts';
-import { pluginRegistryVersion } from '../plugins/schema.ts';
 
 const transitions: Record<RunState, RunState[]> = {
   accepted: ['running', 'failed', 'cancelled', 'indeterminate'],
@@ -17,7 +16,9 @@ const transitions: Record<RunState, RunState[]> = {
 
 export const runLedgerVersion = 1;
 export const telegramChatLedgerVersion = 3;
-export const webLedgerVersion = pluginRegistryVersion;
+export const modelNotesVersion = 13;
+export const capabilitiesVersion = 14;
+export const webLedgerVersion = capabilitiesVersion;
 type WebMigration = { version: number; migrate: (db: DatabaseSync, version: number) => void; verify: (db: DatabaseSync) => void };
 
 export class Ledger {

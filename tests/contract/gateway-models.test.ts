@@ -20,18 +20,70 @@ test('discovery normalizes the endpoint, keeps only safe verbatim IDs, and caps 
   const expected = ['synthetic-model-a', 'team/synthetic-model-b:latest', 'Synthetic/Model@2',
     ...Array.from({ length: maxDiscoveredModels }, (_, i) => `synthetic-extra-${i}`)].slice(0, maxDiscoveredModels);
   const payload = list([url, key, `prefix-${key}`, 'synthetic-discovery.invalid', expected[0], ...expected, 'synthetic-over-cap']);
-  let observed: { url: string; method?: string; redirect?: RequestRedirect; authorization: string | null; signal: boolean } | undefined;
+  const observed: { url: string; method?: string; redirect?: RequestRedirect; authorization: string | null; signal: boolean }[] = [];
   const before = Date.now();
   const result = await discoverGatewayModels({ url, key, fetch: async (input, init) => {
-    observed = { url: String(input), method: init?.method, redirect: init?.redirect,
-      authorization: new Headers(init?.headers).get('authorization'), signal: init?.signal instanceof AbortSignal };
-    return Response.json(payload);
+    observed.push({ url: String(input), method: init?.method, redirect: init?.redirect,
+      authorization: new Headers(init?.headers).get('authorization'), signal: init?.signal instanceof AbortSignal });
+    return observed.length === 1 ? Response.json(payload) : new Response(null, { status: 404 });
   } });
-  assert.deepEqual(observed, { url: 'https://synthetic-discovery.invalid/provider/v1/models', method: 'GET', redirect: 'manual',
-    authorization: `Bearer ${key}`, signal: true });
+  assert.deepEqual(observed, ['/v1/models', '/v1/model/info', '/model/info'].map((path) => ({
+    url: 'https://synthetic-discovery.invalid/provider' + path, method: 'GET', redirect: 'manual',
+    authorization: `Bearer ${key}`, signal: true,
+  })));
   assert.deepEqual(result?.ids, expected);
   assert.ok(result && result.discoveredAt >= before && result.discoveredAt <= Date.now());
   assert.deepEqual(Object.keys(result).sort(), ['discoveredAt', 'ids']);
+});
+
+test('model info projects only unambiguous mappings for public models and falls back across endpoints', async () => {
+  const url = 'https://synthetic-discovery.invalid';
+  const key = randomUUID();
+  const upstreamKey = randomUUID();
+  const apiBase = 'https://synthetic-upstream.invalid/v1';
+  const aliases = ['synthetic-alias', 'synthetic-namespace', 'synthetic-identical', 'synthetic-ambiguous',
+    'synthetic-url', 'synthetic-host', 'synthetic-key', 'synthetic-gateway-key', '__proto__'];
+  const row = (model_name: string, model: string) => ({ model_name,
+    litellm_params: { model, api_base: apiBase, api_key: upstreamKey }, model_info: { id: upstreamKey } });
+  const result = await discoverGatewayModels({ url, key, fetch: async (input) => {
+    switch (String(input)) {
+      case url + '/v1/models': return Response.json(list(aliases));
+      case url + '/v1/model/info': return new Response(apiBase, { status: 403 });
+      case url + '/model/info': return Response.json({ data: [
+        row(aliases[0], 'hosted_vllm/gpt-5.5'), row(aliases[0], 'openai/gpt-5.5'),
+        row(aliases[1], 'custom_provider/team/synthetic-model'), row(aliases[2], 'openai/' + aliases[2]),
+        row(aliases[3], 'openai/gpt-5.5'), row(aliases[3], 'openai/gpt-5.4'), row(aliases[3], 'openai/gpt-5.5'),
+        row(aliases[4], apiBase), row(aliases[5], 'openai/' + new URL(apiBase).hostname),
+        row(aliases[6], 'openai/' + upstreamKey), row(aliases[7], 'openai/' + key),
+        row(aliases[8], 'openai/synthetic-model'), row('synthetic-private', 'openai/gpt-5.4'),
+      ] });
+      default: assert.fail('Unexpected discovery path');
+    }
+  } });
+  assert.deepEqual(result?.ids, aliases);
+  assert.deepEqual(result?.mappedModels, { [aliases[0]]: 'gpt-5.5', [aliases[1]]: 'team/synthetic-model',
+    [aliases[8]]: 'synthetic-model' });
+  const persisted = JSON.stringify(result);
+  for (const secret of [key, upstreamKey, apiBase, new URL(apiBase).hostname, 'api_base', 'api_key']) {
+    assert.equal(persisted.includes(secret), false);
+  }
+});
+
+test('forbidden model info preserves public discovery without logging upstream details', async (t) => {
+  const key = randomUUID();
+  const url = 'https://synthetic-discovery.invalid';
+  const logs = ['log', 'warn', 'error'].map((name) => t.mock.method(console, name as 'log', () => undefined));
+  const requests: string[] = [];
+  const result = await discoverGatewayModels({ url, key, fetch: async (input) => {
+    const path = new URL(String(input)).pathname;
+    requests.push(path);
+    if (path === '/v1/models') return Response.json(list(['synthetic-model-a']));
+    return new Response(key, { status: path === '/v1/model/info' ? 404 : 403 });
+  } });
+  assert.deepEqual(requests, ['/v1/models', '/v1/model/info', '/model/info']);
+  assert.deepEqual(result?.ids, ['synthetic-model-a']);
+  assert.deepEqual(Object.keys(result ?? {}).sort(), ['discoveredAt', 'ids']);
+  assert.deepEqual(logs.map(({ mock }) => mock.callCount()), [0, 0, 0]);
 });
 
 test('failed discovery omits credentials, status details and response bodies', async (t) => {
@@ -115,6 +167,26 @@ test('model storage preserves legacy defaults and the last good catalog, and val
     store.saveModelCatalog({ ids: [b], discoveredAt: 300 }, gatewayAliases);
     assert.deepEqual(store.modelSelection(gatewayAliases), { ids: [gatewayAliases[0]], defaultAlias: gatewayAliases[0] });
     assert.deepEqual(store.modelChoices(gatewayAliases), [b, ...gatewayAliases]);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('owner notes survive refreshing, model removal and reopening the store', () => {
+  const root = mkdtempSync(join(process.env.OEP_DATA_DIR ?? tmpdir(), 'oep-model-notes-'));
+  const path = join(root, 'web.sqlite');
+  const [a, b] = ['synthetic-model-a', 'synthetic-model-b'];
+  let store = new WebStore(path);
+  try {
+    store.saveModelCatalog({ ids: [a, b], discoveredAt: 100, mappedModels: { [a]: 'gpt-5.5', [b]: 'gpt-5.4' } }, gatewayAliases);
+    assert.deepEqual(store.modelNotes([a, b]), { [a]: { mappedModel: 'gpt-5.5', note: null }, [b]: { mappedModel: 'gpt-5.4', note: null } });
+    assert.throws(() => store.saveModelSelection([a, b], b, gatewayAliases, { unknown: 'Unknown model' }), { status: 400 });
+    assert.deepEqual(store.modelSelection(gatewayAliases).ids, gatewayAliases);
+    assert.equal(store.saveModelSelection([a, b], b, gatewayAliases, { [a]: 'Owner note', [b]: '' }), true);
+    store.saveModelCatalog({ ids: [a], discoveredAt: 200 }, gatewayAliases);
+    store.close();
+    store = new WebStore(path);
+    store.saveModelCatalog({ ids: [a, b], discoveredAt: 300, mappedModels: { [a]: 'gpt-5.4', [b]: 'gpt-5.5' } }, gatewayAliases);
+    assert.deepEqual(store.modelNotes([a, b]), { [a]: { mappedModel: 'gpt-5.4', note: 'Owner note' },
+      [b]: { mappedModel: 'gpt-5.5', note: '' } });
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

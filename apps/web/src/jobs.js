@@ -9,6 +9,7 @@ const labels = {
   pending: message('jobs.queued-for-delivery'), sent: message('jobs.sent'), failed: message('chat.failed'), indeterminate: message('jobs.delivery-unconfirmed'), sending: message('jobs.sending'),
   draft: message('jobs.awaiting-approval'), active: message('jobs.enabled'), paused: message('jobs.paused'), rejected: message('jobs.rejected'), removed: message('jobs.removed'),
   queued: message('jobs.queued'), missed: message('jobs.skipped'), expired: message('jobs.missed-retry-window'), ready: message('ui.pending'),
+  scheduled: message('biBuilder.inboxPending'), succeeded: message('biBuilder.inboxProcessed'),
   awaiting_review: message('jobs.pending-review'), blocked: message('jobs.more-information-needed'),
   approved: message('jobs.approved'), published: message('jobs.published'), discarded: message('jobs.discarded'),
 };
@@ -292,7 +293,7 @@ export function bindJobs(openPreview) {
       item.append(node('small', joinText([state, when])));
       const actions = disclosure(message('ui.more'), 'feature-more');
       actions.querySelector('summary').dataset.featureFocus = 'schedule-more-' + row.id;
-      control(actions, message('jobs.edit'), (opener) => preview('edit-' + row.id, message('jobs.edit-schedule-name', { name: row.id }), opener, (body) => {
+      if (row.id !== 'bi-inbox-pipeline') control(actions, message('jobs.edit'), (opener) => preview('edit-' + row.id, message('jobs.edit-schedule-name', { name: row.id }), opener, (body) => {
         const latest = (status.schedules ?? []).find(({ id }) => id === row.id);
         if (latest?.state !== 'removed') scheduleEditor(body, latest);
       }), 'schedule-more-' + row.id);

@@ -8,8 +8,13 @@ const minute = 60_000;
 const day = 1440 * minute;
 const utcMinute = (now: number) => Math.floor(now / minute) * minute;
 type Schedule = { id: string; zone: string; time: string; payload: string; state: string; since: number };
-export type BiOccurrence = { job: string; schedule: string; candidate: Candidate };
-type DispatchOccurrence = (occurrence: BiOccurrence) => 'queued' | 'awaiting_review' | 'blocked';
+export const biInboxSchedule = 'bi-inbox-pipeline';
+type InboxSchedule = { kind: 'bi-inbox'; target: string };
+export type BiOccurrence = { job: string; schedule: string } &
+  ({ candidate: Candidate; inbox?: never } | { candidate?: never; inbox: InboxSchedule });
+type DispatchOccurrence = (occurrence: BiOccurrence) => 'queued' | 'awaiting_review' | 'blocked' | 'succeeded';
+
+function inboxSchedule(input: Candidate | InboxSchedule): input is InboxSchedule { return 'kind' in input && input.kind === 'bi-inbox'; }
 
 export class BiScheduler {
   private readonly db: DatabaseSync;
@@ -28,14 +33,23 @@ export class BiScheduler {
       payload TEXT, state TEXT, PRIMARY KEY(schedule,wall));`);
   }
 
-  save(id: string, zone: string, time: string, input: Candidate, now = Date.now()) {
-    if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(time) || input?.vault?.kind !== 'bi') {
+  save(id: string, zone: string, time: string, input: Candidate | InboxSchedule, now = Date.now()) {
+    if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(time) || !input || typeof input !== 'object' ||
+        (inboxSchedule(input) ? id !== biInboxSchedule || !key(input.target) : id === biInboxSchedule || input.vault?.kind !== 'bi')) {
       throw new Error('Invalid BI schedule');
     }
     zoneClock(zone);
     this.db.prepare(`INSERT INTO bi_schedules VALUES (?,?,?,?,'draft',?)
       ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,time=excluded.time,payload=excluded.payload,state='draft',
       since=excluded.since`).run(key(id), zone, time, JSON.stringify(input), now);
+  }
+
+  inbox() {
+    const row = this.db.prepare("SELECT zone,time,state,payload FROM bi_schedules WHERE id=? AND state IN ('active','paused')")
+      .get(biInboxSchedule);
+    if (!row) return;
+    const input = JSON.parse(String(row.payload)) as InboxSchedule;
+    return { zone: String(row.zone), time: String(row.time), state: String(row.state), target: input.target };
   }
 
   state(id: string, state: unknown, now = Date.now()) {
@@ -111,13 +125,15 @@ export class BiScheduler {
     for (const row of rows) {
       const job = String(row.job);
       try {
-        const candidate = JSON.parse(String(row.payload)) as Candidate;
+        const input = JSON.parse(String(row.payload)) as Candidate | InboxSchedule;
         if (this.dispatch) {
-          const state = this.dispatch({ job, schedule: String(row.schedule), candidate });
+          const selected = inboxSchedule(input) ? { inbox: input } : { candidate: input };
+          const state = this.dispatch({ job, schedule: String(row.schedule), ...selected });
           if (state !== 'queued') update.run(state, job);
           continue;
         }
-        this.store.enqueueBi(job, candidate, 'schedule');
+        if (inboxSchedule(input)) throw new Error('BI inbox needs the dispatcher');
+        this.store.enqueueBi(job, input, 'schedule');
         this.store.runBi(job);
         if (this.store.biCompleted(job)) update.run('awaiting_review', job);
       } catch {

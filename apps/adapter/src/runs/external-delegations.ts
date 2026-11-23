@@ -4,6 +4,7 @@ import { DelegationError, type DelegationFile, type DelegationParent, type Deleg
 import type { Dispatcher } from './dispatcher.ts';
 import { helperReady, unavailableHelper, type HelperAuthAction, type HelperStatus } from './external-cli.ts';
 import { ExternalExecutionUnknown, type ExternalExecutor } from './external-executor.ts';
+import type { LoginRelay } from './external-login.ts';
 import { externalProvider, type Provider, type Snapshot } from './external-ledger.ts';
 import type { ExternalSources } from './external-sources.ts';
 import type { ExternalDelegationInput } from '../opencode/delegation-tools.ts';
@@ -14,7 +15,7 @@ import type { WorkOutcome } from './work-items.ts';
 export type ExternalWorkerOptions = {
   executor?: ExternalExecutor;
   synthetic?: (snapshot: Snapshot) => void;
-  intakeFixture?: (provider: Provider) => HelperStatus;
+  intakeFixture?: (provider: Provider) => HelperStatus | undefined;
 };
 
 export class ExternalDelegations {
@@ -161,12 +162,12 @@ export class ExternalDelegations {
     return this.status(provider);
   }
 
-  async authenticate(provider: Provider, action: HelperAuthAction, signal: AbortSignal) {
+  async authenticate(provider: Provider, action: HelperAuthAction, signal: AbortSignal, relay?: LoginRelay) {
     if (provider === 'claude_code' && action.action !== 'logout' && !this.store.external.settings(provider).termsConfirmed) {
       throw new DelegationError('external-terms-required');
     }
     if (!this.options.executor) throw new DelegationError('external-isolation-unavailable');
-    return this.options.executor.authenticate(provider, action, signal);
+    return this.options.executor.authenticate(provider, action, signal, relay);
   }
 
   recheckActive() {

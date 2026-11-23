@@ -77,7 +77,7 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
     const definitions = store.customMcpServers();
     const tools = definitions.map(({ createdAt: _createdAt, updatedAt: _updatedAt, ...server }) => ({
       id: server.id, name: runtime.redact(server.name),
-      paused: assistantMcpPaused(server) || server.transport !== 'remote' || URL.parse(server.url)?.protocol !== 'https:', enabled: server.enabled,
+      paused: assistantMcpPaused(server), enabled: server.enabled,
       projects: server.appliesToProjects, pending: !runtime.customMcp?.some((applied) => canonical(applied) === canonical(server)),
     }));
     const externalModels = (Object.keys(helpers) as Provider[]).map((provider) => {
@@ -89,7 +89,9 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
     const revision = sha256(JSON.stringify([selection, externalModels.map(({ provider, revision }) => [provider, revision]),
       vaults.map(({ id, revision }) => [id, revision]),
       definitions.map(({ id, updatedAt }) => [id, updatedAt]), store.agents().map(({ id, revision }) => [id, revision])]));
-    return { revision, models, externalModels, appliedModels: runtime.aliases, vaults, tools };
+    const modelNotes = store.modelNotes(models);
+    return { revision, models, ...(Object.keys(modelNotes).length ? { modelNotes } : {}),
+      externalModels, appliedModels: runtime.aliases, vaults, tools };
   }
 
   function validate(settings: AgentSettings, available: ReturnType<typeof choices>, id?: string) {

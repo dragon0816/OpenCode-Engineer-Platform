@@ -16,17 +16,21 @@
         <span class="assistant-avatar" aria-hidden="true">O</span>
         <div><strong id="sidebar-assistant-name" data-i18n="ui.assistant"></strong><small id="sidebar-assistant-intro" data-i18n="ui.local-engineering-assistant"></small></div>
       </div>
-      <details class="rail-section" id="rail-functions" open>
-      <summary data-i18n="ui.main-features"></summary>
+      <section class="rail-section" id="main-features" aria-labelledby="rail-functions-title">
+      <details id="rail-functions" open>
+      <summary id="rail-functions-title" data-i18n="ui.main-features"></summary>
       <nav class="views" data-i18n-aria-label="ui.workbench">
         <button id="open-chat" type="button" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg><span data-i18n="ui.chat"></span></button>
         <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg><span data-i18n="ui.knowledge-base"></span></button>
         <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg><span data-i18n="ui.schedules-jobs"></span></button>
         <button id="open-review" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16H6zm3 8 2 2 4-4"/></svg><span data-i18n="ui.review"></span></button>
-        <button id="open-capabilities" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg><span data-i18n="plugins.capabilities"></span></button>
         <button id="open-settings" type="button" aria-keyshortcuts="Control+,"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/></svg><span data-i18n="ui.settings"></span></button>
       </nav>
       </details>
+      <div class="views capabilities-navigation">
+        <button id="open-capabilities" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg><span data-i18n="plugins.capabilities"></span></button>
+      </div>
+      </section>
       <details class="rail-section" id="rail-sessions" open>
       <summary><span data-i18n="ui.session"></span> <span class="rail-count" id="session-count" data-i18n-title="agents.session-count">0</span></summary>
       <div class="session-search">
@@ -280,6 +284,10 @@
           </section>
           <section id="settings-mcp" aria-labelledby="settings-mcp-title" hidden>
             <h2 id="settings-mcp-title" data-i18n="ui.external-tools"></h2>
+            <p class="settings-help" data-i18n="capabilities.mcp-settings-help"></p>
+            <button type="button" id="settings-open-mcp" data-i18n="capabilities.manage-mcp"></button>
+          </section>
+          <template id="capability-mcp-content">
             <p class="settings-help" data-i18n="ui.add-external-tools-and-choose-which-projects"></p>
             <div class="mcp-toolbar">
               <h3 data-i18n="ui.custom-servers"></h3>
@@ -294,7 +302,7 @@
             </div>
             <p id="mcp-status" role="status"></p>
             <div id="mcp-servers"></div>
-            <div class="settings-group">
+            <div class="settings-group" id="mcp-knowledge-group">
               <h3><span data-i18n="ui.built-in-knowledge-base"></span> <span class="runtime-badge" data-i18n="ui.managed-by-oep"></span></h3>
               <p id="mcp-knowledge-status" role="status"></p>
               <p id="mcp-knowledge-tools" hidden data-i18n="ui.built-in-tool-knowledge-base-query"></p>
@@ -376,7 +384,7 @@
                 </div>
               </form>
             </dialog>
-          </section>
+          </template>
           <section id="settings-runtime" aria-labelledby="settings-runtime-title" hidden>
             <h2 id="settings-runtime-title" data-i18n="ui.runtime"></h2>
             <p class="settings-help" data-i18n="ui.view-the-versions-used-by-local-services"></p>
@@ -602,7 +610,7 @@
             <summary data-i18n="biDocument.title"></summary>
             <form id="bi-document-form">
               <label for="bi-document-file" data-i18n="biDocument.file"></label>
-              <input id="bi-document-file" type="file" accept=".pdf,.txt,.md,.markdown,.html,.htm">
+              <input id="bi-document-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.md,.markdown,.csv,.html,.htm">
               <label for="bi-document-url" data-i18n="biDocument.url"></label>
               <input id="bi-document-url" type="url" maxlength="2048" autocomplete="off" spellcheck="false">
               <p class="page-help" data-i18n="biDocument.approvedSource"></p>
@@ -682,13 +690,63 @@
     <section class="conversation knowledge" id="capabilities-view" aria-labelledby="capabilities-title" hidden>
       <header class="page-header"><h1 id="capabilities-title" tabindex="-1" data-i18n="plugins.capabilities"></h1></header>
       <div class="knowledge-body">
-        <section aria-labelledby="plugins-title">
+        <div id="capability-tabs" class="knowledge-tabs" role="tablist" data-i18n-aria-label="plugins.capabilities">
+          <button id="capability-plugins" type="button" role="tab" aria-controls="capability-plugin-panel" aria-selected="true" data-i18n="capabilities.plugins"></button>
+          <button id="capability-skills" type="button" role="tab" aria-controls="capability-skill-panel" aria-selected="false" tabindex="-1" data-i18n="capabilities.skills"></button>
+          <button id="capability-workflows" type="button" role="tab" aria-controls="capability-workflow-panel" aria-selected="false" tabindex="-1" data-i18n="capabilities.workflows"></button>
+          <button id="capability-knowledge" type="button" role="tab" aria-controls="capability-knowledge-panel" aria-selected="false" tabindex="-1" data-i18n="ui.knowledge-base"></button>
+          <button id="capability-mcp" type="button" role="tab" aria-controls="capability-mcp-panel" aria-selected="false" tabindex="-1">MCP</button>
+        </div>
+        <section id="capability-plugin-panel" role="tabpanel" aria-labelledby="capability-plugins">
+          <div class="capability-toolbar">
+            <input id="plugin-file" type="file" accept=".oepplugin" hidden>
+            <button id="install-plugin" class="button-primary" type="button" data-i18n="plugins.install-file"></button>
+            <span class="muted" data-i18n="capabilities.plugin-drop"></span>
+          </div>
           <h2 id="plugins-title" data-i18n="plugins.heading"></h2>
-          <input id="plugin-file" type="file" accept=".oepplugin" hidden>
-          <button id="install-plugin" type="button" data-i18n="plugins.install-file"></button>
           <p id="plugins-status" role="status"></p>
           <ul id="plugins-list" class="feature-list"></ul>
         </section>
+        <section id="capability-skill-panel" role="tabpanel" aria-labelledby="capability-skills" hidden>
+          <div class="capability-toolbar">
+            <input id="skill-file" type="file" accept=".zip" hidden>
+            <button id="install-skill" class="button-primary" type="button" data-i18n="capabilities.install-zip"></button>
+            <button id="pick-skill-folder" type="button" data-i18n="capabilities.install-folder"></button>
+          </div>
+          <form id="skill-folder-form" class="capability-toolbar">
+            <label><span data-i18n="capabilities.folder-path"></span> <input id="skill-folder" maxlength="2048" required></label>
+            <button type="submit" data-i18n="capabilities.import"></button>
+          </form>
+          <label><span data-i18n="ui.assistant"></span> <select id="skill-assistant"></select></label>
+          <p id="skills-status" role="status"></p>
+          <p id="skills-warning" role="status" hidden data-i18n="capabilities.skill-limit-status"></p>
+          <ul id="skills-list" class="feature-list"></ul>
+        </section>
+        <section id="capability-workflow-panel" role="tabpanel" aria-labelledby="capability-workflows" hidden>
+          <div class="capability-toolbar">
+            <input id="workflow-file" type="file" accept=".json" hidden>
+            <button id="import-workflow" class="button-primary" type="button" data-i18n="capabilities.import-workflow"></button>
+            <span class="muted" data-i18n="capabilities.workflow-coming"></span>
+          </div>
+          <p id="workflows-status" role="status"></p>
+          <ul id="workflows-list" class="feature-list"></ul>
+        </section>
+        <section id="capability-knowledge-panel" role="tabpanel" aria-labelledby="capability-knowledge" hidden>
+          <h2 data-i18n="capabilities.knowledge-import"></h2>
+          <label class="capability-consent"><input type="checkbox" id="published-knowledge-consent"> <span data-i18n="capabilities.knowledge-consent"></span></label>
+          <div class="capability-toolbar">
+            <input id="published-knowledge-file" type="file" accept=".json,.gz,.gzip" hidden>
+            <button id="import-published-knowledge" class="button-primary" type="button" data-i18n="capabilities.import-package"></button>
+            <button id="pick-published-knowledge-folder" type="button" data-i18n="capabilities.import-bi"></button>
+          </div>
+          <form id="published-knowledge-folder-form" class="capability-toolbar">
+            <label><span data-i18n="capabilities.bi-path"></span> <input id="published-knowledge-folder" maxlength="2048" required></label>
+            <button type="submit" data-i18n="capabilities.import"></button>
+          </form>
+          <p id="published-knowledge-status" role="status"></p>
+          <ul id="published-knowledge-list" class="feature-list"></ul>
+        </section>
+        <section id="capability-mcp-panel" role="tabpanel" aria-labelledby="capability-mcp" hidden></section>
       </div>
     </section>
     <section class="conversation knowledge" id="plugin-page-view" aria-labelledby="plugin-page-title" hidden>

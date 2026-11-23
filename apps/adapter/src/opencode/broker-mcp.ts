@@ -1,10 +1,11 @@
 import { startLoopbackMcp } from './loopback-mcp.ts';
-import { brokerMcpName, knowledgeTool, readFileTool, statusTool, writeFileTool } from './permissions.ts';
+import { biQueryTool, brokerMcpName, knowledgeTool, readFileTool, statusTool, writeFileTool } from './permissions.ts';
 import { stripTransport, transportField } from './tool-transport.ts';
 import type { ToolTickets } from './tool-tickets.ts';
 import { fileReadArgs, fileWriteArgs, fileWriteLimit } from '../runs/controlled-files.ts';
 import { referenceReadSchema } from '../runs/local-references.ts';
 import { parseAsk } from '../../../../packages/knowledge/src/ask.ts';
+import { parseBiQuery } from '../../../../packages/knowledge/src/bi/query.ts';
 import { objectRecord } from './tool-transport.ts';
 import { withMcpTicket } from './remote-mcp-broker.ts';
 import type { RemoteMcpBroker } from './remote-mcp-broker.ts';
@@ -21,6 +22,7 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
   tickets.register(readFileTool, fileReadArgs);
   tickets.register(writeFileTool, fileWriteArgs);
   tickets.register(knowledgeTool, (args) => Boolean(parseAsk(args)));
+  tickets.register(biQueryTool, (args) => Boolean(parseBiQuery(args)));
   for (const { name, validate } of delegationTools) tickets.register(name, validate);
   for (const { name, validate } of remote.tools) tickets.register(name, validate);
   return startLoopbackMcp({ name: brokerMcpName, timeout: remote.timeout, maxInput: 448 * 1024,
@@ -29,8 +31,9 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
       inputSchema: schema({}), annotations: readOnly,
     }, {
       name: localName(readFileTool),
-      description: 'Read a session attachment ID, artifact ID, or current output name. For a selected local reference, pass reference and optional byte offset and length. Folder references accept list:true with optional relative path and after cursor, or a relative file path to read. For PDF extraction use page (1-based); next is the next byte offset within the text or page.',
-      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' }, ...referenceReadSchema }),
+      description: 'Read a session attachment ID, artifact ID, current output name, or an enabled Skill resource (provide skill and relative resource). For a selected local reference, pass reference and optional byte offset and length. Folder references accept list:true with optional relative path and after cursor, or a relative file path to read. For PDF extraction use page (1-based); next is the next byte offset within the text or page.',
+      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' },
+        skill: { type: 'string', maxLength: 64 }, resource: { type: 'string', maxLength: 200 }, ...referenceReadSchema }),
       annotations: readOnly,
     }, {
       name: localName(writeFileTool), description: 'Create a new UTF-8 file in the current run output.',
@@ -40,6 +43,11 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
     }, {
       name: localName(knowledgeTool), description: 'Ask an authorized published OEP knowledge vault by ID. Report verified excerpts and citations, or relay the abstention.',
       inputSchema: schema({ vault: { type: 'string' }, question: { type: 'string', maxLength: 500 } }, ['vault', 'question']),
+      annotations: readOnly,
+    }, {
+      name: localName(biQueryTool), description: 'Search published BI cards with text, type, domain and category filters. Read a card with card ID, or follow links using from and optional relation. Card evidence includes source and locator.',
+      inputSchema: schema({ ...Object.fromEntries(['vault', 'text', 'type', 'domain', 'category', 'card', 'from', 'relation']
+        .map(key => [key, { type: 'string', maxLength: 300 }])), offset: { type: 'integer', minimum: 0, maximum: 100_000 } }, ['vault']),
       annotations: readOnly,
     }, ...delegationTools.map(({ name, description, properties, required, readOnly, oneOf }) => ({
       name: localName(name), description, inputSchema: { ...schema(properties, required), ...(oneOf && { oneOf }) },

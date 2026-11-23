@@ -1,5 +1,6 @@
 import { errorText, request } from './api.js';
 import { openBiBuilder } from './bi-builder.js';
+import { bindCapabilityTabs } from './capabilities.js';
 import { getLocale, message, setText } from './i18n.js';
 
 const find = (id) => document.getElementById(id);
@@ -92,7 +93,7 @@ const jobLabels = {
   cancelled: message('plugins.job-cancelled'), 'timed-out': message('plugins.job-timed-out'),
 };
 
-export function bindPlugins(showView, openPanel, openBiReview) {
+export function bindPlugins(showView, openPanel, openBiReview, loadMcp) {
   const rail = find('open-capabilities');
   const capabilityView = find('capabilities-view');
   const pageView = find('plugin-page-view');
@@ -109,6 +110,7 @@ export function bindPlugins(showView, openPanel, openBiReview) {
   let fileTarget;
   let busy = false;
   const biDraft = {};
+  const tabs = bindCapabilityTabs(capabilityView, loadMcp);
 
   function chooseFile(id) {
     if (busy) return;
@@ -120,6 +122,7 @@ export function bindPlugins(showView, openPanel, openBiReview) {
   function hide() {
     activePage?.stop.abort();
     activePage = undefined;
+    delete capabilityView.dataset.pluginDrop;
     capabilityView.hidden = true;
     pageView.hidden = true;
     rail.removeAttribute('aria-current');
@@ -138,7 +141,7 @@ export function bindPlugins(showView, openPanel, openBiReview) {
       pageContent.replaceChildren(...view.paragraphs.map((text) => element('p', localized(text))));
       const api = pageAPI(plugin, view.token, selection.stop.signal);
       if (view.biBuilder) {
-        await openBiBuilder(pageActions, api, selection.stop.signal, (id) => openBiReview(id), biDraft);
+        await openBiBuilder(pageActions, api, selection.stop.signal, (id) => openBiReview(id), biDraft, openPanel);
       } else if (view.actions?.length) {
         pageActions.replaceChildren(...view.actions.map((action) => jobAction(api, action, view.approvedSources, selection.stop.signal)));
       }
@@ -223,7 +226,7 @@ export function bindPlugins(showView, openPanel, openBiReview) {
         const entry = button(localized(page.title), () => void openPage(plugin, page, entry));
         entry.dataset.pluginPage = page.id;
         if (activePage?.id === page.id && activePage.digest === plugin.digest) entry.setAttribute('aria-current', 'page');
-        rail.before(entry);
+        find('open-settings').before(entry);
       }
     }
     list.replaceChildren(...installed.map((plugin) => {
@@ -283,7 +286,7 @@ export function bindPlugins(showView, openPanel, openBiReview) {
     update();
     controls.append(cancel, confirm);
     dialog.replaceChildren(heading, ...content, help, controls);
-    dialog.addEventListener('close', () => (opener?.isConnected ? opener : installFile).focus(), { once: true });
+    dialog.addEventListener('close', () => (opener?.isConnected && opener.checkVisibility() ? opener : installFile).focus(), { once: true });
     dialog.showModal();
   }
 
@@ -350,25 +353,49 @@ export function bindPlugins(showView, openPanel, openBiReview) {
     openDialog(actionLabels[action], copy, actionLabels[action], required, () => change(plugin, action, incompatible));
   }
 
-  rail.addEventListener('click', () => {
+  function open(tab) {
     if (showView(capabilityView, find('capabilities-title'), rail)) {
+      tabs.open(tab);
       void refresh().catch((error) => setText(status, errorText(error)));
     }
-  });
+  }
+  rail.addEventListener('click', () => open());
   installFile.addEventListener('click', () => chooseFile());
-  file.addEventListener('change', async () => {
-    if (!file.files[0] || busy) return;
+  async function previewFile(input, target) {
+    if (!input || busy || dialog.open) return;
     busy = true;
     try {
       setText(status, message('plugins.loading'));
-      const preview = await request('/api/plugins/preview', { bytes: file.files[0] });
+      const preview = await request('/api/plugins/preview', { bytes: input });
       status.replaceChildren();
-      if (fileTarget && fileTarget !== preview.id) setText(status, message('plugins.wrong-file'));
-      else if (!capabilityView.hidden) review(preview);
+      if (target && target !== preview.id) setText(status, message('plugins.wrong-file'));
+      else if (!capabilityView.hidden) { tabs.plugins(); review(preview); }
     } catch (error) { setText(status, errorText(error)); }
     finally { busy = false; }
+  }
+  file.addEventListener('change', () => void previewFile(file.files[0], fileTarget));
+  capabilityView.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    capabilityView.dataset.pluginDrop = '';
+  });
+  capabilityView.addEventListener('dragleave', (event) => {
+    if (!capabilityView.contains(event.relatedTarget)) delete capabilityView.dataset.pluginDrop;
+  });
+  capabilityView.addEventListener('drop', (event) => {
+    const files = event.dataTransfer.files;
+    if (!files.length) return;
+    event.preventDefault();
+    delete capabilityView.dataset.pluginDrop;
+    tabs.plugins();
+    if (files.length === 1 && /\.oepplugin$/i.test(files[0].name)) void previewFile(files[0]);
+    else setText(status, message('capabilities.plugin-file-required'));
   });
   dialog.addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
 
-  return { hide, connect: () => { rail.disabled = false; void refresh().catch(() => {}); } };
+  return { hide, open, connect: () => {
+    tabs.connect();
+    void refresh().catch((error) => { if (!capabilityView.hidden) setText(status, errorText(error)); });
+  } };
 }

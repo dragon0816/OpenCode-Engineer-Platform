@@ -2,6 +2,8 @@
 
 `phase-3i/model-sources` starts from `8de6a94` and merges `phase-3i/slice-2-cli` at `9c78471`. The following sections record the dedicated Windows boundary and the owner’s revised interaction and confidentiality policy on the local follow-up branch.
 
+The subscription sign-in follow-up updates the sign-in dialog and dedicated-account launcher. See the [subscription login report](PHASE3I_SUBSCRIPTION_LOGIN_REPORT.md) for current owner setup and review steps.
+
 ## Dedicated Windows account on `phase-3i/model-sources-2`
 
 The follow-up starts at `81ba31b`. The Windows launcher uses the owner-managed account for authentication and headless runs. It verifies the alternate account SID, checks for Administrators membership, removes the token's bypass-traverse privilege, requires access-denied results for the protected sentinels, and tests writes in the working copy and scratch directory. The trusted bootstrap starts from the protected runtime directory and switches to the working copy after the token check. The helper executable and its descendants run in a kill-on-close Job. A pinned provider binary stays open without write or delete sharing during the operation. The adapter revalidates the snapshot at the release handshake, before the helper starts the provider process.
@@ -29,7 +31,7 @@ The alternate account gets read and execute access to the managed runtime and ac
    Append `-DataRoot 'C:\absolute\path\inside\owner-profile'` on every setup invocation if the review build uses a custom directory. Rerun with the same arguments to repair or refresh the setup. A provider omitted on a repeat invocation retains its existing pin.
 
 3. Setup creates the non-admin local user `OEPExternalHelper` and its Windows profile, the local-machine-persistent `OEP/ExternalHelper/WindowsLogon` credential in the owner's Credential Manager, and `HKLM\SOFTWARE\OEP\ExternalHelper` with the deployment metadata. It creates `%ProgramData%\OEP-ExternalHelper\runtime` for the trusted launcher and pinned provider executables and `%ProgramData%\OEP-ExternalHelper\runs` for working copies. It adds a non-inheriting deny ACE for the helper SID to the owner profile and the default and configured data roots. It places an `.oep-external-helper-sentinel` in each of those roots. The sentinel's read grant makes the probe test whether the account can traverse the protected root.
-4. In OEP, open **Settings → External Helpers** and choose **Check status**. Verify the required version and Windows isolation. Accept the provider warning, enable the provider, and sign in. For Claude Code, first confirm the provider terms and use a Console API key, or use the official CLI as permitted by the applicable agreement. Keep key material out of PowerShell commands.
+4. In OEP, open **Settings → External Helpers** and choose **Recheck status**. Verify the required version and Windows isolation. Accept the provider warning, enable the provider, and sign in with the subscription option. For Claude Code, first confirm the provider terms. The dialog keeps the API-key options under **Advanced**. [Subscription sign-in steps](PHASE3I_SUBSCRIPTION_LOGIN_REPORT.md#owner-setup-on-windows-11-x64)
 5. Run the uninstaller from the same elevated owner PowerShell when the helper is idle. It removes the helper SID's deny ACEs and sentinels, the local account and profile (including its provider sign-ins), the owner's launch credential, the helper files and working copies under ProgramData, and the helper registry key. Keep any needed output before removal. The owner profile, OEP data, and source provider binaries are preserved. An empty `HKLM\SOFTWARE\OEP` parent key can be removed separately after checking that it has no values or subkeys.
 
    ```powershell
@@ -97,7 +99,7 @@ The release ZIP SHA-256 is `8d3ceaaf40ee86ac0c51c1ab13712025781f9faaba0be0ac58d8
 ## Provider references
 
 - Codex supports `codex login` for ChatGPT, `codex login --with-api-key` with the key on stdin, `codex login status`, and `codex logout`. The pinned invocation requests the CLI keyring and disables startup update checking. [OpenAI authentication](https://learn.chatgpt.com/docs/auth) · [OpenAI CLI commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-login)
-- Claude Code accepts the owner’s Claude Console API key for API-billed usage and provides `claude auth login`, `claude auth status`, and `claude auth logout`. The official CLI option is for the owner running the genuine binary under an arrangement permitted by Anthropic. The Console API key is recommended for the OEP integration. [Anthropic authentication](https://code.claude.com/docs/en/iam) · [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference) · [Anthropic legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+- Claude Code provides `claude auth login`, `claude auth status`, and `claude auth logout`. The subscription option runs the owner’s genuine binary under the applicable Anthropic agreement. The Claude Console API key remains available for separate API billing. [Anthropic authentication](https://code.claude.com/docs/en/authentication) · [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference) · [Anthropic legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
 
 ## Owner review steps
 

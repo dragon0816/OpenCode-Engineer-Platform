@@ -1,0 +1,12 @@
+[
+  { "name": "hermes-computer-use", "enabled": false },
+  { "name": "hermes-docx", "enabled": true },
+  { "name": "hermes-github", "enabled": true },
+  { "name": "hermes-grounded-citations", "enabled": true },
+  { "name": "hermes-pdf", "enabled": true },
+  { "name": "hermes-powerpoint", "enabled": true },
+  { "name": "hermes-systematic-debugging", "enabled": true },
+  { "name": "hermes-test-driven-development", "enabled": true },
+  { "name": "hermes-xlsx", "enabled": true },
+  { "name": "oep-skill-creator", "enabled": true, "source": "OEP · AEP creator guidance" }
+]

@@ -17,6 +17,8 @@ import { brokerMcpName } from '../../adapter/src/opencode/permissions.ts';
 import { McpOAuth } from '../../adapter/src/opencode/mcp-oauth.ts';
 import type { CredentialEnvironment } from '../../adapter/src/runs/custom-mcp-credentials.ts';
 import { openBrowser } from './browser.ts';
+import { monitorMcpTrust, readMcpFingerprint, type ReadMcpFingerprint } from '../../adapter/src/runs/mcp-trust.ts';
+import { startCustomMcpBridge } from './custom-mcp-bridge.ts';
 
 import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
 
@@ -24,7 +26,7 @@ export type Runtime = Awaited<ReturnType<typeof startRuntime>>;
 
 type SyntheticGateway = Omit<Parameters<typeof startGateway>[0], 'trace' | 'web' | 'managed' | 'scoped'> & {
   isolatedJob?: boolean; remoteMcpTransport?: RemoteMcpTransport;
-  mcpCredentials?: CredentialEnvironment; openMcpBrowser?: (url: string) => Promise<void>;
+  mcpCredentials?: CredentialEnvironment; openMcpBrowser?: (url: string) => Promise<void>; mcpFingerprint?: ReadMcpFingerprint;
 };
 
 export async function startRuntime(root: string, synthetic?: SyntheticGateway, profile?: string, customMcp: readonly CustomMcp[] = []) {
@@ -68,17 +70,19 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
   const mcpOAuth = profile ? new McpOAuth(dirname(profile), synthetic?.openMcpBrowser ?? openBrowser, synthetic?.mcpCredentials) : undefined;
   let broker: Awaited<ReturnType<typeof startBrokerMcp>> | undefined;
   let remoteMcp: RemoteMcpBroker | undefined;
+  const mcpFingerprint = synthetic?.isolatedJob && synthetic.fetch && synthetic.mcpFingerprint || readMcpFingerprint;
   async function closeRelays() {
     toolTickets?.close();
     mcpOAuth?.close();
-    const results = await Promise.allSettled([broker?.close(), knowledge?.close(), relay.close()]);
+    const results = await Promise.allSettled([broker?.close(), remoteMcp?.close(), knowledge?.close(), relay.close()]);
     if (results.some((result) => result.status === 'rejected')) throw new Error('Runtime relays could not close');
   }
   try {
     if (profile) knowledge = await startKnowledgeRuntime(profile, root, { ...settings, alias, aliases }, () => alias, modelSeat);
     if (toolTickets) {
       remoteMcp = await discoverRemoteMcp(customMcp, relay.redact,
-        synthetic?.isolatedJob && synthetic.fetch ? synthetic.remoteMcpTransport : undefined, mcpOAuth);
+        synthetic?.isolatedJob && synthetic.fetch ? synthetic.remoteMcpTransport : undefined, mcpOAuth,
+        { trusted: monitorMcpTrust(mcpFingerprint), open: (definition) => startCustomMcpBridge(definition, synthetic?.mcpCredentials?.readCredentials) });
       broker = await startBrokerMcp(toolTickets, remoteMcp);
     }
     supervisor = await supervise(root, relay, aliases, profile, synthetic?.isolatedJob,
@@ -173,7 +177,7 @@ export async function startRuntime(root: string, synthetic?: SyntheticGateway, p
         if (!aliases.includes(name)) throw new Error('Model alias is not approved');
         alias = name;
       },
-      endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge, customMcp, remoteMcp, mcpOAuth,
+      endpoint: supervisor.endpoint, client, stop, finished: supervisor.finished, redact: relay.redact, knowledge, customMcp, remoteMcp, mcpOAuth, mcpFingerprint,
       gatewayCursor: relay.requestCursor, setTurnBoundary: relay.setTurnBoundary, gatewaySince, modelSeat, toolTickets };
   } catch (error) {
     try { await stop(); }

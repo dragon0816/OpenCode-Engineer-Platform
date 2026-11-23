@@ -2,10 +2,12 @@ import { appendFileSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { knowledgeCompletion, knowledgeModel } from '../../adapter/src/opencode/knowledge-model.ts';
 import { startGateway } from '../../adapter/src/opencode/gateway.ts';
+import { ocrVision } from '../../adapter/src/opencode/ocr-vision.ts';
 import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
 import type { AskRequest } from '../../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../../packages/knowledge/src/repository.ts';
 import { KnowledgeStore } from '../../../packages/knowledge/src/store.ts';
+import { queryBi, type BiQuery } from '../../../packages/knowledge/src/bi/query.ts';
 import { checkDirectory } from '../../adapter/src/runs/workspace.ts';
 import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
 
@@ -40,13 +42,13 @@ function prepareKnowledgeDirectory(path: string) {
   checkDirectory(path);
 }
 
-export function importKnowledgeRepository(path: string, folder: string, allowModel = false) {
+export function importKnowledgeRepository(path: string, folder: string, allowModel = false, source?: string) {
   const { snapshot, original, digestVerified, sizeVerified } = readRepository(folder, path);
   prepareKnowledgeDirectory(dirname(path));
   verifyKnowledgePath(path);
   const store = new KnowledgeStore(path);
   try {
-    const report = store.import(snapshot, original, allowModel);
+    const report = store.import(snapshot, original, allowModel, source);
     const active = store.isCurrent(report.vault, report.revision, report.snapshot);
     return { state: report.state, vault: report.vault, tag: snapshot.repository!.tag, revision: report.revision,
       schemaVersion: snapshot.schema.version, active, digestVerified, sizeVerified, cards: report.cards.length,
@@ -92,8 +94,23 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
       const limited = beforeRequest && model ? new KnowledgeAsk(queryStore, knowledgeModel(relay!, model, beforeRequest)) : service;
       return (inTurn ? nested : modelSeat).run(() => limited.ask(input, signal, undefined, authorized), signal);
     };
-    return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
-      importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
+    const biBindings = (vaults: readonly string[]) => vaults.flatMap(vault => {
+      const publication = queryStore.biModelPublication(vault);
+      return publication ? [publication] : [];
+    });
+    const scopedBi = (input: BiQuery, signal: AbortSignal, resolve: () => AskScope | undefined) => {
+      signal.throwIfAborted();
+      const current = resolve();
+      const publication = current?.vaults.includes(input.vault) && queryStore.biModelPublication(input.vault);
+      const snapshot = publication && queryStore.snapshot(input.vault, publication.revision);
+      if (!snapshot || !publication || !queryStore.isCurrent(input.vault, publication.revision, publication.hash, true)) {
+        return { state: 'abstain', reason: 'vault-unavailable' };
+      }
+      return { vault: input.vault, revision: publication.revision, snapshotHash: publication.hash, ...queryBi(snapshot, input) };
+    };
+    return { get ask() { return ask(); }, scopedAsk, scopedBi, biBindings, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
+      ocrVision: ocrVision(relay, modelSeat, options.aliases, defaultAlias),
+      importRepository: (folder: string, allowModel: boolean, source?: string) => importKnowledgeRepository(path, folder, allowModel, source),
       readRepository: (folder: string) => readRepository(folder, path),
       propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias(), beforeRequest?: () => void, maxTokens?: number) =>
         modelSeat.run(() => knowledgeCompletion(relay!, models.has(model) ? model : defaultAlias(), prompt, input, signal, beforeRequest, maxTokens), signal),

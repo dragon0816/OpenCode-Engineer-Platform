@@ -199,6 +199,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 探索並保存閘道模型清單，提供繁中及英文的模型勾選、測試、預設與閒置重啟。會話可保留紀錄並在原模型移除後改用預設模型，知識庫品質檢查沿用已套用的模型選擇。 [驗收紀錄](reviews/PHASE3A_GATEWAY_MODELS_REPORT.md)
 - [x] 模型設定顯示未儲存提示，離開前確認捨棄變更。「儲存並套用」在閒置時自動生效，對話只有預設模型時可直接前往模型設定。 [驗收紀錄](reviews/PHASE3A_MODEL_SETTINGS_UX_REPORT.md)
+- [x] 顯示 LiteLLM 別名對應與擁有者備註，涵蓋模型設定、助理模型頁籤、建立精靈與對話選單。 [驗收紀錄](reviews/UX_MODEL_ALIAS_NOTES_REPORT.md)
 - [ ] 由審核者補跑執行中 OEP 阻擋的 Web HTTP、真模型 Excel、安裝、升級及備份還原驗收。
 
 ## 2026-11-22 升級與測試強化
@@ -305,6 +306,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 外部幫手設定與模型選取提供雙語登入視窗。合成驗證覆蓋兩家登入方式及登出，現行發行版依隔離狀態擋下外部執行。
 - [x] 實作擁有者執行的安裝及解除安裝腳本、Windows 專用帳號、憑證儲存、ACL 探測及原版 CLI 邊界。自動測試使用合成身分，實機驗收由擁有者執行。
 - [x] 外部來源助理使用一般 Web、Telegram 對話，Web 的一般交辦工具可選外部來源專員。送出與啟動檢查分級，Web 對話顯示回覆及可驗證下載的變更檔案，嚴格模式與逐次確認預設關閉。
+- [x] Codex 與 Claude Code 預設透過 Windows 專用帳號執行官方 CLI 的訂閱登入。雙語視窗轉送登入連結、裝置代碼及一次性代碼提示，API 金鑰入口移至進階。支援取消、逾時、登出與一次性管理員設定提示。
+- [x] 合成 CLI 登入契約、兩輪 Chromium、外部幫手兩項無須變更 ACL 的測試、交辦及發行重現性通過。敏感資料掃描零命中。
+- [ ] 擁有者安裝官方 CLI 並更新專用帳號啟動程式，使用訂閱帳號驗收。審核者補跑使用限制權杖的外部幫手測試、Web HTTP、Excel、安裝、升級及備份。 [訂閱登入驗收紀錄](reviews/PHASE3I_SUBSCRIPTION_LOGIN_REPORT.md)
 - [ ] 提供外部 CLI 的公開知識庫及受控檔案 MCP 工具，補齊 Telegram 外部來源的附件與交辦。 [模型來源驗收紀錄](reviews/PHASE3I_MODEL_SOURCES_REPORT.md)
 
 ## 0.7.0 對話附件上傳
@@ -352,3 +356,33 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
 - [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
 - [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)
+
+## Phase 3G 掃描文件 OCR
+
+- [x] BI 接受掃描 PDF、PNG 和 JPEG，逐頁辨識並保留頁碼、OCR 引文來源和辨識引擎。雙語建置頁顯示辨識方式與各頁狀態。
+- [x] 驗證 Windows OCR、本機結果保留及 Gateway 圖片備援。Windows x64 bundled 發行內含渲染器與授權清單。
+- [ ] 擁有者用實際掃描文件驗收。以已通過圖片探測的 Gateway 模型驗證真實模型辨識，檔案參照的 OCR 預覽另行評估。 [展示與驗證報告](reviews/PHASE3G_OCR_REPORT.md)
+
+## 能力頁與本機 MCP
+
+- [x] 在主功能提供雙語能力頁，集中安裝 Plugin、管理 Skill 和 MCP、預覽 Workflow，以及匯入已發布知識庫。
+- [x] 接通 OpenCode 原生 Skill、主助理預設組合、逐助理授權與數量警告。接通本機 stdio MCP 的執行檔信任、簽章和雜湊檢查及逐工作區授權。
+- [x] 通過焦點驗收及有序關卡，包含兩輪 Chromium、知識庫、Plugin、BI Plugin 合成資料、原生隔離、發行重現性及零命中掃描。
+- [ ] Phase 3E 建置 Workflow 引擎。定義 capability 對應、參數與輸出驗證、受控試跑、核准、執行紀錄和失敗恢復。另接通有獨立授權的 Skill 腳本工作程序。
+- [ ] 為 loopback HTTP MCP 建立可驗證的服務執行檔身分。以公司的 MXO AI MCP 與真實儀器完成擁有者驗收。
+- [ ] 審核者補跑 Web、Excel、安裝、升級及備份。 [能力頁驗證報告](reviews/UX_CAPABILITIES_PAGE_REPORT.md)
+
+## Phase 3G BI Knowledge parity
+
+- [x] 建立獨立 Convert、Ingest、Testing 階段與設定，支援全自動及可暫停的逐步執行。
+- [x] 建立工作知識庫，重建匯出的 AEP 工作草稿，從附加資料編輯卡片並送審。
+- [x] 讓已綁定並授權模型使用的 BI 助理搜尋卡片、跟隨關聯並引用核對過的來源。
+- [x] 讓 Telegram BI 收件透過 IANA 時區排程及既有派送器轉檔、擷取並送審。 [合成驗收及展示](reviews/PHASE3G_BI_PARITY_REPORT.md)
+- [ ] 複核實際工作匯出及 Gateway，合併 OCR 與能力頁，完成審核者保留的關卡。
+
+## 0.10 整合驗證
+
+- [x] 依序整合 Windows OCR、訂閱登入、Gateway 模型別名備註、能力頁和 BI Knowledge 1.2.0。OCR 選項隨 Convert 階段儲存，已綁定的助理可查詢從能力頁匯入的 BI 知識庫。
+- [x] 驗證 Web v12 → v13 → v14 與知識庫 v3 → v4，涵蓋新建、0.9.0 資料、中間版本、重複遷移和失敗回復。
+- [x] 通過有序自動關卡，包含三輪 Chromium、BI OCR、BI Plugin、BI parity、能力頁和標準及 bundled 發行重現性。 [整合與驗證報告](reviews/INTEGRATION_0_10_REPORT.md)
+- [ ] 審核者驗收 Web HTTP、Excel、安裝、升級、備份和外部助理受限權杖測試。擁有者以實際 BI 匯出、掃描文件與受核准的即時服務驗收。

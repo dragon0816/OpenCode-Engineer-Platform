@@ -23,7 +23,7 @@ export async function bundleRuntimes(files, pin, wheels, download) {
   for (const wheel of wheelZips) {
     for (const [name, bytes] of Object.entries(unzipSync(wheel))) {
       if (name.endsWith('/')) continue;
-      if (!/^[\w./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..') ||
+      if (!/^[\w.+/-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..') ||
           name.split('/')[0].endsWith('.data')) throw new Error('Unsupported wheel layout');
       const path = 'vendor/python/Lib/site-packages/' + name;
       if (path in files) throw new Error('Duplicate wheel file');

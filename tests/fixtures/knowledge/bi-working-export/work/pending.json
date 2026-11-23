@@ -1,0 +1,13 @@
+{
+  "sets": {
+    "card:gamma": {
+      "type": "Measurement",
+      "key": "gamma",
+      "name": "SYN-GAMMA Working Draft"
+    },
+    "field:gamma:notes": {
+      "value": "Awaiting confirmation"
+    }
+  },
+  "files": {}
+}

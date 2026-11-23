@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
@@ -11,6 +11,7 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
+import { verifyCapabilityWorkbench } from './capabilities-browser.ts';
 import { verifyBenchmarkUploads, verifyComposerAttachments, verifyLocalReferences } from './composer-attachments-browser.ts';
 import { verifyDictation } from './dictation-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
@@ -29,6 +30,7 @@ import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
 import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
+import { subscriptionHelper } from '../fixtures/external-helpers/subscription.ts';
 
 const real = process.argv.includes('--real');
 const referencesRoot = !real && process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'oep-browser-reference-')) : undefined;
@@ -75,7 +77,7 @@ const settingsPages = [
   ['projects', '專案與資料夾', ['#folder-project option', '#project-working-root', '#project-folder-list', '#project-folder', '#project-folder-form button[type=submit]', '#project-folder-status']],
   ['integrations', '整合', ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status', '#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', '#telegram-configured', '.settings-advanced li']],
   ['input', '輸入', ['#enable-microphone', '#microphone-settings-status']],
-  ['mcp', '外部工具', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#mcp-add', '#mcp-servers', '#mcp-restart-bar #mcp-restart', '#mcp-status']],
+  ['mcp', '外部工具', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#settings-open-mcp']],
   ['external-helpers', '外部幫手', ['#external-helper-settings fieldset input', '#external-helper-settings-status']],
   ['runtime', '執行環境', ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent', '#runtime-fingerprints dd:nth-of-type(4)']],
   ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
@@ -104,7 +106,7 @@ const settingsRows: Record<string, Record<string, string[]>> = {
     'integration-status': ['#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', 'details #telegram-configured'],
   },
   input: { input: ['#enable-microphone', '#microphone-settings-status'] },
-  mcp: { 'mcp-knowledge': ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings'] },
+  mcp: { 'mcp-knowledge': ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings'], 'mcp-link': ['#settings-open-mcp'] },
   runtime: {
     runtime: ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent'],
     'runtime-advanced': ['details #runtime-fingerprints dd:nth-of-type(4)'],
@@ -249,7 +251,9 @@ try {
     writeFileSync(referenceFixtures.pasted, '{"name":"Synthetic JSON preview"}');
   }
   let helperSignedIn = true;
-  const helper = real ? undefined : memoryHelper(root);
+  let subscriptionLogin = false;
+  const subscription = real ? undefined : subscriptionHelper(root, join(dirname(root), 'synthetic-subscription-profile'));
+  const helper = real ? undefined : memoryHelper(root, undefined, () => subscriptionLogin ? subscription?.isolation : undefined);
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
     writeCredential(name, value) {
@@ -257,7 +261,7 @@ try {
       else credentials.set(name, value);
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
-  }, real ? undefined : { executor: helper!.executor, intakeFixture: (provider) => provider === 'codex_cli'
+  }, real ? undefined : { executor: helper!.executor, intakeFixture: (provider) => subscriptionLogin ? undefined : provider === 'codex_cli'
     ? { installation: 'detected', isolation: 'verified', login: helperSignedIn ? 'signedIn' : 'signedOut', version: '1.2.3', pinnedVersion: '1.2.3' }
     : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } }, undefined, referenceFixtures ? async (kind) => [kind === 'file' ? referenceFixtures.picked : referenceFixtures.folder] : undefined);
   try {
@@ -370,11 +374,16 @@ try {
           await page.ready(`document.activeElement === document.querySelector('#${id} > summary')`);
           await enter();
           await page.ready(`!document.getElementById('${id}').open`);
+          if (id === 'rail-functions') {
+            await tab();
+            await page.ready("document.activeElement.id === 'open-capabilities' && !document.activeElement.disabled");
+          }
         }
         await page.ready(sections.map((id) => `localStorage.getItem('oep.${id}.open') === 'false'`).join(' && '));
         await reload();
         await page.ready("window.__beforeReload !== true && document.querySelector('#connection').textContent === '已連線'");
         assert.equal(await page.evaluate(collapsed), true);
+        assert.equal(await page.evaluate("document.querySelector('#open-capabilities').checkVisibility() && !document.querySelector('#open-capabilities').disabled"), true);
         await tab();
         await page.ready("document.activeElement === document.querySelector('#rail-functions > summary')");
         await enter();
@@ -387,10 +396,11 @@ try {
           reached.add(focus);
           if (focus === 'rail-sessions' || focus === 'rail-assistants') await enter();
         }
-        for (const id of ['open-jobs', 'open-settings', 'session-search', 'new-session', 'agent']) assert.ok(reached.has(id), id);
+        for (const id of ['open-jobs', 'open-settings', 'open-capabilities', 'session-search', 'new-session', 'agent']) assert.ok(reached.has(id), id);
         if (await page.evaluate("!document.querySelector('#open-review').hidden")) {
           assert.ok(reached.has('open-knowledge') && reached.has('open-review'));
         }
+        await verifyCapabilityWorkbench(page, root);
         const audit = async (selector: string, scope = 'body') => {
           await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
           await assertUiTextInThemes(page, scope);
@@ -408,6 +418,8 @@ try {
         await assertContrastInThemes(page, [{ selector: '#top-menu-trigger', property: 'outlineColor', against: '.top' }]);
         await audit('#open-settings', '#settings-view');
         await selectSetting('mcp');
+        await audit('#settings-open-mcp', '#capability-mcp-panel');
+        await page.ready("document.querySelector('#mcp-servers').children.length > 0");
         await audit('#mcp-add', '#mcp-editor');
         await assertContrastInThemes(page, [
           { selector: '#mcp-editor-title' }, { selector: '#mcp-editor [name=name]' },
@@ -415,11 +427,12 @@ try {
         ]);
         await audit('#mcp-add-credential', '#mcp-editor');
         await audit('#mcp-editor details > summary', '#mcp-editor');
-        await audit('#mcp-cancel', '#settings-view');
+        await audit('#mcp-cancel', '#capability-mcp-panel');
         await audit('#mcp-add', '#mcp-editor');
         await escape();
         await page.ready("!document.querySelector('#mcp-editor').open && document.activeElement.id === 'mcp-add'");
         // Restore the first settings section for the later navigation and reload checks.
+        await audit('#open-settings', '#settings-view');
         await selectSetting('assistant');
         await audit('#close-settings', '#chat-view');
         await audit('#shortcuts summary', '#shortcuts');
@@ -975,7 +988,7 @@ try {
             await page.ready(`[...document.querySelectorAll('#telegram-main-status, #telegram-bi-status')]
               .every(status => /^(已設定|未設定)$/.test(status.textContent))`);
           }
-          if (section === 'mcp') await page.ready("document.querySelector('#mcp-servers').children.length > 0");
+          if (section === 'mcp') await page.ready("document.querySelector('#mcp-knowledge-status').textContent !== ''");
           await assertUiTextInThemes(page, `#settings-${section}`);
           await assertContrastInThemes(page, [
             { selector: `#settings-${section} h2` }, { selector: `#settings-${section} .settings-help` },
@@ -1687,7 +1700,8 @@ try {
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
         await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting,
-          signOut: () => { helperSignedIn = false; }, referencePicker: Boolean(referenceFixtures) });
+          signOut: () => { helperSignedIn = false; }, referencePicker: Boolean(referenceFixtures),
+          startSubscriptionTests: () => { subscriptionLogin = true; return subscription!; } });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

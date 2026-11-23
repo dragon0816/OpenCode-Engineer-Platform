@@ -108,6 +108,16 @@ test('local API restricts routing, pairing, mutations, file intake and session o
       selected: ['synthetic-api'], configuredDefaultAlias: 'synthetic-api', choices: ['synthetic-api'], discoveredAt: null,
       maxSelected: 8, restartRequired: false, canRestart: false });
     assert.equal((await post('/api/settings/model', { alias: 'synthetic-api', selected: ['synthetic-api', 'unknown-model'] })).status, 400);
+    const noteEdit = { notes: { 'synthetic-api': 'Owner alias note' } };
+    assert.equal((await post('/api/settings/model', noteEdit, { 'x-oep-csrf': 'bad' })).status, 403);
+    for (const notes of [{ 'synthetic-api': 'x'.repeat(161) }, { 'unknown-model': 'Unknown model' }, { 'synthetic-api': null }]) {
+      const rejected = await post('/api/settings/model', { notes });
+      assert.equal(rejected.status, 400);
+      assert.equal((await rejected.json()).errorDetail.code, 'invalid-model-note');
+    }
+    const savedNote = await post('/api/settings/model', noteEdit);
+    assert.equal(savedNote.status, 200);
+    assert.deepEqual(await savedNote.json(), { ...model, modelNotes: { 'synthetic-api': { mappedModel: null, note: 'Owner alias note' } } });
     assert.equal((await post('/api/settings/model/test', { alias: 'unknown-model' })).status, 400);
     assert.equal(bootstrap.job.state, 'awaiting_review');
     const first = await (await post('/api/sessions', { agent: 'inspector' })).json();

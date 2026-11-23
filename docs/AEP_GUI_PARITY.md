@@ -36,7 +36,7 @@
 | W Shared Platform portal／bridge URL、Personal Agent code、帳密登入、enroll、teams | Omit-with-reason（AEP 公司 Bridge 與組織帳號） | 設定／整合說明 | 2b | 頁面沒有公司登入、授權或登錄請求。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W Shared Platform 憑證 fingerprint／信任／下載／忘記 | Omit-with-reason（AEP 自訂 Bridge 信任） | 設定／整合說明 | 2b | OEP 連線無此信任寫入，無效 HTTPS 憑證拒連。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W Laya SSH host／ports／account／mode／threshold／timeout／approval／auto／check | Omit-with-reason（AEP 專用 SSH 決策服務） | 設定／整合說明 | 2b | OEP 不啟動 Laya 或 SSH tunnel。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
-| W MCP 名稱、stdio command／args／cwd／env／secret env、remote URL／headers／token、timeout、啟停、重連、移除與狀態 | Adapt to OpenCode | 設定／MCP | 2b | 自訂 stdio 與 HTTPS 定義、憑證、重新啟動、專案允許清單及連線測試已提供。固定版本的工具權限以新會話驗證。完整遠端驗收範圍見紀錄。 [Slice 4C](reviews/PHASE2B_SLICE4C_REPORT.md) |
+| W MCP 名稱、stdio command／args／cwd／env／secret env、remote URL／headers／token、timeout、啟停、重連、移除與狀態 | Adapt to OpenCode | 能力／MCP，設定／外部工具連結 | 2b／能力頁 | 自訂 stdio 與 HTTPS、憑證、重啟、測試連線、信任本機程式及逐工作區授權。 [能力頁](reviews/UX_CAPABILITIES_PAGE_REPORT.md) |
 | W、C Coding agents 安裝、移除、狀態；A 的 Claude Code／Codex／Copilot 開關與登入 | Replace（OpenCode 固定版本與 OEP agents） | 設定／Runtime | 2b | 顯示 pin、相容性與健康，切換 OEP agent 後識別新 session。安裝與升級由 5 交付。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、A Agent mode 預設根目錄、會話工作與唯讀資料夾 | Adapt to OpenCode | 設定／專案與會話面板 | 2b | 兩專案分別開新會話，驗唯讀目錄、跨會話拒絕及有效工作根。 [Slice 2D](reviews/PHASE2B_SLICE2D_REPORT.md) |
 | W、A Email folders、days、舊 exclusions、會話 mail grant | Replace（MCP 資料範圍說明與專案允許清單） | 設定／MCP | 2b | 設定頁可編輯資料範圍及專案允許清單。新會話的合成模型工具清單已驗證專案隔離。 [Slice 4C](reviews/PHASE2B_SLICE4C_REPORT.md) |
@@ -58,7 +58,7 @@
 | W 附件、移除、下載、原文／表格／影像／HTML 預覽、Atlas embed | Adapt to OpenCode | 輸入框、檔案／產物面板 | 2／2b | 附件上傳、移除、下載雜湊、文字、表格、影像及隔離 HTML 預覽已驗收。PDF 顯示檔案資料及下載提示。Atlas embed 待驗收。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | 產物版本差異 | Adapt to OpenCode | 產物面板／差異 | 2b | 同會話兩版 XLSX 驗證變更儲存格數量及前後值。 [Slice 2B](reviews/PHASE2B_SLICE2B_REPORT.md) |
 | W Slash palette、直接指令及 action card 決定 | Adapt to OpenCode | 輸入框、對話卡 | 2b | 用鍵盤搜尋並執行允許指令，接受／拒絕卡片各一條。 [Slice 2D](reviews/PHASE2B_SLICE2D_REPORT.md) |
-| W 能力清單技能／工作流程／知識／擴充／應用，更新、查找、狀態篩選、詳情、安裝草稿、啟停移除 | Adapt to OpenCode | 設定／能力 | 2b | 合成項目從待啟用到停用、移除，清單與工具狀態一致。 |
+| W 能力清單技能／工作流程／知識／擴充／應用，更新、查找、狀態篩選、詳情、安裝草稿、啟停移除 | Adapt to OpenCode | 主功能／能力 | 能力頁 | Plugin 從檔案安裝或拖放；Skill 逐助理啟用；Workflow 預覽；已發布知識庫匯入後可綁定。 [能力頁](reviews/UX_CAPABILITIES_PAGE_REPORT.md) |
 | W Installed Workflow 執行表單、上傳、動態選項、JSON 參數及 Recent runs | Replace（OpenCode 指令及 OEP 工作帳本） | 工作面板 | 4 | 同設定手動執行後，查得輸入及結果的對帳紀錄。 |
 | W Share Platform Library 分類／查找／狀態／同步、安裝、Portal 授權與提交審核 | Omit-with-reason（需 AEP 公司服務與資產權限，OEP 使用本機能力管理） | 設定／整合說明 | 2b | 整合說明交代服務與組織依賴。未發 Bridge／Portal 請求。 [Slice 2C](reviews/PHASE2B_SLICE2C_REPORT.md#已驗收) |
 | W、R Reviews 清單、刷新、接受／延後／拒絕／完成、原會話與知識缺口 | Adapt to OpenCode | 左欄／審核 | 3b | 兩筆候選分別接受與拒絕。接受前與拒絕後均無法由 Ask 取回。 |

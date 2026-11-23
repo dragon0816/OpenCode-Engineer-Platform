@@ -8,6 +8,7 @@ const python = {
   'et-xmlfile': ['2.0.0', 'MIT AND Python-2.0.1', 'c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl'],
   openpyxl: ['3.1.5', 'MIT', 'c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl'],
   pypdf: ['6.21.4', 'BSD-3-Clause', '3f/4b/77e8ad4ac42c9d93600f40541a50e9feb3a61d2bbee2d76f659346072051/pypdf-6.21.4-py3-none-any.whl'],
+  pypdfium2: ['5.15.2', 'Apache-2.0 OR BSD-3-Clause', 'fe/7f/8aa446529fa14523e5c18f89e823afc95526689f76a75efe68a82a10d850/pypdfium2-5.15.2-py3-none-win_amd64.whl'],
 };
 
 export function productionPackages(lock) {

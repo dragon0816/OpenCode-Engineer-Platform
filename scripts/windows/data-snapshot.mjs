@@ -14,6 +14,9 @@ import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegra
 import { openBiReviewStore, verifyBiSourceOwners, verifyBiSourceReceipts } from '../../apps/adapter/src/bi/source-ownership.ts';
 import { biOwnershipTables, legacyBiOwnership, openBiChannelStore, verifyBiOwnership } from '../../packages/knowledge/src/bi/ownership.ts';
 import { dataMigrations } from './data-migrations.ts';
+import { capabilitiesVersion, modelNotesVersion } from '../../apps/adapter/src/runs/ledger.ts';
+import { verifyCapabilities, verifyModelNotes } from '../../apps/adapter/src/runs/web-store.ts';
+import { importedKnowledgeVersion, verifyPublishedImports } from '../../packages/knowledge/src/store.ts';
 import { pluginRegistryVersion, verifyPluginRegistry } from '../../apps/adapter/src/plugins/schema.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
 import { mcpOAuthFolder } from '../../apps/adapter/src/opencode/mcp-oauth-storage.ts';
@@ -199,7 +202,10 @@ const webV8Empty = new Set(['telegram_account_settings', 'delegation_budget_choi
 const webV9Empty = new Set(['agent_model_sources']);
 const webV10Empty = new Set(['local_references', 'local_reference_members', 'local_reference_audit']);
 const webV12Empty = new Set(['plugin_packages', 'plugin_installations', 'plugin_operations']);
+const webV13Empty = new Set(['web_model_notes']);
+const webV14Empty = new Set(['installed_skills', 'capability_defaults', 'imported_workflows', 'workspace_mcp_overrides']);
 const knowledgeV2Empty = new Set(['vault_classifications']);
+const knowledgeV4Empty = new Set(['published_imports']);
 const emptyTables = new Set();
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -273,7 +279,7 @@ async function verifyNewCentralStore(name, next, before) {
     const seeds = verifyAgentSeeds(name, undefined, db, next.counts, false);
     verifySeedRows(name, db, next.counts, 'channel_accounts', legacyChannelAccounts());
     const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty, ...webV5Empty, ...webV6Empty,
-      ...webV7Empty, ...webV8Empty, ...webV9Empty, ...webV10Empty, ...webV12Empty]);
+      ...webV7Empty, ...webV8Empty, ...webV9Empty, ...webV10Empty, ...webV12Empty, ...webV13Empty, ...webV14Empty]);
     verifyEmptyAdditions(name, next.counts, empty);
     if (Object.keys(next.counts).some((table) => table !== 'channel_accounts' && !empty.has(table) && !Object.hasOwn(seeds, table))) {
       throw new SnapshotError(name, '升級比對失敗。新建的中央工作台資料庫包含未知資料表。');
@@ -286,6 +292,8 @@ async function verifyNewCentralStore(name, next, before) {
     verifyBudgetChoice(db);
     verifyAgentModelSources(db);
     verifyPluginRegistry(db);
+    verifyModelNotes(db);
+    verifyCapabilities(db);
   }));
 }
 
@@ -335,8 +343,11 @@ async function reconcileUpgrade() {
       prior.userVersion === 10 && !Object.hasOwn(prior.counts, 'agent_model_sources')) && next.userVersion >= 9;
     const addReferences = file === 'web.sqlite' && prior.userVersion < 10 && next.userVersion >= 10;
     const addPlugins = file === 'web.sqlite' && prior.userVersion < pluginRegistryVersion && next.userVersion >= pluginRegistryVersion;
+    const addModelNotes = file === 'web.sqlite' && prior.userVersion < modelNotesVersion && next.userVersion >= modelNotesVersion;
+    const addCapabilities = file === 'web.sqlite' && prior.userVersion < capabilitiesVersion && next.userVersion >= capabilitiesVersion;
     const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion >= 2;
-    const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
+    const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion >= 3;
+    const addPublishedImports = knowledge && prior.userVersion < importedKnowledgeVersion && next.userVersion >= importedKnowledgeVersion;
     const seedTelegram = telegram && [0, 1].includes(prior.userVersion) && next.userVersion === 2;
     const expectedEmpty = seedWeb && !channel ? webV3Empty : seedKnowledge ? knowledgeV2Empty :
       seedTelegram ? new Set(legacyTelegramTables.filter((table) => !Object.hasOwn(prior.counts, table))) : emptyTables;
@@ -358,6 +369,9 @@ async function reconcileUpgrade() {
         if (addReferences) verifyEmptyAdditions(name, next.counts, webV10Empty);
         if (addModelSources) verifyEmptyAdditions(name, next.counts, webV9Empty);
         if (addPlugins) verifyEmptyAdditions(name, next.counts, webV12Empty);
+        if (addModelNotes) verifyEmptyAdditions(name, next.counts, webV13Empty);
+        if (addCapabilities) verifyEmptyAdditions(name, next.counts, webV14Empty);
+        if (addPublishedImports) verifyEmptyAdditions(name, next.counts, knowledgeV4Empty);
         for (const [table, count] of Object.entries(next.counts)) {
           if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
               seedAccounts && table === 'channel_accounts' ||
@@ -367,7 +381,8 @@ async function reconcileUpgrade() {
               !(addWorkItems && webV5Empty.has(table)) && !(addDelegations && webV6Empty.has(table)) &&
               !(addExternalHelpers && webV7Empty.has(table)) && !(addAgentManagement && webV8Empty.has(table)) &&
               !(addModelSources && webV9Empty.has(table)) && !(addReferences && webV10Empty.has(table)) &&
-              !(addPlugins && webV12Empty.has(table))) {
+              !(addPlugins && webV12Empty.has(table)) && !(addModelNotes && webV13Empty.has(table)) &&
+              !(addCapabilities && webV14Empty.has(table)) && !(addPublishedImports && knowledgeV4Empty.has(table))) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
           }
         }
@@ -393,8 +408,11 @@ async function reconcileUpgrade() {
           verifyReferences(newDb);
           verifyAgentModelSources(newDb);
           verifyPluginRegistry(newDb);
+          verifyModelNotes(newDb);
+          verifyCapabilities(newDb);
         }
-        if (knowledge && next.userVersion === 3) verifyBiOwnership(newDb);
+        if (knowledge && next.userVersion >= 3) verifyBiOwnership(newDb);
+        if (knowledge && next.userVersion >= importedKnowledgeVersion) verifyPublishedImports(newDb);
         if (telegram && next.userVersion === telegramInboxVersion) {
           verifyChannelOwners(name, newDb);
           verifyBiSourceOwners(newDb);
