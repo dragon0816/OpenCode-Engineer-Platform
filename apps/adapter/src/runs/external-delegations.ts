@@ -1,53 +1,158 @@
 import { randomUUID } from 'node:crypto';
 import { sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
-import { DelegationError, type DelegationParent } from './delegation-ledger.ts';
+import { DelegationError, type DelegationParent, type DelegationResult } from './delegation-ledger.ts';
 import type { Dispatcher } from './dispatcher.ts';
-import { externalProvider, type Snapshot } from './external-ledger.ts';
+import { helperReady, unavailableHelper, type HelperStatus } from './external-cli.ts';
+import { ExternalExecutionUnknown, type ExternalExecutor } from './external-executor.ts';
+import { externalProvider, type Provider, type Snapshot } from './external-ledger.ts';
 import type { ExternalSources } from './external-sources.ts';
 import type { ExternalDelegationInput } from '../opencode/delegation-tools.ts';
 import type { WebSession, WebStore } from './web-store.ts';
+import type { WorkOutcome } from './work-items.ts';
+
+export type ExternalWorkerOptions = {
+  executor?: ExternalExecutor;
+  synthetic?: (snapshot: Snapshot) => void;
+  intakeFixture?: (provider: Provider) => HelperStatus;
+};
 
 export class ExternalDelegations {
   private readonly store: WebStore;
   private readonly dispatcher: Dispatcher;
   private readonly sources: ExternalSources;
   private readonly notify: (id: string) => void;
+  private readonly options: ExternalWorkerOptions;
+  private readonly active = new Map<string, { stop: AbortController; checkPolicy: () => void }>();
 
   constructor(store: WebStore, dispatcher: Dispatcher, sources: ExternalSources,
-    notify: (id: string) => void, synthetic?: (snapshot: Snapshot) => void) {
+    notify: (id: string) => void, options: ExternalWorkerOptions = {}) {
     this.store = store;
     this.dispatcher = dispatcher;
     this.sources = sources;
     this.notify = notify;
+    this.options = options;
     const ledger = store.delegations;
+    const landed = new Map<string, Omit<DelegationResult, 'delegationId'>>();
     dispatcher.register('external-delegation', {
-      available: () => Boolean(synthetic),
-      execute: async (item, start) => {
-        ledger.claim(item);
+      available: () => Boolean(options.executor || options.synthetic),
+      recoverBeforeStart: true,
+      execute: async (item, start, shutdown): Promise<{ state: WorkOutcome; reason?: string }> => {
+        const id = item.sourceKey;
+        const row = ledger.get(id)!;
+        const limits = store.turnLimits();
+        const duration = Math.min(row.reservedMs, limits.timeoutSeconds * 1000);
+        const deadline = performance.now() + duration;
+        const stopped = new AbortController();
+        const signal = AbortSignal.any([stopped.signal, shutdown]);
+        const timer = setTimeout(() => stopped.abort('execution-deadline'), duration);
+        const check = () => {
+          if (performance.now() >= deadline) stopped.abort('execution-deadline');
+          signal.throwIfAborted();
+        };
+        let watch: NodeJS.Timeout | undefined;
         try {
-          const approval = store.external.confirmation(item.sourceKey);
+          ledger.claim(item);
+          this.changed(id);
+          const approval = store.external.confirmation(id);
           const snapshot = approval?.decision && store.external.snapshot(approval.snapshotId);
           if (!snapshot || approval.expiresAt <= Date.now()) throw new DelegationError('external-confirmation-expired');
-          this.validate(snapshot);
-          ledger.event(item.sourceKey, 'running', 'external-gate-passed');
-          start();
-          synthetic?.(snapshot);
+          const validate = () => {
+            if (externalProvider(row.targetAgentId) !== snapshot.provider || row.parentRunId !== snapshot.parentRunId ||
+                row.parentSessionId !== snapshot.sessionId) throw new DelegationError('external-provenance-missing');
+            ledger.checkTarget(row.targetAgentId, true);
+            this.validate(snapshot);
+          };
+          check();
+          validate();
+          if (Math.min(limits.toolCalls, row.reservedTools, row.reservedRequests) < 1 || !item.runId) {
+            throw new DelegationError('external-budget-unavailable');
+          }
+          const checkPolicy = () => {
+            try { validate(); }
+            catch (error) { stopped.abort(error instanceof DelegationError ? error.code : 'external-changed'); }
+          };
+          this.active.set(id, { stop: stopped, checkPolicy });
+          if (!options.executor) {
+            ledger.event(id, 'running', 'external-gate-passed');
+            start();
+            options.synthetic?.(snapshot);
+            return { state: 'succeeded' };
+          }
+          const result = await options.executor.execute(snapshot, item.runId, Math.min(limits.toolCalls, row.reservedRequests),
+            signal, check, (version) => {
+              ledger.atomic(() => {
+                validate();
+                check();
+                start();
+                ledger.chargeExternal(id);
+                ledger.event(id, 'running', 'external-gate-passed', {
+                  version, settingsRevision: snapshot.settingsRevision, sourceCount: 1 + snapshot.manifest.inputs.length,
+                });
+              });
+              watch = setInterval(checkPolicy, 1000);
+            }, (reason, members) => {
+              ledger.event(id, 'running', reason, members === undefined ? undefined : { members, orphans: 0 });
+            }, validate);
+          landed.set(id, { status: 'succeeded', ...result });
           return { state: 'succeeded' };
         } catch (error) {
-          const reason = error instanceof DelegationError ? error.code : 'external-stub-failed';
-          ledger.event(item.sourceKey, 'running', reason);
-          return { state: 'failed', reason };
+          if (error instanceof ExternalExecutionUnknown) return { state: 'indeterminate', reason: 'external-stop-unverified' };
+          const reason = shutdown.aborted ? 'service-stopping' : stopped.signal.aborted ? String(stopped.signal.reason) :
+            error instanceof DelegationError ? error.code : 'external-cli-failed';
+          ledger.event(id, 'running', reason);
+          return { state: reason === 'execution-deadline' ? 'timed_out' : signal.aborted ? 'cancelled' : 'failed', reason };
+        } finally {
+          this.active.delete(id);
+          clearTimeout(timer);
+          clearInterval(watch);
         }
       },
       finish: (item, outcome) => {
-        const done = ledger.finish(item, outcome.state, outcome.reason);
+        const result = landed.get(item.sourceKey);
+        landed.delete(item.sourceKey);
+        const done = ledger.finish(item, outcome.state, outcome.reason, result);
         if (done) this.changed(item.sourceKey);
         return done;
       },
       expireInTransaction: (item) => ledger.expire(item),
       expired: (item) => this.changed(item.sourceKey),
-      recover: async () => ({ state: 'failed', reason: 'external-stub-stopped' }),
+      recover: async (item) => {
+        const row = ledger.get(item.sourceKey);
+        if (row?.status === 'queued' || ledger.inspect(item.sourceKey)?.events.some(({ reasonCode }) => reasonCode === 'external-copy-discarded')) {
+          return { state: 'failed', reason: 'external-interrupted' };
+        }
+        return { state: 'indeterminate', reason: 'external-stop-unverified' };
+      },
+      canResolve: async () => false,
+      resolve: (item, outcome) => ledger.resolve(item, outcome),
     });
+  }
+
+  status(provider: Provider) {
+    return this.options.intakeFixture?.(provider) ?? this.options.executor?.status(provider) ?? unavailableHelper;
+  }
+
+  requiresReady(provider: Provider) {
+    if (this.options.synthetic) return;
+    const status = this.status(provider);
+    if (status.isolation !== 'verified') throw new DelegationError('external-isolation-unavailable');
+    if (status.installation !== 'detected') throw new DelegationError('external-cli-unsupported');
+    if (!helperReady(status)) throw new DelegationError('external-cli-login-unavailable');
+  }
+
+  async refresh(provider: Provider) {
+    await this.options.executor?.refresh(provider, AbortSignal.timeout(10_000));
+    return this.status(provider);
+  }
+
+  recheckActive() {
+    for (const { checkPolicy } of this.active.values()) checkPolicy();
+  }
+
+  cancel(id: string) {
+    const active = this.active.get(id);
+    active?.stop.abort('cancelled-by-owner');
+    return Boolean(active);
   }
 
   admit(session: WebSession, runId: string, input: ExternalDelegationInput) {
@@ -62,6 +167,7 @@ export class ExternalDelegations {
     const receipt = ledger.atomic(() => {
       const previous = ledger.replay(parent, input.requestKey, requestHash);
       if (previous) return previous;
+      this.requiresReady(provider);
       this.sources.revalidate(session, snapshot);
       const settings = external.settings(provider);
       const id = randomUUID();
@@ -122,6 +228,7 @@ export class ExternalDelegations {
             input.digest !== snapshot.digest || input.settingsRevision !== snapshot.settingsRevision) {
           throw new DelegationError('external-confirmation-invalid');
         }
+        this.requiresReady(snapshot.provider);
         this.validate(snapshot);
         if (!external.confirm(id, now) || !this.store.workItems.makeReady(row.workId, now)) {
           throw new DelegationError('external-confirmation-expired');

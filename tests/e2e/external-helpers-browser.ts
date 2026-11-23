@@ -50,6 +50,11 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       await page.evaluate('document.querySelector("#open-settings").click()');
       await selectSetting('external-helpers');
       await page.ready('!!document.querySelector(' + JSON.stringify(settings + ' input') + ')');
+      const verified = locale === 'zh-TW' ? '已驗證 Windows 隔離' : 'Windows isolation verified';
+      const unavailable = locale === 'zh-TW' ? '尚未驗證 Windows 隔離' : 'Windows isolation is unverified';
+      const helperStatus = await page.evaluate<string[]>('Array.from(document.querySelectorAll("#external-helper-settings fieldset"), group => group.textContent)');
+      assert.ok(helperStatus[0].includes(verified) && helperStatus[0].includes('1.2.3'));
+      assert.ok(helperStatus[1].includes(unavailable));
       const enabled = (await json(await api.get('/api/settings/external-helpers')))[0];
       if (enabled.enabled) {
         const { provider, confirmEachRun, termsConfirmed, revision } = enabled;

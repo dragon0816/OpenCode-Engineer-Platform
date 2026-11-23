@@ -20,9 +20,10 @@ import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { budgetFields, DelegationError, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
-import { ExternalDelegations } from './runs/external-delegations.ts';
+import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external-delegations.ts';
+import { helperReady } from './runs/external-cli.ts';
 import { ExternalSources } from './runs/external-sources.ts';
-import { externalProvider, helpers, type Provider, type Snapshot } from './runs/external-ledger.ts';
+import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
 import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
@@ -111,7 +112,7 @@ function secureHeaders(response: ServerResponse) {
 }
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
-  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void) {
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -142,7 +143,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
+  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions);
   delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
@@ -234,6 +235,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (method === 'POST') {
         const { settings, warningAccepted } = helperSettings(await body(request));
         store.delegations.atomic(() => {
+          if (settings.enabled) external.requiresReady(settings.provider);
           if (settings.enabled && !store.external.settings(settings.provider).enabled && !warningAccepted) {
             throw new HttpError(400, 'external-warning-required');
           }
@@ -241,9 +243,19 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           if (settings.enabled) store.external.ensureTarget(settings.provider);
         });
       }
-      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => ({ ...store.external.settings(provider),
-        name: helpers[provider].name, targetId: helpers[provider].id,
-        classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' })));
+      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => {
+        const status = external.status(provider);
+        const settings = store.external.settings(provider);
+        return { ...settings, enabled: settings.enabled && helperReady(status), status,
+          name: helpers[provider].name, targetId: helpers[provider].id,
+          classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' };
+      }));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/recheck' && method === 'POST') {
+      const { provider, ...extra } = await body(request);
+      if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
+      send(response, 200, await external.refresh(provider));
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {
@@ -859,6 +871,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (method === 'POST' && resource === 'external-snapshot' && item === undefined && extra === undefined) {
       const { runId, provider, taskId, inputs, specialistId } = snapshotInput(await body(request));
+      external.requiresReady(provider);
       const { id: publicInputId, digest } = store.delegations.atomic(() => externalSources.create(session, runId, provider, taskId, inputs));
       send(response, 201, { publicInputId, digest, specialistId });
       return;
@@ -1023,6 +1036,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       }
       const detail = error instanceof HttpError ? error : error instanceof DelegationError ? externalError(error) : new HttpError(503, 'unavailable');
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
+    }).finally(() => {
+      if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
+          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
+        external.recheckActive();
+      }
     });
     active.add(operation);
     void operation.finally(() => active.delete(operation));

@@ -13,6 +13,7 @@ import { DelegationHandoff } from './delegation-handoff.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 import type { ExternalDelegations } from './external-delegations.ts';
 import { externalProvider } from './external-ledger.ts';
+import { helperReady } from './external-cli.ts';
 
 type ParentTurn = { store: WebStore; session: WebSession; input: Turn; channel?: Destination;
   attachments: AttachmentService; workspace: () => string };
@@ -201,10 +202,8 @@ export class DelegationService {
     if (!row) return;
     this.changed(id, true);
     const active = this.stopped.get(id);
-    if (active) {
-      active.abort();
-      await this.dispatcher.wait(row.workId);
-    }
+    active?.abort();
+    if (active || this.external?.cancel(id)) await this.dispatcher.wait(row.workId);
     return this.ledger.inspect(id);
   }
 
@@ -247,7 +246,8 @@ export class DelegationService {
         return this.ledger.specialists(Boolean(external)).flatMap<Record<string, unknown>>((item) => {
           const provider = externalProvider(item.id);
           if (!provider) return [item];
-          return external && store.external.settings(provider).enabled && store.external.workspace(String(item.id)) === 'public'
+          return external && helperReady(external.status(provider)) && store.external.settings(provider).enabled &&
+            store.external.workspace(String(item.id)) === 'public'
             ? [{ ...item, external: true, provider }] : [];
         });
       }

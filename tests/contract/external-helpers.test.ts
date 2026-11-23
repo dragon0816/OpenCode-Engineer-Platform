@@ -62,7 +62,7 @@ test('public snapshots pin selected bytes, inherit provenance, and release only 
     const attachmentService = new AttachmentService(store);
     const sources = new ExternalSources(store, { attachments: attachmentService, workspace: () => workspace }, root, knowledge);
     const sent: Snapshot[] = [];
-    const delegations = new ExternalDelegations(store, dispatcher, sources, () => {}, (snapshot) => { sent.push(snapshot); });
+    const delegations = new ExternalDelegations(store, dispatcher, sources, () => {}, { synthetic: (snapshot) => { sent.push(snapshot); } });
     const ledger = store.external;
     ledger.ensureTarget(provider);
     ledger.saveSettings({ ...ledger.settings(provider), enabled: true });

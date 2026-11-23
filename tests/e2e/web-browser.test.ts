@@ -213,7 +213,9 @@ try {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? '17' :
       ['OEP_TELEGRAM_SAMPLE_BOT_TOKEN', 'OEP_TELEGRAM_DUPLICATE_BOT_TOKEN'].includes(name) ? '83:' + randomUUID() : undefined])),
     createApi: (value) => new SyntheticTelegram(value),
-  });
+  }, real ? undefined : { intakeFixture: (provider) => provider === 'codex_cli'
+    ? { installation: 'detected', isolation: 'verified', login: 'signedIn', version: '1.2.3', pinnedVersion: '1.2.3' }
+    : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } });
   try {
     const page = await chromium(join(root, 'chromium'));
     try {
