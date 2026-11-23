@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { benchmarkJson, benchmarkNames } from '../fixtures/benchmark-upload.ts';
 import type { chromium } from './chromium.ts';
 import { selectLocale } from './gui-locales.ts';
 
@@ -9,6 +10,60 @@ const gif = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const hint = "document.querySelector('#drop-hint')";
 const prompt = "document.querySelector('#prompt')";
 const status = "document.querySelector('#upload-status')";
+const picker = "document.querySelector('#file-input')";
+
+const paste = (page: Page, name: string, content: string | number[], type: string) => page.evaluate(`(() => {
+  const data = new DataTransfer();
+  const content = ${JSON.stringify(content)};
+  data.items.add(new File([typeof content === 'string' ? content : Uint8Array.from(content)],
+    ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
+  return !${prompt}.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+})()`);
+
+export async function verifyBenchmarkUploads(page: Page, audit: string, click: (selector: string) => Promise<void>) {
+  const { root } = await page.command<{ root: { nodeId: number } }>('DOM.getDocument');
+  const { nodeId } = await page.command<{ nodeId: number }>('DOM.querySelector', { nodeId: root.nodeId, selector: '#file-input' });
+  const rows = (name: string) =>
+    `[...document.querySelectorAll('#attachments li')].filter(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
+  const expectBenchmark = async (name: string, count: number) => {
+    const selected = `${rows(name)}.filter(row => row.querySelector('input').checked && row.querySelector('[data-classification="unclassified"]')).length`;
+    await page.ready(`${selected} === ${count} || !document.querySelector('#error').hidden`);
+    assert.equal(await page.evaluate<number>(selected), count, await page.evaluate<string>("document.querySelector('#error').textContent"));
+    assert.match(await page.evaluate<string>(`${status}.textContent`), /已上傳 1/);
+    assert.equal(await page.evaluate("document.querySelector('#error').hidden"), true);
+  };
+  await page.command('Page.setInterceptFileChooserDialog', { enabled: true });
+  try {
+    for (const name of benchmarkNames) {
+      let count = 0;
+      for (const type of ['', 'application/json']) {
+        assert.equal(await paste(page, name, benchmarkJson, type), true);
+        await expectBenchmark(name, ++count);
+        const data = `const data = new DataTransfer();
+          data.items.add(new File([${JSON.stringify(benchmarkJson)}], ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));`;
+        assert.equal(await page.evaluate(`(() => {
+          ${data}
+          return !${prompt}.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+        })()`), true);
+        await expectBenchmark(name, ++count);
+        await click('#pick');
+        await page.evaluate(`(() => {
+          ${data}
+          ${picker}.files = data.files;
+          ${picker}.dispatchEvent(new Event('change', { bubbles: true }));
+        })()`);
+        await expectBenchmark(name, ++count);
+      }
+      const path = join(audit, name);
+      writeFileSync(path, benchmarkJson);
+      await click('#pick');
+      await page.command('DOM.setFileInputFiles', { nodeId, files: [path] });
+      await expectBenchmark(name, ++count);
+      await page.evaluate(`${rows(name)}.forEach(row => row.querySelector('input').click())`);
+    }
+  } finally { await page.command('Page.setInterceptFileChooserDialog', { enabled: false }); }
+  console.log('Benchmark JSON uploads passed in Chromium (paste, drop and file picker).');
+}
 
 export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean, captureEngineering: boolean) {
   const attachment = (name: string) =>
@@ -152,13 +207,6 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
     assert.match(await page.evaluate<string>(`${status}.textContent`), /Could not attach files \(1\)/);
     for (const name of ['paste-photo.gif', 'paste-photo.webp']) await preview(name);
 
-    const paste = (name: string, content: string | number[], type: string) => page.evaluate(`(() => {
-      const data = new DataTransfer();
-      const content = ${JSON.stringify(content)};
-      data.items.add(new File([typeof content === 'string' ? content : Uint8Array.from(content)],
-        ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
-      return !${prompt}.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
-    })()`);
     const json = '{\n  "compilerOptions": { "strict": true }\n}\n';
     const python = 'def sample():\n    return "合成"\n';
     for (const [width, height, layout, locale, pasted, dropped] of [
@@ -171,7 +219,7 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
       for (const [name, content, type] of [pasted, dropped]) {
         const rows = `[...document.querySelectorAll('#attachments li')].filter(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
         const count = await page.evaluate<number>(`${rows}.length`);
-        if (type) assert.equal(await paste(name, content, type), true);
+        if (type) assert.equal(await paste(page, name, content, type), true);
         else await (await drag('#prompt', [name], undefined, content))();
         await page.ready(`${rows}.length === ${count + 1} && ${rows}.at(-1).querySelector('input').checked &&
           ${rows}.at(-1).querySelector('[data-classification=unclassified]')`);
@@ -188,7 +236,7 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
         await page.evaluate("document.querySelector('#close-files').click()");
       }
       const rejected = 'binary.json';
-      assert.equal(await paste(rejected, [0x50, 0x4b, 0x03, 0x04, 0x00], 'application/json'), true);
+      assert.equal(await paste(page, rejected, [0x50, 0x4b, 0x03, 0x04, 0x00], 'application/json'), true);
       const encodingError = locale === 'en' ? 'Text attachments must use UTF-8 encoding.' : '文字附件須使用 UTF-8 編碼。';
       await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(rejected + ' · ' + encodingError)})`);
       assert.equal(await page.evaluate(`Boolean(${attachment(rejected)})`), false);
