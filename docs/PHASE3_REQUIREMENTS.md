@@ -306,3 +306,14 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 
 - 「LLM Gateway 導入」包含外部 coding 幫手（Claude Code、Codex），因此 3I 在 3E（Skill）之前完成。
 - 3I 設計第 10 節的四項待決，擁有者未逐項回覆，依技術負責人建議預設：接受一次性 Windows 隔離配置（無法驗證則保持停用）、預設逐次確認（可關閉）、首版下載後手動套用、Claude Code 待確認商業條件後才啟用（Codex 可先驗收）。擁有者可隨時推翻。
+
+## 11. 擁有者試用回饋（2026-11-23 起，逐項回報）
+
+### 11.1 Claude Code、Codex 與 LLM Gateway 同一層（R21）
+- 擁有者定義：Claude Code、Codex 等外部 AI 工具與 LLM Gateway 屬於同一層的「模型來源」。設定中選擇要用 LLM Gateway、Claude Code 或 Codex；選外部工具時跳出視窗讓使用者登入該 coding agent；選 LLM Gateway 照原方式連線。
+- 技術負責人建議（待擁有者確認）：模型來源做成**每個助理的設定**（與模型同層），預設主助理用 LLM Gateway；例如「開發助理」選 Codex。這與 3I 設計（外部幫手經交辦路徑）一致，只是把它呈現為模型來源。
+- 限制：選外部來源的助理，所有輸入都會送到該供應商，因此依 D2 只能處理已標公開的資料（機密與未分級擋下）；OEP 的工具以 MCP 提供給外部引擎；執行時沿用簡化隔離（專用 Windows 帳號）。
+- 條款：Anthropic 自 2026-02 起明定 Free／Pro／Max 訂閱的 OAuth 不得用於第三方產品，第三方產品應用 Console API key；OpenAI 的 Codex CLI 支援 ChatGPT 帳號登入。建議 Claude Code 採 API key 或公司企業方案，Codex 可用 ChatGPT 帳號登入。
+
+### 11.2 對話輸入區支援拖放與貼上附件（R22）
+- 可把檔案拖放到輸入區附加；Ctrl+C 複製的檔案或截圖，可在輸入區 Ctrl+V 貼上成為附件。沿用既有附件限制與檢查。
