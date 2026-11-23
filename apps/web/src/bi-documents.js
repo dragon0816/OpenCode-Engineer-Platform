@@ -4,6 +4,39 @@ import { bindFilePicker, joinText, message, optionText, setText } from './i18n.j
 const endpoint = '/api/knowledge/bi-documents';
 const active = new Set(['converting', 'extracting', 'validating']);
 const find = id => document.getElementById('bi-document-' + id);
+const states = {
+  'converting': message('biDocument.state.converting'),
+  'validating': message('biDocument.state.validating'),
+  'awaiting-review': message('biDocument.state.awaiting-review'),
+  'needs-attention': message('biDocument.state.needs-attention'),
+  'failed': message('biDocument.state.failed'),
+};
+const candidateStates = {
+  'pass': message('biDocument.candidate.pass'),
+  'awaiting-review': message('biDocument.candidate.awaiting-review'),
+  'needs-attention': message('biDocument.candidate.needs-attention'),
+};
+const issues = {
+  'ocr': message('biDocument.issue.ocr'),
+  'pdf-unavailable': message('biDocument.issue.pdf-unavailable'),
+  'pdf-encrypted': message('biDocument.issue.pdf-encrypted'),
+  'limit': message('biDocument.issue.limit'),
+  'encoding': message('biDocument.issue.encoding'),
+  'empty': message('biDocument.issue.empty'),
+  'invalid': message('biDocument.issue.invalid'),
+  'link': message('biDocument.issue.link'),
+  'model': message('biDocument.issue.model'),
+  'interrupted': message('biDocument.issue.interrupted'),
+  'base-changed': message('biDocument.issue.base-changed'),
+  'no-candidates': message('biDocument.issue.no-candidates'),
+  'missing-evidence': message('biDocument.issue.missing-evidence'),
+  'invalid-quote': message('biDocument.issue.invalid-quote'),
+  'unsupported-value': message('biDocument.issue.unsupported-value'),
+  'unknown-field': message('biDocument.issue.unknown-field'),
+  'invalid-name': message('biDocument.issue.invalid-name'),
+  'conflicting-value': message('biDocument.issue.conflicting-value'),
+  'duplicate': message('biDocument.issue.duplicate'),
+};
 
 export function bindBiDocuments(openReview) {
   const panel = find('panel');
@@ -46,22 +79,22 @@ export function bindBiDocuments(openReview) {
     const reviewState = { approved: message('jobs.approved'), rejected: message('jobs.rejected'), published: message('jobs.published') };
     const progress = result.state === 'extracting' ? message('biDocument.progress', {
       completed: result.completedChunks, total: result.totalChunks,
-    }) : reviewState[result.reviewState] || message('biDocument.state.' + result.state);
+    }) : reviewState[result.reviewState] || states[result.state];
     setText(status, joinText([result.source.title || result.source.ref, progress,
-      result.issue && message('biDocument.issue.' + result.issue)], '\n'));
+      result.issue && issues[result.issue]], '\n'));
     const list = document.createElement('ul');
     for (const candidate of result.candidates) {
       const item = document.createElement('li');
       setText(item, joinText([candidate.name || message('biDocument.unnamed'),
-        message('biDocument.candidate.' + candidate.state)], ' · '));
+        candidateStates[candidate.state]], ' · '));
       if (candidate.issues.length) {
-        const issues = document.createElement('ul');
+        const findings = document.createElement('ul');
         for (const finding of candidate.issues) {
           const entry = document.createElement('li');
-          setText(entry, joinText([finding.field, message('biDocument.issue.' + finding.code)], ' · '));
-          issues.append(entry);
+          setText(entry, joinText([finding.field, issues[finding.code]], ' · '));
+          findings.append(entry);
         }
-        item.append(issues);
+        item.append(findings);
       }
       list.append(item);
     }
