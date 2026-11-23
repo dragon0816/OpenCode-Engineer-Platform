@@ -7,6 +7,7 @@ import { basename, join } from 'node:path';
 import { jsonInput, send } from '../../../scripts/phase0/probe-http.ts';
 import { testCustomMcp } from '../../launcher/src/custom-mcp-probe.ts';
 import { atRepo } from '../../launcher/src/paths.ts';
+import { openBrowser } from '../../launcher/src/browser.ts';
 import type { Runtime } from '../../launcher/src/runtime.ts';
 import { goldFixture } from '../../../tests/fixtures/knowledge/gold.ts';
 import { benchmarkQuestions } from '../../../packages/knowledge/src/benchmark.ts';
@@ -17,6 +18,8 @@ import { isLocalAbsoluteFolder, RepositoryError } from '../../../packages/knowle
 import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { brokerMcpName } from './opencode/permissions.ts';
+import { McpOAuth } from './opencode/mcp-oauth.ts';
+import { probeOAuthMcp } from './opencode/remote-mcp-broker.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
@@ -37,7 +40,8 @@ import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
 import { convertWorkbook, isAttachmentImage, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
-import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import { assistantMcpPaused, customMcpTool, oauthMcpTool, oauthSettings, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
+import type { CustomMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
 import type { CredentialEnvironment } from './runs/custom-mcp-credentials.ts';
 import { foldersOverlap, validateProjectFolder } from './runs/project-folders.ts';
@@ -128,6 +132,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const mcpOAuth = runtime.mcpOAuth ?? new McpOAuth(root, openBrowser, mcpCredentials);
   const dispatcher = new Dispatcher(store.workItems);
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].filter((session) => store.sessionOwner(session)?.origin === 'web')
@@ -172,6 +177,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   let testingMcp = false;
   let refreshingModels = false;
   const changedCredentials = new Set<string>();
+  const oauthStatus = (server: CustomMcp) => {
+    const status = mcpOAuth.status(server);
+    if (!status) return;
+    return { ...status, needsRestart: status.state === 'signed-in' && server.enabled && !assistantMcpPaused(server) &&
+      server.appliesToProjects.length > 0 && runtime.remoteMcp?.status.get(server.id) !== 'connected' };
+  };
   let benchmarksInFlight = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
     secureHeaders(response);
@@ -490,6 +501,13 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 202, { state: 'restarting' });
       return;
     }
+    if (path === '/api/settings/mcp/oauth' && method === 'GET') {
+      send(response, 200, Object.fromEntries(store.customMcpServers().flatMap((server) => {
+        const status = oauthStatus(server);
+        return status ? [[server.id, status]] : [];
+      })));
+      return;
+    }
     if (path === '/api/settings/mcp/test' && method === 'POST') {
       const { id } = await body(request);
       const server = store.customMcpServers().find((entry) => entry.id === id);
@@ -497,10 +515,20 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (testingMcp) throw new HttpError(409, 'probe-busy');
       testingMcp = true;
       try {
+        if (server.transport === 'remote' && server.oauth) {
+          const tools = await probeOAuthMcp(server, mcpOAuth, runtime.redact);
+          send(response, 200, { ok: true, tools });
+          return;
+        }
         const results = await testCustomMcp(server, mcpCredentials?.readCredentials);
         send(response, 200, results.ok ? results :
           { ...results, reasonDetail: webMessage(codeForFallback(results.reason) ?? 'mcp-probe-failed') });
-      } catch {
+      } catch (error) {
+        if (server.transport === 'remote' && server.oauth) {
+          const reasonDetail = error instanceof WebMessageError ? error.detail : webMessage('mcp-probe-failed');
+          send(response, 200, { ok: false, reason: reasonDetail.text, reasonDetail });
+          return;
+        }
         throw new HttpError(503, 'probe-unavailable');
       } finally { testingMcp = false; }
       return;
@@ -512,7 +540,17 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         const existing = store.customMcpServers().find(({ id }) => id === input.id);
         if (input.action !== 'create' && !existing) throw new HttpError(404, 'server-not-found');
         if (input.action === 'remove' && existing) {
+          mcpOAuth.remove(existing);
           store.removeCustomMcp(existing.id);
+        } else if ((input.action === 'oauth-login' || input.action === 'oauth-logout') && existing) {
+          if (existing.transport !== 'remote' || !existing.oauth) throw new HttpError(400, 'mcp-oauth-settings');
+          try {
+            if (input.action === 'oauth-login') await mcpOAuth.start(existing);
+            else await mcpOAuth.signOut(existing);
+          } catch (error) {
+            if (error instanceof WebMessageError) throw new HttpError(400, error.detail.code, error.detail.params);
+            throw new HttpError(503, 'mcp-oauth-login');
+          }
         } else if (input.action === 'credential' && existing) {
           const entry = existing.environment.find(({ name }) => name === input.name);
           if (!entry) throw new HttpError(404, 'credential-not-found');
@@ -531,7 +569,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           return;
         } else if (input.action === 'tool' && existing) {
           const { tool, enabled } = input;
-          if (typeof tool !== 'string' || !customMcpTool.test(tool) || typeof enabled !== 'boolean') {
+          if (typeof tool !== 'string' || !(oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
             throw new HttpError(400, 'invalid-tool-settings');
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
@@ -554,7 +592,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         } else if (input.action === 'create' || input.action === 'update') {
           const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
           try {
-            const definitionInput = { ...input, deniedTools: input.action === 'update' ? existing?.deniedTools : [] };
+            const deniedTools = input.action === 'update' ? existing?.deniedTools ?? [] : [];
+            const definitionInput = { ...input, deniedTools: input.oauth ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
             const projectIDs = projects.map((project) => project.id);
             const definition = input.transport === 'remote'
               ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
@@ -563,6 +602,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
             if (existing && !store.customMcpServers().some((server) => server.id === existing.id && server.updatedAt === existing.updatedAt)) {
               throw new HttpError(400, 'server-changed');
             }
+            mcpOAuth.configure(existing, definition, input.oauthClientId, input.oauthClientSecret);
             store.saveCustomMcp(definition);
             changedId = id;
           } catch (error) {
@@ -580,12 +620,18 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         return Object.entries(definition).every(([key, value]) =>
           JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
       });
+      const oauthStatuses = new Map(servers.map((server) => [server.id, oauthStatus(server)]));
+      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id);
+      const baseRestartRequired = servers.some(definitionChanged) ||
+        applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0;
       send(response, 200, {
         changedId,
-        restartRequired: servers.some((server) => !matches(server)) ||
-          applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0,
+        baseRestartRequired,
+        restartRequired: baseRestartRequired || [...oauthStatuses.values()].some((status) => status?.needsRestart),
         servers: servers.map((server) => ({
-          ...server, restartRequired: !matches(server) || changedCredentials.has(server.id),
+          ...server, restartRequired: definitionChanged(server) || Boolean(oauthStatuses.get(server.id)?.needsRestart),
+          baseRestartRequired: definitionChanged(server),
+          oauthStatus: oauthStatuses.get(server.id),
           status: assistantMcpPaused(server) ? 'paused' : !server.enabled ? 'disabled' :
             matches(server) ? runtime.remoteMcp?.status.get(server.id) ?? 'pending' : 'pending',
           environment: server.environment.map(({ name, reference }) => ({ name, configured: configured.has(reference) })),
@@ -1064,6 +1110,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   return {
     pairURL: () => auth.pairURL(),
     async close() {
+      mcpOAuth.close();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const stopped = chat.close();
       await events.close();

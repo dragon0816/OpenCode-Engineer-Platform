@@ -21,7 +21,9 @@ export async function sendRemoteMcp(server, message, session, headers, signal) {
       const code = response.statusCode;
       if (code >= 300 && code < 400 || code === 401 || code === 403 || code >= 400) {
         response.destroy();
-        reject(new Error(code < 400 ? 'url' : code === 401 || code === 403 ? 'auth' : 'exited'));
+        reject(Object.assign(new Error(code < 400 ? 'url' : code === 401 || code === 403 ? 'auth' : 'exited'), {
+          status: code, challenge: response.headers['www-authenticate'],
+        }));
         return;
       }
       const id = response.headers['mcp-session-id'];
