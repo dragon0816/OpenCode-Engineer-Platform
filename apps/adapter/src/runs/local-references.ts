@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -178,10 +178,14 @@ export class LocalReferences {
     const windows = process.env.SystemRoot;
     if (!windows || JSON.stringify(identity) !== JSON.stringify(file.identity) ||
         !this.ledger.recordAccess(session, file, 'open')) throw failure('reference-changed', 409);
-    const child = execFile(join(windows, 'explorer.exe'), [file.directory ? file.path : '/select,' + file.path],
-      { windowsHide: true, env: { SystemRoot: windows, WINDIR: windows } });
-    child.on('error', () => { /* Explorer sometimes exits after handing off to the desktop shell. */ });
-    child.unref();
+    // Explorer parses /select from the raw Windows command line. The pinned path cannot contain a quote.
+    const location = '"' + file.path + '"';
+    const child = spawn(join(windows, 'explorer.exe'), [file.directory ? location : '/select,' + location],
+      { windowsVerbatimArguments: true, detached: true, stdio: 'ignore', env: { SystemRoot: windows, WINDIR: windows } });
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', () => reject(failure('reference-unavailable', 503)));
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
   }
 
   async read(session: string, file: LocalReference, args: ReferenceReadArgs, signal?: AbortSignal) {
