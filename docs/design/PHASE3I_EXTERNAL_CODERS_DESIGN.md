@@ -2,6 +2,10 @@
 
 2026-11-23 · Windows 11 單人工作台 · 設計基準 `main` `cdfa78a`
 
+## 後續決議
+
+每個助理（含主助理）可在同一個模型選單選擇 LLM Gateway、Codex 或 Claude Code。外部來源需要個別啟用、登入與公開資料檢查，並適用於該助理的對話與交辦。Windows 生產隔離採一個非系統管理員的專用本機帳號、ACL、Job Object、清理過的環境變數、時限及額度。這兩項決議取代下文的僅交辦入口、雙帳號、受控啟動器服務、WFP 與 TLS 主機名政策。切片 2 的分級、確認及合成 CLI 契約仍供後續實作沿用。 [需求 §11.1、§11.3](../PHASE3_REQUIREMENTS.md#11-擁有者試用回饋2026-11-23-起逐項回報) · [擁有者決議](../DECISIONS.md) · [模型來源驗收紀錄](../reviews/PHASE3I_MODEL_SOURCES_REPORT.md)
+
 Claude Code CLI 與 Codex CLI 各自預設關閉，只承接程式碼閱讀、修改與修補提案。使用者用自己的供應商帳號，資料只限已確認公開的公司資料。未分級與機密資料留在 OEP。Copilot 等條款確認後另案處理。3I 在 3B2 之後、3E 之前交付。外部幫手不取得對話模型、通道、排程、工作流程、系統管理或 Skill 執行的身分與權限。 [Phase 3 需求 §4.3、§7 D2、§10](../PHASE3_REQUIREMENTS.md) · [擁有者決議](../DECISIONS.md#2026-11-22-phase-3-擁有者決議)
 
 ## 1. 從主助理交辦
