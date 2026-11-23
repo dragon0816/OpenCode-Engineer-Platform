@@ -26,8 +26,7 @@ const exact = new Set([
   'scripts/phase0/windows-job.cs', 'scripts/knowledge/migrate.ts', 'scripts/knowledge/verify-aep-bi.py',
   'tests/oracles/verify_xlsx.py', 'tests/oracles/requirements.txt', 'tests/fixtures/d08/oracle.json',
   'tests/fixtures/knowledge/gold.ts', 'tests/fixtures/knowledge/gold.v1.json', 'tests/fixtures/knowledge/gold.v2.json',
-  'workers/office/xlsx_to_text.py', 'workers/files/windows_write.py', 'workers/files/windows_probe.py', 'docs/OPERATIONS.md', 'docs/validation/p2-windows-web.md',
-  'workers/office/reference_extractors.py', 'workers/files/windows_reference.py',
+  'workers/office/xlsx_to_text.py', 'workers/files/windows_write.py', 'workers/files/windows_probe.py', 'docs/OPERATIONS.md', 'docs/validation/p2-windows-web.md', 'workers/office/reference_extractors.py', 'workers/files/windows_reference.py', 'workers/bi/worker.py', 'workers/bi/convert.py', 'workers/bi/html_markdown.py', 'workers/bi/extract.py', 'workers/bi/catalog.py', 'workers/bi/staging.py',
 ]);
 
 function verified(bytes, expected) {
