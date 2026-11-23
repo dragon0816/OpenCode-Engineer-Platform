@@ -411,12 +411,14 @@ export class ChatService {
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'turn-pending');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'workbook-assistant-required');
     const source = this.ledger.agentModelSource(owner.agentID);
+    this.pendingFiles(session, input.attachments, !channel && !lease?.delegation, source === 'gateway');
     if (source !== 'gateway') {
       try {
         const worker = this.delegations?.externalWorker();
         if (!worker) this.requireGateway(owner.agentID);
         worker!.requiresReady(source);
-        const snapshot = externalTurnSnapshot(this.ledger, this.store, session, source, input, reply, this.attachments, this.workspace(session));
+        const snapshot = externalTurnSnapshot(this.ledger, this.store, session, source, input, reply, this.attachments,
+          this.workspace(session), this.references);
         if (this.ledger.external.settings(source).confirmEachRun && input.externalConfirmation !== snapshot.digest) {
           throw new HttpError(409, 'external-confirm-turn', { digest: snapshot.digest });
         }
@@ -427,7 +429,6 @@ export class ChatService {
       } catch (error) { throw error instanceof DelegationError ? externalError(error) : error; }
     }
     if (input.externalConfirmation) throw new HttpError(409, 'external-settings-changed');
-    this.pendingFiles(session, input.attachments, !channel && !lease?.delegation);
     const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
     const accept = () => {
       if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
@@ -441,14 +442,14 @@ export class ChatService {
     return { ...publicRun(run), ...(modelFallback && { modelFallback }) };
   }
 
-  private pendingFiles(session: WebSession, ids: string[], allowReferences: boolean) {
+  private pendingFiles(session: WebSession, ids: string[], allowReferences: boolean, requireReferenceTools = true) {
     const uploads: string[] = [];
     const references = new Map<string, LocalReference>();
     for (const id of ids) {
       if (this.store.attachment(session.id, id)) { uploads.push(id); continue; }
       const file = allowReferences && this.references?.get(session.id, id);
       if (!file) throw new HttpError(404, 'session-attachment-not-found');
-      if (!this.runtime.toolTickets) throw new HttpError(409, 'reference-tools-unavailable');
+      if (requireReferenceTools && !this.runtime.toolTickets) throw new HttpError(409, 'reference-tools-unavailable');
       references.set(id, file);
     }
     return { uploads, references };
@@ -555,7 +556,7 @@ export class ChatService {
       check();
       this.executionOwner(session, channel, Boolean(delegation));
       const snapshot = externalTurnSnapshot(this.ledger, this.store, session, item.provider, input, this.store.reply(run.id),
-        this.attachments, this.workspace(session));
+        this.attachments, this.workspace(session), this.references);
       if (snapshot.digest !== item.digest) throw new DelegationError('external-changed');
       return snapshot;
     };

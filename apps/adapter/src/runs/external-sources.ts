@@ -7,6 +7,7 @@ import { maxUpload, MiB } from './attachments.ts';
 import { DelegationError, type Classification } from './delegation-ledger.ts';
 import { helpers, type ExternalSource, type Provider, type Snapshot, type SnapshotFile, type SourceDescriptor,
   type SourceSubmission } from './external-ledger.ts';
+import type { LocalReferences } from './local-references.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 
@@ -25,6 +26,40 @@ export const checkExternalLabel = (label: Classification, strictMode: boolean, n
 };
 const sourceVersion = (file: SnapshotFile): string =>
   sha256(canonical([file.sourceId, file.sha256, file.projection?.sha256 ?? null, file.parents.map(sourceVersion)]));
+
+export const maxExternalInput = 40 * MiB;
+const maxReferences = 64;
+export const externalExtension = (name: string) => /\.[a-z0-9]{1,8}$/i.exec(name)?.[0] ?? '.txt';
+
+export function collectExternalReferences(references: LocalReferences | undefined, session: string, ids: string[],
+  workspaceLabel: Classification, strictMode: boolean, room: number) {
+  const entries: Resolved[] = [];
+  const revisions: string[] = [];
+  for (const id of ids) {
+    const reference = references?.get(session, id);
+    if (!reference || !references) throw new DelegationError('external-changed', id);
+    if (blockedExternalName.test(reference.name) || references.confidential(reference.path, reference)) {
+      throw new DelegationError('external-confidential', reference.name);
+    }
+    const label = strictest([workspaceLabel, reference.classification]);
+    checkExternalLabel(label, strictMode, reference.name);
+    const selection = references.externalSelection(reference, room, maxUpload, maxReferences - entries.length);
+    if ('error' in selection) throw new DelegationError(selection.error === 'external-input-limit' ? selection.error : 'external-changed', reference.name);
+    for (const { path, identity, data: encoded } of selection.files) {
+      const displayName = path ? `${reference.name}/${path}` : reference.name;
+      const data = Buffer.from(encoded, 'base64');
+      if (blockedExternalName.test(displayName) || blockedExternalText.test(data.toString('utf8'))) {
+        throw new DelegationError('external-confidential', displayName);
+      }
+      room -= data.length;
+      entries.push({ file: { sourceId: id, name: `${id}-${entries.length + 1}${externalExtension(displayName)}`, displayName,
+        kind: 'local_reference', sha256: sha256(data), bytes: data.length,
+        provenance: { revision: reference.revision, identity }, parents: [] }, data, label });
+    }
+    revisions.push(`${reference.revision}:${label}`);
+  }
+  return { entries, revisions };
+}
 
 export class ExternalSources {
   private readonly store: WebStore;
@@ -112,12 +147,15 @@ export class ExternalSources {
       const { sha256, ownClassification } = this.inspect(session, taskId);
       if (ownClassification !== 'confidential') this.classify(session, taskId, sha256, 'public');
     }
-    const inputs = attachmentIds.map((id) => {
+    const referenceIds: string[] = [];
+    const inputs = attachmentIds.flatMap((id) => {
       const source = this.store.external.attachmentSource(session.id, id);
-      if (!source) throw new DelegationError('external-provenance-missing');
-      return source;
+      if (source) return [source];
+      if (!this.chat.references?.get(session.id, id)) throw new DelegationError('external-provenance-missing');
+      referenceIds.push(id);
+      return [];
     });
-    const snapshot = this.collect(session, runId, provider, settings.revision, taskId, inputs, undefined, targetAgent);
+    const snapshot = this.collect(session, runId, provider, settings.revision, taskId, inputs, undefined, targetAgent, referenceIds);
     this.store.external.saveSnapshot(snapshot);
     return snapshot;
   }
@@ -128,14 +166,15 @@ export class ExternalSources {
     if (!settings.enabled) throw new DelegationError('external-disabled');
     if (settings.revision !== snapshot.settingsRevision) throw new DelegationError('external-settings-changed');
     const current = this.collect(session, snapshot.parentRunId, snapshot.provider, settings.revision,
-      snapshot.manifest.task.sourceId, snapshot.manifest.inputs.map(({ sourceId }) => sourceId), snapshot.manifest, targetAgent);
+      snapshot.manifest.task.sourceId, snapshot.manifest.inputs.filter(({ kind }) => kind !== 'local_reference')
+        .map(({ sourceId }) => sourceId), snapshot.manifest, targetAgent, snapshot.manifest.referenceIds);
     if (current.digest !== snapshot.digest || !Buffer.from(snapshot.content).equals(Buffer.from(current.content))) {
       throw new DelegationError('external-changed');
     }
   }
 
   private collect(session: WebSession, parentRunId: string, provider: Provider, settingsRevision: number, task: string, inputs: string[],
-    previous?: Snapshot['manifest'], targetAgent?: string): Snapshot {
+    previous?: Snapshot['manifest'], targetAgent?: string, referenceIds: string[] = []): Snapshot {
     const target = helpers[provider].id;
     const policy = this.store.external.policy();
     checkExternalLabel(this.store.external.workspace(target) ?? 'unclassified', policy.strictMode, helpers[provider].name);
@@ -158,14 +197,19 @@ export class ExternalSources {
     }
     for (const { label, file } of entries) checkExternalLabel(label, policy.strictMode, file.kind === 'owner_text' ? undefined : file.name);
     if (taskFile.kind !== 'owner_text' && taskFile.kind !== 'derived') throw new DelegationError('external-invalid-input');
+    const buffers = entries.flatMap(({ data, projection }) => projection ? [data, projection] : [data]);
+    const remaining = maxExternalInput - buffers.reduce((size, data) => size + data.length, 0);
+    if (remaining < 0) throw new DelegationError('external-input-limit');
+    const originLabel = this.store.external.workspace(this.workspace(session)) ?? 'unclassified';
+    const references = collectExternalReferences(this.chat.references, session.id, referenceIds, originLabel, policy.strictMode, remaining);
+    for (const { file, data } of references.entries) { files.push(file); buffers.push(data); }
     if (taskFile.bytes > 16_000 || new Set(files.map(({ name }) => name.toLowerCase())).size !== files.length) {
       throw new DelegationError('external-invalid-input');
     }
-    const buffers = entries.flatMap(({ data, projection }) => projection ? [data, projection] : [data]);
-    if (buffers.reduce((size, data) => size + data.length, 0) > 40 * MiB) throw new DelegationError('external-input-limit');
-    const manifest = { task: taskFile, inputs: files };
+    const manifest = { task: taskFile, inputs: files, ...(referenceIds.length && { referenceIds }) };
     const digest = sha256(canonical({ manifest, session: session.id, parentRunId, provider, settingsRevision,
       targetRevision: this.store.external.workspaceRevision(target), policyRevision: policy.revision,
+      ...(referenceIds.length && { referenceRevisions: references.revisions }),
       ...(workspace && { targetAgent, targetWorkspaceRevision: this.store.external.workspaceRevision(workspace) }) }));
     return { id: randomUUID(), sessionId: session.id, parentRunId, provider, settingsRevision, digest, manifest, content: Buffer.concat(buffers) };
   }

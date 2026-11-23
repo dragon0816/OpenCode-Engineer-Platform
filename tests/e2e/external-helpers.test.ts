@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { AttachmentService } from '../../apps/adapter/src/runs/attachments.ts';
@@ -17,6 +18,7 @@ import { until } from '../../scripts/phase0/probe-http.ts';
 import { restrictedJobFixture } from '../fixtures/external-helpers/isolation.ts';
 import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
 import { externalTurnSnapshot } from '../../apps/adapter/src/runs/external-turn.ts';
+import { LocalReferences } from '../../apps/adapter/src/runs/local-references.ts';
 
 test('direct external input policy names blocked attachments and rejects changes at the release handshake', async () => {
   const folder = canonicalWorkspaceDirectory(mkdtempSync(join(process.env.OEP_DATA_DIR!, 'direct-helper-')));
@@ -57,6 +59,61 @@ test('direct external input policy names blocked attachments and rejects changes
     store.close();
     rmSync(folder, { recursive: true, force: true });
   }
+});
+
+test('external helpers stage only selected pinned references and fail closed on classification changes', async (t) => {
+  const root = canonicalWorkspaceDirectory(mkdtempSync(join(process.env.OEP_DATA_DIR!, 'reference-helper-')));
+  const files = canonicalWorkspaceDirectory(mkdtempSync(join(tmpdir(), 'oep-external-references-')));
+  const directory = join(files, 'selected');
+  mkdirSync(directory);
+  const sample = join(directory, 'sample.txt');
+  writeFileSync(sample, 'Synthetic selected content');
+  writeFileSync(join(directory, '.env'), 'Synthetic disallowed control file');
+  writeFileSync(join(files, 'unselected.txt'), 'Synthetic non-selected sibling');
+  const store = new WebStore(join(root, 'web.sqlite'));
+  t.after(() => {
+    store.close();
+    rmSync(files, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+  const provider = 'codex_cli';
+  store.external.ensureTarget(provider);
+  store.external.saveSettings({ ...store.external.settings(provider), enabled: true });
+  store.updateAgent('main', store.agents().find(({ id }) => id === 'main')!.revision, { modelSource: provider }, 'available');
+  const session = { project: 'default' as const, id: randomUUID(), upstreamID: 'synthetic', createdAt: Date.now(),
+    agent: 'inspector' as const, alias: 'synthetic' };
+  store.createSession(session);
+  const references = new LocalReferences(store.references!, root);
+  const [folder, file] = await references.attach(session.id, [directory, sample], () => true);
+  const input = { id: randomUUID(), text: 'Synthetic question', attachments: [folder.id], workbook: false };
+  const snapshot = () => externalTurnSnapshot(store, store, session, provider, input, undefined,
+    new AttachmentService(store), root, references);
+  const approved = snapshot();
+  assert.deepEqual(approved.manifest.inputs.map(({ displayName }) => displayName), ['selected/sample.txt']);
+  assert.equal(approved.manifest.inputs[0].sha256, sha256('Synthetic selected content'));
+  const helper = memoryHelper(root);
+  const result = await helper.executor.execute(approved, input.id, 2, new AbortController().signal,
+    () => {}, () => {}, () => {}, () => {});
+  const staged = join(result.copyDirectory, 'work', 'oep-inputs');
+  assert.deepEqual(readdirSync(staged), [approved.manifest.inputs[0].name]);
+  assert.equal(readFileSync(join(staged, approved.manifest.inputs[0].name), 'utf8'), 'Synthetic selected content');
+  assert.ok(!helper.launched[0].includes(files));
+
+  store.external.classifyWorkspace(helpers[provider].id, 'public');
+  store.external.classifyWorkspace('legacy-default', 'public');
+  store.external.savePolicy(true, store.external.policy().revision);
+  assert.throws(snapshot, { code: 'external-unclassified', item: 'selected' });
+  references.classify(session.id, folder, 'public');
+  assert.equal(snapshot().manifest.inputs.length, 1);
+  input.id = randomUUID();
+  const beforeRelease = snapshot();
+  const blocked = memoryHelper(root, () => references.classify(session.id, file, 'confidential'));
+  await assert.rejects(blocked.executor.execute(beforeRelease, input.id, 2, new AbortController().signal, () => {},
+    () => snapshot(), () => {}, () => {}), { code: 'external-confidential', item: 'selected' });
+  assert.equal(blocked.launched.length, 0);
+  assert.equal(existsSync(join(root, 'agents', helpers[provider].id, 'external', input.id)), false);
+  input.attachments = [file.id];
+  assert.throws(snapshot, { code: 'external-confidential', item: 'sample.txt' });
 });
 
 test('external CLI jobs use synthetic Windows restricted tokens and settle the delegation lease', { timeout: 180_000 }, async (t) => {

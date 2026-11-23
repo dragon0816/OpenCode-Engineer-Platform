@@ -33,7 +33,7 @@ export const delegationTools = [{
   readOnly: true,
 }, {
   name: delegateTool,
-  description: 'Queue a specialist task. For an external-source specialist, use the user’s exact task words and attachment IDs from this message. Reuse the key when retrying.',
+  description: 'Queue a specialist task. For an external-source specialist, use only the user’s exact task words and the attachment or local reference IDs selected for this message. Reuse the key when retrying.',
   properties: {
     specialistId: { type: 'string', pattern: agentPattern },
     task: { type: 'string', minLength: 1, maxLength: 4000 },

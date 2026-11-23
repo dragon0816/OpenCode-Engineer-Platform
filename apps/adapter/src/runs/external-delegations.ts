@@ -238,11 +238,11 @@ export class ExternalDelegations {
     const { provider, parentRunId, digest, settingsRevision, manifest, content } = snapshot;
     const task = Buffer.from(content.subarray(0, manifest.task.bytes)).toString('utf8');
     let offset = manifest.task.bytes;
-    const inputs = manifest.inputs.map(({ name, kind, bytes, sha256, projection }) => {
+    const inputs = manifest.inputs.map(({ name, displayName, kind, bytes, sha256, projection }) => {
       const body = content.subarray(offset, offset + bytes);
       offset += bytes + (projection?.bytes ?? 0);
       const excerpt = kind === 'citation' || kind === 'derived' || kind === 'owner_text' ? Buffer.from(body).toString('utf8') : undefined;
-      return { name, kind, bytes, sha256, projection, excerpt };
+      return { name: displayName ?? name, kind, bytes, sha256, projection, excerpt };
     });
     return { provider, parentRunId, digest, settingsRevision, task, inputs, bytes: content.length,
       expiresAt: approval.expiresAt, challenge: approval.challenge, decision: approval.decision, decidedAt: approval.decidedAt };

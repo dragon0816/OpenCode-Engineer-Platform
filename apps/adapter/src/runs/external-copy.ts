@@ -130,7 +130,8 @@ class ExternalCopy {
         baseline.push({ path: entry.name, sha256: put(work, entry.name, data).sha256 });
       } else {
         fixedInputs.set(entry.name, put(inputs, entry.name, data));
-        references.push('oep-inputs/' + entry.name);
+        const location = 'oep-inputs/' + entry.name;
+        references.push(entry.displayName ? `${location} (${JSON.stringify(entry.displayName)})` : location);
       }
       if (entry.projection) {
         const path = entry.name + '.projection.txt';

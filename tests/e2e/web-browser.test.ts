@@ -121,6 +121,7 @@ const synthetic: typeof fetch = async (target, init) => {
   }
   const { model, messages } = JSON.parse(String(init?.body)) as WireRequest;
   const user = JSON.stringify(messages.findLast((message) => message.role === 'user')?.content);
+  assert.ok(!user.includes('Synthetic direct external chat'), 'Direct external turns bypass the Gateway');
   if (user.includes('Reply with exactly OEP-READY.')) {
     assert.equal(messages.length, 1);
     pinged.push(model);
@@ -150,8 +151,10 @@ const synthetic: typeof fetch = async (target, init) => {
     assert.ok(!user.includes('publicInputId='));
     const attached = /Session attachment IDs in submission order: ([a-f\d-]{36})/.exec(user);
     assert.ok(attached);
+    const reference = /Reference ([a-f\d-]{36}) · picker-reference\.csv/.exec(user);
     if (messages.at(-1)?.role !== 'tool') return completion(model, toolCall(0, 'call_external_helper', delegateTool,
-      { specialistId: 'external-codex-cli', task: external[0], attachmentIds: [attached[1]], requestKey: external[0] }), 'tool_calls');
+      { specialistId: 'external-codex-cli', task: external[0], attachmentIds: reference ? [attached[1], reference[1]] : [attached[1]],
+        requestKey: external[0] }), 'tool_calls');
     return completion(model, [{ role: 'assistant', content: '已接單。' }], 'stop');
   }
   if (user.includes('SYNTHETIC_DELEGATION_RESULTS') || user.includes('做成 BI 卡片')) {
@@ -1684,7 +1687,7 @@ try {
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
         await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting,
-          signOut: () => { helperSignedIn = false; } });
+          signOut: () => { helperSignedIn = false; }, referencePicker: Boolean(referenceFixtures) });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

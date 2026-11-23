@@ -19,9 +19,10 @@ export type SourceSubmission =
 export type SourceDescriptor = Exclude<SourceSubmission, { kind: 'derived' }> |
   (Extract<SourceSubmission, { kind: 'derived' }> & { sourceVersions: string[] });
 export type ExternalSource = { id: string; sessionId: string; workspaceId: string; descriptor: SourceDescriptor };
-export type SnapshotFile = { sourceId: string; kind: SourceDescriptor['kind']; name: string; sha256: string; bytes: number;
+export type SnapshotFile = { sourceId: string; kind: SourceDescriptor['kind'] | 'local_reference'; name: string;
+  displayName?: string; sha256: string; bytes: number;
   provenance: unknown; parents: SnapshotFile[]; projection?: { sha256: string; bytes: number } };
-export type SnapshotManifest = { task: SnapshotFile; inputs: SnapshotFile[] };
+export type SnapshotManifest = { task: SnapshotFile; inputs: SnapshotFile[]; referenceIds?: string[] };
 export type Snapshot = { id: string; sessionId: string; parentRunId: string; provider: Provider; settingsRevision: number;
   digest: string; manifest: SnapshotManifest; content: Uint8Array };
 type Confirmation = { snapshotId: string; expiresAt: number; challenge: string;

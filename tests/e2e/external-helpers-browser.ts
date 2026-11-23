@@ -10,9 +10,10 @@ type Options = {
   reload: (connection?: string) => Promise<void>;
   selectSetting: (section: string) => Promise<unknown>;
   signOut: () => void;
+  referencePicker?: boolean;
 };
 
-export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting, signOut }: Options) {
+export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting, signOut, referencePicker }: Options) {
   const enter = () => key('Enter', 'Enter', 13);
   const escape = () => key('Escape', 'Escape', 27);
   const focus = async (selector: string) => {
@@ -110,6 +111,12 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
         await escape();
         await page.ready(closePanel);
       }
+      const includeReference = referencePicker && locale === 'zh-TW' && width === 1440;
+      if (includeReference) {
+        await activate('#reference-picker summary');
+        await activate('#pick-reference-file');
+        await page.ready(`document.querySelector('#attachments .reference-chip[title$="picker-reference.csv"] input:checked')`);
+      }
       assert.equal(await page.evaluate('!!document.querySelector("#prepare-external-helper")'), false);
       const task = 'Synthetic public coding task ' + locale + ' ' + width;
       await page.evaluate('document.querySelector("#prompt").value = ' + JSON.stringify(task));
@@ -135,7 +142,8 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       const receipt = await json(await api.get('/api/delegations/' + latest.delegationId));
       assert.equal(receipt.externalApproval.decision, 'confirmed');
       assert.equal(receipt.externalApproval.task, task);
-      assert.deepEqual(receipt.externalApproval.inputs.map(({ name }: { name: string }) => name), [name]);
+      assert.deepEqual(receipt.externalApproval.inputs.map(({ name }: { name: string }) => name),
+        includeReference ? [name, 'picker-reference.csv'] : [name]);
     }
   }
   const setSource = async (modelSource: string) => {
@@ -147,6 +155,11 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   await setSource('codex_cli');
   await reload('Connected');
   await page.ready("document.querySelector('#session-alias').value === 'external:codex_cli'");
+  if (referencePicker) {
+    await activate('#reference-picker summary');
+    await activate('#pick-reference-file');
+    await page.ready(`document.querySelector('#attachments .reference-chip[title$="picker-reference.csv"] input:checked')`);
+  }
   await page.evaluate("document.querySelector('#prompt').value = 'Synthetic direct external chat'");
   await activate('#send');
   await page.ready("document.querySelector('#messages').textContent.includes('Synthetic external reply')");

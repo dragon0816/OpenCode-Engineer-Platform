@@ -1,6 +1,7 @@
 """Read an owner-approved location through pinned, read-only Windows handles."""
 
 import codecs
+import base64
 import ctypes as c
 from ctypes import wintypes as w
 from contextlib import ExitStack, contextmanager
@@ -172,6 +173,62 @@ def extract(source, request):
             **({"page": request["page"], "pages": page_count} if page_count is not None else {})}
 
 
+class ExternalLimit(Exception):
+    pass
+
+
+def external_selection(handle, path, directory, identity, request):
+    files, total, visited = [], 0, 0
+
+    def collect(opened, location, is_dir, expected, relative):
+        nonlocal total, visited
+        visited += 1
+        if visited > 512 or len(relative) > 4096 or relative.count("/") >= 16:
+            raise ExternalLimit()
+        if is_dir:
+            with os.scandir("\\\\?\\" + location) as entries:
+                names = []
+                for entry in entries:
+                    if len(names) >= 512:
+                        raise ExternalLimit()
+                    names.append(entry.name)
+            for name in sorted(names):
+                target = ntpath.join(location, name)
+                if not valid_part(name) or any(overlaps(target, root) for root in request["protected"]):
+                    continue
+                attributes = get_attributes("\\\\?\\" + target)
+                check(attributes != 0xffffffff)
+                if attributes & 0x400:
+                    continue
+                child_dir = bool(attributes & 0x10)
+                with child(opened, name, child_dir, read=True) as member:
+                    collect(member, target, child_dir, metadata(member, target, child_dir),
+                            relative + "/" + name if relative else name)
+        else:
+            size = expected["size"]
+            if (len(files) >= request["maxFiles"] or size > request["maxFileBytes"] or
+                    total + size > request["maxBytes"]):
+                raise ExternalLimit()
+            with open_stream(opened) as source:
+                source.seek(0)
+                data = source.read(size + 1)
+            digest = hashlib.sha256(data).hexdigest()
+            if len(data) != size or expected.get("sha256", digest) != digest:
+                raise ValueError("Reference changed")
+            total += size
+            if size <= FULL_HASH_LIMIT:
+                expected = {**expected, "sha256": digest}
+            files.append({"path": relative, "data": base64.b64encode(data).decode("ascii"), "identity": expected})
+        if metadata(opened, location, is_dir) != {k: v for k, v in expected.items() if k != "sha256"}:
+            raise ValueError("Reference changed")
+
+    try:
+        collect(handle, path, directory, identity, "")
+    except ExternalLimit:
+        return {"error": "external-input-limit"}
+    return {"files": files}
+
+
 def run(request):
     path, protected = request["path"], request["protected"]
     action, expected = request["action"], request.get("expected")
@@ -183,6 +240,8 @@ def run(request):
             if metadata(handle, path, directory) != {k: v for k, v in identity.items() if k != "sha256"}:
                 return {"error": "reference-changed"}
             return {"identity": identity, "directory": directory}
+        if action == "external":
+            return external_selection(handle, path, directory, identity, request)
         target = request.get("child", "")
         with ExitStack() as stack:
             opened, location, is_dir = handle, path, directory

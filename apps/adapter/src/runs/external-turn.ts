@@ -1,13 +1,16 @@
 import { canonical, sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
 import type { Turn } from '../http/chat.ts';
-import { MiB, type AttachmentService } from './attachments.ts';
+import type { AttachmentService } from './attachments.ts';
 import { DelegationError } from './delegation-ledger.ts';
 import { helpers, type Provider, type Snapshot, type SnapshotFile } from './external-ledger.ts';
-import { blockedExternalName, blockedExternalText, checkExternalLabel } from './external-sources.ts';
+import { blockedExternalName, blockedExternalText, checkExternalLabel, collectExternalReferences, externalExtension,
+  maxExternalInput } from './external-sources.ts';
+import type { LocalReferences } from './local-references.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 
 export function externalTurnSnapshot(ledger: WebStore, store: WebStore, session: WebSession, provider: Provider,
-  input: Turn, reply: { id: string; text: string } | undefined, attachments: AttachmentService, directory: string): Snapshot {
+  input: Turn, reply: { id: string; text: string } | undefined, attachments: AttachmentService, directory: string,
+  references?: LocalReferences): Snapshot {
   const owner = store.sessionOwner(session);
   if (!owner || ledger.agentModelSource(owner.agentID) !== provider) throw new DelegationError('external-settings-changed');
   const settings = ledger.external.settings(provider);
@@ -31,14 +34,18 @@ export function externalTurnSnapshot(ledger: WebStore, store: WebStore, session:
     qualify(workspaceLabel, 'quoted message', quote);
   }
   const prompt = quote ? Buffer.concat([text, Buffer.from('\n\nQuoted message:\n'), quote]) : text;
-  if (prompt.byteLength > 40 * MiB) throw new DelegationError('external-input-limit');
+  if (prompt.byteLength > maxExternalInput) throw new DelegationError('external-input-limit');
   const buffers: Buffer[] = [prompt];
   const files: SnapshotFile[] = [];
   const labels: string[] = [];
+  const referenceIds: string[] = [];
   let total = prompt.length;
   for (const id of input.attachments) {
     const attachment = store.attachment(session.id, id);
-    if (!attachment) throw new DelegationError('external-changed', id);
+    if (!attachment) {
+      referenceIds.push(id);
+      continue;
+    }
     if (blockedExternalName.test(attachment.name)) throw new DelegationError('external-confidential', attachment.name);
     const label = ledger.delegations.attachmentClassification(owner.workspaceID, id, attachment.original.sha256);
     let selected: ReturnType<ReturnType<AttachmentService['verifiedSelection']>['next']>['value'];
@@ -48,16 +55,18 @@ export function externalTurnSnapshot(ledger: WebStore, store: WebStore, session:
     const { data, projection } = selected;
     qualify(label, attachment.name, ...[data, projection].filter((item): item is Buffer => Boolean(item)));
     total += data.length + (projection?.length ?? 0);
-    if (total > 40 * MiB) throw new DelegationError('external-input-limit');
-    const extension = /\.[a-z0-9]{1,8}$/i.exec(attachment.name)?.[0] ?? '.txt';
-    files.push({ sourceId: id, name: id + extension, kind: 'attachment', sha256: sha256(data), bytes: data.length,
+    if (total > maxExternalInput) throw new DelegationError('external-input-limit');
+    files.push({ sourceId: id, name: id + externalExtension(attachment.name), kind: 'attachment', sha256: sha256(data), bytes: data.length,
       provenance: attachment.original, parents: [], ...(projection && { projection: { bytes: projection.length, sha256: sha256(projection) } }) });
     labels.push(label);
     buffers.push(data);
     if (projection) buffers.push(projection);
   }
+  const selected = collectExternalReferences(references, session.id, referenceIds, workspaceLabel, policy.strictMode, maxExternalInput - total);
+  for (const { file, data } of selected.entries) { files.push(file); buffers.push(data); }
+  labels.push(...selected.revisions);
   const manifest = { task: { sourceId: session.id, kind: 'owner_text' as const, name: 'message.txt', sha256: sha256(prompt),
-    bytes: prompt.length, provenance: {}, parents: [] }, inputs: files };
+    bytes: prompt.length, provenance: {}, parents: [] }, inputs: files, ...(referenceIds.length && { referenceIds }) };
   const digest = sha256(canonical({ manifest, provider, settings: settings.revision, policy: policy.revision, owner: owner.agentID,
     session: session.id, workspace: owner.workspaceID, workspaceLabel, labels, target, targetRevision: ledger.external.workspaceRevision(target),
     workspaceRevision: ledger.external.workspaceRevision(owner.workspaceID) }));
