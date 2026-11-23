@@ -6,7 +6,7 @@ export default {
   'capabilities.mcp-retrust': "Trust this version again",
   'capabilities.mcp-trust-confirm': "Trust this executable to run with your Windows account and make it available for workspace grants?",
   'capabilities.mcp-trusted': "Trusted for explicit assistant and workspace grants.",
-  'capabilities.mcp-untrusted': "Paused for assistants. Trust this executable to make it eligible for grants.",
+  'capabilities.mcp-untrusted': "You can still test the connection. Trust this executable before granting access to assistants.",
   'capabilities.mcp-unsigned': "Unsigned executable",
   'capabilities.mcp-grants': "Assistant and workspace grants",
   'server.mcp-trust-confirm': "Confirm that you trust this local stdio executable.",

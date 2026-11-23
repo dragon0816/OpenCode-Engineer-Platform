@@ -6,7 +6,7 @@ export default {
   'capabilities.mcp-retrust': "重新信任此版本",
   'capabilities.mcp-trust-confirm': "要信任此執行檔以您的 Windows 帳戶執行，並開放工作區授權嗎？",
   'capabilities.mcp-trusted': "已信任，可對個別助理和工作區授權。",
-  'capabilities.mcp-untrusted': "已暫停供助理使用。信任此執行檔後即可授權。",
+  'capabilities.mcp-untrusted': "仍可測試連線。信任此執行檔後即可授權給助理。",
   'capabilities.mcp-unsigned': "未簽署的執行檔",
   'capabilities.mcp-grants': "助理與工作區授權",
   'server.mcp-trust-confirm': "請確認您信任此本機 stdio 執行檔。",
