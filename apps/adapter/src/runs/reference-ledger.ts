@@ -7,14 +7,21 @@ export type ReferenceIdentity = { key: string[]; size?: number; modified?: strin
 export type LocalReference = { id: string; revision: string; path: string; name: string; directory: boolean; mime: string;
   identity: ReferenceIdentity; hash: string; classification: Classification; createdAt: number };
 
-export function migrateReferences(db: DatabaseSync) {
-  db.exec(readFileSync(atRepo('apps/adapter/migrations/010_local_references.sql'), 'utf8'));
-}
+const referenceSchema = () => readFileSync(atRepo('apps/adapter/migrations/010_local_references.sql'), 'utf8');
+
+export function migrateReferences(db: DatabaseSync) { db.exec(referenceSchema()); }
 
 export function verifyReferences(db: DatabaseSync) {
   db.prepare('SELECT id,session_id,revision,record,revoked FROM local_references');
   db.prepare('SELECT reference_id,member,identity FROM local_reference_members');
   db.prepare('SELECT reference_id,event,identity_hash,chunk_hash,at FROM local_reference_audit');
+  const normalize = (sql: string) => sql.trim().replace(' IF NOT EXISTS ', ' ').replace(/\s+/g, ' ');
+  const expected = referenceSchema().split(';').map(normalize).filter(Boolean).sort();
+  const actual = db.prepare(`SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND tbl_name IN
+    ('local_references','local_reference_members','local_reference_audit')`).all().map(({ sql }) => normalize(String(sql))).sort();
+  if (actual.length !== expected.length || expected.some((sql, index) => sql !== actual[index])) {
+    throw new Error('Local reference tables or indexes do not match the migration');
+  }
 }
 
 export class ReferenceLedger {

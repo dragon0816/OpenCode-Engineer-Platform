@@ -145,6 +145,7 @@ export class WebStore extends Ledger {
           migrateTelegramSettings(db);
           migrateBudgetChoice(db);
         }
+        // The standalone v10 references branch skipped the v9 model source table.
         if (!telegram && (version < 9 || version === 10)) migrateAgentModelSources(db);
         if (!telegram && version < 10) migrateReferences(db);
       },
