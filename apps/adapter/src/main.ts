@@ -141,6 +141,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   pluginOptions?: { dataRoot?: string; version?: string; fetchBiPage?: ConstructorParameters<typeof DocumentExtraction>[3];
     biScheduleClock?: () => number }) {
   const root = canonicalWorkspaceDirectory(dataRoot);
+  const pluginRoot = pluginOptions?.dataRoot ? canonicalWorkspaceDirectory(pluginOptions.dataRoot) : root;
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
     mkdirSync(projectRoot, { recursive: true });
@@ -160,12 +161,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     try {
       const release = atRepo('config/release.manifest.json');
       const version = pluginOptions?.version ?? JSON.parse(readFileSync(existsSync(release) ? release : atRepo('package.json'), 'utf8')).version;
-      const registry = store.pluginRegistry(pluginOptions?.dataRoot ?? root, version);
+      const registry = store.pluginRegistry(pluginRoot, version);
       registry.recover();
       return registry;
     } catch (error) { store.close(); throw error; }
   })();
-  try { await recoverPythonJobs(pluginOptions?.dataRoot ?? root); }
+  try { await recoverPythonJobs(pluginRoot); }
   catch (error) { store.close(); throw error; }
   const dispatcher = new Dispatcher(store.workItems);
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
@@ -191,10 +192,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const extraction = runtime.knowledge && new DocumentExtraction(join(root, 'bi-documents.sqlite'), runtime.knowledge,
     () => new Set(telegram.approvedBiOrigins()), pluginOptions?.fetchBiPage,
-    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined, pluginOptions?.dataRoot ?? root);
+    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined, pluginRoot);
   let receivingBiDocument = false;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  pluginRuntime = new PluginRuntime(plugins, pluginOptions?.dataRoot ?? root, runtime.knowledge, (sessionId, source, hash) => {
+  pluginRuntime = new PluginRuntime(plugins, pluginRoot, runtime.knowledge, (sessionId, source, hash) => {
     const session = sessions.get(sessionId);
     if (!session || store.sessionOwner(session)?.origin !== 'web') throw new HttpError(404, 'plugin-not-installed');
     return externalSources.pluginFile(session, source, hash);

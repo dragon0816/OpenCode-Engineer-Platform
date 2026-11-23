@@ -10,6 +10,7 @@ import type { Classification } from './delegation-ledger.ts';
 import type { LocalReference, ReferenceIdentity, ReferenceLedger } from './reference-ledger.ts';
 import { pickLocalReference } from './reference-picker.ts';
 import type { PickerKind, ReferencePicker } from './reference-picker.ts';
+import { canonicalWorkspaceDirectory } from './workspace.ts';
 
 const rangeLimit = 16 * 1024;
 const batchLimit = 10;
@@ -94,7 +95,7 @@ export class LocalReferences {
 
   constructor(ledger: ReferenceLedger, root: string, picker: ReferencePicker = pickLocalReference) {
     this.ledger = ledger;
-    this.protected = protectedRoots(root);
+    this.protected = protectedRoots(canonicalWorkspaceDirectory(root));
     this.picker = picker;
   }
 
