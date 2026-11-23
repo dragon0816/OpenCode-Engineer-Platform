@@ -1,0 +1,14 @@
+{
+  "schema_id": "synthetic/demo",
+  "version": "1.0.0",
+  "types": [
+    {
+      "name": "Measurement",
+      "fields": [
+        {
+          "name": "setting"
+        }
+      ]
+    }
+  ]
+}

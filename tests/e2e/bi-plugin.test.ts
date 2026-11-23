@@ -9,6 +9,7 @@ import { checkServerIdentity } from 'node:tls';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
+import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import { gatewayAliases, gatewaySettings } from '../../apps/adapter/src/opencode/gateway.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { readApprovedPage } from '../../packages/knowledge/src/bi/link-intake.ts';
@@ -20,6 +21,8 @@ import { labelInLocale, selectLocale, type Locale } from './gui-locales.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { dataDirectory } from './test-data.ts';
 import { webAPI } from './web-api.ts';
+import { completion, toolCall } from './synthetic-completion.ts';
+import { until } from '../../scripts/phase0/probe-http.ts';
 
 const plugin = 'oep.bi-knowledge';
 const entry = '[data-plugin-page="oep.bi-knowledge.build"]';
@@ -285,6 +288,246 @@ test('installs BI Knowledge and publishes cited PDF, HTTPS and repository eviden
 });
 
 const ownerExport = process.env.OEP_MARKET_INTEL_DIR;
+test('runs BI stage checkpoints and benchmark thresholds, edits a working export, and queries published cards', { timeout: 300_000 }, async () => {
+  const root = dataDirectory();
+  const profile = join(root, 'profile');
+  const audit = join(root, 'audit');
+  mkdirSync(profile);
+  mkdirSync(audit);
+  const fixture = resolve('tests/fixtures/knowledge/bi-working-export');
+  const file = join(root, 'synthetic-reading.txt');
+  const fact = 'SYN-GAMMA calibration limit is 23 mm.';
+  writeFileSync(file, 'Name: SYN-GAMMA\nReading: ' + fact);
+  let boundVault = '';
+  let toolSteps = 0;
+  const gateway: typeof fetch = async (_target, init) => {
+    const { model, messages, tools, stream } = JSON.parse(String(init?.body)) as WireRequest & { stream: boolean };
+    if (!stream) {
+      const input = JSON.parse(String(messages.find(({ role }) => role === 'user')?.content));
+      assert.equal(input.segments, undefined, 'Ingest uses the saved deterministic rule method');
+      const passage = (input.evidence as { id: string; text: string }[]).find(({ text }) => text.includes('SYN-GAMMA baseline is 21 mm.') || text.includes(fact));
+      return passage ? reply({ state: 'answer', citations: [{ passageID: passage.id, quote: passage.text }] }) : reply({ state: 'abstain' });
+    }
+    assert.match(JSON.stringify(messages), /BI knowledge-query procedure/);
+    assert.ok(tools?.some(tool => tool.function?.name === 'oep_bi_query'));
+    const results = messages.filter(({ role }) => role === 'tool').map(({ content }) => JSON.stringify(content));
+    toolSteps = Math.max(toolSteps, results.length);
+    if (!results.length) return completion(model, toolCall(0, 'bi-filter', 'oep_bi_query',
+      { vault: boundVault, type: 'Measurement', text: 'SYN-GAMMA' }), 'tool_calls');
+    assert.match(results[0], /SYN-GAMMA Edited Draft/);
+    assert.doesNotMatch(results[0], /SYN-DELTA/);
+    if (results.length === 1) return completion(model, toolCall(0, 'bi-link', 'oep_bi_query',
+      { vault: boundVault, from: 'gamma', relation: 'related' }), 'tool_calls');
+    assert.match(results[1], /SYN-DELTA/);
+    if (results.length === 2) return completion(model, toolCall(0, 'bi-evidence', 'oep_knowledge_ask',
+      { vault: boundVault, question: 'What is the SYN-GAMMA baseline?' }), 'tool_calls');
+    assert.match(results[2], /SYN-GAMMA baseline is 21 mm/);
+    assert.match(results[2], /synthetic-draft\.md.*#L2-L2/s);
+    return completion(model, [{ role: 'assistant', content: 'SYN-GAMMA baseline is 21 mm (synthetic-draft.md, #L2-L2).' }], 'stop');
+  };
+  const runtime = await startRuntime(audit, { url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-stage-model',
+    fetch: gateway, isolatedJob: true }, profile);
+  try {
+    const adapter = await startAdapter(root, runtime, () => {}, false, undefined, undefined, undefined, undefined, async () => [fixture]);
+    try {
+      const api = await webAPI(adapter.pairURL());
+      const browser = await chromium(join(root, 'stage-chromium'));
+      const ready = (id: string) => browser.ready(`document.querySelector('#bi-builder-${id}')?.disabled === false`);
+      const visible = (id: string) => browser.ready(`document.querySelector('#bi-builder-${id}')?.checkVisibility()`);
+      const change = (id: string, value: string) => browser.evaluate(`(() => { const node = document.querySelector('#bi-builder-${id}');
+        node.value = ${JSON.stringify(value)}; node.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      const save = async (stage: string) => {
+        await click(browser, '#bi-builder-save-' + stage);
+        await ready('save-' + stage);
+      };
+      try {
+        await install(browser, adapter.pairURL());
+        await openBuilder(browser);
+        await browser.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 850, deviceScaleFactor: 1, mobile: false });
+        assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+        await fill(browser, '#bi-builder-title', 'Synthetic empty workspace');
+        await click(browser, '#bi-builder-consent');
+        await click(browser, '#bi-builder-create-workspace');
+        await visible('workspace-cards');
+        await ready('run');
+        await change('reader', 'text');
+        await save('convert');
+        await change('method', 'rules');
+        await fill(browser, '#bi-builder-field-rules', 'content = Reading');
+        await save('ingest');
+        await fill(browser, '#bi-builder-benchmark-name', 'Synthetic checks');
+        await fill(browser, '#bi-builder-questions', 'What is the SYN-GAMMA calibration limit? = 23 mm\nWhat is the SYN-GAMMA setting? = 24 mm');
+        await fill(browser, '#bi-builder-threshold', '50');
+        await save('testing');
+        await openBuilder(browser);
+        for (const [selector, expected] of [['reader', 'text'], ['method', 'rules'], ['threshold', '50']]) {
+          assert.equal(await browser.evaluate(`document.querySelector('#bi-builder-${selector}').value`), expected);
+        }
+        await change('mode', 'step');
+        await selectFile(browser, '#bi-builder-file', file);
+        assert.equal(await browser.evaluate('document.querySelector("#bi-builder-run").focus(); document.activeElement.id'), 'bi-builder-run');
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', text: ' ', windowsVirtualKeyCode: 32 });
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+        await visible('run-ingest');
+        await ready('run-ingest');
+        assert.equal((await (await api.get(endpoint)).json()).reviews.length, 0);
+        await click(browser, '#bi-builder-details');
+        await browser.ready('[...document.querySelectorAll("#chat-files summary")].some(element => element.textContent === "paragraph:1")');
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await browser.ready('document.querySelector("#chat-files").hidden');
+        await openBuilder(browser);
+        await visible('run-ingest');
+        await click(browser, '#bi-builder-run-ingest');
+        await visible('run-testing');
+        assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").textContent'), /23 mm/);
+        assert.equal((await (await api.get(endpoint)).json()).reviews.length, 0);
+        await click(browser, '#bi-builder-run-testing');
+        await visible('submit');
+        assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").textContent'), /1\/2.*50%/);
+
+        await change('mode', 'automatic');
+        await fill(browser, '#bi-builder-threshold', '100');
+        await save('testing');
+        await selectFile(browser, '#bi-builder-file', file);
+        await click(browser, '#bi-builder-run');
+        await browser.ready('document.querySelector("#bi-builder-report").textContent.includes("100%")');
+        assert.equal(await browser.evaluate('document.querySelector("#bi-builder-submit").hidden'), true);
+
+        await selectLocale(browser, 'en', '#menu-locale');
+        await openBuilder(browser);
+        await fill(browser, '#bi-builder-title', '');
+        await fill(browser, '#bi-builder-folder', fixture);
+        await click(browser, '#bi-builder-import-workspace');
+        await browser.ready('document.querySelector("#bi-builder-title").value === "Synthetic calibration vault"');
+        await ready('workspace-cards');
+        await click(browser, '#bi-builder-workspace-cards');
+        await browser.ready('document.querySelector("#bi-builder-workspace-card")?.options.length === 3');
+        assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-workspace-card").textContent'), /SYN-GAMMA Working Draft/);
+        await change('workspace-card', 'gamma');
+        await visible('card-fields');
+        assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-card-fields").value'), /Awaiting confirmation/);
+        await fill(browser, '#bi-builder-card-title', 'SYN-GAMMA Edited Draft');
+        await click(browser, '#bi-builder-save-card');
+        await browser.ready('document.querySelector("#bi-builder-workspace-card").textContent.includes("Edited Draft")');
+        await openBuilder(browser);
+        await click(browser, '#bi-builder-prepare-workspace');
+        await visible('submit');
+        const review = await stage(browser, api);
+        boundVault = review.vault;
+        assert.equal((await bind(api, [boundVault])).status, 400);
+        await finish(browser, api, 'en', review);
+      } finally { await browser.close(); }
+
+      assert.equal((await bind(api, [boundVault])).status, 200);
+      assert.equal((await api.post('/api/plugins/' + plugin + '/uninstall', {})).status, 200);
+      const { id: session } = await (await api.post('/api/sessions', { agent: 'inspector' })).json();
+      const id = randomUUID();
+      assert.equal((await api.post('/api/sessions/' + session + '/turns', { id, text: 'What is the synthetic calibration baseline?',
+        attachments: [], workbook: false })).status, 202);
+      await until(async () => {
+        const response = await (await api.get('/api/sessions/' + session + '/state')).json();
+        return response.messages?.some(({ text }: { text: string }) => text.includes('synthetic-draft.md, #L2-L2')) || undefined;
+      }, 45_000);
+      assert.equal(toolSteps, 3);
+    } finally { await adapter.close(); }
+  } finally { await runtime.stop(); }
+});
+
+test('schedules BI Telegram intake through the installed Convert and Ingest workers', { timeout: 180_000 }, async () => {
+  const root = dataDirectory();
+  const profile = join(root, 'profile');
+  const audit = join(root, 'audit');
+  mkdirSync(profile);
+  mkdirSync(audit);
+  const file = pdf([stream('Synthetic calibration index.'), stream(pdfFact)]);
+  const chat = { type: 'private', id: 42 };
+  const from = { id: 42 };
+  const updates = [
+    { update_id: 707, message: { chat, from, text: url } },
+    { update_id: 708, message: { chat, from, document: { file_id: 'fixture-pdf', file_size: file.length, file_name: 'scheduled.pdf' } } },
+  ];
+  let collecting = false;
+  let now = Date.UTC(2026, 0, 6, 0, 58);
+  let reads = 0;
+  const replies: string[] = [];
+  class SyntheticBot extends TelegramApi {
+    override async call<T>(method: string, body: { offset?: number; text?: string }, signal: AbortSignal): Promise<T> {
+      signal.throwIfAborted();
+      if (method === 'getMe') return { id: 72, is_bot: true, username: 'synthetic_bi' } as T;
+      if (method === 'getUpdates') return (collecting ? updates.filter(({ update_id }) => update_id >= (body.offset ?? 0)) : []) as T;
+      assert.equal(method, 'sendMessage');
+      replies.push(body.text!);
+      return { message_id: replies.length } as T;
+    }
+    override async file(id: string, limit: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      assert.equal(id, 'fixture-pdf');
+      assert.ok(limit >= file.length);
+      reads++;
+      return file;
+    }
+  }
+  const web = await fixturePage(root);
+  try {
+    const runtime = await startRuntime(audit, { url: 'http://example.invalid/v1', key: randomUUID(), alias: 'synthetic-bi-inbox',
+      fetch: syntheticGateway, isolatedJob: true }, profile);
+    try {
+      const adapter = await startAdapter(root, runtime, () => {}, true, undefined, {
+        readCredentials: names => Object.fromEntries(names.flatMap(name => name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? [[name, '42']] :
+          name === 'OEP_TELEGRAM_BI_BOT_TOKEN' ? [[name, '72:fixture-bi']] : [])),
+        createApi: value => new SyntheticBot(value),
+      }, undefined, undefined, undefined, { fetchBiPage: web.fetchBiPage, biScheduleClock: () => now });
+      try {
+        const api = await webAPI(adapter.pairURL());
+        const browser = await chromium(join(root, 'scheduled-chromium'));
+        try {
+          await install(browser, adapter.pairURL());
+          await selectLocale(browser, 'en', '#menu-locale');
+          await openBuilder(browser);
+          assert.equal((await api.post('/api/jobs', { action: 'configure', domain: 'synthetic', origins: ['https://synthetic-bi.invalid'] })).status, 200);
+          await fill(browser, '#bi-builder-title', 'Synthetic inbox vault');
+          await click(browser, '#bi-builder-create-workspace');
+          await browser.ready('document.querySelector("#bi-builder-inbox-save").disabled === false');
+          await click(browser, '#bi-builder-inbox summary');
+          await fill(browser, '#bi-builder-inbox-time', '09:00');
+          await fill(browser, '#bi-builder-inbox-zone', 'Asia/Taipei');
+          await click(browser, '#bi-builder-inbox-save');
+          await browser.ready('document.querySelector("#bi-builder-inbox-status").textContent.includes("09:00 (Asia/Taipei)")');
+          collecting = true;
+          await until(async () => {
+            const status = await (await api.get('/api/jobs')).json();
+            return status.sources.length === 2 && status.sources.every(({ state }: { state: string }) => state === 'scheduled') || undefined;
+          }, 25_000);
+          assert.equal(reads, 1);
+          assert.equal((await (await api.get(endpoint)).json()).reviews.length, 0);
+          now = Date.UTC(2026, 0, 6, 1);
+          const scheduled = await until(async () => {
+            const status = await (await api.get('/api/jobs')).json();
+            return status.occurrences.find((row: { schedule: string; state: string }) =>
+              row.schedule === 'bi-inbox-pipeline' && row.state === 'awaiting_review');
+          }, 60_000);
+          assert.equal(scheduled.wall, '2026-01-06T09:00');
+          const { reviews } = await (await api.get(endpoint)).json();
+          assert.equal(reviews.length, 2);
+          assert.ok(reviews.every((row: { vault: string; status: string; publication: unknown }) =>
+            row.vault === reviews[0].vault && row.status === 'pending' && row.publication === null));
+          const evidence = [];
+          for (const { id } of reviews) {
+            const compared = await (await api.post(endpoint, { action: 'compare', id })).json();
+            evidence.push(...compared.candidate.passages.map(({ locator, text }: { locator: string; text: string }) => [locator, text]));
+          }
+          assert.deepEqual(evidence.sort(), [['#limit', webFact], ['page:2', pdfFact]].sort());
+          await click(browser, '#open-review');
+          await browser.ready('document.querySelector("#review-view")?.checkVisibility()');
+          assert.equal((await (await api.get('/api/jobs')).json()).occurrences.length, 1);
+          assert.ok(replies.length >= 2);
+        } finally { await browser.close(); }
+      } finally { await adapter.close(); }
+    } finally { await runtime.stop(); }
+  } finally { await web.close(); }
+});
+
 test('optionally verifies a local owner repository export', {
   skip: !ownerExport || !existsSync(ownerExport) ? 'OEP_MARKET_INTEL_DIR is unavailable' : false,
   timeout: 300_000,

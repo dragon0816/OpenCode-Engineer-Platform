@@ -1,6 +1,6 @@
 import { errorText } from './api.js';
 import { biDocumentIssues } from './bi-documents.js';
-import { bindFilePicker, getLocale, message, optionText, resolveText, setText } from './i18n.js';
+import { bindFilePicker, formatDate, getLocale, message, optionText, resolveText, setText } from './i18n.js';
 
 const working = new Set(['converting', 'extracting', 'validating', 'testing']);
 const steps = [
@@ -168,7 +168,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
   const review = button(message('biBuilder.openReview'), 'review', () => openReview(current.reviewId));
   const mode = select('mode', { automatic: 'automatic', step: 'step' });
   mode.value = draft.mode ?? 'automatic';
-  mode.addEventListener('change', () => { draft.mode = mode.value; });
+  mode.addEventListener('change', () => { draft.mode = mode.value; labelRun(); });
   const reader = select('reader', { auto: 'autoReader', text: 'textReader', html: 'htmlReader', pdf: 'pdfReader' });
   const method = select('method', { model: 'modelMethod', rules: 'rulesMethod' });
   const model = element('select', undefined, 'ingest-model');
@@ -378,6 +378,10 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     review.disabled = busy;
   }
 
+  function labelRun() {
+    setText(run, current?.state === 'failed' || current?.state === 'needs-attention' ? m('retry') : m(mode.value === 'step' ? 'runConvert' : 'run'));
+  }
+
   function draw(result) {
     current = result;
     ledger.set(result.id, result);
@@ -387,7 +391,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     selectStep(index);
     progress.value = result.state === 'extracting' ? 35 + 35 * result.completedChunks / Math.max(1, result.totalChunks) :
       [0, 15, 35, 80, 90, 100][index];
-    setText(run, result.state === 'failed' || result.state === 'needs-attention' ? message('biBuilder.retry') : message('biBuilder.run'));
+    labelRun();
     const detail = result.issue ? biDocumentIssues[result.issue] : result.state === 'extracting' ?
       message('biDocument.progress', { completed: result.completedChunks, total: result.totalChunks }) :
       states[state] || states[result.state];
@@ -433,6 +437,12 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     const report = validation.cloneNode(true);
     report.removeAttribute('id');
     panel.body.replaceChildren(element('p', feedback.textContent), report);
+    if (current.events?.length) {
+      const log = element('ol');
+      for (const { state, at } of current.events) log.append(element('li', () =>
+        `${formatDate(new Date(at))()} · ${resolveText(states[state] ?? state)}`));
+      panel.body.append(element('h3', m('runLog')), log);
+    }
     for (const { locator, text } of current.conversion?.preview ?? []) {
       const excerpt = element('details');
       excerpt.append(element('summary', locator), element('p', text));
@@ -497,6 +507,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     for (const input of [model, testModel]) input.replaceChildren(optionText(m('defaultModel'), ''), ...aliases.map(alias => optionText(alias, alias)));
     choose(choices);
     await loadSettings();
+    labelRun();
     drawInbox(await api.call('bi.inbox'));
     for (const item of [...runs].reverse()) ledger.set(item.id, item);
     drawHistory();

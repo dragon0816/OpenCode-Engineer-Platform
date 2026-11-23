@@ -35,6 +35,7 @@ export type ExtractionStatus = { id: string; source: Source; schema: string; sta
   summary?: Counts;
   mode?: PipelineMode; stage?: 'convert' | 'ingest' | 'testing'; benchmark?: BenchmarkReport;
   scheduled?: boolean;
+  events?: { state: State; at: string }[];
   conversion?: { segments: number; preview: Projection['segments'] };
   repository?: Counts & { tag: string; withoutEvidence: number; digestVerified: boolean; sizeVerified: boolean } };
 type Counts = { cards: number; sources: number; passages: number; relationships: number };
@@ -274,6 +275,10 @@ export class DocumentExtraction {
   }
 
   private save(status: StoredStatus, receipt?: string) {
+    if (status.mode) {
+      const events = status.events ??= [];
+      if (events.at(-1)?.state !== status.state) events.push({ state: status.state, at: new Date().toISOString() });
+    }
     this.database().prepare(`INSERT INTO runs VALUES (?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET status=excluded.status,state=excluded.state,receipt=coalesce(excluded.receipt,runs.receipt)`)
       .run(status.id, JSON.stringify(status), status.state, receipt ?? null);
@@ -289,7 +294,7 @@ export class DocumentExtraction {
     const { pending, checkpoint, ...status } = this.load(id);
     if (status.reviewId) return this.status(id)!;
     if (status.state !== 'validated' || !pending) throw new Error('Validate the BI build first');
-    if (status.scheduled !== Boolean(scheduled) && (status.scheduled || scheduled)) throw new Error('Scheduled run authorization required');
+    if (Boolean(status.scheduled) !== Boolean(scheduled)) throw new Error('Scheduled run authorization required');
     const store = this.knowledge.reviewStore;
     const version = checkpoint?.workingVersion ?? pending.workspaceVersion;
     const working = version === undefined ? undefined : this.workspaces.get(pending.draft.vault.id);

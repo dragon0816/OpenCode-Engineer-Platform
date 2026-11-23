@@ -1,0 +1,76 @@
+{
+  "format": "aep.knowledge.commit/v1",
+  "repo": "synthetic-working",
+  "author": "fixture",
+  "seq": 1,
+  "clock": 1,
+  "kind": "change",
+  "purpose": "Seed synthetic calibrations",
+  "base": null,
+  "created": "2026-01-01T00:00:00Z",
+  "files": [],
+  "ops": [
+    {
+      "unit": "schema",
+      "value": "synthetic/demo@1.0.0",
+      "base": null
+    },
+    {
+      "unit": "card:gamma",
+      "value": {
+        "type": "Measurement",
+        "key": "gamma",
+        "name": "SYN-GAMMA Baseline"
+      },
+      "base": null
+    },
+    {
+      "unit": "field:gamma:setting",
+      "value": {
+        "value": "21 mm",
+        "source": {
+          "kind": "manual"
+        }
+      },
+      "base": null
+    },
+    {
+      "unit": "evidence:gamma:setting",
+      "value": [
+        {
+          "source_id": "synth-note",
+          "source_name": "synthetic-draft.md",
+          "locator": {
+            "line_start": 2,
+            "line_end": 2,
+            "rev": 1
+          },
+          "excerpt": "SYN-GAMMA baseline is 21 mm.",
+          "basis": "fact"
+        }
+      ],
+      "base": null
+    },
+    {
+      "unit": "card:delta",
+      "value": {
+        "type": "Measurement",
+        "key": "delta",
+        "name": "SYN-DELTA Baseline"
+      },
+      "base": null
+    },
+    {
+      "unit": "relation:calibration",
+      "value": {
+        "from": "gamma",
+        "to": "delta",
+        "type": "related",
+        "origin": "registered",
+        "status": "unreviewed"
+      },
+      "base": null
+    }
+  ],
+  "id": "c68b0974e5d26714d9d63099cbfb491e4d05f6990224410e9caa09e9d33e3c8f"
+}
