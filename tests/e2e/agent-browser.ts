@@ -344,7 +344,8 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     assert.equal(await page.evaluate("document.querySelector('#channel-save').disabled"), true);
     await click('#channel-confirm-assignment');
     await click('#channel-save');
-    await page.ready(`!document.querySelector('#channel-dialog').open && document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
+    await page.ready(`!document.querySelector('#channel-dialog').open && !document.querySelector('#channel-dialog').childElementCount &&
+      document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
   }
   const alerts = `[data-channel] button[aria-label$="@SampleAlertsBot"]`;
   await click(alerts);
