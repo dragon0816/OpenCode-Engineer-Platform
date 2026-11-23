@@ -106,8 +106,9 @@ test('external CLI jobs use synthetic Windows restricted tokens and settle the d
       job.confirm();
       writeFileSync(path, 'Synthetic changed after approval');
       await dispatcher.start();
-      assert.equal((await settle(job)).receipt.status, 'failed');
-      assert.equal(store.delegations.receipt(store.delegations.get(job.id)!).reasonCode, 'external-changed');
+      const detail = await settle(job);
+      assert.equal(detail.receipt.status, 'failed');
+      assert.equal(detail.result && detail.result.reasonCode, 'external-changed');
       assert.equal(fake.launches(), 0);
       assert.equal(store.delegations.get(job.id)!.usedRequests, 0);
       assert.equal(existsSync(job.copy), false);

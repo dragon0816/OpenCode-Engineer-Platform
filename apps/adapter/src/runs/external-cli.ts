@@ -45,7 +45,7 @@ export function cliArgs(provider: Provider, operation: 'version' | 'login' | 'ru
     return ['--ask-for-approval', 'never', ...codexAuth, ...codexConfig.flatMap((value) => ['-c', value]),
       'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--skip-git-repo-check', '-'];
   }
-  if (operation === 'login') return ['--safe-mode', '--restricted', 'auth', 'status'];
+  if (operation === 'login') return ['auth', 'status'];
   if (!Number.isSafeInteger(turns) || turns < 1) throw new DelegationError('external-budget-unavailable');
   return ['--print', '--input-format', 'text', '--output-format', 'json', '--no-session-persistence', '--safe-mode',
     '--restricted', '--permission-mode', 'dontAsk', '--tools', claudeTools, '--allowedTools', claudeTools,
