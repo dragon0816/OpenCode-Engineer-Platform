@@ -3,7 +3,7 @@ import { pinIpv4 } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { oauthScopes } from '../runs/custom-mcp.ts';
 import type { CustomRemoteMcp } from '../runs/custom-mcp.ts';
 import { objectRecord } from './tool-transport.ts';
-import { sendRemoteMcp } from '../../../../scripts/windows/custom-mcp-remote.mjs';
+import { sendRemoteMcp, statelessMcpVersion } from '../../../../scripts/windows/custom-mcp-remote.mjs';
 
 export const oauthEndpoint = (value: unknown) => {
   const url = typeof value === 'string' && value.length <= 2048 && !/[\\\s]/.test(value) && URL.parse(value);
@@ -75,7 +75,7 @@ function wellKnown(url: URL, name: string) {
 async function readMetadata(endpoints: URL[], localService: boolean, signal: AbortSignal) {
   for (const endpoint of endpoints) {
     const { status, data } = await oauthHttp(endpoint, localService, signal);
-    if (status >= 200 && status < 300 && data) return data;
+    if (status === 200 && data) return { data, endpoint };
     if (status !== 404 && status !== 410) throw new Error('OAuth metadata unavailable');
   }
   throw new Error('OAuth metadata unavailable');
@@ -87,23 +87,28 @@ export async function discoverMcpOAuth(server: CustomRemoteMcp, boundIssuer: str
   const target = new URL(server.url);
   let challenge = new Map<string, string>();
   try {
-    await sendRemoteMcp(server, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'OEP', version: '1' },
-    } }, {}, {}, signal);
+    try {
+      const reply = await sendRemoteMcp(server, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+        { version: statelessMcpVersion }, {}, signal);
+      if (reply?.error !== undefined) throw Object.assign(new Error('Unsupported catalog request'), { status: 400 });
+    } catch (error) {
+      if (objectRecord(error)?.status !== 400) throw error;
+      await sendRemoteMcp(server, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'OEP', version: '1' },
+      } }, {}, {}, signal);
+    }
   } catch (error) {
     const failure = objectRecord(error);
     if (failure?.status === 401) challenge = bearerChallenge(failure.challenge);
     else if (typeof failure?.status !== 'number' || failure.status < 400) throw new Error('OAuth resource unavailable');
   }
   const advertised = challenge.get('resource_metadata');
-  const metadata = await readMetadata(advertised ? [oauthEndpoint(advertised)] : [
-    wellKnown(target, 'oauth-protected-resource'), ...target.pathname === '/' ? [] : [new URL('/.well-known/oauth-protected-resource', target)],
+  const rootMetadata = '/.well-known/oauth-protected-resource';
+  const { data: metadata, endpoint } = await readMetadata(advertised ? [oauthEndpoint(advertised)] : [
+    wellKnown(target, 'oauth-protected-resource'), ...target.pathname === '/' ? [] : [new URL(rootMetadata, target)],
   ], server.localService, signal);
-  const resource = oauthEndpoint(metadata.resource);
-  const targetPath = target.pathname;
-  const resourcePath = resource.pathname;
-  if (resource.origin !== target.origin || resource.search ||
-    !(targetPath === resourcePath || targetPath.startsWith(resourcePath.endsWith('/') ? resourcePath : resourcePath + '/'))) {
+  const rootResource = target.pathname === '/' || (!advertised && endpoint.pathname === rootMetadata);
+  if (rootResource ? metadata.resource !== target.origin && metadata.resource !== `${target.origin}/` : metadata.resource !== target.href) {
     throw new Error('OAuth resource mismatch');
   }
   const issuers = metadata.authorization_servers;
@@ -116,7 +121,7 @@ export async function discoverMcpOAuth(server: CustomRemoteMcp, boundIssuer: str
   if (issuerUrl.pathname !== '/') {
     endpoints.push(new URL(`${issuerUrl.pathname.replace(/\/$/, '')}/.well-known/openid-configuration`, issuerUrl));
   }
-  const auth = await readMetadata(endpoints, server.localService, signal);
+  const { data: auth } = await readMetadata(endpoints, server.localService, signal);
   if (auth.issuer !== issuer || !Array.isArray(auth.code_challenge_methods_supported) ||
       !auth.code_challenge_methods_supported.includes('S256')) throw new Error('Invalid OAuth issuer metadata');
   const authorization = oauthEndpoint(auth.authorization_endpoint);

@@ -1,6 +1,6 @@
 import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
-import { sendRemoteMcp } from '../../../../scripts/windows/custom-mcp-remote.mjs';
+import { sendRemoteMcp, statelessMcpVersion } from '../../../../scripts/windows/custom-mcp-remote.mjs';
 import { assistantMcpPaused, customMcpName, customMcpTool, oauthBinding, oauthMcpTool, validateCustomRemoteMcp } from '../runs/custom-mcp.ts';
 import type { CustomMcp, CustomRemoteMcp } from '../runs/custom-mcp.ts';
 import { readCustomMcpCredentials } from '../runs/custom-mcp-credentials.ts';
@@ -52,9 +52,9 @@ function redact(value: unknown, secrets: readonly string[], gatewayRedact: (valu
 type Send = (method: string, phase: keyof CustomRemoteMcp['timeouts'], id?: number, params?: unknown,
   stop?: AbortSignal, secrets?: Set<string>) => Promise<unknown>;
 
-function remoteSender(definition: CustomRemoteMcp, headers: Record<string, string>, transport: RemoteMcpTransport, oauth?: McpOAuth): Send {
-  const session = {};
-  return async (method, phase, id, params, stop, secrets = new Set()) => {
+function remoteSender(definition: CustomRemoteMcp, headers: Record<string, string>, transport: RemoteMcpTransport, oauth?: McpOAuth) {
+  const session: { id?: string; version?: string } = {};
+  const send: Send = async (method, phase, id, params, stop, secrets = new Set()) => {
     const timeout = AbortSignal.timeout(Math.min(definition.timeouts[phase], phase === 'execution' ? 120_000 : 8_000));
     const signal = stop ? AbortSignal.any([stop, timeout]) : timeout;
     signal.throwIfAborted();
@@ -62,24 +62,37 @@ function remoteSender(definition: CustomRemoteMcp, headers: Record<string, strin
     if (definition.oauth && !oauth) throw new WebMessageError('mcp-oauth-login-required');
     const reply = definition.oauth ? await oauth!.send(definition, message, session, signal, secrets, transport)
       : await transport(definition, message, session, headers, signal);
-    if (id !== undefined && (!reply || reply.error !== undefined)) throw new Error('Remote tool unavailable');
+    if (id !== undefined && (!reply || reply.error !== undefined)) {
+      throw Object.assign(new Error('Remote tool unavailable'), { rpcCode: objectRecord(reply?.error)?.code });
+    }
     return reply?.result;
   };
-}
-
-async function remoteCatalog(send: Send, secrets: Set<string>) {
-  const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
-    clientInfo: { name: 'OEP assistant broker', version: '1' } }, undefined, secrets))?.protocolVersion;
-  if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
-  await send('notifications/initialized', 'startup', undefined, undefined, undefined, secrets);
-  const catalog = objectRecord(await send('tools/list', 'catalog', 2, {}, undefined, secrets));
-  if (!Array.isArray(catalog?.tools)) throw new Error('Remote catalog unavailable');
-  return catalog.tools.slice(0, 50);
+  return { send, async catalog(secrets: Set<string>) {
+    const list = async () => {
+      const catalog = objectRecord(await send('tools/list', 'catalog', 2, {}, undefined, secrets));
+      if (!Array.isArray(catalog?.tools)) throw new Error('Remote catalog unavailable');
+      return catalog.tools.slice(0, 50);
+    };
+    if (definition.oauth) {
+      session.version = statelessMcpVersion;
+      try { return await list(); }
+      catch (error) {
+        const failure = objectRecord(error);
+        if (failure?.status !== 400 && ![-32022, -32600, -32601].some((code) => code === failure?.rpcCode)) throw error;
+        delete session.version;
+      }
+    }
+    const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
+      clientInfo: { name: 'OEP assistant broker', version: '1' } }, undefined, secrets))?.protocolVersion;
+    if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
+    await send('notifications/initialized', 'startup', undefined, undefined, undefined, secrets);
+    return list();
+  } };
 }
 
 export async function probeOAuthMcp(definition: CustomRemoteMcp, oauth: McpOAuth, gatewayRedact: (value: string) => string) {
   const secrets = new Set<string>();
-  const catalog = await remoteCatalog(remoteSender(definition, {}, sendRemoteMcp, oauth), secrets);
+  const catalog = await remoteSender(definition, {}, sendRemoteMcp, oauth).catalog(secrets);
   const hidden = [...secrets];
   return catalog.flatMap((tool) => {
     const entry = objectRecord(tool);
@@ -111,8 +124,8 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
         return;
       }
       const secrets = new Set(Object.values(headers));
-      const send = remoteSender(definition, headers, transport, oauth);
-      const catalog = await remoteCatalog(send, secrets);
+      const remote = remoteSender(definition, headers, transport, oauth);
+      const catalog = await remote.catalog(secrets);
       const scrub = (value: unknown, values = secrets) => stripTransport(redact(value, [...values], gatewayRedact));
       const verified: Connected['tools'] = [];
       const namesSeen = new Set<string>();
@@ -147,7 +160,13 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
       let nextID = 3;
       const connected: Connected = { definition, tools: verified, async call(name, args, signal) {
         const values = new Set(secrets);
-        try { return scrub(await send('tools/call', 'execution', nextID++, { name, arguments: args }, signal, values), values); }
+        try {
+          const result = await remote.send('tools/call', 'execution', nextID++, { name, arguments: args }, signal, values);
+          if (objectRecord(result)?.resultType === 'input_required') {
+            return { isError: true, message: 'This remote tool requires an interactive confirmation that OEP cannot complete.' };
+          }
+          return scrub(result, values);
+        }
         catch (error) {
           if (!definition.oauth || !(error instanceof WebMessageError) || signal.aborted) throw error;
           const message = error.detail.code === 'mcp-oauth-scope' ? 'This remote tool needs additional permissions. Update the OAuth scopes in External tools and sign in again.'

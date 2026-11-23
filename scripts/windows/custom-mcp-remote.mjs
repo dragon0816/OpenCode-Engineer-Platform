@@ -1,9 +1,16 @@
 import { request } from 'node:https';
 import { pinCustomRemoteMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
 
+export const statelessMcpVersion = '2026-07-28';
+
 export async function sendRemoteMcp(server, message, session, headers, signal) {
   const address = await pinCustomRemoteMcp(server, signal).catch(() => { throw new Error('url'); });
-  const payload = JSON.stringify(message);
+  const stateless = session.version === statelessMcpVersion;
+  const payload = JSON.stringify(stateless ? { ...message, params: { ...message.params, _meta: {
+    'io.modelcontextprotocol/protocolVersion': statelessMcpVersion,
+    'io.modelcontextprotocol/clientCapabilities': {},
+    'io.modelcontextprotocol/clientInfo': { name: 'OEP assistant broker', version: '1' },
+  } } } : message);
   return await new Promise((resolve, reject) => {
     const upstream = request(server.url, {
       method: 'POST', signal, family: 4, agent: false, rejectUnauthorized: true,
@@ -13,8 +20,10 @@ export async function sendRemoteMcp(server, message, session, headers, signal) {
       headers: {
         ...headers, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(payload),
-        ...(session.id && { 'Mcp-Session-Id': session.id }),
+        ...(!stateless && session.id && { 'Mcp-Session-Id': session.id }),
         ...(session.version && { 'MCP-Protocol-Version': session.version }),
+        ...(stateless && { 'Mcp-Method': message.method,
+          ...(message.method === 'tools/call' && { 'Mcp-Name': message.params.name }) }),
       },
     }, (response) => {
       response.on('error', () => reject(new Error('exited')));
@@ -27,7 +36,7 @@ export async function sendRemoteMcp(server, message, session, headers, signal) {
         return;
       }
       const id = response.headers['mcp-session-id'];
-      if (typeof id === 'string' && /^[\x21-\x7e]{1,256}$/.test(id)) session.id = id;
+      if (!stateless && typeof id === 'string' && /^[\x21-\x7e]{1,256}$/.test(id)) session.id = id;
       if (message.id === undefined) {
         response.destroy();
         resolve(undefined);
