@@ -1157,7 +1157,7 @@ export default {
   'ui.secure-connection-url': "Secure connection URL",
   'ui.select-attachments-for-this-message': "Select attachments for this message",
   'ui.select-or-create-a-session-to-start': "Select or create a session to start.",
-  'ui.select-or-drop-images-pdf-excel-web': "Choose or drop files, or paste files and screenshots into the message box. Supports PNG, JPEG, GIF, WebP, PDF, Excel, web, and text files. Up to 20 MB per file.",
+  'ui.select-or-drop-images-pdf-excel-web': "Choose or drop images, PDF, Excel, web, or text files. You can also paste files and screenshots into the message box. Up to 20 MB per file.",
   'ui.selected-attachments': "Selected attachments",
   'ui.send': "Send",
   'ui.session': "Sessions",

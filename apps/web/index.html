@@ -414,7 +414,10 @@
         <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply" data-i18n="ui.remove-quote"></button></div>
         <div id="command-toast" role="status"></div>
         <ul id="slash-palette" role="listbox" data-i18n-aria-label="ui.commands" hidden></ul>
-        <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" data-i18n-placeholder="ui.tell-the-assistant-what-to-do" disabled required></textarea>
+        <div class="composer-entry">
+          <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" data-i18n-placeholder="ui.tell-the-assistant-what-to-do" disabled required></textarea>
+          <span id="drop-hint" aria-hidden="true" data-i18n="chat.release-to-attach-files"></span>
+        </div>
         <div class="composer-toolbar">
           <div class="composer-tools">
             <div class="composer-attachments">
@@ -440,7 +443,6 @@
           <small id="session-model-fallback" role="status"></small>
           <small id="upload-status" role="status"></small>
         </div>
-        <span id="drop-hint" aria-hidden="true" data-i18n="chat.release-to-attach-files"></span>
         </div>
         <div class="composer-footer">
           <small data-i18n="ui.enter-to-send-shift-enter-for-a"></small>

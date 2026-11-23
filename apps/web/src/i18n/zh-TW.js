@@ -1157,7 +1157,7 @@ export default {
   'ui.secure-connection-url': "安全連線網址",
   'ui.select-attachments-for-this-message': "選擇這則訊息的附件",
   'ui.select-or-create-a-session-to-start': "選擇或新增會話即可開始。",
-  'ui.select-or-drop-images-pdf-excel-web': "可選取或拖放檔案，也可將檔案及截圖貼到輸入框。支援 PNG、JPEG、GIF、WebP、PDF、Excel、網頁與文字檔。單檔最多 20 MB。",
+  'ui.select-or-drop-images-pdf-excel-web': "可選取或拖放圖片、PDF、Excel、網頁與文字檔，也可將檔案及截圖貼到輸入框。單檔最多 20 MB。",
   'ui.selected-attachments': "已選附件",
   'ui.send': "送出",
   'ui.session': "會話",

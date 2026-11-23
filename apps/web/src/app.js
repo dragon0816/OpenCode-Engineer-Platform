@@ -354,10 +354,11 @@ function render(context) {
     context.pendingAt = undefined;
   }
   updateProgress();
-  const detail = state.stateErrorDetail ?? latest?.errorDetail;
-  if (detail) showError(limitErrors[detail.code] ?? serverText(detail));
-  else if (state.stateError || latest?.error) showError(state.stateError || latest.error);
-  else if (!context.requestError) showError();
+  // Refreshes can carry an older turn error after a newer request has failed.
+  if (!context.requestError) {
+    const detail = state.stateErrorDetail ?? latest?.errorDetail;
+    showError(detail ? limitErrors[detail.code] ?? serverText(detail) : state.stateError || latest?.error);
+  }
   renderPanel(context);
   renderNotes(context);
   setControls();

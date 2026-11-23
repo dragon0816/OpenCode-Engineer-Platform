@@ -136,7 +136,8 @@ h2 { font-size: var(--text-base); margin-bottom: var(--space-2); }
 .message.user { background: var(--user); }
 .message p { white-space: pre-wrap; margin-top: var(--space-1); }
 #composer { padding: var(--space-2) var(--space-5) var(--space-3); }
-#drop { position: relative; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: 12px; background: var(--drop); }
+#drop { padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: 12px; background: var(--drop); }
+.composer-entry { display: flow-root; position: relative; }
 #drop-hint { display: none; }
 #chat-view.dragging :is(#drop, #messages) { outline: 2px dashed var(--link); outline-offset: -3px; }
 #chat-view.dragging #drop { background: var(--selected); }
