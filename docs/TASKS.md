@@ -271,3 +271,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 與建立精靈共用 Telegram token 設定和私人 `/start` 確認。通道清單提供狀態、管理、改派、更換 token 與移除。
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## 聽寫與麥克風權限
+
+- [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
+- [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
+- [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
