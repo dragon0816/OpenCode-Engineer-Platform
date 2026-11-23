@@ -352,3 +352,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
 - [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
 - [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)
+
+## Phase 3G BI Knowledge parity
+
+- [x] 建立獨立 Convert、Ingest、Testing 階段與設定，支援全自動及可暫停的逐步執行。
+- [x] 建立工作知識庫，重建匯出的 AEP 工作草稿，從附加資料編輯卡片並送審。
+- [x] 讓已綁定並授權模型使用的 BI 助理搜尋卡片、跟隨關聯並引用核對過的來源。
+- [x] 讓 Telegram BI 收件透過 IANA 時區排程及既有派送器轉檔、擷取並送審。 [合成驗收及展示](reviews/PHASE3G_BI_PARITY_REPORT.md)
+- [ ] 複核實際工作匯出及 Gateway，合併 OCR 與能力頁，完成審核者保留的關卡。
