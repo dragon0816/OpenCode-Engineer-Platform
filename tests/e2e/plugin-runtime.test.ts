@@ -121,7 +121,7 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
     const attachSource = await json(await call('sources.reference', { session, source: attachment.id, sha256: attachment.sha256 }));
     assert.equal(attachSource.name, 'attachment.txt');
     const reference = await json(await request(`/api/sessions/${session}/external-sources`, {
-      data: { kind: 'workspace', folder: sha256(references), path: 'reference.txt' },
+      data: { kind: 'workspace', folder: sha256(Buffer.from(references)), path: 'reference.txt' },
     }), 201);
     const fileSource = await json(await call('sources.reference', { session, source: reference.id, sha256: reference.sha256 }));
     assert.equal(fileSource.sha256, sha256(Buffer.from(sourceText)));
