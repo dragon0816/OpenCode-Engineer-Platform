@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
+import { gte } from 'semver';
 import { readApprovedLink } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { sourceUploadLimit } from '../../../../packages/knowledge/src/ingest.ts';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
-import type { DocumentExtraction } from '../bi/document-extraction.ts';
+import type { DocumentExtraction, DocumentInput } from '../bi/document-extraction.ts';
+import type { BiProvenance } from '../../../../packages/knowledge/src/bi/ownership.ts';
 import { documentResult } from '../bi/document-worker.ts';
 import { proposeReview } from '../http/review.ts';
 import type { ReferencePicker } from '../runs/reference-picker.ts';
@@ -17,7 +19,8 @@ import { PluginError, requirePlugin } from './zip.ts';
 
 type Grant = { id: string; page: string; owner: string; generation: string; plugin: VerifiedPlugin; expires: number;
   sources: Map<string, Source>; stop: AbortController };
-type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker };
+type BiBuilder = { extraction: DocumentExtraction; picker: ReferencePicker;
+  inbox?: { status(): unknown; save(vault: string, zone: string, time: string): unknown; state(value: unknown): unknown } };
 type Source = { id: string; name: string; sha256: string; confidential: boolean; bytes: Buffer };
 type Proposal = { draft: string; source: string; proposal: string };
 type State = 'starting' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed-out';
@@ -235,15 +238,12 @@ export class PluginRuntime {
     return job;
   }
 
-  private async build(grant: Grant, method: string, params: Record<string, unknown>) {
+  private biAccess(grant: Grant) {
     const permissions = grant.plugin.manifest.permissions;
     const worker = grant.plugin.manifest.components.pythonWorkers.find(({ id }) => id === biWorker);
     requirePlugin(this.bi && grant.id === biPlugin && grant.page === biPage && worker &&
       permissions.operations.includes('review.submit') && permissions.operations.includes('publish.request') &&
       permissions.modelBroker === 'approved-gateway' && permissions.sourceBroker === 'approved-sources', 'runtime-forbidden');
-    const { extraction, picker } = this.bi;
-    const { signal } = grant.stop;
-    signal.throwIfAborted();
     const run = async <T>([operation, ...args]: string[], bytes: Buffer, parent: AbortSignal) => {
       this.active(grant);
       parent.throwIfAborted();
@@ -254,13 +254,60 @@ export class PluginRuntime {
       requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
       return documentResult<T>(job.update.result);
     };
+    return { ...this.bi, run };
+  }
+
+  scheduledAvailable() {
+    return Boolean(!this.closed && this.bi && !this.bi.extraction.busy() && this.registry.list().some(({ id, status, version }) =>
+      id === biPlugin && status === 'enabled' && gte(version, '1.2.0')));
+  }
+
+  runScheduled(input: DocumentInput, vault: string, reviewId: string, provenance: BiProvenance, signal: AbortSignal) {
+    const active = this.registry.list().find(({ id, status, version }) => id === biPlugin && status === 'enabled' && gte(version, '1.2.0'));
+    requirePlugin(active, 'runtime-forbidden');
+    const { plugin, generation } = this.registry.active(biPlugin, active.digest);
+    const grant: Grant = { id: biPlugin, page: biPage, owner: 'scheduled-bi-inbox', plugin, generation, expires: Date.now(),
+      sources: new Map(), stop: new AbortController() };
+    const { extraction, run } = this.biAccess(grant);
+    return extraction.runScheduled(input, vault, { id: reviewId, provenance }, { worker: run, signal }, () => this.active(grant));
+  }
+
+  private async build(grant: Grant, method: string, params: Record<string, unknown>) {
+    const { extraction, picker, inbox, run } = this.biAccess(grant);
+    const { signal } = grant.stop;
+    signal.throwIfAborted();
     switch (method) {
-      case 'bi.catalog': return { choices: extraction.choices(), runs: extraction.recent(true) };
+      case 'bi.catalog': return { choices: extraction.choices(true), runs: extraction.recent(true), aliases: [...this.knowledge!.benchmarks.keys()] };
+      case 'bi.settings': return extraction.settings(params.schema);
+      case 'bi.configure': return extraction.configure(params.schema, params.stage, params.value, [...this.knowledge!.benchmarks.keys()]);
+      case 'bi.inbox': return inbox?.status() ?? null;
+      case 'bi.inboxschedule': {
+        const vault = text(params.vault, 192);
+        requirePlugin(inbox && extraction.scheduleTarget(vault), 'runtime-input');
+        return inbox.save(vault, text(params.zone, 100), text(params.time, 5));
+      }
+      case 'bi.inboxstate': return inbox?.state(params.state) ?? null;
       case 'bi.pick': {
         requirePlugin(params.locale === 'en' || params.locale === 'zh-TW', 'runtime-input');
         return { folder: (await picker('folder', params.locale, signal))[0] };
       }
       case 'bi.schemas': return extraction.importSchemas(params.folder, signal, run);
+      case 'bi.create':
+      case 'bi.importdraft': {
+        requirePlugin(!extraction.busy(), 'runtime-busy');
+        requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        const title = params.title === undefined ? undefined : text(params.title, 100);
+        const workspace = method === 'bi.create' ? extraction.createWorkspace(text(title, 100), params.schema, params.allowModel) :
+          await extraction.importWorkspace(text(params.folder, 2048), title, params.schema, params.allowModel, signal, run);
+        return { workspace, choices: extraction.choices(true) };
+      }
+      case 'bi.workspace': {
+        const offset = params.offset ?? 0;
+        requirePlugin(typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0, 'runtime-input');
+        return extraction.workspace(text(params.vault, 192), offset, params.card === undefined ? undefined : text(params.card, 192));
+      }
+      case 'bi.editworkspace': return extraction.editWorkspace(text(params.vault, 192), params.version, params.card, params.title, params.fields);
+      case 'bi.prepareworkspace': return extraction.prepareWorkspace(text(params.vault, 192), params.version);
       case 'bi.repository': {
         requirePlugin(!extraction.busy(), 'runtime-busy');
         requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
@@ -270,8 +317,10 @@ export class PluginRuntime {
       case 'bi.start': {
         requirePlugin(!extraction.busy(), 'runtime-busy');
         requirePlugin(typeof params.allowModel === 'boolean', 'runtime-input');
+        const mode = params.mode ?? 'automatic';
+        requirePlugin(mode === 'automatic' || mode === 'step', 'runtime-input');
         const title = params.title === undefined ? undefined : text(params.title, 100);
-        const options = { worker: run, signal, title };
+        const options = { worker: run, signal, title, mode } as const;
         if (params.url !== undefined) {
           requirePlugin(params.source === undefined, 'runtime-input');
           return extraction.start({ url: text(params.url, 2048) }, params.schema, params.allowModel, options);
@@ -283,11 +332,14 @@ export class PluginRuntime {
         return status;
       }
       case 'bi.status':
+      case 'bi.resume':
       case 'bi.submit': {
         const key = id(params.id);
         const status = extraction.status(key);
         requirePlugin(status?.vault, 'runtime-forbidden');
-        return method === 'bi.submit' ? extraction.submit(key) : status;
+        if (method === 'bi.submit') return extraction.submit(key);
+        if (method === 'bi.resume') return extraction.resume(key, { worker: run, signal });
+        return status;
       }
       default: throw new PluginError('runtime-forbidden');
     }

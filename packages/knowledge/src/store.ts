@@ -223,7 +223,7 @@ export class KnowledgeStore {
     if (snapshot.repository) {
       const previous = current && this.readSnapshot(current).repository;
       const order = previous ? compareRepositoryPublications(snapshot.repository, previous) : 1;
-      if (order === 0 && current?.revision !== publication.revision) {
+      if (order === 0 && current?.revision !== publication.revision && !(reviewID && snapshot.repository.tag === 'working-copy')) {
         throw new Error('Repository publication conflicts with the active generation');
       }
       activateRepository = order >= 0;
