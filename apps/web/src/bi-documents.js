@@ -145,7 +145,9 @@ export function bindBiDocuments(openReview) {
     review.hidden = true;
     setText(status, message('biDocument.state.converting'));
     try {
-      const result = selected ? await request(endpoint + '/file/' + schema.value + '/' + Number(allowModel), { file: selected }) :
+      const result = selected ? await request(endpoint + '/file/' + schema.value + '/' + Number(allowModel), {
+        file: { name: selected.name, type: selected.type, content: await selected.arrayBuffer() },
+      }) :
         await request(endpoint + '/link', { data: { url: link, schema: schema.value, allowModel } });
       await watch(result);
     } catch (error) {

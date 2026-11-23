@@ -156,6 +156,18 @@ test('extracts, verifies, reviews, publishes and cites synthetic documents', { t
           })()`);
           await browser.ready("document.querySelector('#bi-document-run').disabled === false");
           assert.equal(await browser.evaluate("document.querySelector('#bi-document-panel > summary').textContent"), label);
+          await browser.evaluate(`(() => {
+            const original = window.fetch;
+            window.testBiDocumentUpload = undefined;
+            window.fetch = async function (url, options) {
+              const response = await original.call(this, url, options);
+              if (String(url).startsWith('/api/knowledge/bi-documents/file/')) {
+                window.testBiDocumentUpload = { method: options.method, status: response.status,
+                  protected: Boolean(options.headers['X-OEP-CSRF']), bytes: options.body?.byteLength };
+              }
+              return response;
+            };
+          })()`);
           const { root: { nodeId: documentId } } = await browser.command<{ root: { nodeId: number } }>('DOM.getDocument');
           const { nodeId } = await browser.command<{ nodeId: number }>('DOM.querySelector', { nodeId: documentId, selector: '#bi-document-file' });
           await browser.command('DOM.setFileInputFiles', { nodeId, files: [pdfPath] });
@@ -164,6 +176,11 @@ test('extracts, verifies, reviews, publishes and cites synthetic documents', { t
             document.querySelector('#bi-document-consent').checked = true;
             document.querySelector('#bi-document-run').click();
           })()`);
+          await browser.ready('Boolean(window.testBiDocumentUpload)');
+          assert.deepEqual(await browser.evaluate('window.testBiDocumentUpload'), {
+            method: 'POST', status: 202, protected: true, bytes: pdf([stream('Synthetic front page.'),
+              stream(pdfQuote + ' ALPHA summary is precise.')]).length,
+          });
           await browser.ready(`document.querySelector('#bi-document-status').textContent.includes(${JSON.stringify(success)}) &&
             !document.querySelector('#bi-document-review').hidden`, 30_000);
           await browser.evaluate("document.querySelector('#bi-document-review').click()");
