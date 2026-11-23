@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createServer, validateHeaderValue } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -48,6 +48,7 @@ import { Dispatcher } from './runs/dispatcher.ts';
 import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
 import { agentManagement } from './http/agents.ts';
+import { servePlugins } from './plugins/http.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -114,7 +115,7 @@ function secureHeaders(response: ServerResponse) {
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
   requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void,
-  mcpCredentials?: CredentialEnvironment) {
+  mcpCredentials?: CredentialEnvironment, pluginOptions?: { dataRoot?: string; version?: string }) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -128,6 +129,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  const plugins = (() => {
+    try {
+      const release = atRepo('config/release.manifest.json');
+      const version = pluginOptions?.version ?? JSON.parse(readFileSync(existsSync(release) ? release : atRepo('package.json'), 'utf8')).version;
+      const registry = store.pluginRegistry(pluginOptions?.dataRoot ?? root, version);
+      registry.recover();
+      return registry;
+    } catch (error) { store.close(); throw error; }
+  })();
   const dispatcher = new Dispatcher(store.workItems);
   const sessions = new Map(store.sessions().map((session) => [session.id, session]));
   const upstreamIDs = new Map([...sessions.values()].filter((session) => store.sessionOwner(session)?.origin === 'web')
@@ -197,6 +207,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     const telegramHistory = /^\/api\/agents\/([a-z\d_-]{1,80})\/telegram-history(?:\/([\da-f-]+))?$/.exec(path);
     const { csrf } = auth.authorize(request,
       path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl || Boolean(telegramHistory));
+    if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
+      await servePlugins(plugins, path, request, response, csrf, () => body(request));
+      return;
+    }
     if (telegramHistory) {
       const [, agentId, sessionId] = telegramHistory;
       if (method !== 'GET' || sessionId && !uuid.test(sessionId) || !store.agents().some(({ id, state }) => id === agentId && state === 'archived')) {

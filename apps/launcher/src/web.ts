@@ -52,7 +52,8 @@ async function launch() {
       let reopen: NodeJS.Timeout | undefined;
       try {
         if (stopping) break;
-        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve);
+        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve,
+          undefined, undefined, undefined, { dataRoot: dirname(root) });
         requestedReopen(root);
         await openBrowser(service.pairURL());
         reopen = setInterval(() => {

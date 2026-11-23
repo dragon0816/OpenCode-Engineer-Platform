@@ -1,5 +1,18 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'plugin-invalid-package': '外掛套件格式無效或超出大小限制。',
+  'plugin-digest-mismatch': '外掛檔案與清單的雜湊不符。',
+  'plugin-compatibility-consent': '請先確認要繼續使用相容範圍以外的外掛。',
+  'plugin-consent-required': '請先確認接受外掛所列的權限。',
+  'plugin-preview-expired': '外掛預覽已過期或狀態已變更。請重新選檔。',
+  'plugin-version-conflict': '請選擇較新的版本。同一版本通常須有相同的套件雜湊。',
+  'plugin-migration-unsupported': '此外掛版本需要目前無法執行的資料遷移。',
+  'plugin-operation-pending': '此外掛有待完成的檔案清理。請重新啟動 OEP 後再試。',
+  'plugin-integrity-failed': '已安裝的外掛檔案發生變更或無法讀取，已停用。',
+  'plugin-reinstall-required': '無法驗證目前的套件。請從有效的外掛檔案重新安裝。',
+  'plugin-not-installed': '找不到此外掛或頁面。',
+  'plugin-rollback-unavailable': '沒有通過驗證且可回退的版本。',
+  'plugin-disabled': '外掛已停用。',
   'external-invalid-input': "請檢查外部幫手輸入。",
   'external-confidential': "機密來源不可交辦給外部幫手。",
   'external-unclassified': "先將來源與工作資料夾標為公開。",

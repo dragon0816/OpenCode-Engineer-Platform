@@ -1,0 +1,31 @@
+{
+  "format": "oep.plugin/v1",
+  "id": "oep.synthetic",
+  "version": "1.0.0",
+  "name": { "en": "Synthetic plugin", "zh-TW": "合成外掛" },
+  "publisher": "Synthetic OEP fixture",
+  "oepCompatibility": ">=0.7.0 <0.9.0",
+  "permissions": {
+    "operations": ["worker.run"],
+    "dataScope": "none",
+    "workers": ["oep.synthetic.worker"],
+    "modelBroker": "none",
+    "sourceBroker": "none"
+  },
+  "components": {
+    "skills": [],
+    "workflows": [],
+    "pythonWorkers": [{ "id": "oep.synthetic.worker", "version": "1.0.0", "entry": "worker.py" }],
+    "dataSchemas": [],
+    "pages": [{
+      "id": "oep.synthetic.page",
+      "version": "1.0.0",
+      "entry": "page.json",
+      "titleKey": "page.title",
+      "strings": { "en": "en.json", "zh-TW": "zh-TW.json" }
+    }],
+    "panels": [],
+    "reviewTypes": [],
+    "collections": []
+  }
+}

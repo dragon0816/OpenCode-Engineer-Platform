@@ -18,6 +18,8 @@ import type { Destination } from '../channels/transport.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
 import { HttpError } from '../http/errors.ts';
+import { migratePlugins, pluginRegistryVersion, verifyPluginRegistry } from '../plugins/schema.ts';
+import { PluginRegistry } from '../plugins/registry.ts';
 import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
   verifyAgentLedger } from './agent-ledger.ts';
 
@@ -141,6 +143,7 @@ export class WebStore extends Ledger {
           migrateTelegramSettings(db);
           migrateBudgetChoice(db);
         }
+        if (!telegram && version < pluginRegistryVersion) migratePlugins(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -150,6 +153,7 @@ export class WebStore extends Ledger {
           verifyExternalHelpers(db);
           verifyTelegramSettings(db);
           verifyBudgetChoice(db);
+          verifyPluginRegistry(db);
         }
       },
     });
@@ -159,6 +163,10 @@ export class WebStore extends Ledger {
       this.centralDelegations = new DelegationLedger(this.db, this.centralWorkItems);
       this.centralExternal = new ExternalLedger(this.db);
     }
+  }
+
+  pluginRegistry(dataRoot: string, oepVersion: string) {
+    return new PluginRegistry(this.db, dataRoot, oepVersion);
   }
 
   get workItems() {
