@@ -1463,6 +1463,57 @@ try {
         })()`);
         assert.deepEqual(annotationIsolation, [404, 1, 1, 1]);
         await page.ready("document.querySelector('#session-notes').textContent.includes('合成筆記')");
+        await page.evaluate("document.querySelector('#close-files').click()");
+        for (const [width, height, layout] of screenshotViewports) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+          await page.ready(`innerWidth === ${width}`);
+          for (const locale of ['zh-TW', 'en'] as const) {
+            await selectLocale(page, locale);
+            const addLabel = locale === 'en' ? 'Add or edit note' : '新增或編輯筆記';
+            const deleteLabel = locale === 'en' ? 'Delete note' : '刪除筆記';
+            const deleted = locale === 'en' ? 'Note deleted.' : '已刪除筆記。';
+            const note = 'Round 2 synthetic note';
+            const useMenu = (label: string) => page.evaluate(`(() => {
+              const menu = document.querySelector('.message.user .message-actions');
+              menu.open = true;
+              window.prompt = () => ${JSON.stringify(note)};
+              [...menu.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)}).click();
+            })()`);
+            for (const entry of ['menu', 'panel']) {
+              await page.ready("document.querySelector('.message.user .message-actions')");
+              await useMenu(addLabel);
+              await page.ready(`document.querySelector('#session-notes').textContent.includes(${JSON.stringify(note)})`);
+              if (entry === 'menu') {
+                await useMenu(deleteLabel);
+                await page.ready(`document.querySelector('#command-toast').textContent === ${JSON.stringify(deleted)}`);
+                await openPanel('open-notes');
+              } else {
+                await openPanel('open-notes');
+                await page.ready("document.querySelector('#session-notes [data-delete-note]')?.checkVisibility()");
+                if (captureAgentManagement && (layout === 'wide' && locale === 'zh-TW' || layout === 'narrow' && locale === 'en')) {
+                  const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
+                  writeFileSync(resolve('docs/validation/gui', `owner-round2-notes-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
+                }
+                await page.evaluate(`(() => {
+                  const row = [...document.querySelectorAll('#session-notes li')].find(row => row.textContent.includes(${JSON.stringify(note)}));
+                  row.querySelector('input').click();
+                  row.querySelector('[data-delete-note]').click();
+                })()`);
+                await page.ready(`document.querySelector('#notes-status').textContent === ${JSON.stringify(deleted)} && document.querySelector('#export-notes').disabled`);
+              }
+              const noteGone = `!document.querySelector('#session-notes').textContent.includes(${JSON.stringify(note)}) &&
+                document.querySelector('#session-notes').textContent.includes('合成筆記')`;
+              await page.ready(noteGone);
+              await reload(locale === 'en' ? 'Connected' : '已連線');
+              await openPanel('open-notes');
+              await page.ready(noteGone);
+              await page.evaluate("document.querySelector('#close-files').click()");
+            }
+          }
+        }
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await selectLocale(page, 'zh-TW');
+        await openPanel('open-notes');
         if (captureGallery || process.env.OEP_CAPTURE_SLICE2D === '1') {
           const shots = resolve('docs/validation/gui');
           const shot = async (view: string, theme: string, layout: string) => {

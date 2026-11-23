@@ -841,6 +841,7 @@ export default {
   'messages.copy-text': "Copy text",
   'messages.could-not-copy-the-text-select-it': "Couldn’t copy the text. Select it and copy it manually.",
   'messages.delete-note': "Delete note",
+  'messages.note-deleted': "Note deleted.",
   'messages.enter-a-note-up-to-500-characters': "Enter a note (up to 500 characters).",
   'messages.enter-an-optional-reason-up-to-200': "Enter an optional reason (up to 200 characters).",
   'messages.go-to-message': "Go to message",

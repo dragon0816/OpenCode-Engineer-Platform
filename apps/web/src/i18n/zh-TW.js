@@ -841,6 +841,7 @@ export default {
   'messages.copy-text': "複製文字",
   'messages.could-not-copy-the-text-select-it': "無法複製文字。請選取文字後手動複製。",
   'messages.delete-note': "刪除筆記",
+  'messages.note-deleted': "已刪除筆記。",
   'messages.enter-a-note-up-to-500-characters': "請輸入筆記（最多 500 字）",
   'messages.enter-an-optional-reason-up-to-200': "請輸入原因，可留空（最多 200 字）",
   'messages.go-to-message': "前往訊息",

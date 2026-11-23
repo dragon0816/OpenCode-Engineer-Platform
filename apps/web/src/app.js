@@ -1,7 +1,7 @@
 import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
 import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
-import { bindNotes, messageActions } from './message-operations.js';
+import { bindNotes, messageActions, saveAnnotation } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
@@ -81,7 +81,14 @@ const renderNotes = bindNotes(find('notes-filter'), find('session-notes'), find(
   if (panelNarrow.matches) closePanel(false);
   message.focus();
   message.scrollIntoView({ block: 'center' });
-});
+}, async (context, id) => {
+  await saveAnnotation(context, id, 'note', null);
+  if (current === context) updateNotes(context);
+}, find('notes-status'));
+
+function updateNotes(context) {
+  renderNotes(context, sessionAgent(context.id)?.state === 'archived');
+}
 let current;
 let uploadBusy = false;
 let sending = false;
@@ -325,8 +332,8 @@ function render(context) {
         replies.set(id, reference);
         renderReply();
         prompt.focus();
-      }, showError, (text) => { setText(find('command-toast'), text); },
-      () => { if (current === context) renderNotes(context); },
+      }, showError, (text) => { if (current === context) setText(find('command-toast'), text); },
+      () => { if (current === context) updateNotes(context); },
       (trigger) => openSection('notes', trigger), sessionAgent(id)?.state === 'archived'));
       fragment.append(entry);
       if (item.runId) anchors.set(item.runId, entry);
@@ -360,7 +367,7 @@ function render(context) {
     showError(detail ? limitErrors[detail.code] ?? serverText(detail) : state.stateError || latest?.error);
   }
   renderPanel(context);
-  renderNotes(context);
+  updateNotes(context);
   setControls();
 }
 
@@ -732,8 +739,10 @@ function refresh(context) {
     context.timer = undefined;
     context.refreshing = true;
     try {
+      const annotationVersion = context.annotationVersion;
       const state = await request(`${context.path}/state`, { signal: context.abort.signal });
       if (current !== context || stopped) return;
+      if (context.annotationVersion !== annotationVersion) state.annotations = context.state.annotations;
       context.state = state;
       render(context);
     } catch (error) {
