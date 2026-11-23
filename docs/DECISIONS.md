@@ -368,3 +368,9 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** Codex、Claude Code 與 LLM Gateway 同層，作為每個助理（含主助理）的「模型來源」，在助理的模型設定中選擇；選外部來源時跳出登入視窗。取代 3I 原本「只經交辦的外部幫手」呈現方式，沿用其分級閘門、確認、執行與簡化隔離。細節見 `docs/PHASE3_REQUIREMENTS.md` 11.1、11.3。
 - **理由：** 擁有者定義為與 Gateway 同層並在助理設定中選用；每個助理設定可讓主助理維持 Gateway、另建開發助理用外部來源。
 - **捨棄的替代方案：** 全域單一開關（所有助理被迫同一來源，機密資料全面受限）；只經交辦（擁有者找不到入口）。
+
+## 2026-11-23 遠端 MCP 支援 OAuth
+
+- **決策：** 自訂遠端 MCP 加入 OAuth 2.1 授權碼流程（PKCE、本機回呼、權杖存於 Windows 使用者憑證、到期自動更新、逐助理授權），沿用既有 OEP broker 的 HTTPS、DNS 固定與禁止重新導向規則。
+- **理由：** 擁有者要求；常用 MCP（Gmail、Google Drive、Atlassian）都需要 OAuth。LLM Gateway 為公司自建，MCP 資料交給 Gateway 模型可接受。
+- **捨棄的替代方案：** 只支援 API key 標頭（無法接上主流 MCP）。

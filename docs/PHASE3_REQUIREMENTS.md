@@ -322,3 +322,7 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 - 擁有者在 0.6.0 啟用外部幫手後，期望在**助理設定的「模型」**（含主助理）直接選 Codex、Claude Code。採「每個助理設定模型來源」：模型下拉分組顯示「LLM Gateway 模型」與「外部 coding agent（Codex、Claude Code）」。
 - 擁有者已勾選 Claude Code「我已確認供應商的商業條款」。Claude Code 支援兩種驗證：Console API key（建議，符合第三方產品條款）與官方 CLI 登入（擁有者自負條款責任）。
 - 選外部來源的助理：所有輸入須通過公開檢查（D2）；執行使用簡化隔離（專用 Windows 帳號）；登入在該帳號下由 OEP 開啟的登入視窗完成。
+
+### 11.4 需要 OAuth 認證的 MCP（擁有者 2026-11-23）
+- OEP 要支援需要認證的遠端 MCP（例如 Gmail、Google Drive、Atlassian），包含 OAuth 登入。
+- 擁有者說明：LLM Gateway 由公司資料中心自建，資料送給 Gateway 模型不會外洩，因此 MCP 取得的資料（例如郵件）交給 Gateway 模型處理可接受。外部 coding agent（Codex、Claude Code）仍依 D2 只收公開資料。
