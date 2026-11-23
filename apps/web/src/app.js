@@ -579,7 +579,8 @@ function addReferenceDetails(entry, file, url, context) {
   });
   const label = node('label', message('references.classification'));
   const select = node('select');
-  for (const value of ['unclassified', 'public', 'confidential']) select.append(optionText(message('references.' + value), value));
+  select.append(optionText(message('references.unclassified'), 'unclassified'),
+    optionText(message('references.public'), 'public'), optionText(message('references.confidential'), 'confidential'));
   select.value = file.classification;
   select.disabled = file.classification === 'confidential';
   select.addEventListener('change', () => void changeReference(url, file, context, { action: 'classify', classification: select.value }));

@@ -641,7 +641,6 @@ export default {
   'chat.model-switched': "模型已切換",
   'chat.model-switched-2': "已切換模型。",
   'chat.more-options-for-session': "「{session}」的更多選項",
-  'chat.name-this-file-exceeds-20-mb-choose': "{name} · 檔案超過 20 MB，請選擇較小的檔案。",
   'chat.name-version-version': "{name} · 版本 {version}",
   'chat.new-session-in-project': "{project}新增會話",
   'chat.no-job-history-for-this-session': "此會話尚無工作紀錄",

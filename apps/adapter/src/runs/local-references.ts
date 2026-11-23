@@ -50,6 +50,13 @@ const identityHash = (identity: ReferenceIdentity) =>
   identity.sha256 ?? createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 const filetimeToMs = (time: string) => Number((BigInt(time) - 116444736000000000n) / 10_000n);
 const failure = (code: WebMessageCode, status = 422) => new HttpError(status, code);
+const workerErrors = new Set<WebMessageCode>([
+  'reference-unavailable', 'reference-changed', 'reference-format', 'reference-range', 'reference-extraction',
+]);
+
+function workerFailure(code: WebMessageCode) {
+  return workerErrors.has(code) ? failure(code, code === 'reference-changed' ? 409 : 422) : failure('reference-unavailable');
+}
 
 function protectedRoots(root: string) {
   const user = process.env.USERPROFILE;
@@ -187,9 +194,9 @@ export class LocalReferences {
     const result = await this.worker(file.path, { action: args.list ? 'list' : 'read', expected: file.identity,
       directory: file.directory, child: args.path, member: memberKey && this.ledger.member(file.id, memberKey),
       cursor: args.after ?? '', mode, offset: args.offset ?? 0, length: args.length ?? rangeLimit, page: args.page ?? 1 }, signal);
-    if ('error' in result) throw failure(result.error, result.error === 'reference-changed' ? 409 : 422);
+    if ('error' in result) throw workerFailure(result.error);
     if (!('result' in result)) throw failure('reference-unavailable');
-    if ('error' in result.result) throw failure(result.result.error);
+    if ('error' in result.result) throw workerFailure(result.result.error);
     signal?.throwIfAborted();
     const hash = identityHash(result.member);
     const member = memberKey ? { key: memberKey, identity: result.member, hash } : undefined;

@@ -641,7 +641,6 @@ export default {
   'chat.model-switched': "Model switched",
   'chat.model-switched-2': "Model switched.",
   'chat.more-options-for-session': "More options for “{session}”",
-  'chat.name-this-file-exceeds-20-mb-choose': "{name} · This file exceeds 20 MB. Choose a smaller file.",
   'chat.name-version-version': "{name} · Version {version}",
   'chat.new-session-in-project': "New session in {project}",
   'chat.no-job-history-for-this-session': "No job history for this session",
