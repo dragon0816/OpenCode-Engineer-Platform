@@ -16,9 +16,12 @@ export const maxProjection = MiB;
 const workbookType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
 const jpeg = Buffer.from('ffd8ff', 'hex');
-const media = (mime: string) => mime === 'image/png' || mime === 'image/jpeg' || mime === 'application/pdf';
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+export const isAttachmentImage = (mime: string) => imageTypes.has(mime);
+const media = (mime: string) => isAttachmentImage(mime) || mime === 'application/pdf';
 const files = new Map([
-  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.pdf', 'application/pdf'],
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'], ['.webp', 'image/webp'], ['.pdf', 'application/pdf'],
   ['.xlsx', workbookType], ['.txt', 'text/plain'], ['.md', 'text/plain'], ['.csv', 'text/plain'],
   ['.html', 'text/html'], ['.htm', 'text/html'],
 ]);
@@ -80,6 +83,9 @@ export function validateAttachment(data: Buffer, mime: string) {
   if (mime === 'text/plain' || mime === 'text/html') decodeText(data);
   else if (mime === 'image/png' && (!startsWith(data, png) || data.subarray(12, 16).toString() !== 'IHDR') ||
     mime === 'image/jpeg' && !startsWith(data, jpeg) ||
+    mime === 'image/gif' && !(startsWith(data, 'GIF87a') || startsWith(data, 'GIF89a')) ||
+    mime === 'image/webp' && !(startsWith(data, 'RIFF') && data.subarray(8, 12).toString() === 'WEBP' &&
+      ['VP8 ', 'VP8L', 'VP8X'].includes(data.subarray(12, 16).toString())) ||
     mime === 'application/pdf' && !startsWith(data, '%PDF-') ||
     mime === workbookType && !startsWith(data, Buffer.from('504b0304', 'hex'))) {
     throw new HttpError(415, 'attachment-type-mismatch');

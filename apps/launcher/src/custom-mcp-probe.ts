@@ -4,6 +4,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { until } from '../../../scripts/phase0/probe-http.ts';
 import type { CustomMcp } from '../../adapter/src/runs/custom-mcp.ts';
+import type { CredentialEnvironment } from '../../adapter/src/runs/custom-mcp-credentials.ts';
 import { startJob } from './job-object.ts';
 
 const reasons = {
@@ -17,7 +18,7 @@ const reasons = {
 
 type Catalog = { tools: { name: string; description: string }[] } | { reason: keyof typeof reasons };
 
-export async function testCustomMcp(server: CustomMcp) {
+export async function testCustomMcp(server: CustomMcp, readCredentials?: CredentialEnvironment['readCredentials']) {
   const control = mkdtempSync(join(tmpdir(), 'oep-mcp-probe-'));
   try {
     const workspace = join(control, 'workspace');
@@ -25,14 +26,16 @@ export async function testCustomMcp(server: CustomMcp) {
     const resultPath = join(control, 'result.json');
     const definition = server.transport === 'stdio' ? { ...server, cwd: workspace } : server;
     writeFileSync(join(control, 'definition.json'), JSON.stringify(definition), { flag: 'wx' });
-    writeFileSync(join(control, 'mcp-credential-names.json'),
-      JSON.stringify(server.environment.map(({ reference }) => reference)), { flag: 'wx' });
+    const names = server.environment.map(({ reference }) => reference);
+    const injected = readCredentials?.(names);
+    writeFileSync(join(control, 'mcp-credential-names.json'), JSON.stringify(injected ? [] : names), { flag: 'wx' });
     const system = process.env.SystemRoot!;
     const job = startJob(control, workspace, {
       SystemRoot: system, WINDIR: system, SystemDrive: process.env.SystemDrive, COMSPEC: join(system, 'System32', 'cmd.exe'),
       PATH: [dirname(process.execPath), join(system, 'System32'), system].join(delimiter),
       HOME: control, USERPROFILE: control, APPDATA: control, LOCALAPPDATA: control, TEMP: control, TMP: control,
       OEP_JOB_MCP_PROBE: '1', OEP_JOB_TEST_SCOPE: randomBytes(16).toString('hex'),
+      ...(injected && Object.fromEntries(names.map((name) => [name, injected[name]]))),
     });
     let catalog: Catalog;
     let clean = false;

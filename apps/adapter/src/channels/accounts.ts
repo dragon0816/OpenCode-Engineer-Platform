@@ -17,6 +17,7 @@ export type ChannelAccount = Binding & {
 };
 
 export const telegramCredentialRef = /^OEP_TELEGRAM_[A-Z][A-Z0-9_]{0,63}_BOT_TOKEN$/;
+export const managedTelegramCredentialRef = /^OEP_TELEGRAM_BOT_[A-F0-9]{32}_BOT_TOKEN$/;
 
 export const legacyChannelAccounts = () => legacyChannels.map(({ accountId, credentialRef, handler, bot }) =>
   [accountId, 'telegram', null, credentialRef, legacyAllowlistRef, bot, handler, 'unverified', 1, 0, 0] as const);
@@ -41,4 +42,19 @@ export function migrateChannelAccounts(db: DatabaseSync) {
     ) BEGIN SELECT RAISE(ABORT,'An agent with enabled channels cannot be archived'); END;`);
   const insert = db.prepare('INSERT INTO channel_accounts VALUES (?,?,?,?,?,?,?,?,?,?,?)');
   for (const row of legacyChannelAccounts()) insert.run(...row);
+}
+
+const telegramSettingsSchema = `CREATE TABLE telegram_account_settings (
+  account_id TEXT PRIMARY KEY REFERENCES channel_accounts(id),
+  bot_name TEXT,
+  removed INTEGER NOT NULL DEFAULT 0 CHECK(removed IN (0,1))
+) STRICT`;
+
+export function migrateTelegramSettings(db: DatabaseSync) { db.exec(telegramSettingsSchema); }
+
+export function verifyTelegramSettings(db: DatabaseSync) {
+  const sql = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='telegram_account_settings'").get()?.sql;
+  if (String(sql).replace(/\s+/g, ' ') !== telegramSettingsSchema.replace(/\s+/g, ' ')) {
+    throw new Error('Telegram account settings do not match the migration');
+  }
 }

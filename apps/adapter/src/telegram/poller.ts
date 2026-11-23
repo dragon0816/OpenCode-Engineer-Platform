@@ -95,9 +95,14 @@ export class TelegramTransport implements ChannelTransport {
   }
 
   async verifyAccount(signal: AbortSignal) {
-    const user = await this.api.call<{ id: number; is_bot: boolean; username?: string }>('getMe', {}, signal);
+    return TelegramTransport.verify(this.api, signal);
+  }
+
+  static async verify(api: TelegramApi, signal: AbortSignal) {
+    const user = await api.call<{ id: number; is_bot: boolean; username?: string; first_name?: string }>('getMe', {}, signal);
     if (!Number.isSafeInteger(user?.id) || user.id < 1 || user.is_bot !== true) throw new Error('Telegram account is invalid');
-    const botName = typeof user.username === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(user.username) ? '@' + user.username : undefined;
+    const botName = typeof user.username === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(user.username) ? '@' + user.username :
+      typeof user.first_name === 'string' ? user.first_name.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 128) || undefined : undefined;
     return { identity: String(user.id), botName, capabilities: ['receive', 'text', 'attachment'] as const };
   }
 
@@ -152,6 +157,7 @@ export class TelegramPoller {
   private readonly lanes = new Set<Lane>();
   private readonly handlers = new Set<Promise<string | undefined>>();
   pollConflict = false;
+  credentialRejected = false;
 
   readonly bot: Bot;
   private readonly transport: ChannelTransport;
@@ -173,7 +179,7 @@ export class TelegramPoller {
   busy() { return this.sending || this.lanes.size > 0 || this.handlers.size > 0; }
 
   async poll(signal: AbortSignal, clock = Date.now) {
-    if (this.polling || this.pollConflict || signal.aborted || clock() < this.pollDue) return;
+    if (this.polling || this.pollConflict || this.credentialRejected || signal.aborted || clock() < this.pollDue) return;
     this.polling = true;
     try {
       const binding = this.account?.binding ?? legacyBinding(this.bot);
@@ -184,6 +190,7 @@ export class TelegramPoller {
       this.failures = 0;
     } catch (error) {
       if (error instanceof TelegramError && error.status === 409) this.pollConflict = true;
+      else if (error instanceof TelegramError && [401, 404].includes(error.status)) this.credentialRejected = true;
       else this.pollDue = clock() + delay(error, ++this.failures);
     } finally {
       this.polling = false;

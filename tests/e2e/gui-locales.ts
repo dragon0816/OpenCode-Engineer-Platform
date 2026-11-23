@@ -77,7 +77,10 @@ export function assertLanguage(text: string, locale: Locale, scope: string) {
   }
   const clean = gatewayAliases.reduce((value, alias) => value.replaceAll(alias, ''), text)
     .replace(syntax, '').replace(fileNames, '').replace(names, '');
-  const word = clean.match(/\b[A-Za-z]{2,}\b/);
+  // Telegram's setup labels retain its official names, field name and command.
+  const localized = /^#(?:settings-channels|agent-view|channel-dialog)(?:\s|$)/.test(scope)
+    ? clean.replace(/\b(?:bot|token|BotFather)\b|\/start\b|@[A-Za-z0-9_]+/g, '') : clean;
+  const word = localized.match(/\b[A-Za-z]{2,}\b/);
   assert.ok(!word, scope + ' contains English UI text: ' + word?.[0]);
 }
 

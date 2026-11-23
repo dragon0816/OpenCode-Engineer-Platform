@@ -8,11 +8,11 @@ import type { SessionOrigin } from '../opencode/permissions.ts';
 import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
-import { DelegationLedger } from './delegation-ledger.ts';
+import { DelegationLedger, migrateBudgetChoice, verifyBudgetChoice } from './delegation-ledger.ts';
 import { migrateExternalHelpers, verifyExternalHelpers } from './external-schema.ts';
 import { ExternalLedger, externalProvider } from './external-ledger.ts';
 import type { WorkRequest } from './work-items.ts';
-import { legacyAllowlistRef, migrateChannelAccounts } from '../channels/accounts.ts';
+import { legacyAllowlistRef, migrateChannelAccounts, migrateTelegramSettings, verifyTelegramSettings } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
 import type { Destination } from '../channels/transport.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
@@ -137,6 +137,10 @@ export class WebStore extends Ledger {
         if (!telegram && version < 5) migrateWorkItems(db);
         if (!telegram && version < 6) migrateDelegations(db);
         if (!telegram && version < 7) migrateExternalHelpers(db);
+        if (!telegram && version < 8) {
+          migrateTelegramSettings(db);
+          migrateBudgetChoice(db);
+        }
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -144,6 +148,8 @@ export class WebStore extends Ledger {
           verifyWorkItems(db);
           verifyDelegations(db);
           verifyExternalHelpers(db);
+          verifyTelegramSettings(db);
+          verifyBudgetChoice(db);
         }
       },
     });
@@ -195,6 +201,25 @@ export class WebStore extends Ledger {
       FROM channel_accounts WHERE provider='telegram' ORDER BY created_at,id`).all() as ChannelAccount[];
   }
 
+  telegramAccountSettings() {
+    return new Map(this.db.prepare('SELECT account_id AS id, bot_name AS botName, removed FROM telegram_account_settings')
+      .all().map(({ id, botName, removed }) => [String(id), { botName: typeof botName === 'string' ? botName : undefined, removed: Boolean(removed) }]));
+  }
+
+  saveTelegramBotName(id: string, name: string) {
+    this.db.prepare(`INSERT INTO telegram_account_settings (account_id,bot_name) VALUES (?,?)
+      ON CONFLICT(account_id) DO UPDATE SET bot_name=excluded.bot_name WHERE bot_name IS NOT excluded.bot_name`).run(id, name);
+  }
+
+  removeTelegramAccount(account: ChannelAccount) {
+    this.transaction(() => {
+      this.db.prepare("UPDATE channel_accounts SET state='disabled',binding_revision=binding_revision+1,updated_at=? WHERE id=?")
+        .run(Date.now(), account.accountId);
+      this.db.prepare(`INSERT INTO telegram_account_settings (account_id,removed) VALUES (?,1)
+        ON CONFLICT(account_id) DO UPDATE SET removed=1`).run(account.accountId);
+    });
+  }
+
   telegramAccountConflict(fingerprint: string, credentialRef: string, accountId?: string) {
     return this.db.prepare(`SELECT id AS accountId,agent_id AS agentId FROM channel_accounts
       WHERE id IS NOT ? AND (credential_ref=? OR (provider='telegram' AND account_fingerprint=?)) LIMIT 1`)
@@ -202,23 +227,25 @@ export class WebStore extends Ledger {
   }
 
   saveTelegramAccount(account: ChannelAccount, previous: ChannelAccount | undefined, sealOwner: () => void,
-    createAgent?: () => void) {
+    createAgent?: () => void, botName?: string) {
     return this.transaction(() => {
       const conflict = this.telegramAccountConflict(account.fingerprint!, account.credentialRef, account.accountId);
       if (conflict) return conflict;
       createAgent?.();
-      if (!this.defaultWorkspace(account.agentId)) throw new Error('Invalid Telegram agent workspace');
+      if (account.state === 'enabled' && !this.defaultWorkspace(account.agentId)) throw new Error('Invalid Telegram agent workspace');
       const now = Date.now();
       if (!previous) {
         this.db.prepare(`INSERT INTO channel_accounts VALUES (?,'telegram',?,?,?,?,?,'enabled',?,?,?)`).run(account.accountId,
           account.fingerprint, account.credentialRef, account.allowlistRef, account.agentId, account.handler, account.bindingRevision, now, now);
       } else {
-        const { changes } = this.db.prepare(`UPDATE channel_accounts SET account_fingerprint=?,credential_ref=?,agent_id=?,
+        const { changes } = this.db.prepare(`UPDATE channel_accounts SET account_fingerprint=?,credential_ref=?,allowlist_ref=?,agent_id=?,
           handler=?,state=?,binding_revision=?,updated_at=? WHERE id=? AND binding_revision=?`)
-          .run(account.fingerprint, account.credentialRef, account.agentId, account.handler, account.state,
+          .run(account.fingerprint, account.credentialRef, account.allowlistRef, account.agentId, account.handler, account.state,
             account.bindingRevision, now, account.accountId, previous.bindingRevision);
         if (!changes) throw new Error('Stale Telegram binding');
       }
+      if (botName) this.saveTelegramBotName(account.accountId, botName);
+      this.db.prepare('UPDATE telegram_account_settings SET removed=0 WHERE account_id=? AND removed=1').run(account.accountId);
       sealOwner();
     });
   }
@@ -309,7 +336,7 @@ export class WebStore extends Ledger {
 
   createAgent(create: () => void) { this.transaction(create); }
 
-  updateAgent(id: string, revision: number, settings: AgentSettings | null, channelStatus: string) {
+  updateAgent(id: string, revision: number, settings: AgentSettings | null, channelStatus: string, unbindChannels = false) {
     this.transaction(() => {
       const agent = this.agents().find((agent) => agent.id === id);
       if (!agent) throw new HttpError(404, 'agent-not-found');
@@ -317,10 +344,13 @@ export class WebStore extends Ledger {
       if (agent.state !== 'active') throw new HttpError(409, 'agent-inactive');
       if (!settings) {
         if (agent.builtin) throw new HttpError(409, 'agent-builtin');
-        if (this.telegramAccounts().some((row) => row.agentId === id && row.state === 'enabled')) {
+        if (!unbindChannels && this.telegramAccounts().some((row) => row.agentId === id && row.state === 'enabled')) {
           throw new HttpError(409, 'agent-channel-bound');
         }
-        if (this.agentStatus(id) !== 'available' || channelStatus !== 'available') throw new HttpError(409, 'agent-busy');
+        const work = this.db.prepare("SELECT 1 FROM agent_work_items WHERE agent_id=? AND (state='queued' OR lease_id IS NOT NULL) LIMIT 1").get(id);
+        if (work || this.agentStatus(id) !== 'available' || channelStatus !== 'available') throw new HttpError(409, 'agent-busy');
+        if (unbindChannels) this.db.prepare(`UPDATE channel_accounts SET state='disabled',binding_revision=binding_revision+1,updated_at=?
+          WHERE agent_id=? AND state<>'disabled'`).run(Date.now(), id);
         this.db.prepare("UPDATE agents SET state='archived',config_revision=config_revision+1,updated_at=? WHERE id=?")
           .run(Date.now(), id);
         return;
@@ -339,6 +369,18 @@ export class WebStore extends Ledger {
         if (settings.avatar !== undefined) this.writeAppearanceAvatar(settings.avatar);
       }
       this.auditSettings('assistant');
+    });
+    this.executionChanges.forEach((check) => check());
+  }
+
+  restoreAgent(id: string, revision: number) {
+    this.transaction(() => {
+      const agent = this.agents().find((agent) => agent.id === id);
+      if (!agent) throw new HttpError(404, 'agent-not-found');
+      if (agent.revision !== revision) throw new HttpError(409, 'agent-revision-conflict');
+      if (agent.builtin || agent.state !== 'archived') throw new HttpError(409, 'agent-inactive');
+      this.db.prepare("UPDATE agents SET state='active',config_revision=config_revision+1,updated_at=? WHERE id=?")
+        .run(Date.now(), id);
     });
     this.executionChanges.forEach((check) => check());
   }

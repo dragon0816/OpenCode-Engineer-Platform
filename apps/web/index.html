@@ -39,15 +39,15 @@
         <summary><span data-i18n="ui.assistant"></span> <span class="rail-count" id="assistant-count"></span></summary>
         <button id="new-agent" type="button" disabled data-i18n-aria-label="agents.create" data-i18n-title="agents.create">+</button>
         <div id="agent-list"></div>
-        <details id="archived-agents" hidden>
-          <summary data-i18n="agents.status-disabled"></summary>
-          <div id="archived-agent-list"></div>
-        </details>
         <label for="agent" data-i18n="agents.main-mode"></label>
         <select id="agent" disabled>
           <option value="inspector" data-i18n="ui.data-analysis"></option>
           <option value="workbook" data-i18n="ui.excel-worksheets"></option>
         </select>
+        <details id="archived-agents" hidden>
+          <summary data-i18n="agents.deleted-assistants"></summary>
+          <div id="archived-agent-list"></div>
+        </details>
       </details>
       </div>
     </aside>
@@ -128,36 +128,20 @@
           <section id="settings-channels" aria-labelledby="settings-channels-title" hidden>
             <h2 id="settings-channels-title" data-i18n="channels.title"></h2>
             <p class="settings-help" data-i18n="channels.assignment-help"></p>
-            <button id="channel-refresh" type="button" data-i18n="channels.refresh"></button>
-            <div class="channel-table-scroll">
-              <table class="channel-table" role="table" data-i18n-aria-label="channels.table">
-                <thead role="rowgroup"><tr role="row">
-                  <th scope="col" role="columnheader" data-i18n="channels.bot"></th>
-                  <th scope="col" role="columnheader" data-i18n="channels.agent"></th>
-                  <th scope="col" role="columnheader" data-i18n="agents.replyLocale"></th>
-                  <th scope="col" role="columnheader" data-i18n="channels.poll-status"></th>
-                  <th scope="col" role="columnheader" data-i18n="channels.actions"></th>
-                </tr></thead>
-                <tbody id="channel-accounts" role="rowgroup"></tbody>
-              </table>
-            </div>
-            <form id="channel-new" class="settings-group">
-              <h3 data-i18n="channels.add"></h3>
-              <p data-i18n="channels.secure-help"></p>
-              <label for="channel-reference" data-i18n="channels.reference"></label>
-              <input id="channel-reference" required autocomplete="off" spellcheck="false">
-              <label for="channel-agent" data-i18n="channels.agent"></label>
-              <select id="channel-agent" required></select>
-              <div class="settings-actions">
-                <button id="channel-verify" type="button" data-i18n="channels.verify"></button>
-                <button id="channel-bind" type="submit" disabled data-i18n="channels.bind"></button>
-                <p id="channel-status" role="status"></p>
-              </div>
-            </form>
+            <button id="channel-add" type="button" data-i18n="channels.add-bot"></button>
+            <p id="channel-status" role="status"></p>
+            <ul id="channel-accounts" class="channel-list" data-i18n-aria-label="channels.table"></ul>
+            <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
             <form id="delegation-budgets" class="settings-group">
-              <h3 data-i18n="delegations.budgets"></h3>
               <p data-i18n="delegations.budget-help"></p>
-              <div id="delegation-budget-fields"></div>
+              <fieldset id="delegation-budget-presets">
+                <legend data-i18n="delegations.budgets"></legend>
+                <div id="delegation-budget-options"></div>
+              </fieldset>
+              <details id="delegation-budget-advanced">
+                <summary><span data-i18n="ui.advanced"></span><span id="delegation-budget-current" hidden data-i18n="delegations.custom"></span></summary>
+                <div id="delegation-budget-fields"></div>
+              </details>
               <div class="settings-actions">
                 <button id="save-delegation-budgets" type="submit" disabled data-i18n="delegations.save-budgets"></button>
                 <p id="delegation-budget-status" role="status"></p>
@@ -414,12 +398,15 @@
         <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply" data-i18n="ui.remove-quote"></button></div>
         <div id="command-toast" role="status"></div>
         <ul id="slash-palette" role="listbox" data-i18n-aria-label="ui.commands" hidden></ul>
-        <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" data-i18n-placeholder="ui.tell-the-assistant-what-to-do" disabled required></textarea>
+        <div class="composer-entry">
+          <textarea aria-controls="slash-palette" id="prompt" rows="3" maxlength="16000" data-i18n-placeholder="ui.tell-the-assistant-what-to-do" disabled required></textarea>
+          <span id="drop-hint" aria-hidden="true" data-i18n="chat.release-to-attach-files"></span>
+        </div>
         <div class="composer-toolbar">
           <div class="composer-tools">
             <div class="composer-attachments">
               <button id="pick" type="button" aria-describedby="attachment-help" disabled data-i18n="ui.attach-files"></button>
-              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
               <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
@@ -626,6 +613,24 @@
         </details>
       </div>
     </section>
+    <dialog id="delete-agent-dialog" class="settings-dialog" aria-labelledby="delete-agent-question" aria-describedby="delete-agent-help">
+      <form>
+        <h2 id="delete-agent-question"></h2>
+        <p id="delete-agent-help" data-i18n="agents.delete-help"></p>
+        <p id="delete-agent-status" role="status"></p>
+        <div class="settings-actions">
+          <button id="cancel-delete-agent" type="button" autofocus data-i18n="ui.cancel"></button>
+          <button id="confirm-delete-agent" type="submit" class="button-danger" data-i18n="agents.delete"></button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="telegram-history-dialog" class="settings-dialog" aria-labelledby="telegram-history-title">
+      <form method="dialog">
+        <h2 id="telegram-history-title" data-i18n="agents.telegram-history"></h2>
+        <div id="telegram-history-messages" aria-live="polite"></div>
+        <button autofocus data-i18n="agents.close-telegram-history"></button>
+      </form>
+    </dialog>
     </main>
     <aside class="sidebar files" id="chat-files" data-i18n-aria-label="ui.details" hidden>
       <div class="panel-header">

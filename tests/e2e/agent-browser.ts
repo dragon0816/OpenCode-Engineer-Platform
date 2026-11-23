@@ -16,14 +16,18 @@ type Options = {
   reload: (connection?: string) => Promise<void>;
   selectSetting: (section: string) => Promise<unknown>;
   captures: boolean;
+  captureAgentManagement: boolean;
+  syntheticBotToken: string;
+  secondBotToken: string;
+  startTelegramSetup(chat: string): void;
+  seedLegacyBudget(): void;
 };
 
-const reference = 'OEP_TELEGRAM_SAMPLE_BOT_TOKEN';
-const duplicate = 'OEP_TELEGRAM_DUPLICATE_BOT_TOKEN';
 const name = '資料查核';
 const reviewID = 'sample-agent-review';
 
-export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures }: Options) {
+export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures, captureAgentManagement,
+  syntheticBotToken, secondBotToken, startTelegramSetup, seedLegacyBudget }: Options) {
   const mapping = mappingChecks(page, 'agent');
   const press = () => key('Enter', 'Enter', 13);
   const type = (text: string) => page.command('Input.insertText', { text });
@@ -57,7 +61,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     await rail();
     await activate('#open-settings');
     await selectSetting('channels');
-    await visible('#channel-accounts tr');
+    await visible('#channel-accounts li button');
   };
 
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -65,6 +69,13 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await rail();
   const initialCount = await page.evaluate<number>("document.querySelectorAll('#agent-list [data-agent]').length");
   await mapping.check('agent-rail', '#rail-assistants', { selectors: ['#new-agent', '[data-agent=main] .agent-row-start', '[data-agent=bi]', '[data-agent=main] summary'] });
+  for (const id of ['main', 'bi']) {
+    assert.equal(await page.evaluate(`Boolean(document.querySelector('[data-agent=${id}] [data-delete-agent]'))`), false);
+    await click(`[data-agent=${id}] .agent-row-open`);
+    await visible('#builtin-agent-help');
+    assert.equal(await page.evaluate("Boolean(document.querySelector('#delete-agent'))"), false);
+    await click('#close-agent');
+  }
   await createWizard(true);
   await page.evaluate("document.querySelector('#assistant-name').focus()");
   await type('放棄草稿');
@@ -88,9 +99,22 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   assert.match(await page.evaluate<string>("document.querySelector('#agent-fields').textContent"), /Skill 即將開放/);
   await step(5);
   await setValue('#agent-reply-locale', 'en');
-  await setValue('#agent-channel-reference', reference);
-  await click('#agent-channel-reference + button');
-  await page.ready("document.querySelector('#agent-channel').selectedOptions[0]?.textContent === '@SampleDataBot'");
+  await setValue('#agent-channel-token', syntheticBotToken);
+  assert.equal(await page.evaluate("document.querySelector('#agent-channel-token').type"), 'password');
+  await page.evaluate("document.querySelector('#agent-channel-token').focus()");
+  await press();
+  await page.ready("document.querySelector('.telegram-setup').textContent.includes('找到 @SampleDataBot') && document.querySelector('.telegram-setup').textContent.includes('/start')");
+  startTelegramSetup('group');
+  await click('#agent-next');
+  await page.ready("document.querySelector('#settings-status').textContent.includes('請先確認')");
+  assert.equal(await page.evaluate("Boolean(document.querySelector('#agent-channel-owner-confirm'))"), false);
+  startTelegramSetup('private');
+  await visible('#agent-channel-owner-confirm');
+  assert.match(await page.evaluate<string>("document.querySelector('.telegram-setup').textContent"), /@SampleOwner/);
+  await click('#agent-next');
+  await page.ready("document.querySelector('#settings-status').textContent.includes('請先確認')");
+  await click('#agent-channel-owner-confirm');
+  await mapping.check('agent-wizard', '#agent-view', { selectors: ['#agent-channel-token[type=password]', '#agent-channel-owner-confirm'] });
   await step(6);
   await step(7);
   assert.match(await page.evaluate<string>("document.querySelector('.agent-summary').textContent"), /@SampleDataBot/);
@@ -103,7 +127,10 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   const specialistRow = `[data-agent="${specialist}"]`;
   assert.equal(await page.evaluate(`document.querySelector('${specialistRow}').textContent.includes('@SampleDataBot')`), true);
   await mapping.check('agent-detail', '#agent-view', { selectors: ['#agent-tab-basic', '#agent-tab-model', '#agent-tab-knowledge',
-    '#agent-tab-channel', '#agent-tab-trigger', '#agent-tab-ability', '#agent-model', '#agent-reply-locale', '#save-assistant'] });
+    '#agent-tab-channel', '#agent-tab-trigger', '#agent-tab-ability', '#agent-model', '#agent-reply-locale', '#save-assistant', '#delete-agent', '.agent-channel-token button'] });
+  await click('#agent-tab-channel');
+  assert.match(await page.evaluate<string>("document.querySelector('.agent-channel-token').textContent"), /已設定 token（@SampleDataBot）.*更換 token/);
+  assert.equal(await page.evaluate("Boolean(document.querySelector('#agent-panel-channel input[type=password]'))"), false);
   await click('#agent-tab-basic');
   await key('ArrowRight', 'ArrowRight', 39);
   await page.ready("document.activeElement.id === 'agent-tab-model' && !document.querySelector('#agent-panel-model').hidden");
@@ -154,10 +181,47 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     document.querySelector('#settings-status').textContent === '已儲存'`);
 
   await openChannels();
-  await setValue('#channel-reference', duplicate);
-  await click('#channel-verify');
-  await page.ready("document.querySelector('#channel-status').textContent.includes('此 Telegram 帳號已綁定') && document.querySelector('#channel-bind').disabled");
-  await setValue('#channel-reference', '');
+  await page.ready("document.querySelector('#channel-accounts').textContent.includes('正常運作') && document.querySelector('#channel-accounts').textContent.includes('需要重新設定 token')");
+  assert.equal(await page.evaluate("[...document.querySelectorAll('#channel-accounts li')].every(row => row.querySelectorAll('button').length === 1)"), true);
+  await page.evaluate("document.querySelector('#channel-add').focus()");
+  await press();
+  await visible('#channel-token');
+  await setValue('#channel-token', syntheticBotToken);
+  await click('#channel-token-continue');
+  await page.ready("document.querySelector('#channel-dialog .telegram-setup').textContent.includes('這個機器人已在清單中') && document.querySelector('#channel-save').disabled");
+  await setValue('#channel-token', secondBotToken);
+  await click('#channel-token-continue');
+  await visible('#channel-agent');
+  await page.ready("document.querySelector('#channel-dialog').textContent.includes('@SampleAlertsBot')");
+  assert.equal(await page.evaluate("Boolean(document.querySelector('#channel-owner-confirm'))"), false);
+  await setValue('#channel-agent', 'main');
+  await click('#channel-save');
+  await page.ready("!document.querySelector('#channel-dialog').open && document.querySelector('#channel-accounts').textContent.includes('@SampleAlertsBot')");
+  for (const [preset, expected] of [
+    ['lean', [2, 3, 6, 18, 12, 36, 5]], ['relaxed', [5, 10, 20, 60, 100, 300, 20]],
+    ['standard', [3, 5, 10, 30, 30, 90, 10]],
+  ] as const) {
+    await click('#delegation-preset-' + preset);
+    await click('#save-delegation-budgets');
+    await page.ready("document.querySelector('#delegation-budget-status').textContent === '已儲存'");
+    await reload();
+    await openChannels();
+    await page.ready(`document.querySelector('#delegation-preset-${preset}')?.checked`);
+    assert.equal(await page.evaluate("document.querySelector('#delegation-budget-advanced').open"), false);
+    assert.deepEqual(await page.evaluate("[...document.querySelectorAll('#delegation-budget-fields input')].map(input => input.valueAsNumber)"), expected);
+  }
+  seedLegacyBudget();
+  await reload();
+  await openChannels();
+  await page.ready("!document.querySelector('#delegation-budget-current').hidden && document.querySelector('#delegation-budget-current').textContent === '自訂'");
+  assert.equal(await page.evaluate("document.querySelector('#budget-queueMs').valueAsNumber"), 720123 / 60000);
+  await activate('#delegation-budget-advanced > summary');
+  assert.match(await page.evaluate<string>("document.querySelector('label[for=budget-queueMs]').textContent"), /分鐘/);
+  await click('#save-delegation-budgets');
+  await page.ready("document.querySelector('#delegation-budget-status').textContent === '已儲存'");
+  await reload();
+  await openChannels();
+  await page.ready("document.querySelector('#budget-queueMs')?.valueAsNumber === 720123 / 60000");
   const reviewStore = runtime.knowledge!.reviewStore;
   const schema = reviewStore.installReviewSchema('sample-agent-bi', 'sample-agent-bi', '1', ['setting']);
   reviewStore.stage(reviewID, {
@@ -176,9 +240,12 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await mapping.check('agent-review-source', '#review-view', { selectors: ['.review-agent-source'] });
 
   const shot = async (label: string, theme: string, viewport: string, locale: string) => {
-    if (!captures) return;
+    const changed = ['detail', 'wizard-channel', 'channels', 'channel-manage', 'delete', 'budget'];
+    const currentGallery = captureAgentManagement && changed.includes(label) &&
+      (theme === 'light' && viewport === 'wide' && locale === 'zh-TW' || theme === 'dark' && viewport === 'narrow' && locale === 'en');
+    if (!captures && !currentGallery) return;
     const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    writeFileSync(join('docs', 'validation', 'gui', `slice4-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
+    writeFileSync(join('docs', 'validation', 'gui', `${currentGallery ? 'ux-agent' : 'slice4'}-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
   };
   const check = async (selector: string, contrast: string, context: string) => {
     await assertUiTextInThemes(page, selector);
@@ -189,9 +256,9 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   for (const [width, height, viewport] of matrix) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${width < 800}`);
-    for (const locale of captures ? ['zh-TW', 'en'] as const : ['zh-TW'] as const) {
+    for (const locale of captures || captureAgentManagement ? ['zh-TW', 'en'] as const : ['zh-TW'] as const) {
       await selectLocale(page, locale);
-      for (const theme of captures ? ['light', 'dark'] : ['light']) {
+      for (const theme of captures || captureAgentManagement ? ['light', 'dark'] : ['light']) {
         await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; window.scrollTo(0, 0)`);
         await rail();
         await page.evaluate("document.querySelector('#rail-assistants').open = true; document.querySelector('#rail-assistants').scrollIntoView({block:'center'})");
@@ -203,6 +270,12 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await page.evaluate('window.scrollTo(0, 0)');
         if (locale === 'zh-TW' && theme === 'light') await check('#agent-view', '#save-assistant', viewport + ' agent details');
         await shot('detail', theme, viewport, locale);
+        if (captureAgentManagement) {
+          await activate('#delete-agent');
+          await visible('#delete-agent-dialog[open]');
+          await shot('delete', theme, viewport, locale);
+          await key('Escape', 'Escape', 27);
+        }
 
         await rail();
         await activate('#new-agent');
@@ -218,10 +291,19 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await openChannels();
         await page.evaluate('window.scrollTo(0, 0)');
         if (locale === 'zh-TW' && theme === 'light') {
-          await check('#settings-channels', '#channel-refresh', viewport + ' channels');
-          assert.equal(await page.evaluate("document.querySelector('#channel-accounts .channel-cell-label').checkVisibility()"), width < 800);
+          await check('#settings-channels', '#channel-add', viewport + ' channels');
+          assert.equal(await page.evaluate("getComputedStyle(document.querySelector('#channel-accounts li')).gridTemplateColumns.split(' ').length"), width < 800 ? 1 : 3);
         }
         await shot('channels', theme, viewport, locale);
+        if (captureAgentManagement) {
+          const selector = `[data-channel] button[aria-label$="@SampleDataBot"]`;
+          await activate(selector);
+          await visible('#channel-dialog[open]');
+          await shot('channel-manage', theme, viewport, locale);
+          await key('Escape', 'Escape', 27);
+          await page.evaluate("document.querySelector('#delegation-budget-presets').scrollIntoView({ block: 'start' })");
+          await shot('budget', theme, viewport, locale);
+        }
         await rail();
         await activate('#open-review');
         await visible('.review-agent-source');
@@ -235,27 +317,73 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await page.ready("!matchMedia('(max-width: 800px)').matches && !document.querySelector('#session-sidebar').hidden");
   await selectLocale(page, 'zh-TW');
   await openChannels();
-  const binding = await page.evaluate<string>(`[...document.querySelectorAll('#channel-accounts tr')]
-    .find(row => row.querySelector('th').textContent === '@SampleDataBot').dataset.channel`);
+  const binding = await page.evaluate<string>(`[...document.querySelectorAll('#channel-accounts li')]
+    .find(row => row.querySelector('strong').textContent === '@SampleDataBot').dataset.channel`);
   await page.evaluate('window.confirm = () => true');
   const channelRow = `[data-channel="${binding}"]`;
-  await setValue(`${channelRow} td:first-of-type select`, 'main');
-  await click(`${channelRow} [data-channel-action=bind]`);
-  await page.ready(`document.querySelector('${channelRow} td:first-of-type p')?.textContent === '合成助理'`);
-  await setValue(`${channelRow} td:first-of-type select`, specialist);
-  await click(`${channelRow} [data-channel-action=bind]`);
-  await page.ready(`document.querySelector('${channelRow} td:first-of-type p')?.textContent === ${JSON.stringify(name)}`);
-  await page.evaluate(`document.querySelector('${channelRow} td:last-child button:nth-of-type(3)').click()`);
-  await page.ready(`document.querySelector('${channelRow} [data-channel-action=bind]')?.textContent === '綁定'`);
+  const manage = `${channelRow} [data-channel-action=manage]`;
+  await page.evaluate(`document.querySelector('${manage}').focus()`);
+  await press();
+  await visible('#channel-dialog[open]');
+  assert.match(await page.evaluate<string>("document.querySelector('#channel-dialog').textContent"), /已設定 token（@SampleDataBot）/);
+  assert.equal(await page.evaluate("document.querySelector('#channel-dialog details code').textContent"), '');
+  await click('#channel-dialog details summary');
+  await page.ready("/^OEP_TELEGRAM_BOT_[A-F0-9]{32}_BOT_TOKEN$/.test(document.querySelector('#channel-dialog details code').textContent)");
+  await click('#channel-recheck');
+  await page.ready("document.querySelector('#channel-dialog-status').textContent.includes('已向 Telegram 檢查')");
+  await key('Escape', 'Escape', 27);
+  await page.ready(`!document.querySelector('#channel-dialog').open && document.activeElement.matches('${manage}')`);
+  for (const [agentId, assignment] of [['main', '合成助理'], [specialist, name], ['', '尚未指定助理'], [specialist, name]]) {
+    await click(manage);
+    await visible('#channel-agent');
+    await setValue('#channel-agent', agentId);
+    assert.equal(await page.evaluate("document.querySelector('#channel-save').disabled"), true);
+    await click('#channel-confirm-assignment');
+    await click('#channel-save');
+    await page.ready(`!document.querySelector('#channel-dialog').open && document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
+  }
+  const alerts = `[data-channel] button[aria-label$="@SampleAlertsBot"]`;
+  await click(alerts);
+  await click('#channel-remove');
+  await page.ready(`!document.querySelector('#channel-dialog').open && !document.querySelector(${JSON.stringify(alerts)})`);
   await rail();
-  await page.evaluate(`document.querySelector('${specialistRow} summary').click()`);
-  await click(`${specialistRow} .menu-actions button:nth-child(2)`);
-  await page.ready(`!document.querySelector('#agent-list ${specialistRow}') && document.querySelector('[data-session="${specialistSession}"]')`);
+  await click(`${specialistRow} .agent-row-open`);
+  await visible('#delete-agent');
+  await click('#delete-agent');
+  await page.ready("document.querySelector('#delete-agent-dialog').open && document.activeElement.id === 'cancel-delete-agent'");
+  assert.match(await page.evaluate<string>("document.querySelector('#delete-agent-help').textContent"), /解除綁定.*過去的會話.*還原助理/);
+  await key('Escape', 'Escape', 27);
+  await page.ready("!document.querySelector('#delete-agent-dialog').open && document.activeElement.id === 'delete-agent'");
+  await click('#delete-agent');
+  await visible('#delete-agent-dialog[open] #confirm-delete-agent');
+  await click('#confirm-delete-agent');
+  await page.ready("!document.querySelector('#delete-agent-dialog').open || document.querySelector('#delete-agent-status').textContent");
+  assert.equal(await page.evaluate("document.querySelector('#delete-agent-status').textContent"), '');
+  await visible('#restore-agent');
+  await page.ready(`!document.querySelector('#agent-list ${specialistRow}') && !document.querySelector('#archived-agents').open`);
+  await openChannels();
+  await page.ready(`document.querySelector('${channelRow} p')?.textContent === '尚未指定助理'`);
+  await rail();
   await activate('#archived-agents > summary');
-  await page.ready(`document.querySelector('#archived-agent-list ${specialistRow} .agent-row-open')?.textContent.includes('已封存') &&
-    document.querySelector('#archived-agent-list ${specialistRow} .agent-row-start').hidden`);
-  await click(`[data-session="${specialistSession}"]`);
+  await page.ready(`document.querySelector('#archived-agent-list ${specialistRow} .agent-row-open')?.textContent.includes('已刪除') &&
+    document.querySelector('#archived-agent-list ${specialistRow} .agent-row-start').hidden &&
+    !document.querySelector('#sessions [data-session="${specialistSession}"]')`);
+  await click(`#archived-agent-list [data-session="${specialistSession}"]`);
   await page.ready("document.querySelector('#prompt').disabled && document.querySelector('#messages .message.assistant')");
+  await click(`#archived-agent-list ${specialistRow} .agent-row-open`);
+  await visible('#restore-agent');
+  await click('#restore-agent');
+  await page.ready(`document.querySelector('#agent-list ${specialistRow}') && document.querySelector('#settings-status').textContent === '已還原助理。'`);
+  await click('#close-agent');
+  await click(`#sessions [data-session="${specialistSession}"]`);
+  await page.ready("!document.querySelector('#prompt').disabled && document.querySelector('#messages .message.assistant')");
+  await page.evaluate(`document.querySelector('${specialistRow} summary').focus()`);
+  await press();
+  await key('ArrowDown', 'ArrowDown', 40);
+  await press();
+  await visible('#delete-agent-dialog[open]');
+  await click('#confirm-delete-agent');
+  await page.ready(`!document.querySelector('#agent-list ${specialistRow}') && document.querySelector('#archived-agent-list [data-session="${specialistSession}"]')`);
   mapping.finish();
   console.log(JSON.stringify({ agentWorkbench: 'passed', viewports: matrix.length, locales: 2, themes: 2 }));
 }

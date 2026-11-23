@@ -259,3 +259,15 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 完成繁中與英文的分級、設定警示及交辦確認介面。中央台帳升至 v7，保留 3B 內部交辦。 [切片 1 驗收紀錄](reviews/PHASE3I_SLICE1_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 - [ ] 切片 2 完成 Windows 隔離、原版 CLI 與供應商個別驗收。切片 3 完成已驗證的差異匯出、預覽及下載。
+
+## R22 對話附件
+
+- [x] 對話與輸入區支援拖放檔案，輸入框可貼上檔案、截圖和文字。沿用上傳限制、資料分級與右側圖片預覽。 [驗收紀錄](reviews/UX_COMPOSER_DROP_PASTE_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`。
+
+## 助理與通道操作改善
+
+- [x] 助理詳情與「更多」提供刪除。刪除會解除 bot 指派，保留唯讀會話，並支援還原。
+- [x] 與建立精靈共用 Telegram token 設定和私人 `/start` 確認。通道清單提供狀態、管理、改派、更換 token 與移除。
+- [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

@@ -1,39 +1,51 @@
 import { errorText, request } from './api.js';
-import { agentButton, agentName, replyLanguage } from './agents.js';
+import { agentButton, agentName } from './agents.js';
 import { message, optionText, setAttribute, setText, t } from './i18n.js';
+import { cancelTelegramSetup, channelErrorText, channelNode as node, channelRequest, setupReady, telegramSetup } from './telegram-setup.js';
 
-const pollLabels = {
-  disabled: message('channels.poll-disabled'), polling: message('channels.poll-polling'),
-  verifying: message('channels.poll-verifying'), 'poll-conflict': message('channels.poll-conflict'),
-  'credential-unavailable': message('server.channel-credential-unavailable'), 'identity-changed': message('server.channel-identity-changed'),
-  'account-in-use': message('channels.poll-account-in-use'), 'verification-failed': message('server.channel-verification-failed'),
-};
-const actionLabels = { verify: message('channels.verify'), bind: message('channels.bind'), rebind: message('channels.rebind'),
-  unbind: message('channels.unbind'), 'save-language': message('channels.save-language') };
-const confirms = { bind: message('channels.confirm-bind'), rebind: message('channels.confirm-rebind'), unbind: message('channels.confirm-unbind') };
 const botLabels = { 'telegram-main': message('channels.telegram-main'), 'telegram-bi': message('channels.telegram-bi') };
-export const channelName = ({ accountId, botName }) => botName || botLabels[accountId] || accountId;
+export const channelName = ({ accountId, botName }) => botName || botLabels[accountId] || message('channels.bot');
 
-function node(tag, text) {
-  const element = document.createElement(tag);
-  if (text) setText(element, text);
-  return element;
+const channelStates = {
+  unassigned: [null, message('channels.hint-unassigned')],
+  'working': [message('channels.status-working'), message('channels.hint-working')],
+  'checking': [message('channels.status-checking'), message('channels.hint-checking')],
+  'paused': [message('channels.status-paused'), message('channels.hint-paused')],
+  'other-app': [message('channels.status-other-app'), message('channels.hint-other-app')],
+  'needs-token': [message('channels.status-needs-token'), message('channels.hint-needs-token')],
+  'duplicate': [message('channels.status-duplicate'), message('channels.hint-duplicate')],
+};
+
+function channelState(account) {
+  if (account.state === 'disabled') return 'unassigned';
+  return {
+    disabled: 'paused', polling: 'working', verifying: 'checking', 'poll-conflict': 'other-app',
+    'credential-unavailable': 'needs-token', 'identity-changed': 'needs-token', 'account-in-use': 'duplicate',
+    'verification-failed': 'needs-token',
+  }[account.pollState];
 }
 
-function cell(label) {
-  const value = node('td');
-  value.setAttribute('role', 'cell');
-  const caption = node('strong', label);
-  caption.className = 'channel-cell-label';
-  caption.setAttribute('aria-hidden', 'true');
-  value.append(caption);
-  return value;
+function credentialDetails(accountId) {
+  const details = node('details');
+  const reference = node('code');
+  reference.setAttribute('data-ui-content', '');
+  details.append(node('summary', message('ui.advanced')), node('p', message('channels.advanced-reference')), reference);
+  details.addEventListener('toggle', async () => {
+    if (!details.open || reference.textContent) return;
+    const bytes = new TextEncoder().encode(accountId);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    reference.textContent = 'OEP_TELEGRAM_BOT_' + hex.toUpperCase() + '_BOT_TOKEN';
+  });
+  return details;
 }
 
 function bindDelegationBudgets() {
   const path = '/api/settings/delegation-budgets';
   const form = document.getElementById('delegation-budgets');
+  const options = document.getElementById('delegation-budget-options');
   const fields = document.getElementById('delegation-budget-fields');
+  const custom = document.getElementById('delegation-budget-current');
   const save = document.getElementById('save-delegation-budgets');
   const status = document.getElementById('delegation-budget-status');
   const labels = {
@@ -45,30 +57,63 @@ function bindDelegationBudgets() {
     toolCallsPerMessage: message('delegations.toolCallsPerMessage'),
     queueMs: message('delegations.queueMs'),
   };
-  function render({ values, fields: limits }) {
-    fields.replaceChildren(...Object.entries(limits).map(([key, { min, max }]) => {
+  const presetLabels = {
+    lean: message('delegations.lean'),
+    standard: message('delegations.standard'),
+    relaxed: message('delegations.relaxed'),
+  };
+  const toMinutes = (key) => key === 'executionMsPerDelegation' || key === 'queueMs' ? 60_000 : 1;
+  let current;
+  let loading;
+
+  function select(preset, values) {
+    current = preset;
+    custom.hidden = preset !== 'custom';
+    for (const input of options.querySelectorAll('input')) input.checked = input.value === current;
+    if (values) for (const [key, value] of Object.entries(values)) form.elements.namedItem(key).value = value / toMinutes(key);
+  }
+
+  function render({ values, fields: limits, preset, presets }) {
+    for (const [key, label] of Object.entries(presetLabels)) {
+      const item = node('label');
       const input = node('input');
-      Object.assign(input, { type: 'number', required: true, name: key, id: `budget-${key}`, min, max, value: values[key] });
+      Object.assign(input, { type: 'radio', name: 'preset', value: key, id: 'delegation-preset-' + key });
+      const summary = node('span');
+      summary.append(node('strong', label), node('small', message('delegations.preset-description', {
+        count: presets[key].delegationsPerMessage, minutes: presets[key].executionMsPerDelegation / 60_000,
+      })));
+      input.addEventListener('change', () => { select(key, presets[key]); setText(status, ''); });
+      item.append(input, summary);
+      options.append(item);
+    }
+    for (const [key, { min, max }] of Object.entries(limits)) {
+      const input = node('input');
+      const unit = toMinutes(key);
+      Object.assign(input, { type: 'number', required: true, name: key, id: 'budget-' + key, min: min / unit, max: max / unit,
+        step: unit === 1 ? '1' : 'any' });
       const label = node('label', labels[key]);
       label.htmlFor = input.id;
       const row = node('div');
       row.append(label, input);
-      return row;
-    }));
+      fields.append(row);
+    }
+    select(preset, values);
     save.disabled = false;
   }
+
+  fields.addEventListener('input', () => { select('custom'); setText(status, ''); });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     save.disabled = true;
-    const data = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, Number(value)]));
+    const data = current === 'custom' ? Object.fromEntries([...fields.querySelectorAll('input')].map(({ name, valueAsNumber }) =>
+      [name, Math.round(valueAsNumber * toMinutes(name))])) : { preset: current };
     try {
-      const { values } = await request(path, { data });
-      for (const [key, value] of Object.entries(values)) form.elements.namedItem(key).value = value;
+      const { preset, values } = await request(path, { data });
+      select(preset, values);
       setText(status, message('chat.saved'));
     } catch (error) { setText(status, errorText(error)); }
     finally { save.disabled = false; }
   });
-  let loading;
   return async () => {
     if (fields.childElementCount || loading) return;
     loading = true;
@@ -79,142 +124,207 @@ function bindDelegationBudgets() {
 }
 
 export function bindChannels(getAgents, refreshAgents) {
-  const table = document.getElementById('channel-accounts');
-  const form = document.getElementById('channel-new');
+  const list = document.getElementById('channel-accounts');
+  const add = document.getElementById('channel-add');
+  const dialog = document.getElementById('channel-dialog');
   const status = document.getElementById('channel-status');
-  const target = document.getElementById('channel-agent');
-  const reference = document.getElementById('channel-reference');
-  const verify = document.getElementById('channel-verify');
-  const bind = document.getElementById('channel-bind');
   const loadBudgets = bindDelegationBudgets();
-  let verifiedRef;
+  let entries = [];
+  let rendered;
+  let loadVersion = 0;
 
-  function feedback(element, error) {
-    if (error.detail?.code !== 'CHANNEL_ACCOUNT_IN_USE') {
-      setText(element, errorText(error));
-      return;
-    }
-    const owner = getAgents().find(({ id }) => id === error.detail.params?.agentId);
-    if (!owner) { setText(element, errorText(error)); return; }
-    const label = node('strong', agentName(owner));
-    if (typeof agentName(owner) === 'string') label.setAttribute('data-ui-content', '');
-    setText(element, message('channels.conflict'));
-    element.append(' ', label);
+  function row(account) {
+    const item = node('li');
+    item.dataset.channel = account.accountId;
+    const assigned = account.state === 'disabled' ? undefined : getAgents().find(({ id }) => id === account.agentId);
+    const bot = node('strong', channelName(account));
+    const assignment = node('p', assigned ? agentName(assigned) : message('channels.no-assistant'));
+    bot.toggleAttribute('data-ui-content', Boolean(account.botName));
+    assignment.toggleAttribute('data-ui-content', Boolean(assigned && typeof agentName(assigned) === 'string'));
+    const identity = node('div');
+    identity.append(bot, assignment);
+    const info = node('div');
+    const state = channelState(account);
+    const [label, hint] = channelStates[state];
+    if (label) info.append(node('strong', label));
+    info.append(node('p', hint));
+    const manage = agentButton(message('channels.manage'), () => open(account, false, manage));
+    setAttribute(manage, 'aria-label', message('channels.manage-bot', { bot: channelName(account) }));
+    manage.dataset.channelAction = 'manage';
+    item.append(identity, info, manage);
+    return item;
   }
 
-  function agents(select, id, biOnly = false) {
-    const available = getAgents().filter((agent) => agent.state === 'active' && (!biOnly || agent.id === 'bi'));
-    select.replaceChildren(...available.map((agent) => {
+  async function load() {
+    const version = ++loadVersion;
+    try {
+      const { accounts } = await channelRequest();
+      if (version !== loadVersion) return;
+      entries = accounts;
+      const key = JSON.stringify([accounts, getAgents().map(({ id, name, state }) => [id, name, state])]);
+      if (key === rendered) return;
+      rendered = key;
+      const focused = document.activeElement.closest('[data-channel]')?.dataset.channel;
+      list.replaceChildren(...entries.map(row));
+      if (focused) manageButton(focused)?.focus();
+      if (!entries.length) list.append(node('li', message('channels.no-bots')));
+    } catch (error) {
+      if (version === loadVersion) setText(status, errorText(error));
+    }
+  }
+
+  function manageButton(id) {
+    return list.querySelector(`[data-channel="${CSS.escape(id)}"] button`);
+  }
+
+  function open(account, replace, opener) {
+    if (dialog.open) return;
+    const heading = node('h2', account ? message('channels.manage-bot', { bot: channelName(account) }) : message('channels.add-bot'));
+    heading.id = 'channel-dialog-title';
+    const form = node('form');
+    const feedback = node('p');
+    feedback.id = 'channel-dialog-status';
+    feedback.setAttribute('role', 'status');
+    const tokenPanel = node('div');
+    const assignment = node('div');
+    const label = node('label', message('channels.agent'));
+    const select = node('select');
+    select.id = 'channel-agent';
+    label.htmlFor = select.id;
+    const original = account?.state === 'disabled' ? '' : account?.agentId ?? '';
+    const active = getAgents().filter(({ id, state }) => state === 'active' && (account?.handler !== 'bi_intake' || id === 'bi'));
+    select.append(optionText(message('channels.no-assistant'), ''), ...active.map((agent) => {
       const option = optionText(agentName(agent), agent.id);
       option.toggleAttribute('data-ui-content', typeof agentName(agent) === 'string');
       return option;
     }));
-    if (available.some((agent) => agent.id === id)) select.value = id;
-  }
+    select.value = original;
+    const confirm = node('input');
+    confirm.id = 'channel-confirm-assignment';
+    confirm.type = 'checkbox';
+    const confirmLabel = node('label');
+    confirmLabel.append(confirm, node('span', message('channels.confirm-assignment')));
+    assignment.append(label, select, confirmLabel);
+    let setup;
+    let editingToken = !account;
+    let busy = false;
+    let removed = false;
+    const save = node('button', message('channels.save-bot'));
+    save.id = 'channel-save';
+    save.type = 'submit';
+    const close = agentButton(message('agents.cancel'), () => dialog.close());
+    close.id = 'channel-close';
+    const actions = node('div');
+    actions.className = 'settings-actions';
+    actions.append(save, close);
 
-  function row(account) {
-    const { state, pollState, botName, agentId, accountId, bindingRevision, verified, handler } = account;
-    const tr = node('tr');
-    tr.dataset.channel = accountId;
-    tr.setAttribute('role', 'row');
-    const bot = node('th', channelName(account));
-    bot.scope = 'row';
-    bot.setAttribute('role', 'rowheader');
-    if (botName || !['telegram-main', 'telegram-bi'].includes(accountId)) bot.setAttribute('data-ui-content', '');
-    const assignment = cell(message('channels.agent'));
-    const select = node('select');
-    setAttribute(select, 'aria-label', message('channels.agent'));
-    agents(select, agentId, handler === 'bi_intake');
-    const assigned = getAgents().find(({ id }) => id === agentId);
-    if (state !== 'disabled') {
-      const label = node('p', agentName(assigned));
-      label.toggleAttribute('data-ui-content', typeof agentName(assigned) === 'string');
-      assignment.append(label);
+    function sync() {
+      const ready = Boolean(setupReady(setup));
+      const change = Boolean(account && select.value !== original);
+      assignment.hidden = !account && !ready;
+      confirmLabel.hidden = !change;
+      close.disabled = busy;
+      save.disabled = busy || change && !confirm.checked || (editingToken ? !ready || !account && !select.value : !change);
     }
-    assignment.append(select);
-    const language = cell(message('agents.replyLocale'));
-    const locale = replyLanguage(account.replyLocale);
-    setAttribute(locale, 'aria-label', message('agents.replyLocale'));
-    language.append(locale);
-    locale.disabled = state === 'disabled';
-    const polling = cell(message('channels.poll-status'));
-    polling.append(node('p', verified ? message('channels.verified') : message('channels.unverified')),
-      node('p', pollLabels[pollState]));
-    const actions = cell(message('channels.actions'));
-    const status = node('p');
-    status.setAttribute('role', 'status');
-    const operation = (key, action) => agentButton(actionLabels[key], async (event) => {
-      const button = event.currentTarget;
+
+    function editToken() {
+      editingToken = true;
+      const editor = telegramSetup('channel', { account, onChange(next) { setup = next; sync(); } });
+      tokenPanel.replaceChildren(editor);
+      sync();
+      editor.querySelector('input').focus();
+    }
+
+    async function perform(button, work) {
+      if (busy) return;
+      busy = true;
+      sync();
       button.disabled = true;
-      try { await action(); }
-      catch (error) { feedback(status, error); }
-      finally { button.disabled = false; }
-    });
-    const mutate = async (action) => {
-      if (!window.confirm(confirms[action]())) return;
-      await request('/api/settings/channels', { data: { action, accountId, agentId: action === 'unbind' ? agentId : select.value,
-        confirmed: true, bindingRevision } });
-      await refreshAgents();
-      await load(accountId);
-    };
-    const change = operation(state === 'enabled' ? 'rebind' : 'bind', () => mutate(state === 'enabled' ? 'rebind' : 'bind'));
-    change.dataset.channelAction = 'bind';
-    const verifyRow = operation('verify', async () => {
-      await request('/api/settings/channels', { data: { action: 'verify', accountId } });
-      setText(status, message('channels.verified'));
-    });
-    actions.append(verifyRow, change);
-    if (state === 'enabled') actions.append(operation('unbind', () => mutate('unbind')));
-    const saveLocale = operation('save-language', async () => {
-      await request('/api/agents/' + agentId, { data: { action: 'edit', revision: assigned?.revision, replyLocale: locale.value } });
-      await refreshAgents();
-      await load(accountId);
-    });
-    if (state !== 'disabled') language.append(saveLocale);
-    actions.append(status);
-    tr.append(bot, assignment, language, polling, actions);
-    return tr;
-  }
+      setText(feedback, message('chat.saving'));
+      try { await work(); }
+      catch (error) { setText(feedback, channelErrorText(error)); }
+      finally { busy = false; button.disabled = false; sync(); }
+    }
 
-  async function load(focus) {
-    try {
-      const { accounts } = await request('/api/settings/channels');
-      agents(target, target.value);
-      table.replaceChildren(...[...accounts].sort((first, second) => Number(second.state === 'enabled') - Number(first.state === 'enabled')).map(row));
-      if (focus) table.querySelector(`[data-channel="${CSS.escape(focus)}"] [data-channel-action]`)?.focus();
-    } catch (error) { setText(status, errorText(error)); }
-  }
+    const target = account && { accountId: account.accountId, bindingRevision: account.bindingRevision };
+    if (account) {
+      const current = node('p', account.verified ? (account.botName ? message('channels.token-configured-bot', { bot: account.botName }) :
+        message('channels.token-configured')) : message('channels.status-needs-token'));
+      const replaceButton = agentButton(message('channels.replace-token'), editToken);
+      replaceButton.id = 'channel-replace-token';
+      tokenPanel.append(current, replaceButton);
+      const recheck = agentButton(message('channels.recheck'), () => perform(recheck, async () => {
+        await channelRequest({ action: 'recheck', ...target });
+        setText(feedback, message('channels.rechecked'));
+        await load();
+      }));
+      recheck.className = 'channel-text-button';
+      recheck.id = 'channel-recheck';
+      const remove = agentButton(message('channels.remove-bot'), () => {
+        if (busy) return;
+        if (!window.confirm(t('channels.confirm-remove'))) return;
+        void perform(remove, async () => {
+          await channelRequest({ action: 'remove', ...target, confirmed: true });
+          removed = true;
+          await updated();
+        });
+      });
+      remove.className = 'danger-action';
+      remove.id = 'channel-remove';
+      actions.append(recheck, remove);
+    } else editToken();
 
-  reference.addEventListener('input', () => { bind.disabled = true; verifiedRef = undefined; });
-  verify.addEventListener('click', async () => {
-    const credentialRef = reference.value.trim();
-    verify.disabled = true;
-    bind.disabled = true;
-    verifiedRef = undefined;
-    try {
-      const result = await request('/api/settings/channels', { data: { action: 'verify', credentialRef } });
-      if (reference.value.trim() !== credentialRef) return;
-      verifiedRef = credentialRef;
-      bind.disabled = false;
-      setText(status, result.botName ? message('channels.verified-bot', { bot: result.botName }) : message('channels.verified'));
-    } catch (error) { feedback(status, error); }
-    finally { verify.disabled = false; }
-  });
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!verifiedRef || reference.value.trim() !== verifiedRef || !target.value || bind.disabled || !window.confirm(t('channels.confirm-bind'))) return;
-    bind.disabled = true;
-    verify.disabled = true;
-    try {
-      await request('/api/settings/channels', { data: { action: 'bind', agentId: target.value, credentialRef: verifiedRef, confirmed: true } });
-      reference.value = '';
-      verifiedRef = undefined;
-      setText(status, message('chat.saved'));
-      await refreshAgents();
+    async function updated() {
+      const focus = account?.accountId;
+      dialog.close();
+      await refreshAgents().catch(() => {});
       await load();
-    } catch (error) { feedback(status, error); }
-    finally { bind.disabled = !verifiedRef; verify.disabled = false; }
-  });
-  document.getElementById('channel-refresh').addEventListener('click', () => { void load(); });
-  return async () => { await Promise.all([load(), loadBudgets()]); };
+      if (!dialog.open) (focus && manageButton(focus) || add).focus();
+      setText(status, removed ? message('channels.removed') : message('chat.saved'));
+    }
+
+    select.addEventListener('change', () => { confirm.checked = false; sync(); });
+    confirm.addEventListener('change', sync);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (save.disabled) return;
+      void perform(save, async () => {
+        if (editingToken) {
+          await channelRequest({ action: 'setup-save', setupId: setup.setupId, ownerConfirmed: setup.ownerConfirmed === true,
+            agentId: select.value || null, confirmed: true });
+          setup = undefined;
+        } else {
+          const action = !select.value ? 'unbind' : account.state === 'enabled' ? 'rebind' : 'bind';
+          await channelRequest({ action, ...target, ...(select.value && { agentId: select.value }), confirmed: true });
+        }
+        await updated();
+      });
+    });
+    dialog.oncancel = (event) => { if (busy) event.preventDefault(); };
+    dialog.addEventListener('close', () => {
+      cancelTelegramSetup(setup);
+      dialog.replaceChildren();
+      if (opener?.isConnected) opener.focus();
+    }, { once: true });
+    form.append(tokenPanel, assignment, actions, feedback);
+    if (account?.managedToken) form.append(credentialDetails(account.accountId));
+    dialog.replaceChildren(heading, form);
+    sync();
+    dialog.showModal();
+    if (replace) editToken();
+    else if (!account) form.querySelector('input').focus();
+  }
+
+  add.addEventListener('click', () => open(undefined, false, add));
+  setInterval(() => {
+    if (!list.closest('[hidden]') && !dialog.open) void load();
+  }, 5000);
+
+  return async (replaceAccountId) => {
+    await Promise.all([load(), loadBudgets()]);
+    if (replaceAccountId) {
+      const account = entries.find(({ accountId }) => accountId === replaceAccountId);
+      if (account) open(account, true, manageButton(replaceAccountId));
+    }
+  };
 }
