@@ -261,9 +261,9 @@ export function bindMcpSettings(projects) {
 
   function pollOAuth(baseRestart, view) {
     clearTimeout(oauthPoll);
-    if (!oauthCards.size || find('settings-mcp').hidden || !find('settings-mcp').checkVisibility()) return;
+    if (!oauthCards.size || !list.checkVisibility()) return;
     oauthPoll = setTimeout(async () => {
-      if (view !== revision || !find('settings-mcp').checkVisibility()) return;
+      if (view !== revision || !list.checkVisibility()) return;
       try {
         const statuses = await request(endpoint + '/oauth');
         if (view !== revision) return;
@@ -272,7 +272,7 @@ export function bindMcpSettings(projects) {
           return card && showOAuth(card, value);
         });
         find('mcp-restart-bar').hidden = !baseRestart && !requested.some(Boolean);
-      } catch { /* The settings page can retry the status request. */ }
+      } catch { /* Retry the status request while the MCP list is visible. */ }
       if (view === revision) pollOAuth(baseRestart, view);
     }, 1500);
   }

@@ -209,13 +209,14 @@ try {
   }
   await browser.command('Page.navigate', { url: adapter!.pairURL() });
   await browser.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
-  await click('#open-settings');
   let id = '';
   for (const [locale, signedOut, signedIn, login, logout] of [
     ['zh-TW', '未登入', '已登入', '登入', '登出'], ['en', 'Signed out', 'Signed in', 'Sign in', 'Sign out'],
   ] as const) {
     await selectLocale(browser, locale);
+    await click('#open-settings');
     await click('[data-section="mcp"]');
+    await browser.ready("document.querySelector('#settings-open-mcp').checkVisibility()");
     await click('#settings-open-mcp');
     await browser.ready("document.querySelector('#mcp-import').checkVisibility()");
     if (!id) {
