@@ -284,3 +284,10 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
 - [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
 - [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
+
+## Phase 3G BI 文件擷取
+
+- [x] 在知識庫建置頁加入雙語「從文件建立卡片」，支援文字 PDF、核准的 HTTPS 網頁、文字、Markdown 及 HTML。
+- [x] 讀取 BI export 的 schema 結構，分段呼叫 Gateway，逐欄驗證原文引文並檢查與發布卡片的重複。
+- [x] 將通過驗證的卡片送交既有審核及發布，助理依知識庫讀取權限引用來源定位。 [擷取與展示紀錄](reviews/PHASE3G_BI_EXTRACTION_REPORT.md)
+- [ ] 擁有者以候選版驗收實際公開網頁及本機樣本，審核者補跑 Web HTTP、Excel、安裝、升級、備份關卡。
