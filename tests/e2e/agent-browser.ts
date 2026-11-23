@@ -332,7 +332,8 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await click('#channel-recheck');
   await page.ready("document.querySelector('#channel-dialog-status').textContent.includes('已向 Telegram 檢查')");
   await key('Escape', 'Escape', 27);
-  await page.ready(`!document.querySelector('#channel-dialog').open && document.activeElement.matches('${manage}')`);
+  await page.ready(`!document.querySelector('#channel-dialog').open && !document.querySelector('#channel-dialog').firstElementChild &&
+    document.activeElement.matches('${manage}')`);
   for (const [agentId, assignment] of [['main', '合成助理'], [specialist, name], ['', '尚未指定助理'], [specialist, name]]) {
     await click(manage);
     await visible('#channel-agent');
@@ -340,7 +341,8 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     assert.equal(await page.evaluate("document.querySelector('#channel-save').disabled"), true);
     await click('#channel-confirm-assignment');
     await click('#channel-save');
-    await page.ready(`!document.querySelector('#channel-dialog').open && document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
+    await page.ready(`!document.querySelector('#channel-dialog').open && !document.querySelector('#channel-dialog').firstElementChild &&
+      document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
   }
   const alerts = `[data-channel] button[aria-label$="@SampleAlertsBot"]`;
   await click(alerts);
