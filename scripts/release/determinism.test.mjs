@@ -34,6 +34,12 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
       if (path.startsWith('payload/')) assert.deepEqual(Buffer.from(files['plugins/bi-knowledge/' + path]), data);
     }
     assert.match(Buffer.from(files['THIRD_PARTY_LICENSES.md']).toString('utf8'), /pypdf 6\.21\.4/);
+    assert.match(Buffer.from(files['THIRD_PARTY_LICENSES.md']).toString('utf8'), /AEP Hermes Skill Pack/);
+    const skillRoot = 'apps/adapter/default-skills/';
+    for (const { name } of JSON.parse(Buffer.from(files[skillRoot + 'defaults.json']))) {
+      assert.ok(files[skillRoot + name + '/SKILL.md']?.length);
+      assert.ok(files[skillRoot + name + '/LICENSE']?.length);
+    }
     const second = unzipSync(archives[1]);
     for (const path of ['sbom.cdx.json', 'THIRD_PARTY_LICENSES.md', 'NOTICE']) {
       assert.ok(files[path]?.length);
