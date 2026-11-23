@@ -31,7 +31,7 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
     assert.equal(plugin.manifest.id, 'oep.bi-knowledge');
     assert.equal(plugin.payload.has('manifest.sig'), false);
     for (const [path, data] of plugin.payload) {
-      if (path.startsWith('payload/')) assert.deepEqual(files['plugins/bi-knowledge/' + path], data);
+      if (path.startsWith('payload/')) assert.deepEqual(Buffer.from(files['plugins/bi-knowledge/' + path]), data);
     }
     assert.match(Buffer.from(files['THIRD_PARTY_LICENSES.md']).toString('utf8'), /pypdf 6\.21\.4/);
     const second = unzipSync(archives[1]);
