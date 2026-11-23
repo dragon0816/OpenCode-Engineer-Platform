@@ -22,8 +22,17 @@ const media = (mime: string) => isAttachmentImage(mime) || mime === 'application
 const files = new Map([
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'],
   ['.gif', 'image/gif'], ['.webp', 'image/webp'], ['.pdf', 'application/pdf'],
-  ['.xlsx', workbookType], ['.txt', 'text/plain'], ['.md', 'text/plain'], ['.csv', 'text/plain'],
-  ['.html', 'text/html'], ['.htm', 'text/html'],
+  ['.xlsx', workbookType],
+]);
+const textExtensions = new Set([
+  '.txt', '.md', '.csv', '.htm', '.json', '.jsonc', '.yaml', '.yml', '.xml', '.log', '.ini', '.cfg', '.conf', '.toml', '.tsv',
+  '.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.c', '.h', '.cpp', '.hpp', '.cs', '.java', '.go', '.rs', '.ps1',
+  '.sh', '.bat', '.sql', '.html', '.css', '.scpi', '.m',
+]);
+const textApplicationTypes = new Set([
+  'application/json', 'application/jsonc', 'application/javascript', 'application/x-javascript', 'application/typescript',
+  'application/xml', 'application/yaml', 'application/x-yaml', 'application/toml', 'application/sql',
+  'application/x-python', 'application/x-powershell', 'application/x-sh', 'application/x-shellscript', 'application/x-bat',
 ]);
 
 export const uuid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
@@ -42,13 +51,15 @@ export function uploadName(encoded: string) {
 }
 
 export function uploadType(name: string, declared: string) {
-  const mime = files.get(extname(name).toLowerCase());
+  const extension = extname(name).toLowerCase();
   const input = declared.split(';')[0].trim().toLowerCase();
-  const text = mime === 'text/plain' && ['text/plain', 'text/csv', 'text/markdown'].includes(input);
-  if (!mime || !(input === mime || input === 'application/octet-stream' || text)) {
-    throw new HttpError(415, 'attachment-type');
-  }
-  return mime;
+  const generic = input === 'application/octet-stream';
+  // File pickers can report these extensions using their Windows media or executable associations.
+  const ambiguous = extension === '.ts' && input === 'video/mp2t' || extension === '.bat' && input === 'application/x-msdownload';
+  if (textExtensions.has(extension) && (generic || input.startsWith('text/') || textApplicationTypes.has(input) || ambiguous)) return 'text/plain';
+  const mime = files.get(extension);
+  if (mime && (generic || input === mime)) return mime;
+  throw new HttpError(415, 'attachment-type');
 }
 
 function decodeText(bytes: Buffer) {

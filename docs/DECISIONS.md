@@ -374,3 +374,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 自訂遠端 MCP 加入 OAuth 2.1 授權碼流程（PKCE、本機回呼、權杖存於 Windows 使用者憑證、到期自動更新、逐助理授權），沿用既有 OEP broker 的 HTTPS、DNS 固定與禁止重新導向規則。
 - **理由：** 擁有者要求；常用 MCP（Gmail、Google Drive、Atlassian）都需要 OAuth。LLM Gateway 為公司自建，MCP 資料交給 Gateway 模型可接受。
 - **捨棄的替代方案：** 只支援 API key 標頭（無法接上主流 MCP）。
+
+## 2026-11-23 工程文字附件
+
+- 選取、貼上、拖放與唯讀資料夾匯入共用副檔名和內容檢查。新增 JSON／JSONC、YAML、XML、LOG、INI／CFG／CONF、TOML、TSV、Python、JavaScript／TypeScript、C／C++、C#、Java、Go、Rust、PowerShell、Shell、Batch、SQL、HTML、CSS、SCPI 與 MATLAB `.m`；各格式以 `text/plain` 提供 UTF-8 文字。保留 TXT、Markdown、CSV、HTM、Excel、PDF 與圖片。
+- 文字必須通過嚴格 UTF-8 解碼和控制字元檢查。沿用單檔 20 MiB、會話配額 200 MiB、一則訊息的文字總量 1 MiB，以及附加資料的文字預覽上限 1 MiB。沿用附件的資料分類。HTML 在右側以原始文字呈現。

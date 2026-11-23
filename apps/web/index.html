@@ -128,10 +128,8 @@
           <section id="settings-channels" aria-labelledby="settings-channels-title" hidden>
             <h2 id="settings-channels-title" data-i18n="channels.title"></h2>
             <p class="settings-help" data-i18n="channels.assignment-help"></p>
-            <button id="channel-add" type="button" data-i18n="channels.add-bot"></button>
             <p id="channel-status" role="status"></p>
             <ul id="channel-accounts" class="channel-list" data-i18n-aria-label="channels.table"></ul>
-            <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
             <form id="delegation-budgets" class="settings-group">
               <p data-i18n="delegations.budget-help"></p>
               <fieldset id="delegation-budget-presets">
@@ -406,7 +404,7 @@
           <div class="composer-tools">
             <div class="composer-attachments">
               <button id="pick" type="button" aria-describedby="attachment-help" disabled data-i18n="ui.attach-files"></button>
-              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.htm,.json,.jsonc,.yaml,.yml,.xml,.log,.ini,.cfg,.conf,.toml,.tsv,.py,.js,.mjs,.cjs,.ts,.tsx,.jsx,.c,.h,.cpp,.hpp,.cs,.java,.go,.rs,.ps1,.sh,.bat,.sql,.html,.css,.scpi,.m" multiple hidden>
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
               <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
@@ -613,6 +611,7 @@
         </details>
       </div>
     </section>
+    <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
     <dialog id="delete-agent-dialog" class="settings-dialog" aria-labelledby="delete-agent-question" aria-describedby="delete-agent-help">
       <form>
         <h2 id="delete-agent-question"></h2>
@@ -630,6 +629,23 @@
         <div id="telegram-history-messages" aria-live="polite"></div>
         <button autofocus data-i18n="agents.close-telegram-history"></button>
       </form>
+    </dialog>
+    <dialog id="microphone-permission" class="settings-dialog" aria-labelledby="microphone-permission-title">
+      <h2 id="microphone-permission-title" data-i18n="voice.enable-microphone-access"></h2>
+      <p id="microphone-permission-status" role="status"></p>
+      <ol>
+        <li data-i18n="voice.open-site-info"></li>
+        <li data-i18n="voice.allow-microphone"></li>
+        <li data-i18n="voice.reload-or-recheck"></li>
+      </ol>
+      <p id="microphone-copy-help" data-i18n="voice.paste-settings-url" hidden></p>
+      <input id="microphone-settings-url" type="text" readonly hidden data-i18n-aria-label="voice.settings-url">
+      <p id="microphone-copy-status" role="status" hidden></p>
+      <div class="settings-actions">
+        <button id="recheck-microphone" type="button" autofocus data-i18n="voice.recheck"></button>
+        <button id="copy-microphone-settings" type="button" aria-describedby="microphone-copy-help" data-i18n="voice.copy-settings-url" hidden></button>
+        <button id="close-microphone-permission" type="button" data-i18n="voice.close-help"></button>
+      </div>
     </dialog>
     </main>
     <aside class="sidebar files" id="chat-files" data-i18n-aria-label="ui.details" hidden>
@@ -668,6 +684,7 @@
       <div role="tabpanel" id="panel-notes" aria-labelledby="tab-notes" tabindex="0" hidden>
         <label><span data-i18n="ui.filter"></span> <select id="notes-filter"><option value="all" data-i18n="ui.all"></option><option value="rated" data-i18n="ui.rated"></option><option value="noted" data-i18n="ui.with-notes"></option></select></label>
         <ul id="session-notes"></ul>
+        <p id="notes-status" role="status"></p>
         <button type="button" id="export-notes" disabled data-i18n="ui.export-selected-notes"></button>
       </div>
     </aside>
