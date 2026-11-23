@@ -136,8 +136,16 @@ h2 { font-size: var(--text-base); margin-bottom: var(--space-2); }
 .message.user { background: var(--user); }
 .message p { white-space: pre-wrap; margin-top: var(--space-1); }
 #composer { padding: var(--space-2) var(--space-5) var(--space-3); }
-#drop { padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: 12px; background: var(--drop); }
-#drop.dragging { background: var(--selected); outline: 2px dashed var(--link); }
+#drop { position: relative; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: 12px; background: var(--drop); }
+#drop-hint { display: none; }
+#chat-view.dragging :is(#drop, #messages) { outline: 2px dashed var(--link); outline-offset: -3px; }
+#chat-view.dragging #drop { background: var(--selected); }
+#chat-view.dragging #drop-hint {
+  position: absolute; z-index: 2; inset: var(--space-2); margin: auto; width: fit-content; height: fit-content;
+  display: block; padding: var(--space-2) var(--space-4); border-radius: var(--radius-control);
+  background: var(--primary); color: var(--primary-text); font-weight: 650; text-align: center;
+  box-shadow: 0 2px 8px var(--shadow); pointer-events: none;
+}
 #drop > label { font-weight: 650; }
 #prompt {
   display: block; width: 100%; margin: var(--space-1) 0 var(--space-2); resize: vertical;
@@ -155,7 +163,8 @@ h2 { font-size: var(--text-base); margin-bottom: var(--space-2); }
 .composer-model { display: flex; align-items: center; gap: var(--space-1); min-width: 0; white-space: nowrap; }
 .composer-model select { width: auto; min-width: 0; }
 .composer-status { margin-top: var(--space-1); }
-.composer-status :empty, #file-status:empty { display: none; }
+.composer-status :empty:not(#upload-status), #file-status:empty { display: none; }
+#upload-status:empty { position: absolute; }
 .composer-footer { justify-content: space-between; margin-top: var(--space-1); }
 .compose-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-3); }
 button, textarea, select, input { font: inherit; }

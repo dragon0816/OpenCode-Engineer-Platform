@@ -30,7 +30,7 @@ const sessionPath = (id) => {
 const sessionAgent = (id) => assistantEntries.find(({ id: agentId }) => agentId === sessionScopes.get(id)?.agentId);
 const pick = find('pick');
 const fileInput = find('file-input');
-const drop = find('drop');
+const chatView = find('chat-view');
 const prompt = find('prompt');
 const send = find('send');
 const cancelTurn = find('cancel-turn');
@@ -56,6 +56,9 @@ const eventLabels = {
   permission: message('chat.checking-tool-permissions'), finished: message('chat.processing-completed'), failed: message('chat.processing-failed'), interrupted: message('chat.processing-stopped'),
 };
 const activeStates = new Set(['accepted', 'running', 'awaiting_permission', 'background', 'indeterminate']);
+const imageExtensions = new Map([
+  ['image/png', 'png'], ['image/jpeg', 'jpg'], ['image/gif', 'gif'], ['image/webp', 'webp'],
+]);
 const knownSessions = new Map();
 const selections = new Map();
 const submitted = new Map();
@@ -111,6 +114,7 @@ function setControls() {
   cancelTurn.hidden = !cancellable;
   cancelTurn.disabled = !cancellable || Boolean(current?.cancelling);
   pick.disabled = !current || uploadBusy || stopped || inactive;
+  if (pick.disabled) chatView.classList.remove('dragging');
   prompt.disabled = !current || stopped || inactive;
   find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped || inactive;
   voice.update();
@@ -534,7 +538,7 @@ async function openPreview(file, url, context, opener, { plainText = false } = {
     const extension = file.name.split('.').at(-1).toLowerCase();
     if (plainText && extension !== 'md' && extension !== 'csv') body.append(node('pre', data));
     else if (data instanceof Blob) {
-      if (!['image/png', 'image/jpeg'].includes(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
+      if (!imageExtensions.has(data.type) || data.size > 20 * 1024 * 1024) throw new Error();
       const image = node('img');
       image.alt = file.name;
       objectURL = URL.createObjectURL(data);
@@ -1165,7 +1169,7 @@ function switchProject(id) {
 
 async function upload(files) {
   const context = current;
-  if (!context || uploadBusy || stopped || !files.length) return;
+  if (pick.disabled || !files.length) return;
   uploadBusy = true;
   context.requestError = false;
   showError();
@@ -1183,12 +1187,27 @@ async function upload(files) {
     } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
   }
   if (current === context && !stopped) {
-    setText(uploadStatus, succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '');
+    setText(uploadStatus, joinText([
+      succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '',
+      failures.length ? message('chat.attach-files-failed', { count: failures.length }) : '',
+    ], ' '));
     if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
     refresh(context);
   }
   uploadBusy = false;
   setControls();
+}
+
+function namePastedFile(file) {
+  const extension = imageExtensions.get(file.type);
+  // Chromium can supply image.png as the name of a clipboard bitmap.
+  if (file.name && !(extension && file.name === 'image.' + extension)) return file;
+  if (!extension) return new File([file], 'clipboard-file', { type: file.type });
+  const now = new Date();
+  const twoDigits = (value) => String(value).padStart(2, '0');
+  const date = now.getFullYear() + twoDigits(now.getMonth() + 1) + twoDigits(now.getDate());
+  const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(twoDigits).join('');
+  return new File([file], `${t('chat.pasted-image-prefix')}-${date}-${time}.${extension}`, { type: file.type });
 }
 
 let projectFolders = [];
@@ -2047,19 +2066,48 @@ fileInput.addEventListener('change', () => {
   void upload([...fileInput.files]);
   fileInput.value = '';
 });
+const canDrop = (target) => !pick.disabled && !chatView.hidden && chatView.contains(target) && !target.closest?.('dialog');
 document.addEventListener('dragover', (event) => {
-  if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault();
+  const allowed = canDrop(event.target);
+  event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+  chatView.classList.toggle('dragging', allowed);
+}, true);
+chatView.addEventListener('dragleave', (event) => {
+  if (!chatView.contains(event.relatedTarget)) chatView.classList.remove('dragging');
 });
+document.addEventListener('dragend', () => chatView.classList.remove('dragging'), true);
 document.addEventListener('drop', (event) => {
-  if (event.dataTransfer.types.includes('Files')) event.preventDefault();
-});
-drop.addEventListener('dragover', (event) => {
-  if (!pick.disabled && event.dataTransfer.types.includes('Files')) drop.classList.add('dragging');
-});
-drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
-drop.addEventListener('drop', (event) => {
-  drop.classList.remove('dragging');
-  void upload([...event.dataTransfer.files]);
+  chatView.classList.remove('dragging');
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault();
+  if (canDrop(event.target)) void upload([...event.dataTransfer.files]);
+}, true);
+prompt.addEventListener('paste', (event) => {
+  const data = event.clipboardData;
+  if (!data || pick.disabled) return;
+  const files = [...data.files];
+  if (!files.length) {
+    for (const item of data.items) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+  }
+  if (!files.length) return;
+  event.preventDefault();
+  const text = data.getData('text/plain');
+  // Use the browser's editing command to keep selection, maxlength and undo behavior.
+  if (text && !document.execCommand('insertText', false, text)) {
+    const { selectionStart, selectionEnd, maxLength, value } = prompt;
+    const space = maxLength - (value.length - (selectionEnd - selectionStart));
+    const inserted = text.replace(/\r\n?/g, '\n').slice(0, Math.max(space, 0));
+    prompt.setRangeText(inserted, selectionStart, selectionEnd, 'end');
+    prompt.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: inserted }));
+  }
+  void upload(files.map(namePastedFile));
 });
 const executeCommand = bindCommands(prompt, find('slash-palette'), find('command-toast'), {
   async '/new'() {

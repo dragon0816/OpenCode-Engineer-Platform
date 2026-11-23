@@ -35,7 +35,7 @@ import { HttpError, WebMessageError } from './http/errors.ts';
 import { codeForFallback, describeRepositoryIssue, webMessage } from './http/messages.ts';
 import { WebEvents } from './http/events.ts';
 import { download, sendDownload, upload } from './http/files.ts';
-import { convertWorkbook, uploadType, uuid } from './runs/attachments.ts';
+import { convertWorkbook, isAttachmentImage, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
 import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
 import { configuredCustomMcpCredentials, saveCustomMcpCredential } from './runs/custom-mcp-credentials.ts';
@@ -875,7 +875,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (method === 'GET') {
         const output = chat.attachments.read(id, chat.workspace(session), item, extra === 'preview');
         if (extra === 'preview') {
-          const mime = output.mime === 'image/png' || output.mime === 'image/jpeg' ? output.mime : 'text/plain; charset=utf-8';
+          const mime = isAttachmentImage(output.mime) ? output.mime : 'text/plain; charset=utf-8';
           response.writeHead(200, { 'Content-Type': mime }).end(output.data);
         } else sendDownload(response, output);
         return;
