@@ -344,3 +344,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 接通外掛資料、明確選取來源、Gateway、即時進度及擁有者審核，啟用時掛載頁面、右側面板、工作程序、審核類型和資料集宣告。 [切片 1B 合約](reviews/PHASE3G_SLICE1B_REPORT.md)
 - [ ] 接通 BI 建置外掛、文件格式的可驗證轉檔、資料移轉計畫、3E 能力、`.oepkb` 成品流通及 Share Platform。
 - [ ] 由審核者整合 `integration/0.8`，補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## Phase 3G BI 知識庫外掛
+
+- [x] 整合 BI 文件擷取與外掛執行環境，中央 Web 資料庫升至 v12。修正 0.8 的 BI 檔案上傳回歸。
+- [x] 提供雙語 BI 建置頁及無簽章安裝套件。從 PDF、網址、文字檔或 BI 匯出資料夾建立，經驗證、擁有者審核及發布。
+- [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
+- [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
+- [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)
