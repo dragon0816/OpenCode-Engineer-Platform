@@ -20,10 +20,11 @@ import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
 import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
-import { ExternalDelegations } from './runs/external-delegations.ts';
+import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external-delegations.ts';
+import { helperReady } from './runs/external-cli.ts';
 import { ExternalSources } from './runs/external-sources.ts';
-import { externalProvider, helpers, type Provider, type Snapshot } from './runs/external-ledger.ts';
-import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperSettings, identifiers, invalidExternal,
+import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -92,15 +93,17 @@ async function body(request: IncomingMessage, limit = 128 * 1024) {
 }
 
 function parseTurn(input: Record<string, unknown>): Turn {
-  const { id, text, attachments, workbook, replyTo } = input;
-  if (Object.keys(input).some((key) => !['id', 'text', 'attachments', 'workbook', 'replyTo'].includes(key)) ||
+  const { id, text, attachments, workbook, replyTo, externalConfirmation } = input;
+  if (Object.keys(input).some((key) => !['id', 'text', 'attachments', 'workbook', 'replyTo', 'externalConfirmation'].includes(key)) ||
+      (externalConfirmation !== undefined && !hashInput(externalConfirmation)) ||
       (replyTo !== undefined && (typeof replyTo !== 'string' || !replyTo || replyTo.length > 128)) || typeof id !== 'string' || !uuid.test(id) ||
       typeof text !== 'string' || !text.trim() || text.length > 16_000 ||
       !Array.isArray(attachments) || attachments.length > 10 || new Set(attachments).size !== attachments.length ||
       !attachments.every((item) => typeof item === 'string' && uuid.test(item)) || typeof workbook !== 'boolean') {
     throw new HttpError(400, 'invalid-message');
   }
-  return { id, text, attachments, workbook, ...(replyTo === undefined ? {} : { replyTo }) };
+  return { id, text, attachments, workbook, ...(replyTo === undefined ? {} : { replyTo }),
+    ...(typeof externalConfirmation === 'string' && { externalConfirmation }) };
 }
 
 function secureHeaders(response: ServerResponse) {
@@ -116,7 +119,7 @@ function secureHeaders(response: ServerResponse) {
 }
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
-  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void,
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, externalOptions?: ExternalWorkerOptions,
   mcpCredentials?: CredentialEnvironment, referencePicker?: ReferencePicker) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
@@ -150,9 +153,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
-  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
+  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions,
+    (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);
-  const management = agentManagement(root, store, runtime, telegram);
+  const management = agentManagement(root, store, runtime, telegram, external);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -254,6 +258,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (method === 'POST') {
         const { settings, warningAccepted } = helperSettings(await body(request));
         store.delegations.atomic(() => {
+          if (settings.enabled && !store.external.settings(settings.provider).enabled) external.requiresInstalled(settings.provider);
           if (settings.enabled && !store.external.settings(settings.provider).enabled && !warningAccepted) {
             throw new HttpError(400, 'external-warning-required');
           }
@@ -261,9 +266,37 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           if (settings.enabled) store.external.ensureTarget(settings.provider);
         });
       }
-      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => ({ ...store.external.settings(provider),
-        name: helpers[provider].name, targetId: helpers[provider].id,
-        classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' })));
+      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => {
+        const status = external.status(provider);
+        const settings = store.external.settings(provider);
+        return { ...settings, available: settings.enabled && helperReady(status), status,
+          name: helpers[provider].name, targetId: helpers[provider].id,
+          classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' };
+      }));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/policy') {
+      if (method === 'POST') {
+        const { strictMode, revision, ...extra } = await body(request);
+        if (typeof strictMode !== 'boolean' || typeof revision !== 'number' || !Number.isSafeInteger(revision) ||
+            revision < 0 || Object.keys(extra).length) throw invalidExternal();
+        store.delegations.atomic(() => store.external.savePolicy(strictMode, revision));
+      }
+      send(response, 200, store.external.policy());
+      return;
+    }
+    if (path === '/api/settings/external-helpers/recheck' && method === 'POST') {
+      const { provider, ...extra } = await body(request);
+      if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
+      send(response, 200, await external.refresh(provider));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/auth' && method === 'POST') {
+      const auth = helperAuth(await body(request));
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      const status = await external.authenticate(auth.provider, auth.request, AbortSignal.any([client.signal, AbortSignal.timeout(180_000)]));
+      if (!response.destroyed) send(response, 200, status);
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {
@@ -855,9 +888,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 201, publicSession(session));
       return;
     }
-    const [, key, group, id, resource, item, extra] = path.split('/');
+    const [, key, group, id, resource, item, extra, trailing] = path.split('/');
     const session = key === 'api' && group === 'sessions' && uuid.test(id ?? '') ? sessions.get(id) : undefined;
-    if (!session || !sessionOwner(session, agentID, workspaceID) || (extra !== undefined && extra !== 'preview')) {
+    if (!session || !sessionOwner(session, agentID, workspaceID) || trailing !== undefined ||
+        (extra !== undefined && extra !== 'preview' && (resource !== 'external-files' || !/^\d{1,3}$/.test(extra)))) {
       throw new HttpError(404, 'session-route-not-found');
     }
     const execution = store.executionProfile(agentID, workspaceID);
@@ -936,6 +970,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (method === 'POST' && resource === 'external-snapshot' && item === undefined && extra === undefined) {
       const { runId, provider, taskId, inputs, specialistId } = snapshotInput(await body(request));
+      external.requiresReady(provider);
       const { id: publicInputId, digest } = store.delegations.atomic(() => externalSources.create(session, runId, provider, taskId, inputs));
       send(response, 201, { publicInputId, digest, specialistId });
       return;
@@ -946,6 +981,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         const projection = await convertWorkbook(output.data);
         response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(projection);
       } else download(response, chat, session, item);
+      return;
+    }
+    if (method === 'GET' && resource === 'external-files' && item && uuid.test(item) && /^\d{1,3}$/.test(extra ?? '')) {
+      let output;
+      try { output = chat.externalFile(session, item, Number(extra)); }
+      catch { throw new HttpError(409, 'external-changed'); }
+      if (!output) throw new HttpError(404, 'file-not-found');
+      sendDownload(response, output, 'text/plain; charset=utf-8');
       return;
     }
     if (resource === 'attachments' && item && uuid.test(item)) {
@@ -1109,6 +1152,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       }
       const detail = error instanceof HttpError ? error : error instanceof DelegationError ? externalError(error) : new HttpError(503, 'unavailable');
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
+    }).finally(() => {
+      if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
+          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
+        external.recheckActive();
+      }
     });
     active.add(operation);
     void operation.finally(() => active.delete(operation));

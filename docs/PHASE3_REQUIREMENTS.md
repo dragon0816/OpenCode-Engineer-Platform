@@ -312,7 +312,7 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 ### 11.1 Claude Code、Codex 與 LLM Gateway 同一層（R21）
 - 擁有者定義：Claude Code、Codex 等外部 AI 工具與 LLM Gateway 屬於同一層的「模型來源」。設定中選擇要用 LLM Gateway、Claude Code 或 Codex；選外部工具時跳出視窗讓使用者登入該 coding agent；選 LLM Gateway 照原方式連線。
 - 技術負責人建議（待擁有者確認）：模型來源做成**每個助理的設定**（與模型同層），預設主助理用 LLM Gateway；例如「開發助理」選 Codex。這與 3I 設計（外部幫手經交辦路徑）一致，只是把它呈現為模型來源。
-- 限制：選外部來源的助理，所有輸入都會送到該供應商，因此依 D2 只能處理已標公開的資料（機密與未分級擋下）；OEP 的工具以 MCP 提供給外部引擎；執行時沿用簡化隔離（專用 Windows 帳號）。
+- 限制：依 11.3 的補充決議，外部來源預設接受公開與未分級資料，機密及其衍生資料一律擋下。嚴格模式只允許標為公開的資料。OEP 的工具以 MCP 提供給外部引擎時，知識查詢仍限於公開知識庫。執行採用專用 Windows 帳號。
 - 條款：Anthropic 自 2026-02 起明定 Free／Pro／Max 訂閱的 OAuth 不得用於第三方產品，第三方產品應用 Console API key；OpenAI 的 Codex CLI 支援 ChatGPT 帳號登入。建議 Claude Code 採 API key 或公司企業方案，Codex 可用 ChatGPT 帳號登入。
 
 ### 11.2 對話輸入區支援拖放與貼上附件（R22）
@@ -322,6 +322,7 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 - 擁有者在 0.6.0 啟用外部幫手後，期望在**助理設定的「模型」**（含主助理）直接選 Codex、Claude Code。採「每個助理設定模型來源」：模型下拉分組顯示「LLM Gateway 模型」與「外部 coding agent（Codex、Claude Code）」。
 - 擁有者已勾選 Claude Code「我已確認供應商的商業條款」。Claude Code 支援兩種驗證：Console API key（建議，符合第三方產品條款）與官方 CLI 登入（擁有者自負條款責任）。
 - 選外部來源的助理：所有輸入須通過公開檢查（D2）；執行使用簡化隔離（專用 Windows 帳號）；登入在該帳號下由 OEP 開啟的登入視窗完成。
+- 選外部來源的助理沿用一般對話輸入框，外部來源專員沿用一般交辦工具。送出與執行前皆檢查分級，預設允許公開與未分級資料，機密資料及其衍生資料一律擋下並指出被擋項目。嚴格模式只允許明確標為公開的資料。嚴格模式及逐次確認預設關閉。登入與執行使用專用 Windows 帳號。
 
 ### 11.4 需要 OAuth 認證的 MCP（擁有者 2026-11-23）
 - OEP 要支援需要認證的遠端 MCP（例如 Gmail、Google Drive、Atlassian），包含 OAuth 登入。

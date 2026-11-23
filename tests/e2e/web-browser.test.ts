@@ -28,6 +28,7 @@ import { completion, toolCall } from './synthetic-completion.ts';
 import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
 import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
+import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
 
 const real = process.argv.includes('--real');
 const referencesRoot = !real && process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'oep-browser-reference-')) : undefined;
@@ -144,11 +145,13 @@ const synthetic: typeof fetch = async (target, init) => {
     assert.match(user, /保留來源引用/);
     return completion(model, [{ role: 'assistant', content: '已核對合成資料' }], 'stop');
   }
-  const external = /specialistId=([a-z-]+).*?publicInputId=([a-f\d-]{36}).*?requestKey=([a-f\d-]{36})/.exec(user);
+  const external = /Synthetic public coding task (?:zh-TW|en) (?:390|1440)/.exec(user);
   if (external) {
-    assert.ok(!user.includes('Synthetic public coding task') && !user.includes('Synthetic selected public text'));
+    assert.ok(!user.includes('publicInputId='));
+    const attached = /Session attachment IDs in submission order: ([a-f\d-]{36})/.exec(user);
+    assert.ok(attached);
     if (messages.at(-1)?.role !== 'tool') return completion(model, toolCall(0, 'call_external_helper', delegateTool,
-      { specialistId: external[1], publicInputId: external[2], requestKey: external[3] }), 'tool_calls');
+      { specialistId: 'external-codex-cli', task: external[0], attachmentIds: [attached[1]], requestKey: external[0] }), 'tool_calls');
     return completion(model, [{ role: 'assistant', content: '已接單。' }], 'stop');
   }
   if (user.includes('SYNTHETIC_DELEGATION_RESULTS') || user.includes('做成 BI 卡片')) {
@@ -242,6 +245,8 @@ try {
     writeFileSync(referenceFixtures.picked, 'heading,column\nSynthetic,CSV\n');
     writeFileSync(referenceFixtures.pasted, '{"name":"Synthetic JSON preview"}');
   }
+  let helperSignedIn = true;
+  const helper = real ? undefined : memoryHelper(root);
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
     writeCredential(name, value) {
@@ -249,7 +254,9 @@ try {
       else credentials.set(name, value);
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
-  }, undefined, undefined, referenceFixtures ? async (kind) => [kind === 'file' ? referenceFixtures.picked : referenceFixtures.folder] : undefined);
+  }, real ? undefined : { executor: helper!.executor, intakeFixture: (provider) => provider === 'codex_cli'
+    ? { installation: 'detected', isolation: 'verified', login: helperSignedIn ? 'signedIn' : 'signedOut', version: '1.2.3', pinnedVersion: '1.2.3' }
+    : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } }, undefined, referenceFixtures ? async (kind) => [kind === 'file' ? referenceFixtures.picked : referenceFixtures.folder] : undefined);
   try {
     const page = await chromium(join(root, 'chromium'));
     try {
@@ -1676,7 +1683,8 @@ try {
           } });
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
-        await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting });
+        await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting,
+          signOut: () => { helperSignedIn = false; } });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

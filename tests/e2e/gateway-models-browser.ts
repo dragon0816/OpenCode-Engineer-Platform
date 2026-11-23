@@ -87,6 +87,11 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     };
     const values = (selector: string) => evaluate<string[]>(
       `[...document.querySelectorAll(${JSON.stringify(selector)})].map(element => element.value)`);
+    const composerModels = async (aliases: string[]) => {
+      assert.deepEqual(await values('#session-alias optgroup:first-child option'), aliases);
+      assert.deepEqual(await values('#session-alias option'), [...aliases, 'external:codex_cli', 'external:claude_code']);
+      assert.deepEqual(await values('#session-alias option:disabled'), ['external:codex_cli', 'external:claude_code']);
+    };
     const status = (match: string) => ready(`document.querySelector('#model-settings-status').textContent.includes(${JSON.stringify(match)})`);
     const turn = (text: string) => evaluate(`{
       document.querySelector('#prompt').value = ${JSON.stringify(text)};
@@ -185,7 +190,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     await status(deferred);
     await ready("!document.querySelector('#model-restart-bar').hidden && !document.querySelector('#model-restart').disabled");
     await draftStatus(false);
-    assert.deepEqual(await values('#session-alias option'), [a, b]);
+    await composerModels([a, b]);
     await ready('window.__modelRestartRequests >= 2');
     await click('#settings-nav [data-section="assistant"]');
     await ready("!document.querySelector('#settings-assistant').hidden");
@@ -213,7 +218,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     assert.deepEqual(runtime!.aliases, [a, c]);
     assert.deepEqual([...runtime!.knowledge!.benchmarks.keys()], [a, c]);
     await ready("!document.querySelector('#send').disabled");
-    assert.deepEqual(await values('#session-alias option'), [a, c]);
+    await composerModels([a, c]);
     assert.match(await evaluate<string>("document.querySelector('#session-alias option:checked').textContent"), /設定預設 · synthetic-model-c/);
     assert.match(await evaluate<string>("document.querySelector('#session-model-help').textContent"), /下一則訊息/);
     assert.match(await evaluate<string>("document.querySelector('#session-model-fallback').textContent"), /下一則訊息將使用預設模型 synthetic-model-c/);
@@ -273,7 +278,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     await closeRuntime();
     await openRuntime();
     await ready("document.querySelector('#session-model-status').textContent === '已套用' && !document.querySelector('#session-alias').disabled");
-    assert.deepEqual(await values('#session-alias option'), [c]);
+    await composerModels([c]);
     await ready("document.querySelector('#choose-more-models').checkVisibility() && document.querySelector('#choose-more-models').textContent === '到設定選擇更多模型'");
     await click('#choose-more-models');
     await ready("!document.querySelector('#settings-view').hidden && !document.querySelector('#settings-model').hidden");

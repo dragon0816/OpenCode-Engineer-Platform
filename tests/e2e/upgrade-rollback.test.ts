@@ -124,7 +124,7 @@ test('upgrade and rollback reconcile data and recover interrupted swaps', { skip
       for (const name of ['web/web.sqlite', 'web/telegram-chat.sqlite']) {
         const { before, after } = read(journalPath).migration[name];
         assert.equal(before.userVersion, 2);
-        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 10 : 3);
+        assert.equal(after.userVersion, name === 'web/web.sqlite' ? 11 : 3);
         assert.equal(after.counts.session_ownership, 2);
         if (name === 'web/web.sqlite') {
           assert.equal(Object.hasOwn(before.counts, 'agent_work_items'), false);

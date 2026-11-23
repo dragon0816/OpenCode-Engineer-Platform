@@ -54,7 +54,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
       ...allowedEmptyTables('webV6Empty'), ...allowedEmptyTables('webV7Empty'), ...allowedEmptyTables('webV8Empty'),
-      ...allowedEmptyTables('webV10Empty'),
+      ...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty'),
       'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
@@ -104,7 +104,7 @@ test('the slice 3b central fixture upgrades from v4 without changing accounts or
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
     assert.equal(result.before.userVersion, 4);
     assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
-    assert.equal(result.after.userVersion, 10);
+    assert.equal(result.after.userVersion, 11);
     assert.equal(result.after.counts.agent_work_items, 0);
     run(snapshot, ['reconcile-upgrade', data, copy]);
     using db = new DatabaseSync(file);
@@ -129,7 +129,7 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
     }
     backup(data, copy);
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 10]);
+    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 11]);
     assert.deepEqual([result.before.counts.agent_work_items, result.after.counts.agent_work_items], [1, 1]);
     for (const table of allowedEmptyTables('webV6Empty')) {
       assert.equal(Object.hasOwn(result.before.counts, table), false);
@@ -162,7 +162,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
     }
     backup(data, copy);
     const { before, after } = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([before.userVersion, after.userVersion], [6, 10]);
+    assert.deepEqual([before.userVersion, after.userVersion], [6, 11]);
     assert.deepEqual([before.counts.delegations, after.counts.delegations], [1, 1]);
     for (const table of allowedEmptyTables('webV7Empty')) {
       assert.equal(Object.hasOwn(before.counts, table), false);
@@ -172,7 +172,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
       assert.equal(Object.hasOwn(before.counts, table), false);
       assert.equal(after.counts[table], 0);
     }
-    for (const table of allowedEmptyTables('webV10Empty')) {
+    for (const table of [...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty')]) {
       assert.equal(Object.hasOwn(before.counts, table), false);
       assert.equal(after.counts[table], 0);
     }
@@ -181,6 +181,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
     try {
       assert.equal(store.external.settings('codex_cli').enabled, false);
       assert.equal(store.external.settings('claude_code').enabled, false);
+      assert.deepEqual(store.agents().map(({ modelSource }) => modelSource), ['gateway', 'gateway']);
       assert.equal(store.external.workspace('legacy-default'), 'unclassified');
       assert.equal(store.delegations.get('synthetic-delegation')?.status, 'succeeded');
       const budget = store.delegations.budgets();
@@ -202,7 +203,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 10], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 11], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);

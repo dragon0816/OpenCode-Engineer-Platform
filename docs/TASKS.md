@@ -278,6 +278,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 
+## Phase 3I 切片 2 Windows 程序與 CLI 執行邊界
+
+- [x] 合成 CLI 驗證執行前分級、額度扣抵、固定引數、隔離工作副本、Job 清理和變更雜湊。設定顯示雙語狀態與停用原因。 [切片 2 驗收紀錄](reviews/PHASE3I_SLICE2_REPORT.md)
+- [ ] 由擁有者在 Windows 測試機驗收專用非管理員帳號、ACL 探測、原版 CLI 版本及登入。兩家幫手各自保持停用，直到個別驗證通過。 [擁有者決議](DECISIONS.md)
+- [ ] 完成正式 scratch 容量限制、啟動與停止收據復原、交辦子會話及子 run。
+
 ## 0.6.0 擁有者驗收第二輪
 
 - [x] 通道設定逐列顯示使用中的助理，可從指定助理、詳情或建立精靈新增 Telegram bot。
@@ -290,6 +296,14 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
 - [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
 - [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
+
+## Phase 3I 每個助理的模型來源
+
+- [x] 助理詳情、建立精靈與對話模型選單分組顯示 Gateway 和外部來源。Web 台帳 v9 保留既有 Gateway 助理與模型。
+- [x] 外部幫手設定與模型選取提供雙語登入視窗。合成驗證覆蓋兩家登入方式及登出，現行發行版依隔離狀態擋下外部執行。
+- [x] 實作擁有者執行的安裝及解除安裝腳本、Windows 專用帳號、憑證儲存、ACL 探測及原版 CLI 邊界。自動測試使用合成身分，實機驗收由擁有者執行。
+- [x] 外部來源助理使用一般 Web、Telegram 對話，Web 的一般交辦工具可選外部來源專員。送出與啟動檢查分級，Web 對話顯示回覆及可驗證下載的變更檔案，嚴格模式與逐次確認預設關閉。
+- [ ] 提供外部 CLI 的公開知識庫及受控檔案 MCP 工具，補齊 Telegram 外部來源的附件與交辦。 [模型來源驗收紀錄](reviews/PHASE3I_MODEL_SOURCES_REPORT.md)
 
 ## 0.7.0 對話附件上傳
 

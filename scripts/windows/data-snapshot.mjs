@@ -6,7 +6,7 @@ import { legacyAgentRows, verifyAgentLedger } from '../../apps/adapter/src/runs/
 import { verifyWorkItems } from '../../apps/adapter/src/runs/work-items.ts';
 import { verifyDelegations } from '../../apps/adapter/src/runs/delegation-schema.ts';
 import { verifyBudgetChoice } from '../../apps/adapter/src/runs/delegation-ledger.ts';
-import { verifyExternalHelpers } from '../../apps/adapter/src/runs/external-schema.ts';
+import { verifyAgentModelSources, verifyExternalHelpers } from '../../apps/adapter/src/runs/external-schema.ts';
 import { verifyReferences } from '../../apps/adapter/src/runs/reference-ledger.ts';
 import { legacyAllowlistRef, legacyChannelAccounts, legacyChannels, telegramCredentialRef, verifyTelegramSettings } from '../../apps/adapter/src/channels/accounts.ts';
 import { legacyChannelRows, legacyTelegramTables, migratedChannelTables, telegramInboxVersion, verifyChannelConversations }
@@ -192,6 +192,7 @@ const webV5Empty = new Set(['agent_work_items']);
 const webV6Empty = new Set(['delegations', 'delegation_events', 'delegation_request_keys', 'delegation_files', 'delegation_notices']);
 const webV7Empty = new Set(['external_helper_settings', 'external_sources', 'external_snapshots', 'external_confirmations']);
 const webV8Empty = new Set(['telegram_account_settings', 'delegation_budget_choice']);
+const webV9Empty = new Set(['agent_model_sources']);
 const webV10Empty = new Set(['local_references', 'local_reference_members', 'local_reference_audit']);
 const knowledgeV2Empty = new Set(['vault_classifications']);
 const emptyTables = new Set();
@@ -266,7 +267,7 @@ async function verifyNewCentralStore(name, next, before) {
   await check(name, '升級比對失敗。無法驗證新建的中央工作台資料庫。', () => useDatabase(join(root, name), (db) => {
     const seeds = verifyAgentSeeds(name, undefined, db, next.counts, false);
     verifySeedRows(name, db, next.counts, 'channel_accounts', legacyChannelAccounts());
-    const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty, ...webV5Empty, ...webV6Empty, ...webV7Empty, ...webV8Empty, ...webV10Empty]);
+    const empty = new Set(['runs', 'run_events', ...webAdditions, ...webV3Empty, ...webV5Empty, ...webV6Empty, ...webV7Empty, ...webV8Empty, ...webV9Empty, ...webV10Empty]);
     verifyEmptyAdditions(name, next.counts, empty);
     if (Object.keys(next.counts).some((table) => table !== 'channel_accounts' && !empty.has(table) && !Object.hasOwn(seeds, table))) {
       throw new SnapshotError(name, '升級比對失敗。新建的中央工作台資料庫包含未知資料表。');
@@ -277,6 +278,7 @@ async function verifyNewCentralStore(name, next, before) {
     verifyExternalHelpers(db);
     verifyTelegramSettings(db);
     verifyBudgetChoice(db);
+    verifyAgentModelSources(db);
   }));
 }
 
@@ -316,6 +318,8 @@ async function reconcileUpgrade() {
     const addDelegations = file === 'web.sqlite' && [0, 1, 2, 3, 4, 5].includes(prior.userVersion) && next.userVersion >= 6;
     const addExternalHelpers = file === 'web.sqlite' && [0, 1, 2, 3, 4, 5, 6].includes(prior.userVersion) && next.userVersion >= 7;
     const addAgentManagement = file === 'web.sqlite' && prior.userVersion < 8 && next.userVersion >= 8;
+    const addModelSources = file === 'web.sqlite' && (prior.userVersion < 9 ||
+      prior.userVersion === 10 && !Object.hasOwn(prior.counts, 'agent_model_sources')) && next.userVersion >= 9;
     const addReferences = file === 'web.sqlite' && prior.userVersion < 10 && next.userVersion >= 10;
     const seedKnowledge = knowledge && [0, 1].includes(prior.userVersion) && next.userVersion >= 2;
     const seedBi = knowledge && [0, 1, 2].includes(prior.userVersion) && next.userVersion === 3;
@@ -338,6 +342,7 @@ async function reconcileUpgrade() {
         if (addExternalHelpers) verifyEmptyAdditions(name, next.counts, webV7Empty);
         if (addAgentManagement) verifyEmptyAdditions(name, next.counts, webV8Empty);
         if (addReferences) verifyEmptyAdditions(name, next.counts, webV10Empty);
+        if (addModelSources) verifyEmptyAdditions(name, next.counts, webV9Empty);
         for (const [table, count] of Object.entries(next.counts)) {
           if (Object.hasOwn(prior.counts, table) || Object.hasOwn(seeded, table) ||
               seedAccounts && table === 'channel_accounts' ||
@@ -346,7 +351,7 @@ async function reconcileUpgrade() {
           if (count !== 0 || !allowed.has(table) && !expectedEmpty.has(table) &&
               !(addWorkItems && webV5Empty.has(table)) && !(addDelegations && webV6Empty.has(table)) &&
               !(addExternalHelpers && webV7Empty.has(table)) && !(addAgentManagement && webV8Empty.has(table)) &&
-              !(addReferences && webV10Empty.has(table))) {
+              !(addModelSources && webV9Empty.has(table)) && !(addReferences && webV10Empty.has(table))) {
             throw new SnapshotError(name, '升級比對失敗。新增的資料表含有資料或未列入允許清單。');
           }
         }
@@ -370,6 +375,7 @@ async function reconcileUpgrade() {
           verifyTelegramSettings(newDb);
           verifyBudgetChoice(newDb);
           verifyReferences(newDb);
+          verifyAgentModelSources(newDb);
         }
         if (knowledge && next.userVersion === 3) verifyBiOwnership(newDb);
         if (telegram && next.userVersion === telegramInboxVersion) {

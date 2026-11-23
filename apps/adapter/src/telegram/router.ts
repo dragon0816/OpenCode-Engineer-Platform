@@ -9,6 +9,7 @@ import { legacyBinding, topicKey } from './channel-migration.ts';
 import { channelText, intakeStatus } from '../channels/catalog.ts';
 import type { ChannelLocale, Destination } from '../channels/transport.ts';
 import { BiService, biProposalServices } from '../bi/service.ts';
+import { HttpError } from '../http/errors.ts';
 
 export function turnId(accountId: string, update: number) {
   const hex = createHash('sha256').update(accountId + '-' + update).digest('hex').slice(0, 32);
@@ -23,22 +24,30 @@ export class TelegramRouter {
   private readonly sessions: WebStore;
   private readonly fileApi: (accountId: string) => TelegramApi | undefined;
   private readonly locale: (agentId: string) => ChannelLocale;
+  private readonly externalSource: (agentId: string) => boolean;
+  private readonly externalConfirmations = new Map<string, { text: string; digest: string; expires: number }>();
   readonly bi: BiService;
 
   constructor(inbox: TelegramInbox, runtime: Runtime, chat: ChatService, sessions: WebStore, biApi?: TelegramApi,
     locale: (agentId: string) => ChannelLocale = () => 'zh-TW', fileApi: (accountId: string) => TelegramApi | undefined = () => biApi,
-    biModel: () => string | undefined = () => undefined) {
+    biModel: () => string | undefined = () => undefined, externalSource: (agentId: string) => boolean = () => false) {
     this.inbox = inbox;
     this.chat = chat;
     this.sessions = sessions;
     this.fileApi = fileApi;
     this.locale = locale;
+    this.externalSource = externalSource;
     this.bi = new BiService(inbox, biProposalServices(runtime.knowledge, biModel));
   }
 
   async handle(row: Intake, signal: AbortSignal, lease?: Lease) {
     const message = JSON.parse(row.payload) as Message;
     const origin = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
+    if (this.externalSource(origin.agentId)) {
+      const file = message.document ?? message.photo?.at(-1);
+      if (file) return channelText(this.locale(origin.agentId)).externalAttachment(message.document?.file_name ?? 'photo.jpg');
+      return this.chatMessage(row, origin, message.text ?? '', signal, lease, true);
+    }
     if (row.bot === 'main') return this.chatMessage(row, origin, message.text ?? '', signal, lease);
     const locale = this.locale(origin.agentId);
     const messages = channelText(locale);
@@ -74,7 +83,7 @@ export class TelegramRouter {
     return intakeStatus(locale, row.id, state);
   }
 
-  private async chatMessage(row: Intake, owner: Destination, text: string, signal: AbortSignal, lease?: Lease) {
+  private async chatMessage(row: Intake, owner: Destination, text: string, signal: AbortSignal, lease?: Lease, external = false) {
     const messages = channelText(this.locale(owner.agentId));
     if (!text.trim()) return messages.empty;
     const db = this.inbox.db;
@@ -105,7 +114,28 @@ export class TelegramRouter {
       this.inbox.rememberConversation(owner, owner.conversationKey, session.id);
     }
     const id = turnId(owner.accountId, row.id);
-    await this.chat.submit(session, { id, text, attachments: [], workbook: false }, undefined, owner, lease);
+    const confirmationKey = JSON.stringify([owner.accountId, owner.bindingRevision, owner.conversationKey, session.id]);
+    let digest: string | undefined;
+    if (external) {
+      for (const [key, entry] of this.externalConfirmations) if (entry.expires <= Date.now()) this.externalConfirmations.delete(key);
+      const pending = this.externalConfirmations.get(confirmationKey);
+      this.externalConfirmations.delete(confirmationKey);
+      if (text.trim() === '/confirm') {
+        if (!pending) return messages.externalNoConfirmation;
+        ({ text, digest } = pending);
+      }
+    }
+    try {
+      await this.chat.submit(session, { id, text, attachments: [], workbook: false, ...(digest && { externalConfirmation: digest }) },
+        undefined, owner, lease);
+    } catch (error) {
+      if (!external || !(error instanceof HttpError)) throw error;
+      if (error.detail.code === 'external-confirm-turn' && typeof error.detail.params?.digest === 'string') {
+        this.externalConfirmations.set(confirmationKey, { text, digest: error.detail.params.digest, expires: Date.now() + 300_000 });
+        return messages.externalConfirm;
+      }
+      return messages.externalIssue(error.detail.code, String(error.detail.params?.name ?? ''), error.detail.text);
+    }
     return this.turnReply(session, id, owner, signal);
   }
 
@@ -122,7 +152,8 @@ export class TelegramRouter {
     signal.throwIfAborted();
     const run = state.runs.find((item) => item.id === id);
     if (run?.state === 'cancelled') return messages.cancelled;
-    if (run?.state === 'failed') return messages.failed;
+    if (run?.state === 'failed') return run.errorDetail && this.sessions.get(id).external
+      ? messages.externalIssue(run.errorDetail.code, String(run.errorDetail.params?.name ?? ''), run.errorDetail.text) : messages.failed;
     if (run?.state !== 'verified') return undefined;
     if (!state.messages) return undefined;
     const index = state.messages.findIndex((message) => message.id === this.sessions.get(id).submissionID);

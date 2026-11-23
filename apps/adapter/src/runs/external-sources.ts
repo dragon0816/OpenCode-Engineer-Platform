@@ -11,17 +11,17 @@ import { checkDirectory, openWorkspaceFile, scopedPath } from './workspace.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 
 type Resolved = { file: SnapshotFile; data: Buffer; projection?: Buffer; label: Classification };
-const strictest = (labels: Classification[]): Classification => labels.includes('confidential') ? 'confidential' :
+export const strictest = (labels: Classification[]): Classification => labels.includes('confidential') ? 'confidential' :
   labels.every((label) => label === 'public') ? 'public' : 'unclassified';
 const isInside = (root: string, path: string) => {
   const tail = relative(root, path);
   return !isAbsolute(tail) && tail !== '..' && !tail.startsWith('..' + sep);
 };
-const blockedName = /(?:^|\/)(?:\.(?:git|env|ssh|claude|codex)(?:[./]|$)|(?:AGENTS|CLAUDE)\.md(?:\/|$)|\.mcp\.json$|(?:credentials|secrets)(?:[./]|$))|\.(?:pem|pfx|key)$/i;
-const blockedText = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[\s"'=])(?:sk-(?:proj-|ant-)?[a-z\d_-]{24,}|gh[pousr]_[a-z\d]{30,})\b/i;
-const publicOnly = (label: Classification) => {
-  if (label === 'confidential') throw new DelegationError('external-confidential');
-  if (label === 'unclassified') throw new DelegationError('external-unclassified');
+export const blockedExternalName = /(?:^|\/)(?:\.(?:git|env|ssh|claude|codex)(?:[./]|$)|(?:AGENTS|CLAUDE)\.md(?:\/|$)|\.mcp\.json$|(?:credentials|secrets)(?:[./]|$))|\.(?:pem|pfx|key)$/i;
+export const blockedExternalText = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[\s"'=])(?:sk-(?:proj-|ant-)?[a-z\d_-]{24,}|gh[pousr]_[a-z\d]{30,})\b/i;
+export const checkExternalLabel = (label: Classification, strictMode: boolean, name?: string) => {
+  if (label === 'confidential') throw new DelegationError('external-confidential', name);
+  if (strictMode && label === 'unclassified') throw new DelegationError('external-unclassified', name);
 };
 const sourceVersion = (file: SnapshotFile): string =>
   sha256(canonical([file.sourceId, file.sha256, file.projection?.sha256 ?? null, file.parents.map(sourceVersion)]));
@@ -101,21 +101,49 @@ export class ExternalSources {
     return snapshot;
   }
 
-  revalidate(session: WebSession, snapshot: Snapshot) {
+  createForDelegation(session: WebSession, runId: string, provider: Provider, task: string, attachmentIds: string[], targetAgent?: string) {
+    if (this.store.sessionOwner(session)?.agentID !== 'main' || this.store.turn(session.id, runId)?.run.state !== 'running') {
+      throw new DelegationError('external-provenance-missing');
+    }
+    const settings = this.store.external.settings(provider);
+    if (!settings.enabled) throw new DelegationError('external-disabled');
+    const taskId = this.register(session, { kind: 'owner_text', text: task });
+    if (this.store.external.workspace(this.workspace(session)) === 'public') {
+      const { sha256, ownClassification } = this.inspect(session, taskId);
+      if (ownClassification !== 'confidential') this.classify(session, taskId, sha256, 'public');
+    }
+    const inputs = attachmentIds.map((id) => {
+      const source = this.store.external.attachmentSource(session.id, id);
+      if (!source) throw new DelegationError('external-provenance-missing');
+      return source;
+    });
+    const snapshot = this.collect(session, runId, provider, settings.revision, taskId, inputs, undefined, targetAgent);
+    this.store.external.saveSnapshot(snapshot);
+    return snapshot;
+  }
+
+  revalidate(session: WebSession, snapshot: Snapshot, targetAgent?: string) {
     const settings = this.store.external.settings(snapshot.provider);
+    if (snapshot.provider === 'claude_code' && !settings.termsConfirmed) throw new DelegationError('external-terms-required');
     if (!settings.enabled) throw new DelegationError('external-disabled');
     if (settings.revision !== snapshot.settingsRevision) throw new DelegationError('external-settings-changed');
     const current = this.collect(session, snapshot.parentRunId, snapshot.provider, settings.revision,
-      snapshot.manifest.task.sourceId, snapshot.manifest.inputs.map(({ sourceId }) => sourceId), snapshot.manifest);
+      snapshot.manifest.task.sourceId, snapshot.manifest.inputs.map(({ sourceId }) => sourceId), snapshot.manifest, targetAgent);
     if (current.digest !== snapshot.digest || !Buffer.from(snapshot.content).equals(Buffer.from(current.content))) {
       throw new DelegationError('external-changed');
     }
   }
 
   private collect(session: WebSession, parentRunId: string, provider: Provider, settingsRevision: number, task: string, inputs: string[],
-    previous?: Snapshot['manifest']): Snapshot {
+    previous?: Snapshot['manifest'], targetAgent?: string): Snapshot {
     const target = helpers[provider].id;
-    publicOnly(this.store.external.workspace(target) ?? 'unclassified');
+    const policy = this.store.external.policy();
+    checkExternalLabel(this.store.external.workspace(target) ?? 'unclassified', policy.strictMode, helpers[provider].name);
+    const workspace = targetAgent && this.store.defaultWorkspace(targetAgent);
+    if (targetAgent && (!workspace || this.store.agentModelSource(targetAgent) !== provider)) {
+      throw new DelegationError('external-settings-changed');
+    }
+    if (workspace) checkExternalLabel(this.store.external.workspace(workspace) ?? 'unclassified', policy.strictMode, 'specialist workspace');
     const resolved = new Map<string, Resolved>();
     const entries = [task, ...inputs].map((id) => {
       const source = this.store.external.source(session.id, id);
@@ -123,11 +151,12 @@ export class ExternalSources {
       return this.read(session, source, resolved, new Set());
     });
     const [taskFile, ...files] = entries.map(({ file }) => file);
-    if (previous && JSON.stringify([previous.task, ...previous.inputs].map(sourceVersion)) !==
-        JSON.stringify([taskFile, ...files].map(sourceVersion))) {
-      throw new DelegationError('external-changed');
+    if (previous) {
+      const before = [previous.task, ...previous.inputs];
+      const changed = [taskFile, ...files].find((file, index) => sourceVersion(file) !== sourceVersion(before[index]));
+      if (changed) throw new DelegationError('external-changed', changed.kind === 'owner_text' ? undefined : changed.name);
     }
-    publicOnly(strictest(entries.map(({ label }) => label)));
+    for (const { label, file } of entries) checkExternalLabel(label, policy.strictMode, file.kind === 'owner_text' ? undefined : file.name);
     if (taskFile.kind !== 'owner_text' && taskFile.kind !== 'derived') throw new DelegationError('external-invalid-input');
     if (taskFile.bytes > 16_000 || new Set(files.map(({ name }) => name.toLowerCase())).size !== files.length) {
       throw new DelegationError('external-invalid-input');
@@ -136,7 +165,8 @@ export class ExternalSources {
     if (buffers.reduce((size, data) => size + data.length, 0) > 40 * MiB) throw new DelegationError('external-input-limit');
     const manifest = { task: taskFile, inputs: files };
     const digest = sha256(canonical({ manifest, session: session.id, parentRunId, provider, settingsRevision,
-      targetRevision: this.store.external.workspaceRevision(target) }));
+      targetRevision: this.store.external.workspaceRevision(target), policyRevision: policy.revision,
+      ...(workspace && { targetAgent, targetWorkspaceRevision: this.store.external.workspaceRevision(workspace) }) }));
     return { id: randomUUID(), sessionId: session.id, parentRunId, provider, settingsRevision, digest, manifest, content: Buffer.concat(buffers) };
   }
 
@@ -162,13 +192,13 @@ export class ExternalSources {
         const result = this.chat.attachments.verifiedSelection(session.id, this.chat.workspace(session), [id]).next().value;
         if (!result) throw new Error('Missing attachment');
         ({ data, projection } = result);
-      } catch { throw new DelegationError('external-changed'); }
+      } catch { throw new DelegationError('external-changed', record.name); }
       name = record.name;
       provenance = { attachmentId: id, mime: record.mime };
     } else if (descriptor.kind === 'workspace') {
       const workspace = this.store.agentWorkspaces(this.store.sessionOwner(session)!.agentID).find(({ id }) => id === workspaceId);
       const folder = workspace?.folders.find((value) => sha256(value) === descriptor.folder);
-      if (!folder || isInside(this.root, folder) || blockedName.test(descriptor.path)) throw new DelegationError('external-provenance-missing');
+      if (!folder || isInside(this.root, folder) || blockedExternalName.test(descriptor.path)) throw new DelegationError('external-provenance-missing');
       let path: string;
       try { path = scopedPath(folder, descriptor.path); }
       catch { throw new DelegationError('external-changed'); }
@@ -179,7 +209,7 @@ export class ExternalSources {
         const opened = openWorkspaceFile(folder, descriptor.path, maxUpload);
         data = opened.data;
         provenance = { folder: descriptor.folder, path: descriptor.path, identity: opened.identity };
-      } catch { throw new DelegationError('external-changed'); }
+      } catch { throw new DelegationError('external-changed', descriptor.path); }
       name = descriptor.path;
     } else if (descriptor.kind === 'citation') {
       const owner = this.store.sessionOwner(session)!;
@@ -213,13 +243,13 @@ export class ExternalSources {
       }
       provenance = { origin: descriptor.kind };
     }
-    if (blockedName.test(name) || blockedText.test(data.toString('utf8')) || projection && blockedText.test(projection.toString('utf8'))) {
-      throw new DelegationError('external-confidential');
+    if (blockedExternalName.test(name) || blockedExternalText.test(data.toString('utf8')) || projection && blockedExternalText.test(projection.toString('utf8'))) {
+      throw new DelegationError('external-confidential', descriptor.kind === 'owner_text' ? undefined : name);
     }
     const hash = sha256(data);
     const ledger = this.store.external;
     const inherited = strictest([ledger.workspace(workspaceId) ?? 'unclassified', rootLabel, ...parents.map(({ label }) => label)]);
-    if (marking) publicOnly(inherited);
+    if (marking) checkExternalLabel(inherited, true, descriptor.kind === 'owner_text' ? undefined : name);
     const label = strictest([inherited, ledger.label(source, hash) ?? 'unclassified']);
     const cacheBytes = [...cache.values()].reduce((size, value) => size + value.data.length + (value.projection?.length ?? 0), 0);
     if (cacheBytes + data.length + (projection?.length ?? 0) > 80 * MiB) throw new DelegationError('external-input-limit');
