@@ -235,7 +235,9 @@ try {
       else credentials.set(name, value);
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
-  });
+  }, real ? undefined : { intakeFixture: (provider) => provider === 'codex_cli'
+    ? { installation: 'detected', isolation: 'verified', login: 'signedIn', version: '1.2.3', pinnedVersion: '1.2.3' }
+    : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } });
   try {
     const page = await chromium(join(root, 'chromium'));
     try {

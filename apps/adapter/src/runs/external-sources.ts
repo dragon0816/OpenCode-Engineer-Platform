@@ -103,6 +103,7 @@ export class ExternalSources {
 
   revalidate(session: WebSession, snapshot: Snapshot) {
     const settings = this.store.external.settings(snapshot.provider);
+    if (snapshot.provider === 'claude_code' && !settings.termsConfirmed) throw new DelegationError('external-terms-required');
     if (!settings.enabled) throw new DelegationError('external-disabled');
     if (settings.revision !== snapshot.settingsRevision) throw new DelegationError('external-settings-changed');
     const current = this.collect(session, snapshot.parentRunId, snapshot.provider, settings.revision,

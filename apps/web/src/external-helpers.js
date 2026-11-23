@@ -104,9 +104,24 @@ export async function loadExternalSettings(root, status) {
     root.replaceChildren(...settings.map((setting) => {
       const group = node('fieldset');
       group.append(content('legend', setting.name));
+      const detected = {
+        detected: message('externalHelpers.status.detected'), missing: message('externalHelpers.status.missing'),
+        unsupported: message('externalHelpers.status.unsupported'), unknown: message('externalHelpers.status.installationUnknown'),
+      };
+      const login = {
+        signedIn: message('externalHelpers.status.signedIn'), signedOut: message('externalHelpers.status.signedOut'),
+        probeFailed: message('externalHelpers.status.probeFailed'), unknown: message('externalHelpers.status.loginUnknown'),
+      };
+      const check = setting.status;
+      const ready = check.isolation === 'verified' && check.installation === 'detected' && check.login === 'signedIn';
+      group.append(node('p', check.isolation === 'verified' ? message('externalHelpers.status.isolationVerified') :
+        message('externalHelpers.status.isolationUnavailable')), node('p', detected[check.installation]), node('p', login[check.login]));
+      if (check.version) group.append(node('p', message('externalHelpers.status.version', { version: check.version })));
+      if (check.pinnedVersion) group.append(node('p', message('externalHelpers.status.pinnedVersion', { version: check.pinnedVersion })));
       const enabled = checkbox(message('externalHelpers.settings.enabled'), setting.enabled);
       const confirm = checkbox(message('externalHelpers.settings.confirmEachRun'), setting.confirmEachRun);
       const terms = checkbox(message('externalHelpers.settings.termsConfirmed'), setting.termsConfirmed);
+      enabled.input.disabled = !ready;
       const refresh = async (values) => {
         await request(settingsRoute, { data: { provider: setting.provider, enabled: enabled.input.checked,
           confirmEachRun: confirm.input.checked, termsConfirmed: setting.provider === 'claude_code' && terms.input.checked,
@@ -133,9 +148,20 @@ export async function loadExternalSettings(root, status) {
           void apply();
         });
         group.append(terms.label);
-        enabled.input.disabled = !setting.termsConfirmed;
+        enabled.input.disabled ||= !setting.termsConfirmed;
       }
       group.append(enabled.label, confirm.label);
+      group.append(button(message('externalHelpers.settings.recheck'), async (event) => {
+        const control = event.currentTarget;
+        control.disabled = true;
+        try {
+          await request(settingsRoute + '/recheck', { data: { provider: setting.provider } });
+          await loadExternalSettings(root, status);
+          root.querySelector(`[data-external-recheck="${setting.provider}"]`)?.focus();
+        } catch (error) { setText(status, errorText(error)); }
+        finally { control.disabled = false; }
+      }));
+      group.lastElementChild.dataset.externalRecheck = setting.provider;
       if (setting.enabled) {
         const classification = node('div');
         classification.className = 'external-classification';

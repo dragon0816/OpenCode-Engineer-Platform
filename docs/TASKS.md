@@ -271,3 +271,8 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 與建立精靈共用 Telegram token 設定和私人 `/start` 確認。通道清單提供狀態、管理、改派、更換 token 與移除。
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+## Phase 3I 切片 2 Windows 程序與 CLI 執行邊界
+
+- [x] 合成 CLI 驗證執行前分級、額度扣抵、固定引數、隔離工作副本、Job 清理和變更雜湊。設定顯示雙語狀態與停用原因。 [切片 2 驗收紀錄](reviews/PHASE3I_SLICE2_REPORT.md)
+- [ ] 完成實際 Windows 專用身分、受控 launcher、WFP 與 TLS 主機名政策、原版 CLI 版本及登入驗收。兩家幫手各自保持停用，直到個別驗證通過。
+- [ ] 完成正式 scratch 容量限制、啟動與停止收據復原、交辦子會話及子 run。

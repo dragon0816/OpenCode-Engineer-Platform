@@ -12,8 +12,9 @@ export type FileManifest = DelegationFile & { sourceId: string; classification: 
   projection?: FileIdentity };
 type Terminal = 'succeeded' | 'needs_input' | 'failed' | 'timed_out' | 'cancelled' | 'indeterminate';
 export type DelegationResult = { delegationId: string; status: Terminal; summary?: string; files?: DelegationFile[];
-  reviewRef?: { reviewId: string }; reasonCode?: string };
-type Metrics = { requests?: number; tools?: number; elapsedMs?: number };
+  reviewRef?: { reviewId: string }; changes?: { count: number; manifestSha256: string }; reasonCode?: string };
+type Metrics = { requests?: number; tools?: number; elapsedMs?: number; version?: string; settingsRevision?: number;
+  sourceCount?: number; members?: number; orphans?: number };
 type EventRow = { sequence: number; at: number; state: string; reasonCode: string | null; metrics: string | null };
 type Row = { id: string; workId: string; parentStore: 'web' | 'channel'; parentSessionId: string; parentRunId: string;
   targetAgentId: string; childSessionId: string | null; childRunId: string | null; requestHash: string;
@@ -278,6 +279,14 @@ export class DelegationLedger {
       this.event(id, 'running', kind, { [kind]: Number(result.count) });
       return true;
     });
+  }
+
+  chargeExternal(id: string) {
+    const row = this.db.prepare(`UPDATE delegations SET used_requests=reserved_requests,used_tools=reserved_tools
+      WHERE id=? AND status='running' AND used_requests=0 AND used_tools=0 AND reserved_requests>0 AND reserved_tools>0
+      RETURNING used_requests AS requests,used_tools AS tools`).get(id);
+    if (!row) throw new DelegationError('external-budget-unavailable');
+    this.event(id, 'running', 'external-budget-charged', { requests: Number(row.requests), tools: Number(row.tools) });
   }
 
   elapsed(id: string) {

@@ -19,7 +19,7 @@ export function scopedPath(root: string, name: string) {
   return path;
 }
 
-function windowsAttributes(path: string, expandShortNames = false) {
+function windowsAttributes(path: string, mode?: 'expand' | 'plain') {
   if (process.platform !== 'win32') return path;
   // libuv recognises symlinks and junctions. Check the Windows attribute for other reparse tags too.
   const result = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-c', [
@@ -42,7 +42,23 @@ function windowsAttributes(path: string, expandShortNames = false) {
     'for p in reversed(parents):',
     ' result = attributes(namespaced(p))',
     ' if result == 0xffffffff or result & 0x400: sys.exit(1)',
-    'if len(sys.argv) > 2:',
+    'if len(sys.argv) > 2 and sys.argv[2] == "plain":',
+    ' k = ctypes.WinDLL("kernel32", use_last_error=True)',
+    ' first, next_stream, close = k.FindFirstStreamW, k.FindNextStreamW, k.FindClose',
+    ' first.argtypes, first.restype = [ctypes.c_wchar_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32], ctypes.c_void_p',
+    ' next_stream.argtypes = [ctypes.c_void_p, ctypes.c_void_p]',
+    ' close.argtypes = [ctypes.c_void_p]',
+    ' class Stream(ctypes.Structure):',
+    '  _fields_ = [("size", ctypes.c_int64), ("name", ctypes.c_wchar * 296)]',
+    ' stream = Stream()',
+    ' h = first(namespaced(path), 0, ctypes.byref(stream), 0)',
+    ' if h == ctypes.c_void_p(-1).value:',
+    '  if ctypes.get_last_error() != 38: sys.exit(1)',
+    ' else:',
+    '  try:',
+    '   if stream.name != "::$DATA" or next_stream(h, ctypes.byref(stream)) or ctypes.get_last_error() != 38: sys.exit(1)',
+    '  finally: close(h)',
+    'if len(sys.argv) > 2 and sys.argv[2] == "expand":',
     ' long_name = ctypes.windll.kernel32.GetLongPathNameW',
     ' long_name.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]',
     ' long_name.restype = ctypes.c_uint32',
@@ -50,10 +66,10 @@ function windowsAttributes(path: string, expandShortNames = false) {
     ' if not 0 < long_name(namespaced(path), buffer, len(buffer)) < len(buffer): sys.exit(1)',
     ' name = buffer.value',
     ' sys.stdout.buffer.write((slash * 2 + name[len(unc):] if name.startswith(unc) else name.removeprefix(prefix)).encode("utf-8"))',
-  ].join('\n'), path, ...(expandShortNames ? ['expand'] : [])], {
+  ].join('\n'), path, ...(mode ? [mode] : [])], {
     windowsHide: true, timeout: 2_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH } });
-  if (result.status !== 0 || expandShortNames && !result.stdout) throw unsafe();
+  if (result.status !== 0 || mode === 'expand' && !result.stdout) throw unsafe();
   return result.stdout && normalized(result.stdout) !== normalized(path) ? result.stdout : path;
 }
 
@@ -72,16 +88,16 @@ function inspectPath(full: string, directory: boolean, expected = full) {
   return file;
 }
 
-export function checkDirectory(path: string) {
+export function checkDirectory(path: string, plain = false) {
   const full = resolve(path);
-  windowsAttributes(full);
+  windowsAttributes(full, plain ? 'plain' : undefined);
   return inspectPath(full, true);
 }
 
 // Data roots can arrive in DOS 8.3 form. Expand the name independently of realpath's link resolution.
 export function canonicalWorkspaceDirectory(path: string) {
   const full = resolve(path);
-  const expected = windowsAttributes(full, true);
+  const expected = windowsAttributes(full, 'expand');
   inspectPath(full, true, expected);
   return expected;
 }
@@ -94,9 +110,9 @@ const same = (a: ReturnType<typeof metadata>, b: ReturnType<typeof metadata>) =>
   a.device === b.device && a.inode === b.inode && a.created === b.created && a.modified === b.modified &&
   a.changed === b.changed && a.bytes === b.bytes;
 
-export function openWorkspaceFile(root: string, name: string, maximum: number, expected?: FileIdentity): OpenFile {
+export function openWorkspaceFile(root: string, name: string, maximum: number, expected?: FileIdentity, plain = false): OpenFile {
   const path = resolve(scopedPath(root, name));
-  windowsAttributes(path);
+  windowsAttributes(path, plain ? 'plain' : undefined);
   const before = metadata(inspectPath(path, false));
   if (before.bytes > maximum || expected && !same(before, expected)) throw unsafe();
   const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
