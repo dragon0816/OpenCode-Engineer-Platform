@@ -30,9 +30,13 @@ function windowsAttributes(path: string, mode?: 'expand' | 'plain') {
   if (process.platform !== 'win32') return path;
   // libuv recognises symlinks and junctions. Check the Windows attribute for other reparse tags too.
   const worker = atRepo('workers/files/windows_probe.py');
-  const result = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-B', worker, path, ...(mode ? [mode] : [])], {
-    windowsHide: true, timeout: 2_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH } });
+  const probe = (timeout: number) => spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-B', worker, path, ...(mode ? [mode] : [])], {
+    windowsHide: true, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH },
+  });
+  let result = probe(2_000);
+  // Windows can delay a cold Python launch. Retry the same check only after a timeout.
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = probe(5_000);
   if (result.status !== 0 || mode === 'expand' && !result.stdout) throw unsafe();
   return result.stdout && normalized(result.stdout) !== normalized(path) ? result.stdout : path;
 }

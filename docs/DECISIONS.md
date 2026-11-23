@@ -436,3 +436,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **理由：** 擁有者不想輸入 API key 並另外付費；擁有者已確認相關商業條款（2026-11-23 設定中勾選）。
 - **捨棄的替代方案：** 預設 Console API key（額外計費）。
 - **風險：** Anthropic 對第三方產品使用訂閱 OAuth 有限制；由擁有者承擔條款責任，OEP 只呼叫官方 CLI，不自行取得或保存訂閱 token 以外的憑證。
+
+## 2026-11-23 BI 掃描頁 OCR
+
+- BI 以 `pypdf` 逐頁讀取可用文字層。需要轉成圖片的頁面在既有 Windows AppContainer 內使用 `pypdfium2` 5.15.2。發行鎖定 Windows x64 wheel 的 SHA-256，bundled 發行含 PDFium DLL，並在 NOTICE、第三方授權及 SBOM 列出套件。Python binding 採 `Apache-2.0 OR BSD-3-Clause`，wheel 所附 PDFium 與其他元件授權一併保留。 [pypdfium2 5.15.2](https://pypi.org/project/pypdfium2/5.15.2/)
+- Windows PowerShell 5.1 提供已驗證的 WinRT 投影。宿主透過 BI 轉檔工作程序的 broker，將有界 PNG 或 JPEG 交給 `Windows.Media.Ocr`。本機 OCR 只需作業系統的辨識語言包。Gateway 圖片辨識依選用模型的探測結果啟用，沿用同一個模型請求席位。 [Windows.Media.Ocr](https://learn.microsoft.com/en-us/uwp/api/windows.media.ocr.ocrengine) · [驗證紀錄](reviews/PHASE3G_OCR_REPORT.md)

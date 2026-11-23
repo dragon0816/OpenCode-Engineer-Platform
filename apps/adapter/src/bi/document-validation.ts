@@ -2,12 +2,13 @@
 import { verifyCitations } from '../../../../packages/contracts/src/evidence.ts';
 import { sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
 import type { Chunk, Segment } from './document-worker.ts';
+import type { OcrProvenance } from './document-ocr.ts';
 
 // Adapt the AEP extractor's evidence_not_found check to OEP's verbatim verifier.
 export type CandidateIssue = 'missing-evidence' | 'invalid-quote' | 'unsupported-value' | 'unknown-field' |
   'invalid-name' | 'conflicting-value' | 'duplicate' | 'base-changed';
 type Finding = { code: CandidateIssue; field?: string };
-type VerifiedField = { value: string; quote: string; locator: string; segment: number; start: number };
+type VerifiedField = { value: string; quote: string; locator: string; segment: number; start: number; ocr?: OcrProvenance };
 export type DocumentCandidate = { id: string; name: string; state: 'pass' | 'needs-attention' | 'awaiting-review';
   fields: Record<string, string>; evidence: Record<string, VerifiedField>; issues: Finding[] };
 type PartialCandidate = { name: string; fields: Map<string, VerifiedField>; failures: Map<string, CandidateIssue>;
@@ -53,7 +54,7 @@ export function verifyCandidate(candidate: ReturnType<typeof modelCandidates>[nu
       continue;
     }
     found.fields.set(field, { value: entry.value, quote: entry.quote, locator: passage.locator,
-      segment: index, start: passage.text.indexOf(entry.quote) });
+      segment: index, start: passage.text.indexOf(entry.quote), ...(segment.ocr && { ocr: segment.ocr }) });
   }
   return found;
 }

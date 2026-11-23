@@ -10,7 +10,7 @@ const messages = {
   'reference-picker-unavailable': "無法開啟 Windows 檔案選擇視窗。也可以貼上本機路徑。",
   'reference-picker-busy': "已有 Windows 檔案選擇視窗開啟。",
   'reference-tools-unavailable': "目前的助理無法讀取本機參照。",
-  'bi-document-format': "請選擇 PDF、文字、Markdown 或 HTML 檔。",
+  'bi-document-format': "請選擇 PDF、PNG、JPEG、文字、Markdown 或 HTML 檔。",
   'bi-document-import': "無法從此資料夾匯入支援的卡片結構。",
   'bi-document-input': "請確認來源及所選的卡片結構。",
   'bi-document-busy': "請等候目前的擷取工作完成。",

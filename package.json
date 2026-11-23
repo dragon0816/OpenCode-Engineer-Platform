@@ -16,6 +16,7 @@
     "test:e2e:mcp": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp.ts && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-probe.ts && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-remote.mjs && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-browser.ts --leaks && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-oauth.ts",
     "test:e2e:knowledge": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/knowledge.test.ts",
     "test:bi-extraction": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/bi-extraction.test.ts",
+    "test:bi-ocr": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/bi-ocr.test.ts",
     "test:e2e:bi-plugin": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/bi-plugin.test.ts",
     "test:plugins": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test --test-concurrency=1 tests/contract/plugins.test.ts tests/e2e/plugins.test.ts tests/e2e/plugin-runtime.test.ts",
     "test:e2e:delegation": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/delegation.test.ts",

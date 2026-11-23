@@ -73,7 +73,9 @@ function showComparison(parent, { previous, candidate }) {
   for (const item of candidate.passages) {
     if (JSON.stringify(item) === JSON.stringify(oldPassages.get(item.id))) continue;
     const document = item.sourceId.startsWith('source-extract-');
-    const label = document ? joinText([sources.get(item.sourceId), item.locator]) : sources.get(item.sourceId);
+    const ocr = document && /^(page:\d+) \[OCR: (.+)\]$/.exec(item.locator);
+    const label = document ? joinText([sources.get(item.sourceId), ocr ? ocr[1] : item.locator,
+      ocr ? message('biOcr.evidence', { engine: ocr[2] }) : undefined]) : sources.get(item.sourceId);
     evidence.append(element('p', label), element('blockquote', item.text));
     if (item.locator && !document) advanced(evidence).append(element('p', item.locator));
   }
