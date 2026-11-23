@@ -82,7 +82,9 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
     }));
     const externalModels = (Object.keys(helpers) as Provider[]).map((provider) => {
       const { enabled, revision, termsConfirmed } = store.external.settings(provider);
-      return { provider, name: helpers[provider].name, enabled, revision, termsConfirmed, status: external.status(provider) };
+      const status = external.status(provider);
+      return { provider, name: helpers[provider].name, enabled, revision, termsConfirmed, status,
+        available: enabled && status.isolation === 'verified' && status.installation === 'detected' && status.login === 'signedIn' };
     });
     const revision = sha256(JSON.stringify([selection, externalModels.map(({ provider, revision }) => [provider, revision]),
       vaults.map(({ id, revision }) => [id, revision]),

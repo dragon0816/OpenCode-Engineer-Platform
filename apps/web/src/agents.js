@@ -136,10 +136,11 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
       folder.append(' ', path);
       const classification = node('div', undefined, 'external-classification');
       const name = resolveText(workspaceName(workspace));
-      classificationControl(classification, workspace.classification, name, async () => {
-        await request('/api/classification/workspace', { data: { workspaceId: workspace.id, classification: 'public' } });
-        workspace.classification = 'public';
-      }, () => classificationControl(classification, 'public', name));
+      const displayClassification = () => classificationControl(classification, workspace.classification, name, async (label) => {
+        await request('/api/classification/workspace', { data: { workspaceId: workspace.id, classification: label } });
+        workspace.classification = label;
+      }, displayClassification, true);
+      displayClassification();
       folder.append(classification);
       if (workspace.folders.length) {
         const reads = node('ul');

@@ -14,6 +14,9 @@ import type { WebSession, WebStore } from './web-store.ts';
 import type { ExternalDelegations } from './external-delegations.ts';
 import { externalProvider, type Provider } from './external-ledger.ts';
 import { helperReady } from './external-cli.ts';
+import { checkExternalLabel } from './external-sources.ts';
+import { verifiedExternalChanges, verifiedExternalOutput } from './external-copy.ts';
+import { validOutputName } from './controlled-files.ts';
 
 type ParentTurn = { store: WebStore; session: WebSession; input: Turn; channel?: Destination;
   attachments: AttachmentService; workspace: () => string };
@@ -39,6 +42,8 @@ export class DelegationService {
   registerExternal(external: ExternalDelegations) { this.external = external; }
 
   externalStatus(provider: Provider) { return this.external?.status(provider); }
+
+  externalWorker() { return this.external; }
 
   registerWorker(store: WebStore, chat: ChatService, bi?: Pick<BiService, 'delegate' | 'delegationReceipt'>) {
     const landed = (item: WorkLease): Omit<DelegationResult, 'delegationId'> | undefined => {
@@ -226,6 +231,19 @@ export class DelegationService {
     if (file) return { name: file.name, mime: file.mime, sha256: file.sha256, data: this.handoff.readExport(id, file) };
   }
 
+  exportExternalChanges(id: string, directory: string, digest: string) {
+    const changes = verifiedExternalChanges(directory, digest);
+    const files = changes.flatMap(({ path, after }, index) => after && validOutputName(path.split('/').at(-1))
+      ? [index] : []).slice(0, 4).map((index) => {
+      const output = verifiedExternalOutput(directory, digest, index);
+      if (!output) throw new DelegationError('external-changed');
+      return output;
+    });
+    const saved = this.handoff.export(id, files, 'unclassified');
+    this.ledger.prepareExports(id, saved);
+    return saved.map(({ fileId, name, bytes, sha256, mime }) => ({ fileId, name, bytes, sha256, mime }));
+  }
+
   allows(id: string, store: WebStore['runStore']) {
     const work = this.dispatcher.items.byRun(store, id);
     return work?.state === 'running' && work.source === 'direct' && work.agentId === 'main';
@@ -249,20 +267,30 @@ export class DelegationService {
       const external = channel ? undefined : this.external;
       if (name === listSpecialistsTool && !Object.keys(args).length) {
         return this.ledger.specialists(Boolean(external)).flatMap<Record<string, unknown>>((item) => {
-          const provider = externalProvider(item.id);
-          if (!provider) return this.central.agentModelSource(String(item.id)) === 'gateway' ? [item] : [];
-          return external && helperReady(external.status(provider)) && store.external.settings(provider).enabled &&
-            store.external.workspace(String(item.id)) === 'public'
+          const provider = externalProvider(item.id) ?? this.central.agentModelSource(String(item.id));
+          if (provider === 'gateway') return [item];
+          const target = this.central.defaultWorkspace(String(item.id));
+          if (!target || !external) return [];
+          try { checkExternalLabel(this.central.external.workspace(target) ?? 'unclassified', this.central.external.policy().strictMode); }
+          catch { return []; }
+          return helperReady(external.status(provider)) && this.central.external.settings(provider).enabled
             ? [{ ...item, external: true, provider }] : [];
         });
       }
-      if (name === delegateTool && externalProvider(args.specialistId)) {
-        if (!external || !externalDelegationArgs(args)) throw new DelegationError('DELEGATION_ARGUMENTS_INVALID');
+      if (name === delegateTool && externalDelegationArgs(args)) {
+        if (!external) throw new DelegationError('DELEGATION_ARGUMENTS_INVALID');
         return external.admit(session, input.id, args);
       }
       if (name !== delegateTool || !delegationArgs(args)) throw new DelegationError('DELEGATION_ARGUMENTS_INVALID');
       const refs = args.attachmentIds ?? [];
       if (refs.some((id) => !input.attachments.includes(id))) throw new DelegationError('DELEGATION_ATTACHMENT_UNAVAILABLE');
+      const provider = externalProvider(args.specialistId) ?? this.central.agentModelSource(args.specialistId);
+      if (provider !== 'gateway') {
+        if (!external) throw new DelegationError('DELEGATION_TARGET_UNAVAILABLE');
+        this.ledger.checkTarget(args.specialistId, true);
+        if (!input.text.includes(args.task)) throw new DelegationError('external-reference-unverified');
+        return external.admitTurn(session, input.id, provider, args);
+      }
       const parent = { store: store.runStore, runId: input.id, sessionId: session.id, channel };
       let bytes = 0;
       const files = [];
@@ -294,7 +322,7 @@ export class DelegationService {
         this.dispatcher.kick();
       }
     } catch (error) {
-      if (error instanceof DelegationError) return { errorCode: error.code };
+      if (error instanceof DelegationError) return { errorCode: error.code, ...(error.item && { item: error.item }) };
       return { errorCode: 'DELEGATION_HANDOFF_UNAVAILABLE' };
     }
   }

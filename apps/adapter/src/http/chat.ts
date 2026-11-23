@@ -32,8 +32,13 @@ import { Dispatcher } from '../runs/dispatcher.ts';
 import type { ResolvedOutcome, WorkItem, WorkLease, WorkOutcome, WorkRequest } from '../runs/work-items.ts';
 import type { DelegationService } from '../runs/delegation.ts';
 import type { OpenFile } from '../runs/workspace.ts';
+import { DelegationError } from '../runs/delegation-ledger.ts';
+import { verifiedExternalChanges, verifiedExternalOutput } from '../runs/external-copy.ts';
+import { ExternalExecutionUnknown } from '../runs/external-executor.ts';
+import { externalTurnSnapshot } from '../runs/external-turn.ts';
+import { externalError } from './external-helpers.ts';
 
-export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string };
+export type Turn = { id: string; text: string; attachments: string[]; workbook: boolean; replyTo?: string; externalConfirmation?: string };
 type DelegatedTurn = {
   id: string; toolCap: number;
   beforeRequest: () => void; beforeTool: () => void;
@@ -66,8 +71,10 @@ function toolText(value: unknown, redact: (text: string) => string): string {
 
 export function publicRun(run: RunRecord) {
   const recorded = run.errors.at(-1);
-  const errorDetail = recorded ? describeTurnError(recorded) : undefined;
+  const issue = run.external?.issue;
+  const errorDetail = issue ? externalError(new DelegationError(issue.code, issue.item)).detail : recorded ? describeTurnError(recorded) : undefined;
   return { id: run.id, state: run.state, createdAt: run.createdAt, error: errorDetail?.text, errorDetail, finishedAt: run.finishedAt,
+    externalFiles: run.external?.files,
     artifact: run.state === 'verified' && run.artifact
       ? { name: workbookName, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: run.artifact.bytes, sha256: run.artifact.sha256 } : undefined };
 }
@@ -184,15 +191,19 @@ export class ChatService {
     return !disabled && this.ledger.knowledgeSettings().toolbox ? this.ledger.executionKnowledgeReads(agentID, workspaceID) : [];
   }
 
-  private executionScope(session: WebSession, channel?: Destination, turnId?: string, delegated = false) {
+  private executionOwner(session: WebSession, channel?: Destination, delegated = false) {
     const owner = this.store.sessionOwner(session);
-    const origin = delegated ? 'delegation' : channel ? 'channel' : 'web';
+    const origin: SessionOrigin = delegated ? 'delegation' : channel ? 'channel' : 'web';
     if (!owner || owner.origin !== origin || channel && (owner.channelAccount !== channel.accountId ||
         owner.agentID !== channel.agentId || owner.bindingRevision !== channel.bindingRevision ||
         owner.conversationKey !== channel.conversationKey)) {
       throw new HttpError(409, 'session-unavailable');
     }
-    const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
+    return { owner, profile: this.profile(owner.agentID, owner.workspaceID, session.project), origin };
+  }
+
+  private executionScope(session: WebSession, channel?: Destination, turnId?: string, delegated = false) {
+    const { owner, profile, origin } = this.executionOwner(session, channel, delegated);
     this.requireGateway(owner.agentID);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
     const vaults = this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled);
@@ -289,7 +300,7 @@ export class ChatService {
     let messages: { id: string; role: 'user' | 'assistant'; text: string; runId?: string;
       createdAt?: number; tools?: ToolCard[]; reply?: { id: string; text: string } }[] | undefined;
     try {
-      const pending = !readOnly && latest && (active.has(latest.state) || latest.state === 'indeterminate');
+      const pending = !readOnly && latest && !latest.external && (active.has(latest.state) || latest.state === 'indeterminate');
       const [{ data }, inbox, permissions, status] = await Promise.all([
         readOnly ? this.childMessages(sessionID) : client.message.list({ sessionID, order: 'desc', limit: 100 }, call()),
         pending ? client.session.inbox.list({ sessionID }, call()) : [],
@@ -323,7 +334,7 @@ export class ChatService {
         return text.trim() || tools.length ? [{ id: message.id, role: 'assistant', runId: turn?.id,
           text: stripTransportText(this.runtime.redact(text)), createdAt: message.time?.created, tools }] : [];
       });
-      if (!readOnly && latest?.state === 'indeterminate' && !status?.[sessionID] && !inbox.length && !permissions.length &&
+      if (!readOnly && latest?.state === 'indeterminate' && !latest.external && !status?.[sessionID] && !inbox.length && !permissions.length &&
           !this.recovering.has(latest.id)) {
         const work = this.dispatcher.items.byRun(this.store.runStore, latest.id);
         if (work) this.modelSeat.release(work.id);
@@ -332,11 +343,23 @@ export class ChatService {
         }
       }
     } catch {
-      stateErrorDetail = webMessage('session-unavailable');
+      if (!runs.some(({ external }) => external)) stateErrorDetail = webMessage('session-unavailable');
+    }
+    if (runs.some(({ external }) => external)) {
+      messages ??= [];
+      for (const run of runs) {
+        const item = run.external;
+        if (!item) continue;
+        messages.push({ id: run.submissionID!, role: 'user', text: this.runtime.redact(item.text), runId: run.id,
+          createdAt: run.createdAt, reply: this.store.reply(run.id) });
+        if (run.state === 'verified' && item.reply) messages.push({ id: run.id + '-external-reply', role: 'assistant',
+          text: item.reply, runId: run.id, createdAt: run.finishedAt });
+      }
+      messages.sort((left, right) => (left.createdAt ?? 0) - (right.createdAt ?? 0));
     }
     runs = this.store.turns(session.id);
     const owner = this.store.sessionOwner(session);
-    const knowledgeAllowed = Boolean(owner && this.runtime.toolTickets &&
+    const knowledgeAllowed = Boolean(owner && this.ledger.agentModelSource(owner.agentID) === 'gateway' && this.runtime.toolTickets &&
       this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled).length);
     return { session: publicSession({ ...session, knowledgeAllowed }), messages, stateError: stateErrorDetail?.text, stateErrorDetail, runs: runs.map(publicRun),
       attachments: this.store.attachments(session.id).map(publicAttachment), annotations: this.store.annotations(session.id) };
@@ -367,7 +390,7 @@ export class ChatService {
   async submit(session: WebSession, input: Turn, reply?: { id: string; text: string }, channel?: Destination,
     lease?: TurnLease) {
     if (this.switching.has(session.id)) throw new HttpError(409, 'model-changing');
-    const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
+    const hash = createHash('sha256').update(JSON.stringify({ ...input, externalConfirmation: undefined })).digest('hex');
     const existing = this.store.turn(session.id, input.id);
     if (existing) {
       if (existing.hash !== hash) throw new HttpError(409, 'message-id-in-use');
@@ -378,14 +401,30 @@ export class ChatService {
       return publicRun(existing.run);
     }
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
-    const owner = this.store.sessionOwner(session);
-    if (owner) this.requireGateway(owner.agentID);
+    const { owner } = this.executionOwner(session, channel, Boolean(lease?.delegation));
     const prior = this.store.turns(session.id).at(-1);
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'turn-pending');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'workbook-assistant-required');
     for (const id of input.attachments) {
       if (!this.store.attachment(session.id, id)) throw new HttpError(404, 'session-attachment-not-found');
     }
+    const source = this.ledger.agentModelSource(owner.agentID);
+    if (source !== 'gateway') {
+      try {
+        const worker = this.delegations?.externalWorker();
+        if (!worker) this.requireGateway(owner.agentID);
+        worker!.requiresReady(source);
+        const snapshot = externalTurnSnapshot(this.ledger, this.store, session, source, input, reply, this.attachments, this.workspace(session));
+        if (this.ledger.external.settings(source).confirmEachRun && input.externalConfirmation !== snapshot.digest) {
+          throw new HttpError(409, 'external-confirm-turn', { digest: snapshot.digest });
+        }
+        const run = this.acceptTurn(session, input, hash, reply, channel, lease, { provider: source, digest: snapshot.digest,
+          text: input.text, includesSources: Boolean(reply || input.attachments.length) });
+        if (lease) await this.runTurn(session, run, input, lease.id, lease.start, lease.signal, channel, lease.delegation);
+        return publicRun(lease ? this.store.get(run.id) : run);
+      } catch (error) { throw error instanceof DelegationError ? externalError(error) : error; }
+    }
+    if (input.externalConfirmation) throw new HttpError(409, 'external-settings-changed');
     const modelFallback = this.runtime.aliases.includes(session.alias) ? undefined : this.runtime.alias;
     const accept = () => {
       if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
@@ -400,13 +439,14 @@ export class ChatService {
   }
 
   private acceptTurn(session: WebSession, input: Turn, hash: string, reply: { id: string; text: string } | undefined,
-    channel: Destination | undefined, lease?: TurnLease) {
-    const scope = this.executionScope(session, channel, undefined, Boolean(lease?.delegation));
-    const run: RunRecord = { id: input.id, mode: input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
+    channel: Destination | undefined, lease?: TurnLease, external?: RunRecord['external']) {
+    const agentID = external ? this.executionOwner(session, channel, Boolean(lease?.delegation)).owner.agentID :
+      this.executionScope(session, channel, undefined, Boolean(lease?.delegation)).agentID;
+    const run: RunRecord = { id: input.id, mode: external ? 'external-chat' : input.workbook ? 'web-workbook' : 'web-chat', state: 'accepted',
       createdAt: Date.now(), workspace: this.modelWorkspace(session), alias: session.alias, sessionID: session.upstreamID,
-      submissionID: promptID(), retries: 0, errors: [] };
+      submissionID: promptID(), retries: 0, errors: [], ...(external && { external }) };
     const work: WorkRequest | undefined = lease ? undefined : {
-      agentId: scope.agentID, source: 'direct', sourceKey: this.store.runStore + ':' + run.id, effectClass: 'write',
+      agentId: agentID, source: 'direct', sourceKey: this.store.runStore + ':' + run.id, effectClass: 'write',
       run: { store: this.store.runStore, id: run.id },
       payload: { kind: this.workKind, serialKey: this.store.runStore + ':' + session.id, sessionId: session.id, input, channel },
     };
@@ -432,8 +472,9 @@ export class ChatService {
     const waiting = AbortSignal.any([this.stop.signal, signal, stop.signal]);
     let timedOut = false;
     const done = this.modelSeat.run(async () => {
-      timedOut = await this.execute(session, run, input, limits, waiting, start, channel, delegation);
-      if (this.store.get(run.id).state === 'indeterminate') await this.inspectRuntime(workId, run);
+      timedOut = run.external ? await this.executeExternal(session, run, input, limits, waiting, start, channel, delegation) :
+        await this.execute(session, run, input, limits, waiting, start, channel, delegation);
+      if (!run.external && this.store.get(run.id).state === 'indeterminate') await this.inspectRuntime(workId, run);
     }, waiting);
     this.executing.set(run.id, { stop, done });
     try { await done; }
@@ -482,11 +523,64 @@ export class ChatService {
     return item.runId && this.store.hasTurn(item.runId) ? this.store.get(item.runId).state : undefined;
   }
 
+  externalFile(session: WebSession, id: string, index: number) {
+    const run = this.store.turn(session.id, id)?.run;
+    if (run?.state !== 'verified' || !run.external?.copyDirectory || !run.external.manifestSha256) return;
+    return verifiedExternalOutput(run.external.copyDirectory, run.external.manifestSha256, index);
+  }
+
+  private async executeExternal(session: WebSession, run: RunRecord, input: Turn, limits: TurnLimits, stopped: AbortSignal,
+    start: () => void, channel?: Destination, delegation?: DelegatedTurn) {
+    const item = run.external!;
+    const timeout = AbortSignal.timeout(limits.timeoutSeconds * 1000);
+    const signal = AbortSignal.any([stopped, timeout]);
+    const check = () => signal.throwIfAborted();
+    const collect = () => {
+      check();
+      this.executionOwner(session, channel, Boolean(delegation));
+      const snapshot = externalTurnSnapshot(this.ledger, this.store, session, item.provider, input, this.store.reply(run.id),
+        this.attachments, this.workspace(session));
+      if (snapshot.digest !== item.digest) throw new DelegationError('external-changed');
+      return snapshot;
+    };
+    try {
+      const worker = this.delegations?.externalWorker();
+      if (!worker) throw new DelegationError('external-isolation-unavailable');
+      const result = await worker.executeTurn(collect(), run.id, limits.toolCalls, signal, check, () => {
+        collect();
+        delegation?.beforeRequest();
+        start();
+        this.store.change(run.id, 'running');
+        this.notify(session.id);
+      }, collect);
+      const { copyDirectory, changes } = result;
+      const files = verifiedExternalChanges(copyDirectory, changes.manifestSha256);
+      const reply = stripTransportText(this.runtime.redact(result.reply)).slice(0, 24_000).toWellFormed();
+      this.store.change(run.id, 'verified', { finishedAt: Date.now(),
+        external: { ...item, reply, copyDirectory, manifestSha256: changes.manifestSha256,
+          files: files.map(({ path, after }, index) => ({ index, name: path, deleted: after === null })) } });
+    } catch (error) {
+      if (this.store.get(run.id).state === 'cancelled') return timeout.aborted;
+      const state = error instanceof ExternalExecutionUnknown ? 'indeterminate' : signal.aborted ? 'cancelled' : 'failed';
+      const issue = error instanceof ExternalExecutionUnknown ? { code: 'external-stop-unverified' } :
+        error instanceof DelegationError ? { code: error.code, item: error.item } :
+          { code: timeout.aborted ? 'turn-time-limit' : 'external-cli-failed' };
+      this.store.change(run.id, state, { finishedAt: Date.now(), external: { ...item, issue } });
+    }
+    return timeout.aborted;
+  }
+
   async recoverTurn(item: WorkLease) {
     if (!item.runId || !this.store.hasTurn(item.runId)) return;
     const run = this.store.get(item.runId);
     if (run.state === 'verified') return { state: 'succeeded' } as const;
     if (run.state === 'failed' || run.state === 'cancelled') return { state: run.state };
+    if (run.external) {
+      if (run.state !== 'indeterminate') this.store.change(run.id, 'indeterminate', {
+        external: { ...run.external, issue: { code: 'external-stop-unverified' } },
+      });
+      return;
+    }
     const evidence = await this.inspectRuntime(item.id, run);
     if (run.state !== 'indeterminate') this.store.change(run.id, 'indeterminate', {
       errors: ['OEP restarted before this turn could be verified. The message was not resent'],
@@ -500,6 +594,7 @@ export class ChatService {
   async canResolveTurn(item: WorkLease, outcome: ResolvedOutcome) {
     if (!item.runId || !this.store.hasTurn(item.runId)) return outcome !== 'succeeded';
     const run = this.store.get(item.runId);
+    if (run.external) return false;
     const evidence = await this.inspectRuntime(item.id, run);
     return Boolean(evidence && (outcome !== 'succeeded' || run.state === 'verified' ||
           run.mode === 'web-chat' && evidence.succeeded));

@@ -77,10 +77,12 @@ export function parseDelegationBudgets(input: Record<string, unknown>) {
 
 export class DelegationError extends Error {
   readonly code: string;
+  readonly item?: string;
 
-  constructor(code: string) {
+  constructor(code: string, item?: string) {
     super(code);
     this.code = code;
+    this.item = item;
   }
 }
 

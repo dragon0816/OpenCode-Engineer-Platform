@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
-import { DelegationError, type DelegationParent, type DelegationResult } from './delegation-ledger.ts';
+import { DelegationError, type DelegationFile, type DelegationParent, type DelegationResult } from './delegation-ledger.ts';
 import type { Dispatcher } from './dispatcher.ts';
 import { helperReady, unavailableHelper, type HelperAuthAction, type HelperStatus } from './external-cli.ts';
 import { ExternalExecutionUnknown, type ExternalExecutor } from './external-executor.ts';
 import { externalProvider, type Provider, type Snapshot } from './external-ledger.ts';
 import type { ExternalSources } from './external-sources.ts';
 import type { ExternalDelegationInput } from '../opencode/delegation-tools.ts';
+import type { DelegationInput } from '../opencode/delegation-tools.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 import type { WorkOutcome } from './work-items.ts';
 
@@ -25,7 +26,8 @@ export class ExternalDelegations {
   private readonly active = new Map<string, { stop: AbortController; checkPolicy: () => void }>();
 
   constructor(store: WebStore, dispatcher: Dispatcher, sources: ExternalSources,
-    notify: (id: string) => void, options: ExternalWorkerOptions = {}) {
+    notify: (id: string) => void, options: ExternalWorkerOptions = {},
+    exportChanges?: (id: string, directory: string, digest: string) => DelegationFile[], redact = (text: string) => text) {
     this.store = store;
     this.dispatcher = dispatcher;
     this.sources = sources;
@@ -57,10 +59,11 @@ export class ExternalDelegations {
           const snapshot = approval?.decision && store.external.snapshot(approval.snapshotId);
           if (!snapshot || approval.expiresAt <= Date.now()) throw new DelegationError('external-confirmation-expired');
           const validate = () => {
-            if (externalProvider(row.targetAgentId) !== snapshot.provider || row.parentRunId !== snapshot.parentRunId ||
+            if ((externalProvider(row.targetAgentId) ?? store.agentModelSource(row.targetAgentId)) !== snapshot.provider ||
+                row.parentRunId !== snapshot.parentRunId ||
                 row.parentSessionId !== snapshot.sessionId) throw new DelegationError('external-provenance-missing');
             ledger.checkTarget(row.targetAgentId, true);
-            this.validate(snapshot);
+            this.validate(snapshot, row.targetAgentId);
           };
           check();
           validate();
@@ -93,7 +96,9 @@ export class ExternalDelegations {
             }, (reason, members) => {
               ledger.event(id, 'running', reason, members === undefined ? undefined : { members, orphans: 0 });
             }, validate);
-          landed.set(id, { status: 'succeeded', ...result });
+          const files = exportChanges?.(id, result.copyDirectory, result.changes.manifestSha256);
+          landed.set(id, { status: 'succeeded', summary: redact(result.reply).slice(0, 4000).toWellFormed() || result.summary,
+            changes: result.changes, files });
           return { state: 'succeeded' };
         } catch (error) {
           if (error instanceof ExternalExecutionUnknown) return { state: 'indeterminate', reason: 'external-stop-unverified' };
@@ -138,6 +143,13 @@ export class ExternalDelegations {
     if (!helperReady(this.status(provider))) throw new DelegationError('external-cli-login-unavailable');
   }
 
+  async executeTurn(snapshot: Snapshot, runId: string, turns: number, signal: AbortSignal, check: () => void,
+    start: () => void, validate: () => void) {
+    this.requiresReady(snapshot.provider);
+    if (!this.options.executor) throw new DelegationError('external-model-execution-unavailable');
+    return this.options.executor.execute(snapshot, runId, turns, signal, check, start, () => {}, validate);
+  }
+
   requiresInstalled(provider: Provider) {
     const status = this.status(provider);
     if (status.isolation !== 'verified') throw new DelegationError('external-isolation-unavailable');
@@ -172,6 +184,18 @@ export class ExternalDelegations {
     const snapshot = this.store.external.snapshot(input.publicInputId);
     if (!provider || !snapshot || snapshot.provider !== provider || snapshot.sessionId !== session.id ||
         snapshot.parentRunId !== runId) throw new DelegationError('external-provenance-missing');
+    return this.admitSnapshot(session, { ...input, task: '' }, snapshot);
+  }
+
+  admitTurn(session: WebSession, runId: string, provider: Provider, input: DelegationInput) {
+    this.requiresReady(provider);
+    const target = externalProvider(input.specialistId) ? undefined : input.specialistId;
+    const snapshot = this.sources.createForDelegation(session, runId, provider, input.task, input.attachmentIds ?? [], target);
+    return this.admitSnapshot(session, input, snapshot);
+  }
+
+  private admitSnapshot(session: WebSession, input: DelegationInput, snapshot: Snapshot) {
+    const { provider, parentRunId: runId } = snapshot;
     const parent: DelegationParent = { store: 'web', sessionId: session.id, runId };
     const ledger = this.store.delegations;
     const external = this.store.external;
@@ -180,7 +204,7 @@ export class ExternalDelegations {
       const previous = ledger.replay(parent, input.requestKey, requestHash);
       if (previous) return previous;
       this.requiresReady(provider);
-      this.sources.revalidate(session, snapshot);
+      this.sources.revalidate(session, snapshot, externalProvider(input.specialistId) ? undefined : input.specialistId);
       const settings = external.settings(provider);
       const id = randomUUID();
       const result = ledger.admit(id, randomUUID(), parent, { ...input, task: '' }, requestHash, [], { wait: settings.confirmEachRun });
@@ -196,10 +220,10 @@ export class ExternalDelegations {
     return waiting ? { ...receipt, status: 'awaiting_confirmation' } : receipt;
   }
 
-  private validate(snapshot: Snapshot) {
+  private validate(snapshot: Snapshot, targetAgent: string) {
     const [session] = this.store.sessions(false, snapshot.sessionId);
     if (!session || this.store.sessionOwner(session)?.agentID !== 'main') throw new DelegationError('external-provenance-missing');
-    this.sources.revalidate(session, snapshot);
+    this.sources.revalidate(session, snapshot, externalProvider(targetAgent) ? undefined : targetAgent);
   }
 
   pending(id: string) {
@@ -241,7 +265,7 @@ export class ExternalDelegations {
           throw new DelegationError('external-confirmation-invalid');
         }
         this.requiresReady(snapshot.provider);
-        this.validate(snapshot);
+        this.validate(snapshot, row.targetAgentId);
         if (!external.confirm(id, now) || !this.store.workItems.makeReady(row.workId, now)) {
           throw new DelegationError('external-confirmation-expired');
         }

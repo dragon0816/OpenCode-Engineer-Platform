@@ -9,7 +9,7 @@ import { bindJobs, loadJobSummary } from './jobs.js';
 import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
-import { classificationControl, externalModelBlock, groupModelOptions, loadExternalSettings, modelChoice, openExternalIntake,
+import { classificationControl, confirmExternalTurn, externalModelBlock, groupModelOptions, loadExternalSettings, modelChoice,
   openExternalLogin } from './external-helpers.js';
 
 initializeLocale();
@@ -107,11 +107,9 @@ function runningID(context) {
 }
 
 function setControls() {
-  const external = find('prepare-external-helper');
   const assistant = sessionAgent(current?.id);
-  const selectedExternal = Boolean(assistant && assistant.modelSource !== 'gateway');
-  external.hidden = !current || sessionScopes.get(current.id)?.agentId !== 'main' || selectedExternal;
-  external.disabled = sending || stopped || Boolean(runningID(current));
+  const unavailableExternal = Boolean(assistant && assistant.modelSource !== 'gateway' &&
+    !externalModels.some(({ provider, available }) => provider === assistant.modelSource && available));
   const inactive = assistant?.state === 'archived';
   const cancellable = !stopped && Boolean(runningID(current));
   send.hidden = cancellable;
@@ -124,7 +122,7 @@ function setControls() {
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped || inactive;
   find('project-read-button').disabled = uploadBusy;
-  send.disabled = !current || uploadBusy || sending || stopped || inactive || selectedExternal || Boolean(current.pendingID || current.aliasUpdating) ||
+  send.disabled = !current || uploadBusy || sending || stopped || inactive || unavailableExternal || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
 
@@ -403,9 +401,9 @@ function renderPanel(context) {
     const url = `${path}/attachments/${attachment.id}`;
     addFileDetails(entry, attachment, url, context, true);
     const classification = node('div', undefined, 'external-classification');
-    classificationControl(classification, attachment.classification, attachment.name, attachment.sourceId ? () =>
-      request(path + '/external-sources/' + attachment.sourceId, { data: { sha256: attachment.sha256, classification: 'public' },
-        signal: context.abort.signal }) : null, () => refresh(context));
+    classificationControl(classification, attachment.classification, attachment.name, attachment.sourceId ? (classification) =>
+      request(path + '/external-sources/' + attachment.sourceId, { data: { sha256: attachment.sha256, classification },
+        signal: context.abort.signal }) : null, () => refresh(context), true);
     entry.append(classification);
     addResource(attachment, url);
     attachmentList.append(entry);
@@ -421,6 +419,19 @@ function renderPanel(context) {
     entry.append(classification);
     addResource(artifact, url);
     artifactList.append(entry);
+  }
+  for (const run of [...state.runs].reverse()) {
+    for (const file of run.externalFiles ?? []) {
+      const entry = node('li');
+      if (file.deleted) entry.append(node('span', message('externalHelpers.result.deleted', { name: file.name })));
+      else {
+        const link = node('a', file.name);
+        link.href = `${path}/external-files/${run.id}/${file.index}`;
+        link.download = file.name.split('/').at(-1);
+        entry.append(link);
+      }
+      artifactList.append(entry);
+    }
   }
   if (!artifactList.children.length) emptyList(artifactList, message('ui.no-downloadable-files-yet'));
   const focused = document.activeElement;
@@ -1295,10 +1306,10 @@ function displayProjectFolders() {
   const active = projectFolders.find((entry) => entry.id === folderProject.value);
   if (!active) return;
   setText(find('project-working-root'), message('chat.working-folder-path', { path: active.workingRoot }));
-  classificationControl(find('project-classification'), active.classification, resolveText(projectLabel(active)), async () => {
-    await request('/api/classification/workspace', { data: { workspaceId: 'legacy-' + active.id, classification: 'public' } });
-    active.classification = 'public';
-  }, () => displayProjectFolders());
+  classificationControl(find('project-classification'), active.classification, resolveText(projectLabel(active)), async (classification) => {
+    await request('/api/classification/workspace', { data: { workspaceId: 'legacy-' + active.id, classification } });
+    active.classification = classification;
+  }, () => displayProjectFolders(), true);
   find('project-folder-list').replaceChildren(...active.folders.map((folder) => {
     const row = node('li');
     row.append(node('span', folder));
@@ -1620,7 +1631,7 @@ function updateSessionAlias() {
   setText(find('model-source'), external ? message('externalHelpers.settings.title') : message('ui.external-model-service'));
   setText(find('session-model-help'), external ? message('externalHelpers.models.appliesToAssistant') : message('ui.changes-apply-to-the-next-message'));
   const externalStatus = find('session-external-model-status');
-  externalStatus.hidden = !external;
+  externalStatus.hidden = !external || external.available;
   setText(find('session-external-model-reason'), external ? externalModelBlock(external) : '');
   let notice = '';
   if (fallback) notice = message('model.fallback-next', { model: fallback });
@@ -2364,7 +2375,15 @@ find('composer').addEventListener('submit', async (event) => {
   showError();
   setControls();
   try {
-    const result = await request(`${context.path}/turns`, { data: { id, ...data } });
+    const route = `${context.path}/turns`;
+    let result;
+    try { result = await request(route, { data: { id, ...data } }); }
+    catch (error) {
+      const digest = error instanceof RequestError && error.detail?.code === 'external-confirm-turn' && error.detail.params?.digest;
+      if (!digest) throw error;
+      if (!await confirmExternalTurn(prompt) || current !== context) return;
+      result = await request(route, { data: { id, ...data, externalConfirmation: digest } });
+    }
     if (result.modelFallback) {
       context.modelFallback = result.modelFallback;
       const session = knownSessions.get(context.id);
@@ -2396,26 +2415,6 @@ find('composer').addEventListener('submit', async (event) => {
     setControls();
     refresh(context);
   }
-});
-find('prepare-external-helper').addEventListener('click', (event) => {
-  const context = current;
-  void openExternalIntake(event.currentTarget, context, async (id, publicInputId, specialistId) => {
-    if (current !== context || sending) throw new LocalizedError(message('externalHelpers.intake.sessionChanged'));
-    sending = true;
-    setControls();
-    try {
-      await request(context.path + '/turns', { data: { id, attachments: [], workbook: false,
-        text: t('externalHelpers.intake.intent', { publicInputId, specialistId, requestKey: id }) } });
-      if (!context.state?.runs.some((run) => run.id === id)) {
-        context.pendingID = id;
-        context.pendingAt = Date.now();
-      }
-    } finally {
-      sending = false;
-      setControls();
-      refresh(context);
-    }
-  }).catch(showError);
 });
 async function stopTurn() {
   const context = current;

@@ -15,6 +15,49 @@ import { canonicalWorkspaceDirectory } from '../../apps/adapter/src/runs/workspa
 import { sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
 import { restrictedJobFixture } from '../fixtures/external-helpers/isolation.ts';
+import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
+import { externalTurnSnapshot } from '../../apps/adapter/src/runs/external-turn.ts';
+
+test('direct external input policy names blocked attachments and rejects changes at the release handshake', async () => {
+  const folder = canonicalWorkspaceDirectory(mkdtempSync(join(process.env.OEP_DATA_DIR!, 'direct-helper-')));
+  const directory = join(folder, 'session');
+  mkdirSync(join(directory, 'attachments'), { recursive: true });
+  const store = new WebStore(join(folder, 'web.sqlite'));
+  try {
+    const provider = 'codex_cli';
+    store.external.ensureTarget(provider);
+    store.external.saveSettings({ ...store.external.settings(provider), enabled: true, confirmEachRun: true });
+    store.updateAgent('main', store.agents().find(({ id }) => id === 'main')!.revision, { modelSource: provider }, 'available');
+    store.external.classifyWorkspace(helpers[provider].id, 'public');
+    store.external.classifyWorkspace('legacy-default', 'public');
+    const session = { project: 'default' as const, id: randomUUID(), upstreamID: 'synthetic', createdAt: Date.now(),
+      agent: 'inspector' as const, alias: 'synthetic' };
+    store.createSession(session);
+    const attachments = new AttachmentService(store);
+    const sources = new ExternalSources(store, { attachments, workspace: () => directory }, folder);
+    const data = Buffer.from('Synthetic attachment');
+    const file = await attachments.upload(session.id, directory, 'notes.txt', 'text/plain', data.length, async () => data);
+    const secret = await attachments.upload(session.id, directory, 'restricted.txt', 'text/plain', data.length, async () => data);
+    sources.classify(session, store.external.attachmentSource(session.id, secret.id)!, secret.sha256, 'confidential');
+    const input = { id: randomUUID(), text: 'Synthetic message', attachments: [file.id], workbook: false };
+    const capture = () => externalTurnSnapshot(store, store, session, provider, input, undefined, attachments, directory);
+    assert.equal(capture().manifest.inputs[0].sha256, file.sha256);
+    input.attachments = [secret.id];
+    assert.throws(capture, { code: 'external-confidential', item: 'restricted.txt' });
+    input.attachments = [file.id];
+    store.external.savePolicy(true, store.external.policy().revision);
+    assert.throws(capture, { code: 'external-unclassified', item: 'notes.txt' });
+    store.external.savePolicy(false, store.external.policy().revision);
+    const confirmed = capture();
+    const helper = memoryHelper(folder, () => writeFileSync(join(directory, 'attachments', file.id + '.source'), 'Synthetic mutation'));
+    await assert.rejects(helper.executor.execute(confirmed, input.id, 2, new AbortController().signal, () => {},
+      () => capture(), () => {}, () => capture()), { code: 'external-changed', item: 'notes.txt' });
+    assert.equal(helper.launched.length, 0);
+  } finally {
+    store.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
 
 test('external CLI jobs use synthetic Windows restricted tokens and settle the delegation lease', { timeout: 180_000 }, async (t) => {
   const folder = canonicalWorkspaceDirectory(mkdtempSync(join(process.env.OEP_DATA_DIR!, 'helper-suite-')));
@@ -97,7 +140,8 @@ test('external CLI jobs use synthetic Windows restricted tokens and settle the d
         if (provider === 'claude_code') {
           assert.throws(() => store.external.saveSettings({ ...store.external.settings(provider), enabled: true }), { code: 'external-terms-required' });
         }
-        store.external.saveSettings({ ...store.external.settings(provider), enabled: true, termsConfirmed: provider === 'claude_code' });
+        store.external.saveSettings({ ...store.external.settings(provider), enabled: true, confirmEachRun: true,
+          termsConfirmed: provider === 'claude_code' });
       }
     });
 

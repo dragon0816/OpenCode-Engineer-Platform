@@ -5,7 +5,10 @@ const channelStrings = {
     empty: '請輸入文字訊息。',
     askUsage: '請輸入 /ask 知識庫ID 問題',
     askUnavailable: '沒有可核對的知識答案。請確認知識庫及模型授權。',
-    externalSource: '此外部模型來源目前無法執行。請在 OEP 的「設定 → 外部幫手」檢查登入與 Windows 隔離。',
+    externalAttachment: (name: string) => `請在 OEP 工作台傳送附件「${name}」，以便檢查其資料分級。`,
+    externalConfirm: '請在五分鐘內輸入 /confirm，確認將這則訊息傳送給外部幫手。',
+    externalNoConfirmation: '沒有等待確認的外部幫手訊息。',
+    externalIssue: (_code: string, _name: string, text: string) => text,
     citation: (quote: string, reference: string) => `「${quote}」\n來源 ${reference}`,
     cancelled: '對話已停止。',
     failed: '對話未完成，請在工作台確認服務狀態。',
@@ -32,7 +35,20 @@ const channelStrings = {
     empty: 'Enter a text message.',
     askUsage: 'Enter /ask vaultID question',
     askUnavailable: 'No verifiable answer is available. Check the vault and model permissions.',
-    externalSource: 'This external model source is unavailable. Check sign-in and Windows isolation in OEP Settings → External Helpers.',
+    externalAttachment: (name: string) => `Send “${name}” from the OEP workbench so it can check the attachment’s classification.`,
+    externalConfirm: 'Enter /confirm within five minutes to send this message to the external helper.',
+    externalNoConfirmation: 'No external helper message is waiting for confirmation.',
+    externalIssue: (code: string, name: string, _text: string) => {
+      switch (code) {
+        case 'external-confidential-item': return `“${name}” contains confidential data and cannot be sent to an external helper.`;
+        case 'external-unclassified-item': return `Strict mode requires “${name}” to be marked public.`;
+        case 'external-changed-item': return `“${name}” changed. Review it before sending again.`;
+        case 'external-isolation-unavailable': return 'Windows helper isolation is unverified. Check OEP Settings → External Helpers.';
+        case 'external-cli-login-unavailable': return 'Sign in to this provider in OEP Settings → External Helpers.';
+        case 'external-disabled': return 'Enable this provider in OEP Settings → External Helpers.';
+        default: return 'The external helper could not complete the message. Check OEP for details.';
+      }
+    },
     citation: (quote: string, reference: string) => `“${quote}”\nSource ${reference}`,
     cancelled: 'The conversation was stopped.',
     failed: 'The conversation did not finish. Check the workbench for its status.',

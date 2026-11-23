@@ -128,7 +128,7 @@ export class ExternalExecutor {
       check();
       if (receipt.reason) throw new DelegationError(receipt.reason);
       if (!released || receipt.exit !== 0) throw new DelegationError('external-cli-failed');
-      checkCliResult(provider, receipt.stdout);
+      const reply = checkCliResult(provider, receipt.stdout);
       copy.clearScratch(scratch, check);
       const changes = (() => {
         try { return copy.collect({ work, inputs, scratch, prompt, ...baseline }, check); }
@@ -139,7 +139,8 @@ export class ExternalExecutor {
       })();
       validate();
       check();
-      return { summary: `${changes.count} ${changes.count === 1 ? 'file changed' : 'files changed'}.`, changes };
+      return { summary: `${changes.count} ${changes.count === 1 ? 'file changed' : 'files changed'}.`,
+        reply, changes, copyDirectory: copy.run.root };
     } catch (error) {
       if (released && !zero) throw new ExternalExecutionUnknown();
       try {

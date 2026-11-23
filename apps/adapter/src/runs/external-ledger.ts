@@ -34,8 +34,22 @@ export class ExternalLedger {
 
   settings(provider: Provider): HelperSettings {
     const row = this.db.prepare('SELECT * FROM external_helper_settings WHERE provider=?').get(provider);
-    return { provider, enabled: row?.enabled === 1, confirmEachRun: row?.confirm_each_run !== 0,
+    return { provider, enabled: row?.enabled === 1, confirmEachRun: row?.confirm_each_run === 1,
       termsConfirmed: row?.terms_confirmed === 1, revision: Number(row?.revision ?? 1) };
+  }
+
+  policy() {
+    const row = this.db.prepare(`SELECT id,section FROM web_settings_audit
+      WHERE section IN ('external-strict:on','external-strict:off') ORDER BY id DESC LIMIT 1`).get();
+    return { strictMode: row?.section === 'external-strict:on', revision: Number(row?.id ?? 0) };
+  }
+
+  savePolicy(strictMode: boolean, revision: number) {
+    const current = this.policy();
+    if (current.revision !== revision) throw new DelegationError('external-settings-changed');
+    if (current.strictMode !== strictMode) this.db.prepare('INSERT INTO web_settings_audit(section,changed_at) VALUES (?,?)')
+      .run(strictMode ? 'external-strict:on' : 'external-strict:off', Date.now());
+    return this.policy();
   }
 
   saveSettings(next: HelperSettings) {

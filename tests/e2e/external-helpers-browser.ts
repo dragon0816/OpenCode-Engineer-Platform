@@ -40,17 +40,22 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   await page.ready('!!document.querySelector(' + JSON.stringify(dialog) + ')');
   await activate(accept);
   await page.ready('!!document.querySelector("#project-classification [data-classification=public]")');
+  assert.deepEqual(await json(await api.get('/api/settings/external-helpers/policy')), { strictMode: false, revision: 0 });
+  assert.equal((await json(await api.get('/api/settings/external-helpers')))[0].confirmEachRun, false);
 
   for (const locale of ['zh-TW', 'en'] as const) {
     for (const width of [1440, 390]) {
       await page.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       await selectLocale(page, locale);
       const labels = locale === 'zh-TW'
-        ? { enable: '確認啟用', mark: '標為公開', confirm: '確認交辦', warning: '傳送至 Codex' }
-        : { enable: 'Confirm enable', mark: 'Mark public', confirm: 'Confirm delegation', warning: 'sent to Codex' };
+        ? { enable: '確認啟用', mark: '標為公開', confirm: '確認交辦', warning: '傳送至 Codex', strict: '嚴格模式：只允許標為公開的資料' }
+        : { enable: 'Confirm enable', mark: 'Mark public', confirm: 'Confirm delegation', warning: 'sent to Codex',
+          strict: 'Strict mode: allow only data marked public' };
       await page.evaluate('document.querySelector("#open-settings").click()');
       await selectSetting('external-helpers');
       await page.ready('!!document.querySelector(' + JSON.stringify(settings + ' input') + ')');
+      await page.ready('!!document.querySelector("#external-helper-strict")');
+      assert.equal(await page.evaluate('document.querySelector("#external-helper-strict").closest("label").textContent'), labels.strict);
       const verified = locale === 'zh-TW' ? '已驗證 Windows 隔離' : 'Windows isolation verified';
       const unavailable = locale === 'zh-TW' ? '尚未驗證 Windows 隔離' : 'Windows isolation is unverified';
       const helperStatus = await page.evaluate<string[]>('Array.from(document.querySelectorAll("#external-helper-settings fieldset"), group => group.textContent)');
@@ -78,6 +83,10 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       await activate(accept);
       await page.ready('!!document.querySelector(' + JSON.stringify(settings + ' [data-classification]') + ')');
       const target = (await json(await api.get('/api/settings/external-helpers')))[0];
+      if (!target.confirmEachRun) {
+        const { provider, enabled, termsConfirmed, revision } = target;
+        await json(await api.post('/api/settings/external-helpers', { provider, enabled, termsConfirmed, revision, confirmEachRun: true }));
+      }
       if (target.classification !== 'public') {
         await activate(settings + ' .external-classification button');
         await activate(accept);
@@ -89,25 +98,22 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       await page.ready('!document.querySelector("#manage-attachments").hidden');
       await activate('#manage-attachments');
       const fileSelector = '#attachments li:last-child .external-classification';
-      await page.ready('!!document.querySelector(' + JSON.stringify(fileSelector + ' button') + ')');
+      await page.ready('document.querySelector("#attachments li:last-child label")?.textContent === ' + JSON.stringify(name) +
+        ' && !!document.querySelector(' + JSON.stringify(fileSelector + ' [data-classification=unclassified]') + ')');
       await activate(fileSelector + ' button');
       assert.equal(await page.evaluate('document.querySelector(' + JSON.stringify(accept) + ').textContent'), labels.mark);
       await activate(accept);
       await page.ready('!!document.querySelector(' + JSON.stringify(fileSelector + ' [data-classification=public]') + ')');
+      await focus('#attachments li:last-child label input');
+      await key(' ', 'Space', 32);
       if (!await page.evaluate(closePanel)) {
         await escape();
         await page.ready(closePanel);
       }
-      await activate('#prepare-external-helper');
-      await page.ready('!!document.querySelector(' + JSON.stringify(dialog + ' textarea') + ')');
+      assert.equal(await page.evaluate('!!document.querySelector("#prepare-external-helper")'), false);
       const task = 'Synthetic public coding task ' + locale + ' ' + width;
-      await page.evaluate('document.querySelector(' + JSON.stringify(dialog + ' textarea') + ').value = ' + JSON.stringify(task));
-      await focus(dialog + ' input[required][type=checkbox]');
-      await key(' ', 'Space', 32);
-      await page.evaluate('Array.from(document.querySelectorAll(' + JSON.stringify(dialog + ' fieldset label') +
-        ')).find(label => label.textContent === ' + JSON.stringify(name) + ').querySelector("input").focus()');
-      await key(' ', 'Space', 32);
-      await activate(accept);
+      await page.evaluate('document.querySelector("#prompt").value = ' + JSON.stringify(task));
+      await activate('#send');
       const card = '.delegation-card[data-status=awaiting_confirmation]';
       await page.ready('!!document.querySelector(' + JSON.stringify(card) + ')', 25_000);
       await activate(card + ' [data-feature-focus$="-confirm"]');
@@ -116,16 +122,41 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       assert.ok(approval.includes(task) && approval.includes(labels.confirm) && approval.includes(name));
       await assertWorkbenchFits(page, 'external confirmation ' + locale + ' ' + width);
       await activate(accept);
-      await page.ready('!document.querySelector(' + JSON.stringify(card) + ')');
+      await page.ready('!document.querySelector(' + JSON.stringify(card) + ') && ' +
+        'Array.from(document.querySelectorAll(".delegation-card")).at(-1)?.dataset.status === "succeeded"');
       const state = await json(await api.get(path + '/state'));
       const latest = state.delegations.at(-1);
-      assert.equal(latest.status, 'queued');
+      assert.equal(latest.status, 'succeeded');
+      assert.equal(latest.summary, 'Synthetic external reply');
+      assert.deepEqual(latest.files.map(({ name }: { name: string }) => name), ['synthetic-result.txt']);
+      const delegatedOutput = await api.get('/api/delegations/' + latest.delegationId + '/files/' + latest.files[0].fileId);
+      assert.equal(delegatedOutput.status, 200);
+      assert.equal(await delegatedOutput.text(), 'Synthetic verified output\n');
       const receipt = await json(await api.get('/api/delegations/' + latest.delegationId));
       assert.equal(receipt.externalApproval.decision, 'confirmed');
       assert.equal(receipt.externalApproval.task, task);
       assert.deepEqual(receipt.externalApproval.inputs.map(({ name }: { name: string }) => name), [name]);
     }
   }
+  const setSource = async (modelSource: string) => {
+    const { agent } = await json(await api.get('/api/agents/main'));
+    await json(await api.post('/api/agents/main', { revision: agent.revision, action: 'edit', modelSource }));
+  };
+  const { provider, enabled, termsConfirmed, revision } = (await json(await api.get('/api/settings/external-helpers')))[0];
+  await json(await api.post('/api/settings/external-helpers', { provider, enabled, termsConfirmed, revision, confirmEachRun: false }));
+  await setSource('codex_cli');
+  await reload('Connected');
+  await page.ready("document.querySelector('#session-alias').value === 'external:codex_cli'");
+  await page.evaluate("document.querySelector('#prompt').value = 'Synthetic direct external chat'");
+  await activate('#send');
+  await page.ready("document.querySelector('#messages').textContent.includes('Synthetic external reply')");
+  const direct = (await json(await api.get(path + '/state'))).runs.at(-1);
+  assert.equal(direct.state, 'verified');
+  assert.deepEqual(direct.externalFiles.map(({ name }: { name: string }) => name), ['synthetic-result.txt']);
+  const output = await api.get(path + '/external-files/' + direct.id + '/0');
+  assert.equal(output.status, 200);
+  assert.equal(await output.text(), 'Synthetic verified output\n');
+  await setSource('gateway');
   signOut();
   await reload('Connected');
   await page.ready(`!document.querySelector('#session-alias').disabled &&
@@ -144,7 +175,8 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   const loginText = await page.evaluate<string>(`document.querySelector('${dialog}').textContent`);
   assert.match(loginText, /Codex sign-in/);
   assert.match(loginText, /Signed out/);
-  assert.match(loginText, /classified as public/);
+  assert.match(loginText, /Confidential data is blocked/);
+  assert.match(loginText, /Strict mode allows only public data/);
   assert.deepEqual(await page.evaluate(`Array.from(document.querySelector('${dialog} select').options, option => option.textContent)`),
     ['ChatGPT account', 'OpenAI API key']);
   assert.equal(await page.evaluate(`document.querySelector('${dialog} input').type`), 'password');

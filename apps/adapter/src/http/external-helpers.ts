@@ -6,8 +6,12 @@ import { HttpError } from './errors.ts';
 import type { WebMessageCode } from './messages.ts';
 import type { HelperAuthAction } from '../runs/external-cli.ts';
 
-export const externalError = (error: DelegationError) => new HttpError(
-  error.code === 'external-invalid-input' ? 400 : 409, error.code as WebMessageCode);
+const namedGate = new Set(['external-confidential', 'external-unclassified', 'external-changed']);
+export const externalError = (error: DelegationError) => {
+  const named = error.item && namedGate.has(error.code);
+  return new HttpError(error.code === 'external-invalid-input' ? 400 : 409,
+    (named ? error.code + '-item' : error.code) as WebMessageCode, named ? { name: error.item! } : undefined);
+};
 export const invalidExternal = () => new HttpError(400, 'external-invalid-input');
 export const labelInput = (value: unknown): value is Classification => value === 'unclassified' || value === 'public' || value === 'confidential';
 const id = (value: unknown): value is string => typeof value === 'string' && uuid.test(value);

@@ -59,7 +59,7 @@ export function externalModelBlock(setting) {
   if (setting.status.isolation !== 'verified') return message('externalHelpers.settings.setup');
   if (setting.status.installation !== 'detected') return message('server.external-cli-unsupported');
   if (setting.status.login !== 'signedIn') return message('externalHelpers.models.signInHelp');
-  return message('server.external-model-execution-unavailable');
+  return '';
 }
 const content = (tag, value) => {
   const element = node(tag, value);
@@ -176,24 +176,28 @@ export function openExternalLogin(setting, opener, onChange) {
   return view.dialog;
 }
 
-export function classificationControl(root, label, name, save, onSaved) {
+export function classificationControl(root, label, name, save, onSaved, allowConfidential = false) {
   const badge = node('span', classifications[label ?? 'unclassified']);
   badge.dataset.classification = label ?? 'unclassified';
   root.replaceChildren(badge);
-  if (save && label !== 'public' && label !== 'confidential') root.append(button(message('externalHelpers.gate.markPublic'), (event) => {
-    const view = modal(message('externalHelpers.gate.markPublic'), event.currentTarget);
-    view.body.append(node('p', message('externalHelpers.classificationWarning', { name })));
-    view.submit(message('externalHelpers.gate.markPublic'), async () => {
-      await save();
+  const mark = (value, action, warning) => button(action, (event) => {
+    const view = modal(action, event.currentTarget);
+    view.body.append(node('p', message(warning, { name })));
+    view.submit(action, async () => {
+      await save(value);
       onSaved?.();
     });
     view.open();
-  }));
+  });
+  if (save && label !== 'public' && label !== 'confidential') root.append(mark('public',
+    message('externalHelpers.gate.markPublic'), 'externalHelpers.classificationWarning'));
+  if (save && allowConfidential && label !== 'confidential') root.append(mark('confidential',
+    message('externalHelpers.gate.markConfidential'), 'externalHelpers.confidentialWarning'));
 }
 
 export async function loadExternalSettings(root, status, onChange) {
   try {
-    const settings = await request(settingsRoute);
+    const [settings, policy] = await Promise.all([request(settingsRoute), request(settingsRoute + '/policy')]);
     root.replaceChildren(...settings.map((setting) => {
       const group = node('fieldset');
       group.append(content('legend', setting.name));
@@ -269,95 +273,37 @@ export async function loadExternalSettings(root, status, onChange) {
         const classification = node('div');
         classification.className = 'external-classification';
         group.append(node('p', message('externalHelpers.settings.targetWorkspace')), classification);
-        classificationControl(classification, setting.classification, setting.name, () =>
-          request('/api/classification/workspace', { data: { workspaceId: setting.targetId, classification: 'public' } }),
-        () => void loadExternalSettings(root, status, onChange));
+        classificationControl(classification, setting.classification, setting.name, (classification) =>
+          request('/api/classification/workspace', { data: { workspaceId: setting.targetId, classification } }),
+        () => void loadExternalSettings(root, status, onChange), true);
       }
       return group;
     }));
+    const strict = checkbox(message('externalHelpers.settings.strictMode'), policy.strictMode);
+    strict.input.id = 'external-helper-strict';
+    strict.input.addEventListener('change', async () => {
+      try {
+        Object.assign(policy, await request(settingsRoute + '/policy', {
+          data: { strictMode: strict.input.checked, revision: policy.revision },
+        }));
+        setText(status, message('externalHelpers.settings.saved'));
+        onChange?.();
+      } catch (error) {
+        strict.input.checked = policy.strictMode;
+        setText(status, errorText(error));
+      }
+    });
+    root.append(strict.label);
   } catch (error) { setText(status, errorText(error)); }
 }
 
-export async function openExternalIntake(opener, context, submit) {
-  const route = context.path + '/external-sources';
-  const [settings, data] = await Promise.all([request(settingsRoute), request(route)]);
-  const view = modal(message('externalHelpers.intake.title'), opener);
-  const provider = node('select');
-  provider.append(...settings.filter((item) => item.available).map((item) => optionText(item.name, item.provider)));
-  const task = node('textarea');
-  task.required = true;
-  task.maxLength = 4000;
-  const authored = checkbox(message('externalHelpers.intake.ownerAuthored'));
-  authored.input.required = true;
-  const sources = node('fieldset');
-  const selected = new Set();
-  function renderEntries(entries) {
-    sources.replaceChildren(node('legend', message('externalHelpers.intake.inputs')));
-    for (const source of entries) {
-      const choose = checkbox(source.name, selected.has(source.id));
-      choose.label.lastChild.setAttribute('data-ui-content', '');
-      choose.input.addEventListener('change', () => {
-        if (choose.input.checked) selected.add(source.id);
-        else selected.delete(source.id);
-      });
-      const row = node('div');
-      row.className = 'external-classification';
-      row.append(choose.label, node('span', classifications[source.classification]));
-      sources.append(row);
-    }
-    sources.hidden = entries.length === 0;
-  }
-  renderEntries(data.sources);
-  if (!provider.options.length) {
-    view.body.append(node('p', message('externalHelpers.intake.noHelpers')));
+export function confirmExternalTurn(opener) {
+  return new Promise((resolve) => {
+    const view = modal(message('server.external-confirm-turn'), opener);
+    view.dialog.addEventListener('close', () => resolve(false), { once: true });
+    view.submit(message('externalHelpers.confirm.sendTurn'), async () => resolve(true));
     view.open();
-    return;
-  }
-  view.body.append(field(provider, message('externalHelpers.intake.provider')), field(task, message('externalHelpers.intake.task')), authored.label, sources);
-  if (data.workspace.folders.length) {
-    const disclosure = node('details');
-    disclosure.append(node('summary', message('externalHelpers.intake.addFile')));
-    const folder = node('select');
-    folder.append(...data.workspace.folders.map(({ id, path }) => optionText(path, id)));
-    const path = node('input');
-    const added = node('div');
-    const register = button(message('externalHelpers.intake.inspectFile'), async () => {
-      try {
-        const file = await request(route, { data: { kind: 'workspace', folder: folder.value, path: path.value.trim() } });
-        const save = async () => {
-          const marked = await request(route + '/' + file.id, { data: { sha256: file.sha256, classification: 'public' } });
-          const entry = data.sources.findIndex(({ id }) => id === file.id);
-          data.sources.splice(entry, 1, marked);
-          renderEntries(data.sources);
-        };
-        if (!data.sources.some(({ id }) => id === file.id)) data.sources.unshift(file);
-        renderEntries(data.sources);
-        added.replaceChildren(content('span', file.name), node('span', classifications[file.classification]));
-        if (file.classification === 'unclassified') {
-          const mark = checkbox(message('externalHelpers.classificationWarning', { name: file.name }));
-          const action = button(message('externalHelpers.gate.markPublic'), async () => {
-            try { await save(); added.replaceChildren(node('span', message('externalHelpers.label.public'))); }
-            catch (error) { setText(view.status, errorText(error)); }
-          });
-          action.disabled = true;
-          mark.input.addEventListener('change', () => { action.disabled = !mark.input.checked; });
-          added.append(mark.label, action);
-        }
-      } catch (error) { setText(view.status, errorText(error)); }
-    });
-    disclosure.append(field(folder, message('externalHelpers.intake.folder')), field(path, message('externalHelpers.intake.relativePath')), register, added);
-    view.body.append(disclosure);
-  }
-  view.submit(message('externalHelpers.intake.request'), async () => {
-    const label = 'public';
-    const source = await request(route, { data: { kind: 'owner_text', ownerAuthored: true, text: task.value } });
-    await request(route + '/' + source.id, { data: { sha256: source.sha256, classification: label } });
-    const runId = crypto.randomUUID();
-    const { publicInputId, specialistId } = await request(context.path + '/external-snapshot',
-      { data: { runId, provider: provider.value, taskId: source.id, inputs: [...selected] } });
-    await submit(runId, publicInputId, specialistId);
   });
-  view.open();
 }
 
 export async function confirmExternal(id, name, opener, signal, onConfirmed) {
@@ -366,7 +312,7 @@ export async function confirmExternal(id, name, opener, signal, onConfirmed) {
   if (!externalApproval || externalApproval.decision || signal.aborted) return;
   const { provider, parentRunId, digest, settingsRevision, challenge, task, inputs, bytes } = externalApproval;
   const view = modal(message('externalHelpers.confirm.title'), opener);
-  view.body.append(node('p', message('externalHelpers.warning', { provider: name })), node('h3', message('externalHelpers.intake.task')), content('pre', task));
+  view.body.append(node('p', message('externalHelpers.warning', { provider: name })), node('h3', message('externalHelpers.confirm.task')), content('pre', task));
   if (inputs.length) {
     const list = node('ul');
     for (const file of inputs) {
@@ -375,7 +321,7 @@ export async function confirmExternal(id, name, opener, signal, onConfirmed) {
       if (file.excerpt) row.append(content('pre', file.excerpt));
       list.append(row);
     }
-    view.body.append(node('h3', message('externalHelpers.intake.inputs')), list);
+    view.body.append(node('h3', message('externalHelpers.confirm.inputs')), list);
   }
   view.body.append(node('p', message('externalHelpers.confirm.totals', { count: inputs.length, bytes })));
   view.submit(message('externalHelpers.confirm.send'), async () => {

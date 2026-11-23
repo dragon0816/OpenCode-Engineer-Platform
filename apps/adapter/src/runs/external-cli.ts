@@ -91,13 +91,21 @@ export function checkCliResult(provider: Provider, output: string) {
   try {
     if (provider === 'claude_code') {
       const result = object(output);
-      if (result.type === 'result' && result.subtype === 'success' && result.is_error === false && typeof result.result === 'string') return;
+      if (result.type === 'result' && result.subtype === 'success' && result.is_error === false && typeof result.result === 'string') {
+        return result.result;
+      }
     } else {
       const events = output.trimEnd().split(/\r?\n/).map(object);
       if (events[0]?.type === 'thread.started' && events.at(-1)?.type === 'turn.completed' &&
           events.filter(({ type }) => type === 'turn.started').length === 1 &&
           events.filter(({ type }) => type === 'turn.completed').length === 1 &&
-          events.every(({ type }) => typeof type === 'string' && type !== 'error' && type !== 'turn.failed')) return;
+          events.every(({ type }) => typeof type === 'string' && type !== 'error' && type !== 'turn.failed')) {
+        return events.flatMap(({ type, item }) => {
+          if (type !== 'item.completed' || !item || typeof item !== 'object') return [];
+          const message = item as Record<string, unknown>;
+          return message.type === 'agent_message' && typeof message.text === 'string' ? [message.text] : [];
+        }).join('\n');
+      }
     }
   } catch { /* Discard raw CLI output on protocol errors. */ }
   throw new DelegationError('external-cli-invalid-output');

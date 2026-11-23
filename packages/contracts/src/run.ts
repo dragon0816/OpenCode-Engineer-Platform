@@ -44,6 +44,11 @@ export type RunRecord = {
   modelRequestRange?: { after: number; through: number };
   modelCalls?: ModelCall[];
   delegationSummary?: string;
+  external?: {
+    provider: 'codex_cli' | 'claude_code'; text: string; digest: string; includesSources: boolean;
+    reply?: string; copyDirectory?: string; manifestSha256?: string; files?: { index: number; name: string; deleted: boolean }[];
+    issue?: { code: string; item?: string };
+  };
   retries: number;
   errors: string[];
 };

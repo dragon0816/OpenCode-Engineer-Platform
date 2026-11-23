@@ -15,6 +15,22 @@ const maxTreeBytes = 40 * MiB;
 const blocked = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|mcp\.json|auth\.json|config\.toml|hooks\.json|credentials(?:[._-]|$)|secrets(?:[._-]|$))|\.(?:pem|pfx|key)$/i;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
+export function verifiedExternalChanges(directory: string, sha: string) {
+  const file = openWorkspaceFile(directory, 'changed-files.json', maxUpload, undefined, true);
+  if (file.identity.sha256 !== sha) throw new DelegationError('external-changed');
+  return JSON.parse(utf8.decode(file.data)) as Change[];
+}
+
+export function verifiedExternalOutput(directory: string, sha: string, index: number) {
+  const selection = verifiedExternalChanges(directory, sha)[index];
+  if (!selection?.after) return;
+  const work = scopedPath(directory, 'work');
+  checkedPath(work, selection.path);
+  const file = openWorkspaceFile(work, selection.path, maxUpload, undefined, true);
+  if (file.identity.sha256 !== selection.after) throw new DelegationError('external-changed', selection.path);
+  return { name: selection.path.split('/').at(-1)!, ...file, sha256: selection.after };
+}
+
 function checkedPath(root: string, path: string) {
   const parts = path.split('/');
   if (parts.length > 16 || parts.some((part) => part.length > 120 || blocked.test(part) || /^staging-/i.test(part))) {
