@@ -73,3 +73,10 @@
 - 真實資料實跑（market-intel＋公司 Gateway）：安裝、匯入、驗證、審核、發布、綁定皆成功；自動測試的英文泛問被模型以 abstain 拒答，需改為依證據內容出題（待修）。
 - 時程：週二擁有者驗證、週三修改並在乾淨電腦安裝驗收、週四發布給同事。給同事的版本應使用內含 Python 的 bundled 建置（`OEP_TEST_BUNDLED`／build-release bundled 模式），並隱藏或標示未完成功能（外部 coding agent 需管理員設定、Share Platform 未串接）。
 - 待辦：信任本機 MCP（MXO AI MCP）、BI live 測試出題、同事安裝說明、乾淨機安裝驗收。
+
+## 2026-11-24 凌晨狀態
+
+- main = 0.10 整合（`ed8f737`），28 項檢查全過。擁有者安裝版仍為 0.9.0。
+- 擁有者指示：問答在真實資料上修好後再升級 0.10（已授權升級）。今晚非破壞性操作皆已核准；推送 GitHub 留待早上詢問。
+- 進行中：`fix/knowledge-ask-real-data`（真實 market-intel＋live Gateway 問答回 abstain/unsupported）、`release/colleague-preview`（週四給同事：PS5.1 相容安裝、首次設定 Gateway、預覽功能開關、同事指南、先決條件檢查腳本）。
+- 擁有者待辦：請 chatrs 管理員為 gpt-5.x 開啟 Vision；週三準備乾淨電腦做安裝驗收。
