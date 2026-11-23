@@ -387,12 +387,16 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").textContent'), /1\/2.*50%/);
 
         await change('mode', 'automatic');
+        await fill(browser, '#bi-builder-benchmark-name', 'Synthetic strict');
         await fill(browser, '#bi-builder-threshold', '100');
         await save('testing');
         await selectFile(browser, '#bi-builder-file', file);
         await click(browser, '#bi-builder-run');
         await browser.ready('document.querySelector("#bi-builder-report").textContent.includes("100%")');
         assert.equal(await browser.evaluate('document.querySelector("#bi-builder-submit").hidden'), true);
+        await change('saved-questions', 'Synthetic checks');
+        await ready('save-testing');
+        assert.equal(await browser.evaluate('document.querySelector("#bi-builder-threshold").value'), '50');
 
         await selectLocale(browser, 'en', '#menu-locale');
         await openBuilder(browser);

@@ -28,7 +28,9 @@ export class BiWorkspaces {
     const database = new DatabaseSync(path);
     try {
       database.exec(`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, body TEXT NOT NULL) STRICT;
-        CREATE TABLE IF NOT EXISTS stage_settings (target TEXT PRIMARY KEY, body TEXT NOT NULL) STRICT;`);
+        CREATE TABLE IF NOT EXISTS stage_settings (target TEXT PRIMARY KEY, body TEXT NOT NULL) STRICT;
+        CREATE TABLE IF NOT EXISTS question_sets (target TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL,
+          PRIMARY KEY(target, name)) STRICT;`);
     } catch (error) { database.close(); throw error; }
     return this.database = database;
   }
@@ -40,9 +42,26 @@ export class BiWorkspaces {
     return row ? { ...defaults, ...JSON.parse(String(row.body)) } : defaults;
   }
 
-  configure(target: string, settings: PipelineSettings) {
-    this.db().prepare(`INSERT INTO stage_settings VALUES (?,?) ON CONFLICT(target) DO UPDATE SET body=excluded.body`)
-      .run(target, JSON.stringify(settings));
+  configure(target: string, settings: PipelineSettings, saveQuestions = false) {
+    const db = this.db();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`INSERT INTO stage_settings VALUES (?,?) ON CONFLICT(target) DO UPDATE SET body=excluded.body`)
+        .run(target, JSON.stringify(settings));
+      if (saveQuestions) db.prepare(`INSERT INTO question_sets VALUES (?,?,?)
+        ON CONFLICT(target,name) DO UPDATE SET body=excluded.body`).run(target, settings.testing.name, JSON.stringify(settings.testing));
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
+
+  questionSets(target: string) {
+    return this.db().prepare('SELECT name FROM question_sets WHERE target=? ORDER BY name').all(target).map(({ name }) => String(name));
+  }
+
+  testing(target: string, name: string) {
+    const row = this.db().prepare('SELECT body FROM question_sets WHERE target=? AND name=?').get(target, name);
+    if (!row) throw new Error('Unknown benchmark question set');
+    return JSON.parse(String(row.body)) as PipelineSettings['testing'];
   }
 
   list() {

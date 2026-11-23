@@ -43,11 +43,19 @@ function button(label, id, action) {
   return node;
 }
 
-const m = (key, values) => message('biBuilder.' + key, values);
+const inboxLabels = {
+  active: data => message('biBuilder.inboxActive', data),
+  paused: data => message('biBuilder.inboxPaused', data),
+};
+const benchmarkLabels = {
+  passed: data => message('biBuilder.benchmark-passed', data),
+  failed: data => message('biBuilder.benchmark-failed', data),
+  skipped: data => message('biBuilder.benchmark-skipped', data),
+};
 
 function select(id, options) {
   const input = element('select', undefined, id);
-  input.replaceChildren(...Object.entries(options).map(([value, label]) => optionText(m(label), value)));
+  input.replaceChildren(...Object.entries(options).map(([value, label]) => optionText(label, value)));
   return input;
 }
 
@@ -133,20 +141,20 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     draw(await api.call('bi.repository', { folder: folder.value.trim(), allowModel: consent.checked,
       title: title.value.trim() || undefined }));
   }));
-  const createWorkspace = button(m('createWorkspace'), 'create-workspace', () => perform(async () => selectWorkspace(await api.call('bi.create', {
+  const createWorkspace = button(message('biBuilder.createWorkspace'), 'create-workspace', () => perform(async () => selectWorkspace(await api.call('bi.create', {
     title: title.value.trim(), schema: schema.value, allowModel: consent.checked,
   }))));
-  const importWorkspace = button(m('importWorkspace'), 'import-workspace', () => perform(async () => selectWorkspace(await api.call('bi.importdraft', {
+  const importWorkspace = button(message('biBuilder.importWorkspace'), 'import-workspace', () => perform(async () => selectWorkspace(await api.call('bi.importdraft', {
     folder: folder.value.trim(), title: title.value.trim() || undefined, schema: schema.value, allowModel: consent.checked,
   }))));
-  const browseWorkspace = button(m('workspaceCards'), 'workspace-cards', event => {
+  const browseWorkspace = button(message('biBuilder.workspaceCards'), 'workspace-cards', event => {
     const opener = event.currentTarget;
     void perform(async () => {
-      const panel = openPanel('bi-working-draft', m('workspaceCards'), opener);
+      const panel = openPanel('bi-working-draft', message('biBuilder.workspaceCards'), opener);
       await drawWorkspace(panel, await api.call('bi.workspace', { vault: selectedWorkspace() }));
     });
   });
-  const prepareWorkspace = button(m('prepareWorkspace'), 'prepare-workspace', () => perform(async () => {
+  const prepareWorkspace = button(message('biBuilder.prepareWorkspace'), 'prepare-workspace', () => perform(async () => {
     const item = await api.call('bi.workspace', { vault: selectedWorkspace() });
     draw(await api.call('bi.prepareworkspace', { vault: item.id, version: item.version }));
   }));
@@ -166,19 +174,29 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     draw(await api.call('bi.submit', { id: current.id }));
   }));
   const review = button(message('biBuilder.openReview'), 'review', () => openReview(current.reviewId));
-  const mode = select('mode', { automatic: 'automatic', step: 'step' });
+  const mode = select('mode', { automatic: message('biBuilder.automatic'), step: message('biBuilder.step') });
   mode.value = draft.mode ?? 'automatic';
   mode.addEventListener('change', () => { draft.mode = mode.value; labelRun(); });
-  const reader = select('reader', { auto: 'autoReader', text: 'textReader', html: 'htmlReader', pdf: 'pdfReader' });
-  const method = select('method', { model: 'modelMethod', rules: 'rulesMethod' });
+  const reader = select('reader', { auto: message('biBuilder.autoReader'), text: message('biBuilder.textReader'),
+    html: message('biBuilder.htmlReader'), pdf: message('biBuilder.pdfReader') });
+  const method = select('method', { model: message('biBuilder.modelMethod'), rules: message('biBuilder.rulesMethod') });
   const model = element('select', undefined, 'ingest-model');
-  const duplicates = select('duplicates', { hold: 'holdDuplicates', update: 'updateDuplicates' });
+  const duplicates = select('duplicates', { hold: message('biBuilder.holdDuplicates'), update: message('biBuilder.updateDuplicates') });
   const minEvidence = integer('min-evidence', 1, 100);
   const fieldRules = element('textarea', undefined, 'field-rules');
   fieldRules.rows = 3;
   fieldRules.maxLength = 12_000;
   const benchmarkName = element('input', undefined, 'benchmark-name');
   benchmarkName.maxLength = 80;
+  const savedQuestions = element('select', undefined, 'saved-questions');
+  savedQuestions.addEventListener('change', () => {
+    if (!savedQuestions.value) return;
+    void perform(async () => {
+      const { settings, names } = await api.call('bi.questions', { schema: schema.value, name: savedQuestions.value });
+      applySettings(settings, 'testing');
+      drawQuestionSets(names);
+    });
+  });
   const questionSet = element('textarea', undefined, 'questions');
   questionSet.rows = 4;
   questionSet.maxLength = 22_000;
@@ -192,16 +210,17 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     testing: () => ({ name: benchmarkName.value.trim(), model: testModel.value, threshold: threshold.valueAsNumber,
       questions: parseQuestions(questionSet.value), evidenceChecks: evidenceChecks.checked }),
   };
-  const save = stage => button(m('saveStage'), 'save-' + stage, () => perform(async () => {
+  const save = stage => button(message('biBuilder.saveStage'), 'save-' + stage, () => perform(async () => {
     applySettings(await api.call('bi.configure', { schema: schema.value, stage, value: inputs[stage]() }), stage);
-    setText(feedback, m('settingsSaved'));
+    if (stage === 'testing') drawQuestionSets((await api.call('bi.questions', { schema: schema.value })).names);
+    setText(feedback, message('biBuilder.settingsSaved'));
   }));
   const saveConvert = save('convert');
   const saveIngest = save('ingest');
   const saveTesting = save('testing');
   const resume = () => perform(async () => { await watch(await api.call('bi.resume', { id: current.id })); });
-  const ingestRun = button(m('runIngest'), 'run-ingest', resume);
-  const testingRun = button(m('runTesting'), 'run-testing', resume);
+  const ingestRun = button(message('biBuilder.runIngest'), 'run-ingest', resume);
+  const testingRun = button(message('biBuilder.runTesting'), 'run-testing', resume);
   const inbox = element('details', undefined, 'inbox');
   const inboxTime = element('input', undefined, 'inbox-time');
   inboxTime.type = 'time';
@@ -211,18 +230,18 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
   inboxZone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const inboxStatus = element('p', undefined, 'inbox-status');
   inboxStatus.setAttribute('role', 'status');
-  const saveInbox = button(m('saveInbox'), 'inbox-save', () => perform(async () => {
+  const saveInbox = button(message('biBuilder.saveInbox'), 'inbox-save', () => perform(async () => {
     drawInbox(await api.call('bi.inboxschedule', {
       vault: selectedTarget()?.vault, zone: inboxZone.value.trim(), time: inboxTime.value,
     }));
   }));
-  const pauseInbox = button(m('pauseInbox'), 'inbox-pause', () => perform(async () => {
+  const pauseInbox = button(message('biBuilder.pauseInbox'), 'inbox-pause', () => perform(async () => {
     drawInbox(await api.call('bi.inboxstate', { state: inboxSchedule?.state === 'paused' ? 'active' : 'paused' }));
   }));
-  inbox.append(element('summary', m('inboxSchedule')), element('p', m('inboxHint')), field(m('inboxTime'), inboxTime),
-    field(m('inboxZone'), inboxZone), saveInbox, pauseInbox, inboxStatus);
-  const details = button(m('details'), 'details', event => {
-    panel = openPanel('bi-build-details', m('details'), event.currentTarget);
+  inbox.append(element('summary', message('biBuilder.inboxSchedule')), element('p', message('biBuilder.inboxHint')), field(message('biBuilder.inboxTime'), inboxTime),
+    field(message('biBuilder.inboxZone'), inboxZone), saveInbox, pauseInbox, inboxStatus);
+  const details = button(message('biBuilder.details'), 'details', event => {
+    panel = openPanel('bi-build-details', message('biBuilder.details'), event.currentTarget);
     panel.body.classList.add('bi-builder-details');
     drawPanel();
   });
@@ -230,14 +249,15 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
   const consentLabel = element('label');
   consentLabel.append(consent, element('span', message('biDocument.allowModel')));
   areas[0].append(element('h3', steps[1]), field(message('biDocument.file'), file), field(message('biDocument.url'), url),
-    field(m('reader'), reader), saveConvert, field(m('mode'), mode), run, inbox);
+    field(message('biBuilder.reader'), reader), saveConvert, field(message('biBuilder.mode'), mode), run, inbox);
   bindFilePicker(file);
   const pickerButton = file.nextElementSibling.querySelector('button');
-  areas[1].append(element('h3', steps[2]), field(message('biDocument.schema'), schema), importSchemas, field(m('method'), method),
-    field(m('model'), model), field(m('fieldRules'), fieldRules), field(m('duplicates'), duplicates), field(m('minEvidence'), minEvidence),
+  areas[1].append(element('h3', steps[2]), field(message('biDocument.schema'), schema), importSchemas, field(message('biBuilder.method'), method),
+    field(message('biBuilder.model'), model), field(message('biBuilder.fieldRules'), fieldRules), field(message('biBuilder.duplicates'), duplicates), field(message('biBuilder.minEvidence'), minEvidence),
     element('p', message('biDocument.gateway')), consentLabel, saveIngest, ingestRun);
-  areas[2].append(element('h3', steps[3]), field(m('questionSet'), benchmarkName), field(m('questions'), questionSet),
-    field(m('model'), testModel), field(m('threshold'), threshold), field(m('evidenceChecks'), evidenceChecks), saveTesting, testingRun);
+  areas[2].append(element('h3', steps[3]), field(message('biBuilder.savedQuestions'), savedQuestions),
+    field(message('biBuilder.questionSet'), benchmarkName), field(message('biBuilder.questions'), questionSet),
+    field(message('biBuilder.model'), testModel), field(message('biBuilder.threshold'), threshold), field(message('biBuilder.evidenceChecks'), evidenceChecks), saveTesting, testingRun);
   const results = element('section');
   results.append(progressTitle, progress, feedback, details, validation, submit, review, produced,
     element('h3', message('biBuilder.history')), history);
@@ -258,11 +278,11 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     if (value) {
       inboxTime.value = value.time;
       inboxZone.value = value.zone;
-      setText(inboxStatus, m(value.state === 'paused' ? 'inboxPaused' : 'inboxActive', {
+      setText(inboxStatus, inboxLabels[value.state]({
         time: value.time, zone: value.zone, title: choices.find(item => item.vault === value.target)?.title ?? value.target,
       }));
-    } else setText(inboxStatus, m('inboxNone'));
-    setText(pauseInbox, m(value?.state === 'paused' ? 'resumeInbox' : 'pauseInbox'));
+    } else setText(inboxStatus, message('biBuilder.inboxNone'));
+    setText(pauseInbox, value?.state === 'paused' ? message('biBuilder.resumeInbox') : message('biBuilder.pauseInbox'));
     controls();
   }
 
@@ -271,7 +291,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     schema.value = draft.schema = workspace.choice;
     title.value = draft.title = workspace.title;
     await loadSettings();
-    setText(feedback, m('workspaceReady', { title: workspace.title }));
+    setText(feedback, message('biBuilder.workspaceReady', { title: workspace.title }));
   }
 
   async function drawWorkspace(panel, workspace) {
@@ -279,18 +299,18 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     const body = panel.body;
     body.classList.add('bi-builder-details');
     body.replaceChildren(element('h3', workspace.title));
-    if (!workspace.cards.length) body.append(element('p', m('emptyWorkspace')));
-    if (workspace.conflicts) body.append(element('p', m('workspaceConflicts', { count: workspace.conflicts })));
+    if (!workspace.cards.length) body.append(element('p', message('biBuilder.emptyWorkspace')));
+    if (workspace.conflicts) body.append(element('p', message('biBuilder.workspaceConflicts', { count: workspace.conflicts })));
     const load = async (offset, card) => drawWorkspace(panel, await api.call('bi.workspace', { vault: workspace.id, offset, card }));
-    if (workspace.offset > 0) body.append(button(m('previousCards'), undefined, () => perform(() => load(workspace.offset - 100))));
+    if (workspace.offset > 0) body.append(button(message('biBuilder.previousCards'), undefined, () => perform(() => load(workspace.offset - 100))));
     if (workspace.offset + workspace.cards.length < workspace.summary?.cards) {
-      body.append(button(m('nextCards'), undefined, () => perform(() => load(workspace.offset + 100))));
+      body.append(button(message('biBuilder.nextCards'), undefined, () => perform(() => load(workspace.offset + 100))));
     }
     const cards = element('select', undefined, 'workspace-card');
-    cards.append(optionText(m('chooseCard'), ''), ...workspace.cards.map(card => optionText(card.title + ' · ' + card.type, card.id)));
+    cards.append(optionText(message('biBuilder.chooseCard'), ''), ...workspace.cards.map(card => optionText(card.title + ' · ' + card.type, card.id)));
     cards.value = workspace.card?.id ?? '';
     cards.addEventListener('change', () => { void perform(() => load(workspace.offset, cards.value || undefined)); });
-    if (workspace.cards.length) body.append(field(m('workspaceCard'), cards));
+    if (workspace.cards.length) body.append(field(message('biBuilder.workspaceCard'), cards));
     if (!workspace.card) return;
     const name = element('input', undefined, 'card-title');
     name.value = workspace.card.title;
@@ -301,23 +321,23 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     fields.value = JSON.stringify(workspace.card.fields, null, 2);
     const status = element('p');
     status.setAttribute('role', 'status');
-    const apply = button(m('saveCard'), 'save-card', () => perform(async () => {
+    const apply = button(message('biBuilder.saveCard'), 'save-card', () => perform(async () => {
       try {
         await api.call('bi.editworkspace', { vault: workspace.id, version: workspace.version, card: workspace.card.id,
           title: name.value.trim(), fields: JSON.parse(fields.value) });
         await load(workspace.offset, workspace.card.id);
-        setText(panel.body.querySelector('[role=status]'), m('workspaceCardSaved'));
+        setText(panel.body.querySelector('[role=status]'), message('biBuilder.workspaceCardSaved'));
         panel.body.querySelector('#bi-builder-save-card').focus();
       } catch (error) { setText(status, errorText(error)); }
     }));
-    body.append(field(m('cardTitle'), name), field(m('cardFields'), fields), element('p', m('editEvidence')), apply, status);
+    body.append(field(message('biBuilder.cardTitle'), name), field(message('biBuilder.cardFields'), fields), element('p', message('biBuilder.editEvidence')), apply, status);
     name.focus();
   }
 
   function pairs(value) {
     return value.split('\n').filter(line => line.trim()).map(line => {
       const separator = line.indexOf(' = ');
-      if (separator < 1 || !line.slice(0, separator).trim() || !line.slice(separator + 3).trim()) throw new Error(resolveText(m('lineFormat')));
+      if (separator < 1 || !line.slice(0, separator).trim() || !line.slice(separator + 3).trim()) throw new Error(resolveText(message('biBuilder.lineFormat')));
       return [line.slice(0, separator).trim(), line.slice(separator + 3).trim()];
     });
   }
@@ -344,11 +364,17 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     }
   }
 
+  function drawQuestionSets(names) {
+    savedQuestions.replaceChildren(optionText(message('biBuilder.chooseQuestions'), ''), ...names.map(name => optionText(name, name)));
+    savedQuestions.value = names.includes(settings.testing.name) ? settings.testing.name : '';
+  }
+
   async function loadSettings() {
     const target = schema.value;
-    const value = await api.call('bi.settings', { schema: target });
+    const { settings, names } = await api.call('bi.questions', { schema: target });
     if (!signal.aborted && schema.value === target) {
-      applySettings(value);
+      applySettings(settings);
+      drawQuestionSets(names);
       controls();
     }
   }
@@ -379,7 +405,8 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
   }
 
   function labelRun() {
-    setText(run, current?.state === 'failed' || current?.state === 'needs-attention' ? m('retry') : m(mode.value === 'step' ? 'runConvert' : 'run'));
+    const startLabel = mode.value === 'step' ? message('biBuilder.runConvert') : message('biBuilder.run');
+    setText(run, current?.state === 'failed' || current?.state === 'needs-attention' ? message('biBuilder.retry') : startLabel);
   }
 
   function draw(result) {
@@ -402,7 +429,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
       validation.append(element('p', message('biBuilder.repositoryReport', details)),
         element('p', digestVerified && sizeVerified ? message('biBuilder.repositoryVerified') : message('biBuilder.repositoryPartial')));
     }
-    if (result.conversion) validation.append(element('p', m('convertedSegments', { count: result.conversion.segments })));
+    if (result.conversion) validation.append(element('p', message('biBuilder.convertedSegments', { count: result.conversion.segments })));
     if (result.candidates.length) {
       const accepted = result.candidates.filter(candidate => candidate.state !== 'needs-attention').length;
       validation.append(element('p', message('biBuilder.validation', { accepted, held: result.candidates.length - accepted })));
@@ -425,7 +452,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
       }
       validation.append(candidates);
     }
-    if (result.benchmark) validation.append(element('p', m('benchmark-' + result.benchmark.state, result.benchmark)));
+    if (result.benchmark) validation.append(element('p', benchmarkLabels[result.benchmark.state](result.benchmark)));
     setText(produced, result.summary ? message('biBuilder.summary', { title: result.title, revision: result.publication, ...result.summary }) : '');
     drawHistory();
     drawPanel();
@@ -441,7 +468,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
       const log = element('ol');
       for (const { state, at } of current.events) log.append(element('li', () =>
         `${formatDate(new Date(at))()} · ${resolveText(states[state] ?? state)}`));
-      panel.body.append(element('h3', m('runLog')), log);
+      panel.body.append(element('h3', message('biBuilder.runLog')), log);
     }
     for (const { locator, text } of current.conversion?.preview ?? []) {
       const excerpt = element('details');
@@ -450,7 +477,8 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
     }
     for (const row of current.benchmark?.results ?? []) {
       const question = element('details');
-      question.append(element('summary', row.question), element('p', m(row.passed ? 'questionPassed' : 'questionFailed')));
+      question.append(element('summary', row.question), element('p', row.passed ?
+        message('biBuilder.questionPassed') : message('biBuilder.questionFailed')));
       for (const citation of row.citations ?? []) question.append(element('p', citation.locator + ' · ' + citation.quote));
       panel.body.append(question);
     }
@@ -504,7 +532,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
 
   await perform(async () => {
     const { choices, runs, aliases } = await api.call('bi.catalog');
-    for (const input of [model, testModel]) input.replaceChildren(optionText(m('defaultModel'), ''), ...aliases.map(alias => optionText(alias, alias)));
+    for (const input of [model, testModel]) input.replaceChildren(optionText(message('biBuilder.defaultModel'), ''), ...aliases.map(alias => optionText(alias, alias)));
     choose(choices);
     await loadSettings();
     labelRun();

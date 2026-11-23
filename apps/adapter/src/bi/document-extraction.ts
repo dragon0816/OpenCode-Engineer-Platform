@@ -157,8 +157,15 @@ export class DocumentExtraction {
     const settings = this.settings(target);
     const { schema } = this.targets().get(String(target))!;
     const next = { ...settings, ...stageSettings(stage, value, schema.document.fields as string[], aliases) };
-    this.workspaces.configure(String(target), next);
+    this.workspaces.configure(String(target), next, stage === 'testing');
     return next;
+  }
+
+  questionSets(target: string, name?: string) {
+    const current = this.settings(target);
+    const settings = name === undefined ? current : { ...current, testing: this.workspaces.testing(target, name) };
+    if (name !== undefined) this.workspaces.configure(target, settings);
+    return { settings, names: this.workspaces.questionSets(target) };
   }
 
   createWorkspace(title: string, target: unknown, allowModel: boolean) {

@@ -278,8 +278,9 @@ export class PluginRuntime {
     signal.throwIfAborted();
     switch (method) {
       case 'bi.catalog': return { choices: extraction.choices(true), runs: extraction.recent(true), aliases: [...this.knowledge!.benchmarks.keys()] };
-      case 'bi.settings': return extraction.settings(params.schema);
       case 'bi.configure': return extraction.configure(params.schema, params.stage, params.value, [...this.knowledge!.benchmarks.keys()]);
+      case 'bi.questions': return extraction.questionSets(text(params.schema, 64),
+        params.name === undefined ? undefined : text(params.name, 80));
       case 'bi.inbox': return inbox?.status() ?? null;
       case 'bi.inboxschedule': {
         const vault = text(params.vault, 192);
