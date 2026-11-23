@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -265,6 +266,11 @@ test('the built-in broker completes a native status call and shares the model se
   let modelStatusSchema: unknown;
   let attachmentID: string;
   let artifactID: string;
+  let referenceID: string;
+  const local = mkdtempSync(join(tmpdir(), 'oep-native-reference-'));
+  context.after(() => rmSync(local, { recursive: true, force: true }));
+  const referencePath = join(local, 'native-reference.csv');
+  writeFileSync(referencePath, 'left,Synthetic range,right');
   const fileResults = new Map<string, string>();
   const d08 = workbookFixture();
   const runtime = await startRuntime(audit, { url: 'http://example.invalid', key: randomUUID(), alias, isolatedJob: true,
@@ -279,7 +285,8 @@ test('the built-in broker completes a native status call and shares the model se
       }
       const user = request.messages.findLastIndex(({ role }) => role === 'user');
       const result = request.messages.slice(user + 1).find(({ role }) => role === 'tool');
-      const fileCase = ['broker workbook', 'own attachment', 'foreign attachment', 'own artifact', 'foreign artifact', 'bad path', 'bad fields']
+      const fileCase = ['broker workbook', 'own attachment', 'foreign attachment', 'own artifact', 'foreign artifact', 'bad path', 'bad fields',
+        'selected local reference', 'unselected local reference']
         .find((value) => JSON.stringify(request.messages[user]?.content).includes('Synthetic ' + value));
       if (fileCase) {
         if (result) fileResults.set(fileCase, JSON.stringify(result.content));
@@ -287,7 +294,13 @@ test('the built-in broker completes a native status call and shares the model se
           const [name, args] = fileCase === 'broker workbook' ? [writeFileTool, { name: 'workbook.json', content: JSON.stringify(d08) }] :
             fileCase === 'bad path' ? [writeFileTool, { name: 'C:/synthetic/private.txt', content: 'blocked path' }] :
               fileCase === 'bad fields' ? [writeFileTool, { name: 'notes.txt', content: 'blocked args', note: 'token: sample-hidden-value' }] :
-                [readFileTool, fileCase.endsWith('attachment') ? { attachment: attachmentID } : { artifact: artifactID }];
+                fileCase.endsWith('local reference') ? [readFileTool, { reference: referenceID, offset: 5, length: 15 }] :
+                  [readFileTool, fileCase.endsWith('attachment') ? { attachment: attachmentID } : { artifact: artifactID }];
+          if (fileCase === 'selected local reference') {
+            assert.match(JSON.stringify(request.messages[user].content), /native-reference\.csv/);
+            assert.ok(JSON.stringify(request.messages[user].content).includes(referenceID));
+            assert.doesNotMatch(wire, /left,Synthetic range,right/);
+          }
           assert.ok(request.tools?.some(({ function: fn }) => fn?.name === name));
           assert.ok(!request.tools?.some(({ function: fn }) => fn?.name === 'write' || fn?.name === 'edit'));
           return completion(alias, toolCall(0, 'call_synthetic_file', name, args), 'tool_calls');
@@ -397,6 +410,17 @@ test('the built-in broker completes a native status call and shares the model se
       assert.match(fileResults.get(fileCase) ?? '', /Tool authorization unavailable/);
       assert.doesNotMatch(fileResults.get(fileCase) ?? '', /session-private|output\.xlsx/);
     }
+    const [reference] = await web.references!.attach(own.id, [referencePath], () => true);
+    referenceID = reference.id;
+    for (const fileCase of ['selected local reference', 'unselected local reference']) {
+      const id = randomUUID();
+      await web.submit(own, { id, text: 'Synthetic ' + fileCase,
+        attachments: fileCase === 'selected local reference' ? [referenceID] : [], workbook: false });
+      await observe(fileCase, () => until(() => Promise.resolve(store.get(id).state === 'verified' || undefined), 20_000));
+    }
+    assert.match(fileResults.get('selected local reference') ?? '', /Synthetic range/);
+    assert.doesNotMatch(fileResults.get('selected local reference') ?? '', /left,|,right/);
+    assert.match(fileResults.get('unselected local reference') ?? '', /reference-not-found/);
     assert.equal(fileResults.has('bad path'), false);
     assert.equal(fileResults.has('bad fields'), false);
   } finally {

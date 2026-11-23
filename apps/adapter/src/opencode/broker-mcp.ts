@@ -3,6 +3,7 @@ import { brokerMcpName, knowledgeTool, readFileTool, statusTool, writeFileTool }
 import { stripTransport, transportField } from './tool-transport.ts';
 import type { ToolTickets } from './tool-tickets.ts';
 import { fileReadArgs, fileWriteArgs, fileWriteLimit } from '../runs/controlled-files.ts';
+import { referenceReadSchema } from '../runs/local-references.ts';
 import { parseAsk } from '../../../../packages/knowledge/src/ask.ts';
 import { objectRecord } from './tool-transport.ts';
 import { withMcpTicket } from './remote-mcp-broker.ts';
@@ -28,8 +29,8 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
       inputSchema: schema({}), annotations: readOnly,
     }, {
       name: localName(readFileTool),
-      description: 'Read one file by session attachment ID, session artifact ID, or exact file name from the current run output.',
-      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' } }),
+      description: 'Read a session attachment ID, artifact ID, or current output name. For a selected local reference, pass reference and optional byte offset and length. Folder references accept list:true with optional relative path and after cursor, or a relative file path to read. For PDF extraction use page (1-based); next is the next byte offset within the text or page.',
+      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' }, ...referenceReadSchema }),
       annotations: readOnly,
     }, {
       name: localName(writeFileTool), description: 'Create a new UTF-8 file in the current run output.',

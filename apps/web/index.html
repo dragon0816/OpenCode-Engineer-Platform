@@ -392,6 +392,7 @@
           <label><span data-i18n="ui.folder"></span> <select id="project-read-folder"></select></label>
           <label><span data-i18n="ui.file-name-in-the-folder"></span> <input id="project-read-file" type="text"></label>
           <button id="project-read-button" type="button" data-i18n="ui.attach-file-copy"></button>
+          <button id="project-reference-button" type="button" data-i18n="references.attach-folder"></button>
         </details>
         <div id="reply-chip" hidden><span id="reply-chip-text"></span> <button type="button" id="clear-reply" data-i18n="ui.remove-quote"></button></div>
         <div id="command-toast" role="status"></div>
@@ -406,6 +407,13 @@
               <button id="pick" type="button" aria-describedby="attachment-help" disabled data-i18n="ui.attach-files"></button>
               <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.htm,.json,.jsonc,.yaml,.yml,.xml,.log,.ini,.cfg,.conf,.toml,.tsv,.py,.js,.mjs,.cjs,.ts,.tsx,.jsx,.c,.h,.cpp,.hpp,.cs,.java,.go,.rs,.ps1,.sh,.bat,.sql,.html,.css,.scpi,.m" multiple hidden>
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
+              <details id="reference-picker" class="reference-picker" hidden>
+                <summary data-i18n="references.picker"></summary>
+                <div class="file-actions">
+                  <button id="pick-reference-file" type="button" data-i18n="references.pick-files"></button>
+                  <button id="pick-reference-folder" type="button" data-i18n="references.pick-folder"></button>
+                </div>
+              </details>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
               <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
             </div>
@@ -424,6 +432,7 @@
           <small id="session-model-status" role="status"></small>
           <small id="session-model-fallback" role="status"></small>
           <small id="upload-status" role="status"></small>
+          <button id="attach-pasted-paths" type="button" data-i18n="references.attach-paste" hidden></button>
         </div>
         </div>
         <div class="composer-footer">

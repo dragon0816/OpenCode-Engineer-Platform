@@ -12,6 +12,55 @@ const prompt = "document.querySelector('#prompt')";
 const status = "document.querySelector('#upload-status')";
 const picker = "document.querySelector('#file-input')";
 
+export async function verifyLocalReferences(page: Page, files: { picked: string; pasted: string; folder: string },
+  click: (selector: string) => Promise<void>) {
+  const label = () => page.evaluate<string>("document.querySelector('#reference-picker summary').textContent");
+  assert.equal(await label(), '附加本機檔案／資料夾');
+  await click('#reference-picker summary');
+  await click('#pick-reference-file');
+  await page.ready("document.querySelector('.reference-chip[title$=\"picker-reference.csv\"]')");
+  const picked = await page.evaluate<string>("document.querySelector('#chat-resources .reference-chip').title");
+  assert.equal(picked, files.picked);
+  await selectLocale(page, 'en');
+  assert.equal(await label(), 'Attach local files or folder');
+  await click('#reference-picker summary');
+  await click('#pick-reference-folder');
+  await page.ready("document.querySelector('#chat-resources .reference-chip[title$=\"synthetic folder\"]')");
+  const clip = '"' + files.pasted + '"\r\n' + files.picked;
+  assert.equal(await page.evaluate(`(() => {
+    ${prompt}.value = 'Synthetic instructions\\n';
+    ${prompt}.setSelectionRange(${prompt}.value.length, ${prompt}.value.length);
+    const data = new DataTransfer();
+    data.setData('text/plain', ${JSON.stringify(clip)});
+    return !${prompt}.dispatchEvent(new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:data}));
+  })()`), true);
+  assert.equal(await page.evaluate("document.querySelector('#attach-pasted-paths').textContent"), 'Attach as file references');
+  await click('#attach-pasted-paths');
+  await page.ready("document.querySelector('#chat-resources .reference-chip[title$=\"pasted-reference.json\"]')");
+  assert.equal(await page.evaluate(`${prompt}.value`), 'Synthetic instructions\n');
+  await click('#chat-resources .reference-chip[title$="pasted-reference.json"]');
+  await page.ready("document.querySelector('#file-preview pre')?.textContent.includes('Synthetic JSON preview')");
+  await click('#close-files');
+  for (const locale of ['en', 'zh-TW'] as const) {
+    await selectLocale(page, locale);
+    for (const kind of ['drop', 'paste']) {
+      assert.equal(await page.evaluate(`(() => {
+        const data = new DataTransfer();
+        data.items.add(new File([new Uint8Array(20 * 1024 * 1024 + 1)], 'oversized.csv', {type:'text/csv'}));
+        const event = ${JSON.stringify(kind)} === 'paste'
+          ? new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:data})
+          : new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:data});
+        return !${prompt}.dispatchEvent(event);
+      })()`), true);
+      assert.match(await page.evaluate<string>(`${status}.textContent`),
+        locale === 'en' ? /20 MiB.*Attach local files or folder/ : /20 MiB.*附加本機檔案／資料夾/);
+      assert.equal(await page.evaluate("document.querySelector('#error').hidden"), true);
+    }
+  }
+  await page.evaluate(`${prompt}.value = ''`);
+  console.log('Local references passed in Chromium (fake native picker, pasted paths, preview, oversized drop/paste, zh-TW and en).');
+}
+
 const paste = (page: Page, name: string, content: string | number[], type: string) => page.evaluate(`(() => {
   const data = new DataTransfer();
   const content = ${JSON.stringify(content)};

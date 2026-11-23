@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
@@ -10,7 +11,7 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
-import { verifyBenchmarkUploads, verifyComposerAttachments } from './composer-attachments-browser.ts';
+import { verifyBenchmarkUploads, verifyComposerAttachments, verifyLocalReferences } from './composer-attachments-browser.ts';
 import { verifyDictation } from './dictation-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
 import { verifyExternalHelpersInBrowser } from './external-helpers-browser.ts';
@@ -29,6 +30,9 @@ import { webAPI } from './web-api.ts';
 import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 
 const real = process.argv.includes('--real');
+const referencesRoot = !real && process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'oep-browser-reference-')) : undefined;
+const referenceFixtures = referencesRoot && { picked: join(referencesRoot, 'picker-reference.csv'),
+  pasted: join(referencesRoot, 'pasted-reference.json'), folder: join(referencesRoot, 'synthetic folder') };
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
 const captureEnglish = process.env.OEP_CAPTURE_GUI_EN === '1';
 const captureAgentManagement = process.env.OEP_CAPTURE_AGENT_MANAGEMENT === '1';
@@ -233,6 +237,11 @@ try {
       throw new Error('Unexpected synthetic Telegram request');
     }
   }
+  if (referenceFixtures) {
+    mkdirSync(referenceFixtures.folder);
+    writeFileSync(referenceFixtures.picked, 'heading,column\nSynthetic,CSV\n');
+    writeFileSync(referenceFixtures.pasted, '{"name":"Synthetic JSON preview"}');
+  }
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
     writeCredential(name, value) {
@@ -240,7 +249,7 @@ try {
       else credentials.set(name, value);
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
-  });
+  }, undefined, undefined, referenceFixtures ? async (kind) => [kind === 'file' ? referenceFixtures.picked : referenceFixtures.folder] : undefined);
   try {
     const page = await chromium(join(root, 'chromium'));
     try {
@@ -1630,6 +1639,7 @@ try {
         rmdirSync(join(benchmarkWorkspace, 'attachments'));
         rmdirSync(benchmarkWorkspace);
         await verifyBenchmarkUploads(page, audit, click);
+        if (referenceFixtures) await verifyLocalReferences(page, referenceFixtures, click);
         await page.evaluate(`
           document.querySelector('#file-input').click = () => { window.syntheticPicker = true; };
         `);
@@ -1676,6 +1686,7 @@ try {
     } finally { await page.close(); }
   } finally { await web.close(); }
 } finally {
+  if (referencesRoot) rmSync(referencesRoot, { recursive: true, force: true });
   const stopped = await runtime.stop();
   console.log(JSON.stringify(stopped));
   assert.equal(stopped.orphans, 0);

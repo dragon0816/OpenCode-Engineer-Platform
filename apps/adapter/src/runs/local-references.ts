@@ -183,7 +183,7 @@ export class LocalReferences {
     const memberKey = args.path?.toLowerCase();
     const type = args.path ? referenceType(args.path) : file.mime;
     const mode = type === 'application/pdf' ? 'pdf' : type.endsWith('spreadsheetml.sheet') ? 'xlsx' :
-      type.startsWith('text/') || type === 'application/json' ? 'text' : 'unsupported';
+      type === 'text/csv' ? 'csv' : type === 'application/json' ? 'json' : type.startsWith('text/') ? 'text' : 'unsupported';
     const result = await this.worker(file.path, { action: args.list ? 'list' : 'read', expected: file.identity,
       directory: file.directory, child: args.path, member: memberKey && this.ledger.member(file.id, memberKey),
       cursor: args.after ?? '', mode, offset: args.offset ?? 0, length: args.length ?? rangeLimit, page: args.page ?? 1 }, signal);

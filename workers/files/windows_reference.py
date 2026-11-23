@@ -148,7 +148,7 @@ def extract(source, request):
             source = spreadsheet(source)
         else:
             source, page_count = pdf_page(source, request["page"])
-    elif mode != "text":
+    elif mode not in ("text", "csv", "json"):
         return {"error": "reference-format"}
     total = source.seek(0, os.SEEK_END)
     if offset > total:
