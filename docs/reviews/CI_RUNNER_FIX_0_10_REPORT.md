@@ -20,7 +20,7 @@ Use the [Windows runner alias setup](CI_RUNNER_FIX_REPORT.md#reproduction) with 
 | [Phase 0 verification 45214389407](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45214389407) | Baseline failed one reference-grant case and three plugin registry cases. |
 | [Windows release verification 45214389312](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45214389312) | Baseline failed the reference grant and the knowledge browser latency contract. |
 | [Phase 0 verification 45216001490](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45216001490) | Passed all steps and all 128 tests at `cce90e731acc5b5ebd2a974fe0ecf8b614b27454`. The FTS median was 2.07 ms. |
-| [Windows release verification 45217357719](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45217357719) | Passed source and release checks, installation, backup, upgrade, SBOM extraction and artifact upload. |
+| [Windows release verification 45217357719](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45217357719) | Passed all required gates and artifact upload. The optional Chromium step timed out waiting for a reference from the picker fixture, which still supplied a short path in this run. |
 | [Phase 0 verification 45218243644](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243644) | Passed after the Chromium reference fixture update. |
 | [Windows release verification 45218243522](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243522) | Clean-runner follow-up with the updated Chromium reference fixture. |
 
