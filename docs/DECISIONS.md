@@ -429,3 +429,10 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 ## 2026-11-23 BI 文件擷取工作程序
 - 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
 - PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
+
+## 2026-11-23 外部 coding agent 預設用訂閱帳號登入
+
+- **決策：** Codex 與 Claude Code 預設以官方 CLI 的訂閱帳號登入（Codex：ChatGPT 帳號；Claude Code：Pro／Max 帳號的瀏覽器 OAuth 或 `claude setup-token`），參考 AEP 的作法；登入在專用 helper 帳號下執行，OEP 把登入網址或裝置碼轉到登入視窗讓擁有者完成。API key 只留在「進階」作為選項。
+- **理由：** 擁有者不想輸入 API key 並另外付費；擁有者已確認相關商業條款（2026-11-23 設定中勾選）。
+- **捨棄的替代方案：** 預設 Console API key（額外計費）。
+- **風險：** Anthropic 對第三方產品使用訂閱 OAuth 有限制；由擁有者承擔條款責任，OEP 只呼叫官方 CLI，不自行取得或保存訂閱 token 以外的憑證。
