@@ -31,6 +31,7 @@ export function documentOcr(options: OcrOptions, vision: Vision, preferred?: str
   const alias = options.mode === 'local' ? undefined : vision.select(preferred);
   let lastPage = 0;
   let requests = 0;
+  let visionBlocked: 'vision-unsupported' | 'vision-unavailable' | undefined;
   return async ({ page, mime, base64 }, signal) => {
     if (typeof page !== 'number' || !Number.isInteger(page) || page <= lastPage || page > 120 ||
         (mime !== 'image/png' && mime !== 'image/jpeg') || typeof base64 !== 'string' ||
@@ -49,10 +50,12 @@ export function documentOcr(options: OcrOptions, vision: Vision, preferred?: str
     const localWarning = local.warning ?? (local.sufficient ? undefined : 'local-low-text');
     if (options.mode === 'local' || (options.mode === 'auto' && local.sufficient)) return { ...localPage, warning: localWarning };
     if (!alias) return { ...localPage, warning: 'vision-no-model' };
+    if (visionBlocked) return { ...localPage, warning: visionBlocked };
     if (requests >= 8) return { ...localPage, warning: 'vision-budget' };
     requests++;
     const model = await vision.recognize(alias, image, mime, options.language, signal);
     if ('text' in model && model.text) return { status: 'model', text: model.text, ocr: mark(alias) };
+    if (model.warning === 'vision-unsupported' || model.warning === 'vision-unavailable') visionBlocked = model.warning;
     return { ...localPage, warning: model.warning };
   };
 }

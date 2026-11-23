@@ -7,7 +7,7 @@ const transcriptPrompt = 'Transcribe the visible printed text line by line. Pres
 type ImageSupport = 'supported' | 'unsupported' | 'unavailable';
 type Relay = Parameters<typeof knowledgeCompletion>[0];
 
-export const visionModel = (alias: string) => /^(?:[\w.-]+\/)?gpt-5(?:[.-]|$)/i.test(alias);
+export const visionModel = (alias: string) => /^(?:[\w.-]+\/)?gpt-5(?:[.-][\w.-]+)?$/i.test(alias);
 
 export function ocrVision(relay: Relay, seat: ModelSeat, approved: readonly string[], defaultAlias: () => string) {
   const cache = new Map<string, { state: ImageSupport; expires: number }>();

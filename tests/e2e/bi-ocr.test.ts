@@ -126,6 +126,7 @@ test('probes the relay once, falls back for sparse pages, and preserves local te
           assert.equal(page.status, 'local');
           assert.ok(page.text?.includes(scanQuote));
         }
+        assert.equal((await recognize({ page: 2, mime: 'image/png', base64: data }, signal())).warning, 'vision-unsupported');
         assert.deepEqual(await vision.recognize(alias, image, 'image/png', 'en-US', signal()), { warning: 'vision-unsupported' });
       }
       assert.equal(probes, 1);
