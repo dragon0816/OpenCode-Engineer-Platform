@@ -8,13 +8,16 @@ import test from 'node:test';
 import { ExternalExecutor } from '../../apps/adapter/src/runs/external-executor.ts';
 import { windowsExternalIsolation, type WindowsHelperOs } from '../../apps/adapter/src/runs/external-windows.ts';
 
+// A cold Windows PowerShell process also compiles the native helper used by this fixture.
+const setupFixtureTimeout = 60_000;
+
 test('Windows helper provisioning and token probes exercise platform fakes without changing host configuration', {
-  skip: process.platform !== 'win32', timeout: 25_000,
+  skip: process.platform !== 'win32', timeout: setupFixtureTimeout + 5_000,
 }, () => {
   const powershell = join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const fixture = fileURLToPath(new URL('../fixtures/external-helpers/setup-fake.ps1', import.meta.url));
   const output = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fixture],
-    { encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    { encoding: 'utf8', timeout: setupFixtureTimeout, windowsHide: true });
   assert.match(output, /Synthetic setup, repair, removal and verification passed\./);
 });
 

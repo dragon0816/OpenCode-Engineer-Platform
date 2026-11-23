@@ -33,8 +33,13 @@ export async function chromium(profile: string) {
   try {
     const devtools = join(profile, 'DevToolsActivePort');
     const port = await until(async () => {
-      if (!existsSync(devtools)) return;
-      return Number(readFileSync(devtools, 'utf8').split(/\r?\n/)[0]) || undefined;
+      try { return Number(readFileSync(devtools, 'utf8').split(/\r?\n/)[0]) || undefined; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        // Chromium can briefly lock the port file while publishing it on Windows.
+        if (code !== 'ENOENT' && code !== 'EBUSY') throw error;
+        return undefined;
+      }
     });
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as
       { type: string; webSocketDebuggerUrl: string }[];

@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import semver from 'semver';
-import { checkDirectory, openWorkspaceFile } from '../runs/workspace.ts';
+import { canonicalWorkspaceDirectory, checkDirectory, openWorkspaceFile } from '../runs/workspace.ts';
 import { compatibleWith, digestPattern, pluginID, sha256, verifyPackage, version } from './package.ts';
 import type { VerifiedPlugin } from './package.ts';
 import { archiveLimit, PluginError, requirePlugin } from './zip.ts';
@@ -60,7 +60,7 @@ export class PluginRegistry {
   constructor(db: DatabaseSync, dataRoot: string, oepVersion: string) {
     this.db = db;
     this.oepVersion = version(oepVersion);
-    this.root = join(dataRoot, 'plugins');
+    this.root = join(canonicalWorkspaceDirectory(dataRoot), 'plugins');
     this.packages = join(this.root, 'packages');
     this.staging = join(this.root, 'staging');
   }

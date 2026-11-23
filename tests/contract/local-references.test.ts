@@ -12,6 +12,7 @@ import { ExternalSources } from '../../apps/adapter/src/runs/external-sources.ts
 import { LocalReferences, referenceReadArgs } from '../../apps/adapter/src/runs/local-references.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { workbook } from '../../apps/adapter/src/runs/workbook.ts';
+import { canonicalWorkspaceDirectory } from '../../apps/adapter/src/runs/workspace.ts';
 import { workbookFixture } from '../e2e/synthetic-excel.ts';
 import { sha256 } from '../../packages/knowledge/src/snapshot.ts';
 
@@ -44,9 +45,10 @@ test('reference arguments allow bounded ranges and relative members only', () =>
 });
 
 test('reference grants pin large files and folder members, verify identity and audit hashes', { skip: process.platform !== 'win32' }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'oep-references-contract-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'oep-references-contract-'));
+  const root = canonicalWorkspaceDirectory(temporary);
   const folder = join(root, 'synthetic allowed');
-  const data = join(root, 'synthetic private');
+  const data = join(temporary, 'synthetic private');
   mkdirSync(folder);
   mkdirSync(data);
   const file = join(folder, 'big.csv');
@@ -58,7 +60,7 @@ test('reference grants pin large files and folder members, verify identity and a
   try { writeSync(fd, Buffer.from('last,row\n'), 0, 9, tail); }
   finally { closeSync(fd); }
   assert.equal(statSync(file).size, tail + 9);
-  const privateFile = join(data, 'secret.csv');
+  const privateFile = join(root, 'synthetic private', 'secret.csv');
   writeFileSync(privateFile, 'synthetic restricted');
   symlinkSync(data, join(folder, 'escape'), 'junction');
   writeFileSync(join(folder, '.env'), 'synthetic credential fixture');
@@ -127,6 +129,10 @@ test('reference grants pin large files and folder members, verify identity and a
   for (const rejected of [privateFile, root, join(system, 'kernel.fixture'), join(folder, 'escape', 'secret.csv'),
     join(folder, '.env'), join(folder, '.git-credentials'), '\\\\synthetic-host\\share\\file.csv', '\\\\?\\C:\\fixture.csv', file + ':alternate']) {
     await assert.rejects(() => references.attach(session.id, [rejected], () => true), rejects('reference-unavailable'));
+  }
+  if (root.toLowerCase() !== temporary.toLowerCase()) {
+    await assert.rejects(() => references.attach(session.id, [join(temporary, 'synthetic allowed', 'big.csv')], () => true),
+      rejects('reference-unavailable'));
   }
   const changed = openSync(file, 'r+');
   try { writeSync(changed, Buffer.from('other'), 0, 5, 0); }

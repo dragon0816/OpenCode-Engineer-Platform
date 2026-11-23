@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { dirname, join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
+import { canonicalWorkspaceDirectory } from '../../apps/adapter/src/runs/workspace.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
@@ -33,7 +34,8 @@ import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
 import { subscriptionHelper } from '../fixtures/external-helpers/subscription.ts';
 
 const real = process.argv.includes('--real');
-const referencesRoot = !real && process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'oep-browser-reference-')) : undefined;
+const referencesRoot = !real && process.platform === 'win32'
+  ? canonicalWorkspaceDirectory(mkdtempSync(join(tmpdir(), 'oep-browser-reference-'))) : undefined;
 const referenceFixtures = referencesRoot && { picked: join(referencesRoot, 'picker-reference.csv'),
   pasted: join(referencesRoot, 'pasted-reference.json'), folder: join(referencesRoot, 'synthetic folder') };
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';

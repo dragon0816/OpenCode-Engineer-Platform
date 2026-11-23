@@ -781,8 +781,9 @@ const schema = this.reviewSchema(input.vault.id, base);
     if (typeof input.query === 'string') {
       const query = matchQuery(input.query);
       const ready = publication.index_hash === publication.manifest_hash;
+      // Drive the join from the FTS matches so SQLite probes each matching passage by rowid.
       const matches = query && ready ? this.db.prepare(`
-        SELECT p.passage FROM passage_index JOIN passages p ON p.id=passage_index.rowid
+        SELECT p.passage FROM passage_index CROSS JOIN passages p ON p.id=passage_index.rowid
         WHERE passage_index MATCH ? AND p.publication=?
         ORDER BY bm25(passage_index, 12, 8, 3, 1), p.passage LIMIT 25
       `).all(query, publication.id) : [];
