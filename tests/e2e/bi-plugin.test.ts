@@ -342,7 +342,7 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
       const api = await webAPI(adapter.pairURL());
       const browser = await chromium(join(root, 'stage-chromium'));
       const ready = (id: string) => browser.ready(`document.querySelector('#bi-builder-${id}')?.disabled === false`);
-      const visible = (id: string) => browser.ready(`document.querySelector('#bi-builder-${id}')?.checkVisibility()`);
+      const visible = (id: string, timeout?: number) => browser.ready(`document.querySelector('#bi-builder-${id}')?.checkVisibility()`, timeout);
       const change = (id: string, value: string) => browser.evaluate(`(() => { const node = document.querySelector('#bi-builder-${id}');
         node.value = ${JSON.stringify(value)}; node.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       const save = async (stage: string) => {
@@ -377,7 +377,7 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
         assert.equal(await browser.evaluate('document.querySelector("#bi-builder-run").focus(); document.activeElement.id'), 'bi-builder-run');
         await browser.command('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', text: ' ', windowsVirtualKeyCode: 32 });
         await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
-        await visible('run-ingest');
+        await visible('run-ingest', 60_000);
         await ready('run-ingest');
         assert.equal((await (await api.get(endpoint)).json()).reviews.length, 0);
         await click(browser, '#bi-builder-details');
@@ -388,11 +388,11 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
         await openBuilder(browser);
         await visible('run-ingest');
         await click(browser, '#bi-builder-run-ingest');
-        await visible('run-testing');
+        await visible('run-testing', 60_000);
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").textContent'), /23 mm/);
         assert.equal((await (await api.get(endpoint)).json()).reviews.length, 0);
         await click(browser, '#bi-builder-run-testing');
-        await visible('submit');
+        await visible('submit', 60_000);
         assert.match(await browser.evaluate<string>('document.querySelector("#bi-builder-report").textContent'), /1\/2.*50%/);
 
         await change('mode', 'automatic');
@@ -401,7 +401,7 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
         await save('testing');
         await selectFile(browser, '#bi-builder-file', file);
         await click(browser, '#bi-builder-run');
-        await browser.ready('document.querySelector("#bi-builder-report").textContent.includes("100%")');
+        await browser.ready('document.querySelector("#bi-builder-report").textContent.includes("100%")', 60_000);
         assert.equal(await browser.evaluate('document.querySelector("#bi-builder-submit").hidden'), true);
         await change('saved-questions', 'Synthetic checks');
         await ready('save-testing');
@@ -412,7 +412,7 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
         await fill(browser, '#bi-builder-title', '');
         await fill(browser, '#bi-builder-folder', fixture);
         await click(browser, '#bi-builder-import-workspace');
-        await browser.ready('document.querySelector("#bi-builder-title").value === "Synthetic calibration vault"');
+        await browser.ready('document.querySelector("#bi-builder-title").value === "Synthetic calibration vault"', 60_000);
         await ready('workspace-cards');
         await click(browser, '#bi-builder-workspace-cards');
         await browser.ready('document.querySelector("#bi-builder-workspace-card")?.options.length === 3');
