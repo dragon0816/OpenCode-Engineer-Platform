@@ -205,9 +205,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const modelSettings = () => {
     const selection = modelSelection();
     const choices = store.modelChoices(runtime.builtInAliases);
+    const modelNotes = store.modelNotes([...new Set([...choices, ...runtime.aliases])]);
     return { defaultAlias: runtime.alias, aliases: runtime.aliasHealth(), credentialsConfigured: true,
       selected: selection.ids, configuredDefaultAlias: selection.defaultAlias, choices,
-      modelNotes: store.modelNotes([...new Set([...choices, ...runtime.aliases])]),
+      ...(Object.keys(modelNotes).length ? { modelNotes } : {}),
       discoveredAt: store.modelCatalog()?.discoveredAt ?? null, maxSelected: maxSelectedModels,
       restartRequired: !sameModels(selection.ids), canRestart: Boolean(requestRestart) };
   };
@@ -476,8 +477,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
             throw new HttpError(400, 'invalid-model-note');
           }
           const edits = Object.fromEntries(Object.entries(notes).map(([id, note]) => [id, (note as string).trim()]));
-          if (fields.length === 1 && 'notes' in input) store.saveModelNotes(edits, runtime.builtInAliases);
-          else if (fields.some((key) => !['selected', 'alias', 'notes'].includes(key)) ||
+          if (fields.length === 1 && 'notes' in input) {
+            store.saveModelNotes(edits, runtime.builtInAliases);
+            return send(response, 200, modelSettings());
+          }
+          if (fields.some((key) => !['selected', 'alias', 'notes'].includes(key)) ||
               !store.saveModelSelection(input.selected, input.alias, runtime.builtInAliases, edits)) {
             throw new HttpError(400, 'invalid-model-selection', { max: maxSelectedModels });
           }
