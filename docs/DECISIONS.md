@@ -385,3 +385,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 選用 Codex／Claude Code 的助理與一般助理相同，直接對話即可，移除「準備外部交辦」按鈕與定稿對話框。資料規則改為預設只擋「機密」標記的資料（含其衍生內容），未分級資料可送出；設定中保留「嚴格模式：只允許標為公開的資料」（預設關閉）。送出時與執行時各檢查一次，逐次確認預設關閉。
 - **理由：** 擁有者決定；原流程需額外定稿步驟，且未分級即擋下造成大量摩擦。
 - **捨棄的替代方案：** 原 D2 預設（未分級一律擋下）改為嚴格模式選項保留。
+
+## 2026-11-23 BI 文件擷取工作程序
+
+- 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
+- PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
