@@ -259,6 +259,8 @@ const messages = {
   'upload-incomplete': "檔案上傳未完成。",
   'upload-length-mismatch': "檔案超過指定大小。",
   'upload-length-required': "請提供檔案大小。",
+  'upload-storage-full': "OEP 儲存空間不足。請釋出空間再試一次。",
+  'upload-storage-unavailable': "OEP 無法存取附件儲存空間。請檢查資料夾是否可用後再試一次。",
   'upload-too-large': "檔案超過 {size} MiB。",
   'workbook-assistant-required': "請選擇 Excel 工作表助理來產生工作簿。",
   'workbook-data-invalid': "模型寫入的工作簿資料無效。請重送要求。",

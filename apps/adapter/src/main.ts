@@ -34,7 +34,7 @@ import { reviewAction, uploadReviewSource } from './http/review.ts';
 import { HttpError, WebMessageError } from './http/errors.ts';
 import { codeForFallback, describeRepositoryIssue, webMessage } from './http/messages.ts';
 import { WebEvents } from './http/events.ts';
-import { download, sendDownload, upload } from './http/files.ts';
+import { download, reportClientUpload, sendDownload, upload, uploadFailure } from './http/files.ts';
 import { convertWorkbook, isAttachmentImage, uploadType, uuid } from './runs/attachments.ts';
 import { projects, WebStore } from './runs/web-store.ts';
 import { assistantMcpPaused, customMcpTool, pinCustomRemoteMcp, validateCustomRemoteMcp, validateCustomStdioMcp } from './runs/custom-mcp.ts';
@@ -146,6 +146,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   })();
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher,
     delegations, referencePicker);
+  const uploadAudit = join(runtime.root, 'web-uploads.jsonl');
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
@@ -1075,9 +1076,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 200, {});
     }
     else if (method === 'POST' && resource === 'attachments') {
-      const attachment = await upload(request, chat, session);
-      events.notify(session.id);
-      send(response, 201, attachment);
+      try {
+        const attachment = await upload(request, chat, session);
+        events.notify(session.id);
+        send(response, 201, attachment);
+      } catch (error) { throw uploadFailure(error, uploadAudit); }
+    } else if (method === 'POST' && resource === 'attachment-diagnostics' && item === undefined) {
+      reportClientUpload(uploadAudit, await body(request, 256));
+      send(response, 200, {});
     } else if (method === 'POST' && resource === 'turns') {
       const input = parseTurn(await body(request));
       const reference = input.replyTo && ((store.turn(id, input.id) && store.reply(input.id)) ??
