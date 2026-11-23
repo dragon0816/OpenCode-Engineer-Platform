@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
@@ -13,6 +13,7 @@ import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import { gatewayAliases, gatewaySettings } from '../../apps/adapter/src/opencode/gateway.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { readApprovedPage } from '../../packages/knowledge/src/bi/link-intake.ts';
+import { canonical, sha256 } from '../../packages/knowledge/src/snapshot.ts';
 import { pdf, stream } from '../fixtures/knowledge/pdf.ts';
 import { biPluginRepository, biPluginRepositoryQuote } from '../fixtures/knowledge/repository.ts';
 import { syntheticMcpCertificate } from '../fixtures/mcp/tls.ts';
@@ -294,7 +295,15 @@ test('runs BI stage checkpoints and benchmark thresholds, edits a working export
   const audit = join(root, 'audit');
   mkdirSync(profile);
   mkdirSync(audit);
-  const fixture = resolve('tests/fixtures/knowledge/bi-working-export');
+  const fixture = join(root, 'working-export');
+  cpSync(resolve('tests/fixtures/knowledge/bi-working-export'), fixture, { recursive: true });
+  // Match the size class of the example export without reusing any of its data.
+  for (let seq = 2; seq <= 5; seq++) {
+    const commit = { format: 'aep.knowledge.commit/v1', repo: 'synthetic-working', author: 'fixture', seq, clock: seq,
+      kind: 'change', purpose: 'Synthetic import size check', base: null, created: '2026-01-01T00:00:00Z', files: [],
+      ops: [{ unit: 'meta:fixture:' + seq, value: 'x'.repeat(3 * 1024 * 1024), base: null }] };
+    writeFileSync(join(fixture, 'commits', 'fixture', seq + '.json'), JSON.stringify({ ...commit, id: sha256(canonical(commit)) }));
+  }
   const file = join(root, 'synthetic-reading.txt');
   const fact = 'SYN-GAMMA calibration limit is 23 mm.';
   writeFileSync(file, 'Name: SYN-GAMMA\nReading: ' + fact);

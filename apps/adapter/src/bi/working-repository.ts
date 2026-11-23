@@ -8,6 +8,8 @@ import type { documentWorker } from './document-worker.ts';
 type Replay = { units: Record<string, unknown>; clock: number; digest: string; commits: number; conflicts: number };
 const sequence = /^([1-9][0-9]{0,8})\.json$/;
 const author = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+const commitLimit = 8 * 1024 * 1024;
+export const workingRepositoryLimit = 24 * 1024 * 1024;
 
 function project({ units, clock, digest, commits, conflicts }: Replay, vault: Snapshot['vault']) {
   const reference = typeof units.schema === 'string' ? units.schema : typeof units.schema === 'object' && units.schema
@@ -111,9 +113,8 @@ export async function readWorkingRepository(path: string, destination: string, w
   let size = 0;
   function load(name: string) {
     signal.throwIfAborted();
-    const raw = folder.utf8(name);
+    const raw = folder.utf8(name, Math.min(commitLimit, workingRepositoryLimit - size));
     size += Buffer.byteLength(raw);
-    if (size > 6 * 1024 * 1024) throw new RepositoryError('.', 'Working export exceeds the supported replay size.');
     return raw;
   }
   function commitsAt(directory: string) {
@@ -125,6 +126,6 @@ export async function readWorkingRepository(path: string, destination: string, w
   const local = commitsAt('work/commits');
   const pending = folder.list('work', true).some(entry => entry.name === 'pending.json') ? load('work/pending.json') : null;
   const input = Buffer.from(JSON.stringify({ repository: vault.id, commits, local, pending }));
-  if (input.length > 8 * 1024 * 1024) throw new RepositoryError('.', 'Working export exceeds the supported replay size.');
+  if (input.length > workingRepositoryLimit) throw new RepositoryError('.', 'Working export exceeds the supported replay size.');
   return project(await worker<Replay>(['worktree'], input, signal), vault);
 }

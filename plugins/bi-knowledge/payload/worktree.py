@@ -6,6 +6,8 @@ import json
 import re
 
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+INPUT_BYTES = 24 * 1024 * 1024
+PROJECTION_BYTES = 20 * 1024 * 1024
 
 
 def canonical(value):
@@ -57,7 +59,8 @@ def replay(repository, commits, local, pending):
     # These are data units. Imported skills and tools never become runnable host code.
     roots = ("card:", "field:", "state:", "relation:", "evidence:", "relation_evidence:")
     projected = {key: value for key, value in units.items() if key == "schema" or key.startswith(roots)}
-    if len(canonical(projected).encode()) > 1_800_000:
+    # The broker serializes the returned JSON as ASCII, including escaped non-ASCII text.
+    if len(json.dumps(projected, ensure_ascii=True, allow_nan=False)) > PROJECTION_BYTES:
         raise ValueError("limit")
     return {"units": projected, "digest": digest(units), "conflicts": conflicts, "commits": len(ordered),
             "clock": ordered[-1][0] if ordered else 0}

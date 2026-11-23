@@ -9,11 +9,11 @@ def process(operation, args, data):
     from extract import plan
     from recipes import records
     from staging import card_identity
-    from worktree import replay
+    from worktree import INPUT_BYTES, replay
 
 
     try:
-        if len(data) > SOURCE_BYTES:
+        if len(data) > (INPUT_BYTES if operation == "worktree" else SOURCE_BYTES):
             raise ConversionError("limit")
         if operation == "convert":
             result = convert(args[0], data, args[1])

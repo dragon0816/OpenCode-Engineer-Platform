@@ -9,6 +9,7 @@ import type { Runtime } from '../../../launcher/src/runtime.ts';
 import type { DocumentExtraction, DocumentInput } from '../bi/document-extraction.ts';
 import type { BiProvenance } from '../../../../packages/knowledge/src/bi/ownership.ts';
 import { documentResult } from '../bi/document-worker.ts';
+import { workingRepositoryLimit } from '../bi/working-repository.ts';
 import { proposeReview } from '../http/review.ts';
 import type { ReferencePicker } from '../runs/reference-picker.ts';
 import { checkDirectory, openWorkspaceFile, scopedPath } from '../runs/workspace.ts';
@@ -199,7 +200,7 @@ export class PluginRuntime {
   }
 
   private launch(grant: Grant, worker: VerifiedPlugin['manifest']['components']['pythonWorkers'][number], input: unknown,
-    sources: Map<string, Source>, documentSignal?: AbortSignal) {
+    sources: Map<string, Source>, documentSignal?: AbortSignal, resultLimit?: number) {
     const active = [...this.jobs.values()].filter(({ update }) => !terminal(update.state));
     requirePlugin(active.length < 3 && !active.some((job) => job.plugin === grant.id), 'runtime-busy');
     if (this.jobs.size >= 32) {
@@ -220,7 +221,7 @@ export class PluginRuntime {
     }, (method, params) => {
       requirePlugin(!documentSignal || method === 'sources.read', 'runtime-forbidden');
       return this.call(grant, method, params, job);
-    }, documentSignal ? 2 * 1024 * 1024 : undefined).then(async (result) => {
+    }, resultLimit ?? (documentSignal ? 2 * 1024 * 1024 : undefined)).then(async (result) => {
       this.active(grant);
       signal.throwIfAborted();
       const review = job.proposal && await this.propose(grant, job, job.proposal);
@@ -248,11 +249,14 @@ export class PluginRuntime {
       this.active(grant);
       parent.throwIfAborted();
       const source = { id: randomUUID(), sha256: sha256(bytes), bytes, name: operation, confidential: false };
-      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent);
-      await job.done;
-      parent.throwIfAborted();
-      requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
-      return documentResult<T>(job.update.result);
+      const resultLimit = operation === 'worktree' ? workingRepositoryLimit : undefined;
+      const job = this.launch(grant, worker, { operation, args, source: source.id }, new Map([[source.id, source]]), parent, resultLimit);
+      try {
+        await job.done;
+        parent.throwIfAborted();
+        requirePlugin(job.update.state === 'succeeded', job.update.error ?? 'worker-failed');
+        return documentResult<T>(job.update.result);
+      } finally { this.jobs.delete(job.update.id); }
     };
     return { ...this.bi, run };
   }

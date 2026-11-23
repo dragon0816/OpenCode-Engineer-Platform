@@ -114,8 +114,8 @@ export class RepositoryFolder {
     }
   }
 
-  utf8(file: string) {
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(this.bytes(file, maxRecordBytes)); }
+  utf8(file: string, limit = maxRecordBytes) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(this.bytes(file, limit)); }
     catch (error) {
       if (error instanceof TypeError) throw new RepositoryError(file, 'Invalid UTF-8 record.');
       throw fileError(file, error);

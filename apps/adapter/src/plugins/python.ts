@@ -182,7 +182,8 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
     };
     signal.addEventListener('abort', end, { once: true });
     const send = (value: unknown) => child.stdin.write(JSON.stringify(value) + '\n');
-    let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    const chunks: Buffer[] = [];
+    let buffered = 0;
     let started = false;
     let sequence = 0;
     let result: unknown;
@@ -191,12 +192,17 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
       send({ port: (probe.address() as AddressInfo).port, sentinel });
       for await (const piece of child.stdout as AsyncIterable<Buffer>) {
         signal.throwIfAborted();
-        buffer = Buffer.concat([buffer, piece]);
+        let offset = 0;
         let newline: number;
-        while ((newline = buffer.indexOf(10)) !== -1) {
-          requirePlugin(newline <= resultLimit && !returned, 'worker-protocol');
-          const frame = JSON.parse(buffer.subarray(0, newline).toString('utf8')) as Record<string, unknown>;
-          buffer = buffer.subarray(newline + 1);
+        while ((newline = piece.indexOf(10, offset)) !== -1) {
+          const tail = piece.subarray(offset, newline);
+          const size = buffered + tail.length;
+          requirePlugin(size <= resultLimit && !returned, 'worker-protocol');
+          const bytes = buffered ? Buffer.concat([...chunks, tail], size) : tail;
+          const frame = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+          chunks.length = 0;
+          buffered = 0;
+          offset = newline + 1;
           if (!started) {
             requirePlugin(frame?.ready === true && Object.keys(frame).length === 1, 'isolation-unavailable');
             started = true;
@@ -207,7 +213,7 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
             returned = true;
             child.stdin.end();
           } else {
-            requirePlugin(newline <= frameLimit && ++sequence <= maxCalls && frame?.jsonrpc === '2.0' && frame.id === sequence &&
+            requirePlugin(size <= frameLimit && ++sequence <= maxCalls && frame?.jsonrpc === '2.0' && frame.id === sequence &&
               typeof frame.method === 'string' && frame.params && typeof frame.params === 'object' &&
               !Array.isArray(frame.params) && Object.keys(frame).length === 4, 'worker-protocol');
             const envelope = { jsonrpc: '2.0', id: sequence };
@@ -218,12 +224,16 @@ export async function runPython(root: string, plugin: VerifiedPlugin, worker: Wo
             }
           }
         }
-        requirePlugin(buffer.length <= resultLimit, 'worker-protocol');
+        if (offset < piece.length) {
+          buffered += piece.length - offset;
+          requirePlugin(buffered <= resultLimit, 'worker-protocol');
+          chunks.push(piece.subarray(offset));
+        }
       }
       const code = await finished;
       signal.throwIfAborted();
       requirePlugin(started && code !== 2, 'isolation-unavailable');
-      requirePlugin(code === 0 && returned && !buffer.length, 'worker-failed');
+      requirePlugin(code === 0 && returned && !buffered, 'worker-failed');
       return result;
     } finally {
       signal.removeEventListener('abort', end);
