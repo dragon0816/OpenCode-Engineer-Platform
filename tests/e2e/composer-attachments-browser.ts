@@ -72,11 +72,9 @@ export async function verifyBenchmarkUploads(page: Page, audit: string, click: (
       await page.evaluate(`${rows(name)}.forEach(row => row.querySelector('input').click())`);
     }
   } finally { await page.command('Page.setInterceptFileChooserDialog', { enabled: false }); }
-  console.log('Benchmark JSON uploads passed in Chromium (paste, drop and file picker).');
-
   const diagnosticFile = join(audit, 'web-uploads.jsonl');
   const failure = async (name: string, error: string, message: string, code: string) => {
-    const read = `Object.defineProperty(File.prototype, 'arrayBuffer', {
+    const read = `void Object.defineProperty(File.prototype, 'arrayBuffer', {
       configurable: true, value: () => Promise.reject(${error})
     });`;
     await page.evaluate(read);
@@ -104,6 +102,7 @@ export async function verifyBenchmarkUploads(page: Page, audit: string, click: (
   assert.equal(await paste(page, retry, benchmarkJson, 'application/json'), true);
   await expectBenchmark(retry, 1);
   await page.evaluate(`${rows(retry)}[0].querySelector('input').click()`);
+  console.log('Benchmark JSON uploads and upload diagnostics passed in Chromium (paste, drop and file picker).');
 }
 
 export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean, captureEngineering: boolean) {
