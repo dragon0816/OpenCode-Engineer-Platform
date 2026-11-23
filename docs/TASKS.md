@@ -379,3 +379,10 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 讓已綁定並授權模型使用的 BI 助理搜尋卡片、跟隨關聯並引用核對過的來源。
 - [x] 讓 Telegram BI 收件透過 IANA 時區排程及既有派送器轉檔、擷取並送審。 [合成驗收及展示](reviews/PHASE3G_BI_PARITY_REPORT.md)
 - [ ] 複核實際工作匯出及 Gateway，合併 OCR 與能力頁，完成審核者保留的關卡。
+
+## 0.10 整合驗證
+
+- [x] 依序整合 Windows OCR、訂閱登入、Gateway 模型別名備註、能力頁和 BI Knowledge 1.2.0。OCR 選項隨 Convert 階段儲存，已綁定的助理可查詢從能力頁匯入的 BI 知識庫。
+- [x] 驗證 Web v12 → v13 → v14 與知識庫 v3 → v4，涵蓋新建、0.9.0 資料、中間版本、重複遷移和失敗回復。
+- [x] 通過有序自動關卡，包含三輪 Chromium、BI OCR、BI Plugin、BI parity、能力頁和標準及 bundled 發行重現性。 [整合與驗證報告](reviews/INTEGRATION_0_10_REPORT.md)
+- [ ] 審核者驗收 Web HTTP、Excel、安裝、升級、備份和外部助理受限權杖測試。擁有者以實際 BI 匯出、掃描文件與受核准的即時服務驗收。
