@@ -1,6 +1,6 @@
 import { errorText } from './api.js';
 import { biDocumentIssues } from './bi-documents.js';
-import { bindFilePicker, getLocale, message, optionText, setText } from './i18n.js';
+import { bindFilePicker, getLocale, joinText, message, optionText, setText } from './i18n.js';
 
 const working = new Set(['converting', 'extracting', 'validating']);
 const steps = [
@@ -60,7 +60,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
   title.addEventListener('input', () => { draft.title = title.value; });
   const file = element('input', undefined, 'file');
   file.type = 'file';
-  file.accept = '.pdf,.txt,.md,.markdown,.html,.htm';
+  file.accept = '.pdf,.png,.jpg,.jpeg,.txt,.md,.markdown,.html,.htm';
   const url = element('input', undefined, 'url');
   url.type = 'url';
   url.maxLength = 2048;
@@ -85,9 +85,21 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
   }));
   const schema = element('select', undefined, 'schema');
   schema.addEventListener('change', () => { draft.schema = schema.value; });
+  const language = element('select', undefined, 'ocr-language');
+  language.append(optionText(message('biOcr.language.auto'), 'auto'), optionText(message('biOcr.language.en-US'), 'en-US'),
+    optionText(message('biOcr.language.zh-Hant-TW'), 'zh-Hant-TW'));
+  language.value = draft.ocrLanguage ?? 'auto';
+  language.addEventListener('change', () => { draft.ocrLanguage = language.value; });
+  const mode = element('select', undefined, 'ocr-mode');
+  mode.append(optionText(message('biOcr.mode.auto'), 'auto'), optionText(message('biOcr.mode.local-only'), 'local'),
+    optionText(message('biOcr.mode.model'), 'model'));
+  mode.value = draft.ocrMode ?? 'auto';
+  mode.addEventListener('change', () => { draft.ocrMode = mode.value; });
+  const pageReport = element('div', undefined, 'pages');
   const areas = [element('section'), element('section'), element('section')];
   areas[0].append(element('h3', steps[0]), field(message('biBuilder.title'), title),
-    field(message('biDocument.file'), file), field(message('biDocument.url'), url), field(message('biBuilder.folder'), folder), pick);
+    field(message('biDocument.file'), file), field(message('biOcr.language'), language), field(message('biOcr.mode'), mode),
+    element('p', message('biOcr.gateway')), pageReport, field(message('biDocument.url'), url), field(message('biBuilder.folder'), folder), pick);
   bindFilePicker(file);
   const pickerButton = file.nextElementSibling.querySelector('button');
   const consent = element('input', undefined, 'consent');
@@ -138,7 +150,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
   }
 
   function controls() {
-    for (const input of [title, file, url, folder, schema, pick, consent, pickerButton, importSchemas, importRepository]) input.disabled = busy;
+    for (const input of [title, file, url, folder, schema, language, mode, pick, consent, pickerButton, importSchemas, importRepository]) input.disabled = busy;
     run.disabled = busy || !schema.value;
     submit.disabled = busy;
     submit.hidden = current?.state !== 'validated';
@@ -160,6 +172,16 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
       message('biDocument.progress', { completed: result.completedChunks, total: result.totalChunks }) :
       states[state] || states[result.state];
     setText(feedback, detail);
+    pageReport.replaceChildren();
+    if (result.pages?.length) {
+      const list = element('ul');
+      for (const page of result.pages) list.append(element('li', joinText([
+        message('biOcr.page', { page: page.locator.split(':')[1],
+          status: message('biOcr.status.' + (page.status === 'local' ? 'local-ocr' : page.status)) }),
+        page.ocr?.engine, page.warning && message('biOcr.warning.' + page.warning),
+      ])));
+      pageReport.append(element('p', result.source.title || result.source.ref), list);
+    }
     validation.replaceChildren();
     if (result.repository) {
       const { digestVerified, sizeVerified, ...details } = result.repository;
@@ -181,7 +203,8 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
           findings.append(finding);
         }
         for (const evidence of Object.values(candidate.evidence)) {
-          findings.append(element('li', evidence.locator + ' · ' + evidence.quote));
+          findings.append(element('li', joinText([evidence.locator,
+            evidence.ocr && message('biOcr.evidence', { engine: evidence.ocr.engine }), evidence.quote])));
         }
         row.append(findings);
         candidates.append(row);
@@ -225,6 +248,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft) {
     progressTitle.scrollIntoView({ block: 'nearest' });
     const source = selected ? (await api.source(selected)).id : undefined;
     const params = { schema: schema.value, allowModel: consent.checked, title: title.value.trim() || undefined,
+      ocr: { language: language.value, mode: mode.value },
       ...(source ? { source } : { url: link }) };
     await watch(await api.call('bi.start', params));
   }
