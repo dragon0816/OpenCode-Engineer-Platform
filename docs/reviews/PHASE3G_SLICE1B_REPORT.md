@@ -51,3 +51,30 @@ To try the synthetic builder, package the fixture with `node scripts/plugins/pac
 The BI extraction port, verified PDF or Office normalization for review evidence, multi-source review batches, plugin data migration plans, Skills and Workflows, and collection record APIs remain follow-on work. The registered collection declarations expose their schema, scope and review policy. The runtime provides in-process job status and cleans abandoned jobs on restart. Durable job history and replay are outside this slice.
 
 All slice 1 assertions retain their coverage. The slice 1 helper still emits the earlier permission shape for the original consent and recovery assertions. Its package-on-disk fixture now declares the full worker flow. The suite adds actual worker confinement, timeout, cancel and owner-loss checks, a native payload rejection, source references and cross-plugin grant checks, progress in Chromium, and a verified review ending in owner publication.
+
+## Verification setup and retries
+
+Ran `npm ci`, copied `.phase0/assets` and `.phase0/source` from the main checkout, and ran `node scripts/phase0/install-hooks.mjs`. The hook installer initially refused the worktree's T3 hook snapshot. Setting this worktree's `core.hooksPath` to `.githooks` let the installer finish. Every gate used a fresh temporary `OEP_DATA_DIR`, with the verification Python venv first on PATH and `OEP_PYTHON` set only for the test process. The installed OEP and its data roots were outside verification.
+
+Early probes exposed two Windows startup requirements. LPAC needed the OS registry-read capability to initialize desktop Python, and the fresh profile needed a medium-integrity label to deny filesystem writes. The first full plugin suite had 8 passes and 1 failure because the package builder rejected the vendored `__init__.py` path. Allowing that path in the package reader fixed the existing packaging assertion. The first ordered sweep caught implicit proposal types and a missing attachment directory in the seeded HTTP fixture. The second ordered sweep caught the fixture's workspace hash argument type. The reference test passed after creating the session directory and using the attachment API's public checksum.
+
+## Final ordered gate output
+
+Implementation and tests at `f6e022f`. Each command exited 0. The second ordered sweep also passed the nine plugin tests before the final sweep. No gate required a load-related retry.
+
+| Command | Observed output |
+| --- | --- |
+| `npm run lint` | Checked 313 source and configuration files. |
+| `npm run typecheck` | `tsc --noEmit` completed with no diagnostics. |
+| `npm test` | 113 passed, 0 failed, 0 skipped. |
+| `npm run build:release` | Built `OEP-0.0.0-windows-x64.zip` in 19.6 s. SHA-256 `c84fdef2a3227dfccf1fb033318a4bee54ce03e105c3fdd267ba4b6815fa299b`. |
+| `npm run test:e2e:browser` run 1 | 136.3 s. Supervisor exit 0, child exit 0, `orphans: 0`. |
+| `npm run test:e2e:browser` run 2 | 138.8 s. Supervisor exit 0, child exit 0, `orphans: 0`. |
+| `npm run test:e2e:knowledge` | 1 passed, 0 failed, 0 skipped. |
+| `npm run test:ingest` | 16 passed, 0 failed, 0 skipped. |
+| `npm run test:contract:native:isolation` | 5 passed, 0 failed, 0 skipped. Both reported host receipts had 0 orphans. |
+| `npm run test:release:determinism` | 1 passed, 0 failed, 0 skipped. Both archives matched the release SHA-256 above. |
+| `npm run scan` | 787 files scanned, 0 hits. |
+| `npm run test:plugins` | 9 passed, 0 failed, 0 skipped. |
+
+Web HTTP, Excel, install, upgrade and backup gates remain with the reviewer.
