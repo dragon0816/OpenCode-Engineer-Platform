@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { atRepo } from '../../../launcher/src/paths.ts';
 import type { FileIdentity } from '../../../../packages/contracts/src/run.ts';
 
 export type OpenFile = { identity: FileIdentity; data: Buffer };
@@ -22,51 +23,8 @@ export function scopedPath(root: string, name: string) {
 function windowsAttributes(path: string, mode?: 'expand' | 'plain') {
   if (process.platform !== 'win32') return path;
   // libuv recognises symlinks and junctions. Check the Windows attribute for other reparse tags too.
-  const result = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-c', [
-    'import ctypes, os, sys',
-    'attributes = ctypes.windll.kernel32.GetFileAttributesW',
-    'attributes.argtypes = [ctypes.c_wchar_p]',
-    'attributes.restype = ctypes.c_uint32',
-    'path = p = sys.argv[1]',
-    'parents = [p]',
-    'while True:',
-    ' parent = os.path.dirname(p)',
-    ' if parent == p: break',
-    ' parents.append(parent)',
-    ' p = parent',
-    // Namespace each complete path after walking the normal drive or UNC ancestry.
-    'slash = chr(92)',
-    'prefix = slash * 2 + "?" + slash',
-    'unc = prefix + "UNC" + slash',
-    'def namespaced(p): return unc + p[2:] if p.startswith(slash * 2) else prefix + p',
-    'for p in reversed(parents):',
-    ' result = attributes(namespaced(p))',
-    ' if result == 0xffffffff or result & 0x400: sys.exit(1)',
-    'if len(sys.argv) > 2 and sys.argv[2] == "plain":',
-    ' k = ctypes.WinDLL("kernel32", use_last_error=True)',
-    ' first, next_stream, close = k.FindFirstStreamW, k.FindNextStreamW, k.FindClose',
-    ' first.argtypes, first.restype = [ctypes.c_wchar_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32], ctypes.c_void_p',
-    ' next_stream.argtypes = [ctypes.c_void_p, ctypes.c_void_p]',
-    ' close.argtypes = [ctypes.c_void_p]',
-    ' class Stream(ctypes.Structure):',
-    '  _fields_ = [("size", ctypes.c_int64), ("name", ctypes.c_wchar * 296)]',
-    ' stream = Stream()',
-    ' h = first(namespaced(path), 0, ctypes.byref(stream), 0)',
-    ' if h == ctypes.c_void_p(-1).value:',
-    '  if ctypes.get_last_error() != 38: sys.exit(1)',
-    ' else:',
-    '  try:',
-    '   if stream.name != "::$DATA" or next_stream(h, ctypes.byref(stream)) or ctypes.get_last_error() != 38: sys.exit(1)',
-    '  finally: close(h)',
-    'if len(sys.argv) > 2 and sys.argv[2] == "expand":',
-    ' long_name = ctypes.windll.kernel32.GetLongPathNameW',
-    ' long_name.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]',
-    ' long_name.restype = ctypes.c_uint32',
-    ' buffer = ctypes.create_unicode_buffer(32768)',
-    ' if not 0 < long_name(namespaced(path), buffer, len(buffer)) < len(buffer): sys.exit(1)',
-    ' name = buffer.value',
-    ' sys.stdout.buffer.write((slash * 2 + name[len(unc):] if name.startswith(unc) else name.removeprefix(prefix)).encode("utf-8"))',
-  ].join('\n'), path, ...(mode ? [mode] : [])], {
+  const worker = atRepo('workers/files/windows_probe.py');
+  const result = spawnSync(process.env.OEP_PYTHON || 'python', ['-I', '-B', worker, path, ...(mode ? [mode] : [])], {
     windowsHide: true, timeout: 2_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH } });
   if (result.status !== 0 || mode === 'expand' && !result.stdout) throw unsafe();
