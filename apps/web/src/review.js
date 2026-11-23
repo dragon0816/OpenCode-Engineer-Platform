@@ -72,8 +72,10 @@ function showComparison(parent, { previous, candidate }) {
   const sources = new Map(candidate.sources.map((item) => [item.id, item.ref]));
   for (const item of candidate.passages) {
     if (JSON.stringify(item) === JSON.stringify(oldPassages.get(item.id))) continue;
-    evidence.append(element('p', sources.get(item.sourceId)), element('blockquote', item.text));
-    if (item.locator) advanced(evidence).append(element('p', item.locator));
+    const document = item.sourceId.startsWith('source-extract-');
+    const label = document ? joinText([sources.get(item.sourceId), item.locator]) : sources.get(item.sourceId);
+    evidence.append(element('p', label), element('blockquote', item.text));
+    if (item.locator && !document) advanced(evidence).append(element('p', item.locator));
   }
   parent.append(evidence);
 }

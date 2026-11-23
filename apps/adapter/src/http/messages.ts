@@ -1,5 +1,10 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'bi-document-format': "請選擇 PDF、文字、Markdown 或 HTML 檔。",
+  'bi-document-import': "無法從此資料夾匯入支援的卡片結構。",
+  'bi-document-input': "請確認來源及所選的卡片結構。",
+  'bi-document-busy': "請等候目前的擷取工作完成。",
+  'bi-document-not-found': "找不到此擷取工作。",
   'external-invalid-input': "請檢查外部幫手輸入。",
   'external-confidential': "機密來源不可交辦給外部幫手。",
   'external-unclassified': "先將來源與工作資料夾標為公開。",

@@ -48,6 +48,8 @@ import { Dispatcher } from './runs/dispatcher.ts';
 import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
 import { agentManagement } from './http/agents.ts';
+import { DocumentExtraction } from './bi/document-extraction.ts';
+import { receiveBiDocument } from './http/bi-documents.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -66,6 +68,7 @@ const assets = new Map([
   ['/knowledge-quality.js', ['src/knowledge-quality.js', 'text/javascript; charset=utf-8']],
   ['/knowledge-browser.js', ['src/knowledge-browser.js', 'text/javascript; charset=utf-8']],
   ['/knowledge.js', ['src/knowledge.js', 'text/javascript; charset=utf-8']],
+  ['/bi-documents.js', ['src/bi-documents.js', 'text/javascript; charset=utf-8']],
   ['/jobs.js', ['src/jobs.js', 'text/javascript; charset=utf-8']],
   ['/i18n.js', ['src/i18n.js', 'text/javascript; charset=utf-8']],
   ['/i18n/en.js', ['src/i18n/en.js', 'text/javascript; charset=utf-8']],
@@ -144,6 +147,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher, delegations);
   delegations.registerWorker(store, chat, telegram.delegationBi);
   const knowledgeStore = runtime.knowledge?.reviewStore;
+  const extraction = runtime.knowledge && new DocumentExtraction(join(root, 'bi-documents.sqlite'), runtime.knowledge,
+    () => new Set(telegram.approvedBiOrigins()), undefined,
+    () => store.executionProfile('bi', 'bi')?.defaultModel ?? undefined);
+  let receivingBiDocument = false;
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
   delegations.registerExternal(external);
@@ -476,7 +483,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const input = await body(request);
       if (Object.keys(input).length) throw new HttpError(400, 'restart-has-input');
       if (!requestRestart) throw new HttpError(503, 'restart-unavailable');
-      if (restarting || active.size > 1 || chat.busy() || dispatcher.busy() || !telegram.pauseForRestart()) {
+      if (restarting || active.size > 1 || chat.busy() || dispatcher.busy() || extraction?.busy() || !telegram.pauseForRestart()) {
         throw new HttpError(409, 'restart-busy');
       }
       restarting = true;
@@ -638,6 +645,43 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (!bytes) throw new HttpError(404, 'source-not-found');
       response.writeHead(200, { 'Content-Type': 'application/octet-stream',
         'Content-Disposition': 'attachment; filename="telegram-source.bin"' }).end(bytes);
+      return;
+    }
+    const documents = '/api/knowledge/bi-documents';
+    if (extraction && path.startsWith(documents + '/')) {
+      const route = path.slice(documents.length);
+      const file = /^\/file\/([a-f0-9]{64})\/([01])$/.exec(route);
+      const run = /^\/runs\/([a-f0-9-]{36})$/.exec(route);
+      if (method === 'GET' && route === '/schemas') {
+        send(response, 200, { choices: extraction.choices() });
+      } else if (method === 'GET' && route === '/runs') {
+        send(response, 200, { runs: extraction.recent() });
+      } else if (method === 'GET' && run && uuid.test(run[1])) {
+        const status = extraction.status(run[1]);
+        if (!status) throw new HttpError(404, 'bi-document-not-found');
+        send(response, 200, status);
+      } else if (method === 'POST' && route === '/schemas') {
+        const { folder } = await body(request);
+        try { send(response, 200, await extraction.importSchemas(folder)); }
+        catch { throw new HttpError(422, 'bi-document-import'); }
+      } else if (method === 'POST' && (route === '/link' || file)) {
+        if (receivingBiDocument || extraction.busy()) throw new HttpError(409, 'bi-document-busy');
+        receivingBiDocument = true;
+        try {
+          let status;
+          if (file) {
+            status = extraction.start(await receiveBiDocument(request), file[1], file[2] === '1');
+          } else {
+            const { url, schema, allowModel } = await body(request);
+            if (typeof url !== 'string' || typeof allowModel !== 'boolean') throw new HttpError(422, 'bi-document-input');
+            status = extraction.start({ url }, schema, allowModel);
+          }
+          send(response, 202, status);
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          throw new HttpError(422, 'bi-document-input');
+        } finally { receivingBiDocument = false; }
+      } else throw new HttpError(404, 'route-not-found');
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/review-sources' && method === 'POST') {
@@ -1072,7 +1116,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       server.closeAllConnections();
       await closed;
       await dispatcher.close();
-      await Promise.all([stopped, telegram.close(), ...active]);
+      await Promise.all([stopped, telegram.close(), extraction?.close(), ...active]);
       store.close();
     },
   };

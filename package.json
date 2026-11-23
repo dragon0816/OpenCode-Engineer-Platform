@@ -15,6 +15,7 @@
     "test:knowledge": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/contract/knowledge*.test.ts",
     "test:e2e:mcp": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp.ts && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-probe.ts && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-remote.mjs && node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/custom-mcp-browser.ts --leaks",
     "test:e2e:knowledge": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/knowledge.test.ts",
+    "test:bi-extraction": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/bi-extraction.test.ts",
     "test:e2e:delegation": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/delegation.test.ts",
     "knowledge:migrate": "node --disable-warning=ExperimentalWarning scripts/knowledge/migrate.ts",
     "knowledge:inspect": "node --disable-warning=ExperimentalWarning scripts/knowledge/inspect.ts",

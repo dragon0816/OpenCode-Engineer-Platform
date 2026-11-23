@@ -2,6 +2,7 @@ import { formatDate, joinText, LocalizedError, message, optionText, setText } fr
 import { bindKnowledgeQuality } from './knowledge-quality.js';
 import { bindKnowledgeBrowser } from './knowledge-browser.js';
 import { bindReview } from './review.js';
+import { bindBiDocuments } from './bi-documents.js';
 import { errorText, request, RequestError, sampleKnowledgeID, serverText } from './api.js';
 import { classificationControl } from './external-helpers.js';
 
@@ -40,6 +41,7 @@ export function bindKnowledge(openPreview, closePreviews, sessionPath) {
   });
   const quality = bindKnowledgeQuality(browser.openPassage, messages);
   const review = bindReview(find('knowledge-repository'), () => refreshVaults(), openPreview);
+  bindBiDocuments(review.openBiReview);
   const tabs = [...find('knowledge-view').querySelectorAll('[role="tab"]')];
   function selectTab(tab, focus = false) {
     for (const item of tabs) {

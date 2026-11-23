@@ -1,3 +1,4 @@
+// Ported from dragon0816/agentic-engineering-platform feature_plugins/bi_knowledge/python/aep_bi/inbox/fetch.py @ 861d0c0ca0813073f3944d4aff88818980beff2a, used with the rights holder's permission
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:https';
 import { BlockList, isIP } from 'node:net';
@@ -26,20 +27,36 @@ export async function pinIpv4(hostname: string, allowLocal: boolean, signal: Abo
 }
 
 export async function readApprovedLink(value: string, approved: ReadonlySet<string>, stop: AbortSignal) {
+  return (await readApprovedSource(value, approved, stop, false)).bytes;
+}
+
+type LinkTransport = { pin: typeof pinIpv4; request: typeof request };
+const transport = { pin: pinIpv4, request };
+
+// Use the host's pinned HTTPS transport for the adapted page media and bounded body read.
+export function readApprovedPage(value: string, approved: ReadonlySet<string>, stop: AbortSignal, io = transport) {
+  return readApprovedSource(value, approved, stop, true, io);
+}
+
+async function readApprovedSource(value: string, approved: ReadonlySet<string>, stop: AbortSignal,
+  page: boolean, io: LinkTransport = transport) {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || isIP(url.hostname) ||
+  if (url.href.length > 2048 || url.protocol !== 'https:' || url.username || url.password || url.port || isIP(url.hostname) ||
       !approved.has(url.origin)) throw new Error('來源未核准');
+  url.hash = '';
+  const types = ['text/plain', 'text/markdown', ...(page ? ['text/html', 'application/xhtml+xml'] : [])];
   const signal = AbortSignal.any([stop, AbortSignal.timeout(8000)]);
   // Pin the address used by TLS to the public IPv4 result we validated.
-  const address = await pinIpv4(url.hostname, false, signal);
-  return await new Promise<Buffer>((resolve, reject) => {
-    const upstream = request(url, {
+  const address = await io.pin(url.hostname, false, signal);
+  return await new Promise<{ bytes: Buffer; url: string; type: string; charset: string; fetchedAt: string }>((resolve, reject) => {
+    const upstream = io.request(url, {
       signal, family: 4,
       lookup: (_host, _options, callback) => callback(null, address, 4),
-      headers: { Accept: 'text/plain, text/markdown', 'Accept-Encoding': 'identity' },
+      headers: { Accept: types.join(', '), 'Accept-Encoding': 'identity' },
     }, (response) => {
-      const type = response.headers['content-type']?.split(';')[0];
-      if (response.statusCode !== 200 || (type !== 'text/plain' && type !== 'text/markdown') ||
+      const media = response.headers['content-type'] ?? '';
+      const type = media.split(';')[0].trim().toLowerCase();
+      if (response.statusCode !== 200 || !types.includes(type) ||
           response.headers['content-encoding']) {
         response.destroy();
         reject(new Error('來源無法讀取'));
@@ -48,12 +65,14 @@ export async function readApprovedLink(value: string, approved: ReadonlySet<stri
       let size = 0;
       const chunks: Buffer[] = [];
       response.on('error', reject);
+      response.on('aborted', () => reject(new Error('來源無法讀取')));
       response.on('data', (chunk: Buffer) => {
         size += chunk.length;
-        if (size > 100_000) { response.destroy(new Error('來源超過上限')); return; }
+        if (size > (page ? 512_000 : 100_000)) { response.destroy(new Error('來源超過上限')); return; }
         chunks.push(chunk);
       });
-      response.on('end', () => resolve(Buffer.concat(chunks)));
+      response.on('end', () => resolve({ bytes: Buffer.concat(chunks), url: url.href, type,
+        charset: /;\s*charset="?([a-z\d_-]{1,40})/i.exec(media)?.[1] ?? '', fetchedAt: new Date().toISOString() }));
     });
     upstream.on('error', reject);
     upstream.end();

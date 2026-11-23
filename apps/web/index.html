@@ -557,6 +557,33 @@
         </section>
         <section id="knowledge-build" role="tabpanel" aria-labelledby="knowledge-tab-build" hidden>
           <p class="page-help" data-i18n="ui.import-published-data-or-prepare-drafts-for"></p>
+          <details id="bi-document-panel">
+            <summary data-i18n="biDocument.title"></summary>
+            <form id="bi-document-form">
+              <label for="bi-document-file" data-i18n="biDocument.file"></label>
+              <input id="bi-document-file" type="file" accept=".pdf,.txt,.md,.markdown,.html,.htm">
+              <label for="bi-document-url" data-i18n="biDocument.url"></label>
+              <input id="bi-document-url" type="url" maxlength="2048" autocomplete="off" spellcheck="false">
+              <p class="page-help" data-i18n="biDocument.approvedSource"></p>
+              <label for="bi-document-schema" data-i18n="biDocument.schema"></label>
+              <select id="bi-document-schema" required></select>
+              <label><input id="bi-document-consent" type="checkbox"> <span data-i18n="biDocument.allowModel"></span></label>
+              <p class="page-help" data-i18n="biDocument.gateway"></p>
+              <button id="bi-document-run" type="submit" data-i18n="biDocument.run" disabled></button>
+            </form>
+            <details>
+              <summary data-i18n="biDocument.import"></summary>
+              <form id="bi-document-import">
+                <label for="bi-document-folder" data-i18n="biDocument.folder"></label>
+                <input id="bi-document-folder" type="text" maxlength="2048" autocomplete="off" spellcheck="false" required>
+                <button type="submit" data-i18n="biDocument.import"></button>
+              </form>
+              <p id="bi-document-import-status" role="status"></p>
+            </details>
+            <p id="bi-document-status" role="status"></p>
+            <div id="bi-document-candidates"></div>
+            <button id="bi-document-review" type="button" data-i18n="biDocument.review" hidden></button>
+          </details>
           <details id="knowledge-repository">
           <summary data-i18n="ui.import-from-a-local-folder"></summary>
           <form id="knowledge-repository-form">
