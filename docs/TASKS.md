@@ -271,3 +271,10 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 與建立精靈共用 Telegram token 設定和私人 `/start` 確認。通道清單提供狀態、管理、改派、更換 token 與移除。
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## Phase 3 遠端 MCP OAuth
+
+- [x] 加入 OAuth 探索、原生瀏覽器授權、靜態與自動註冊、使用者範圍權杖保護、更新及登出。助理執行沿用 broker 的逐助理及工作資料夾權限。
+- [x] 外部工具支援雙語 OAuth 設定、狀態、連線測試及 OpenCode JSON 匯入。環境變數佔位提示由擁有者自行填寫。
+- [x] 完成依序驗收，包含三輪 Chromium、合成 HTTPS OAuth、原生隔離、交辦、重現建置及敏感資料掃描零命中。
+- [ ] 由擁有者確認 Gmail 帳號和組織政策，並補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。 [驗收與 Gmail 操作](reviews/PHASE3_MCP_OAUTH_REPORT.md)
