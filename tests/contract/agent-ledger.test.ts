@@ -204,7 +204,7 @@ test('a failed slice migration rolls back each owned DB and resumes earlier comm
   assert.deepEqual(paths.map((name) => {
     using db = open(name);
     return version(db);
-  }), [8, 3, 3, 2]);
+  }), [12, 3, 3, 2]);
 });
 
 test('opening a current session ledger rejects absent owners and invalid central references', (t) => {
