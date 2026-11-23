@@ -98,14 +98,15 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       await page.evaluate('document.querySelector("#close-settings").click()');
       await page.ready('!document.querySelector("#manage-attachments").hidden');
       await activate('#manage-attachments');
-      const fileSelector = '#attachments li:last-child .external-classification';
-      await page.ready('document.querySelector("#attachments li:last-child label")?.textContent === ' + JSON.stringify(name) +
+      const uploadRow = '#attachments > li:nth-last-child(1 of :has(> .external-classification))';
+      const fileSelector = uploadRow + ' .external-classification';
+      await page.ready('document.querySelector(' + JSON.stringify(uploadRow + ' label') + ')?.textContent === ' + JSON.stringify(name) +
         ' && !!document.querySelector(' + JSON.stringify(fileSelector + ' [data-classification=unclassified]') + ')');
       await activate(fileSelector + ' button');
       assert.equal(await page.evaluate('document.querySelector(' + JSON.stringify(accept) + ').textContent'), labels.mark);
       await activate(accept);
       await page.ready('!!document.querySelector(' + JSON.stringify(fileSelector + ' [data-classification=public]') + ')');
-      await focus('#attachments li:last-child label input');
+      await focus(uploadRow + ' label input');
       await key(' ', 'Space', 32);
       if (!await page.evaluate(closePanel)) {
         await escape();
