@@ -9,6 +9,7 @@ The branch `ci/fix-0.10-runner` starts at `2c00fbb`. Local verification used Win
 - The reference-grant contract passed the runner's short `TEMP` spelling to a mock file picker. The pinned reader deliberately rejects short-name selections. The contract and Chromium picker fixtures now use checked long paths. The contract verifies rejection of the raw alias when one is present. The reference service canonicalizes its protected data root so comparisons block the directory's long spelling even when the application supplied a short one.
 - The Windows release run reported a 206.53 ms median for full-text search. The query plan iterated all passages in the publication and ran the FTS lookup for each row. `CROSS JOIN` makes SQLite evaluate the FTS matches once and look up each matching passage by rowid. The query retains the publication filter and ranking. The contract retains its 200 ms median limit.
 - After the reference fix, the hosted Chromium step reached its second browser launch and hit `EBUSY` while reading `DevToolsActivePort`. The harness now retries an absent or locked port file within the existing startup deadline.
+- A later Phase 0 run hit the synthetic helper fixture's 20-second deadline while starting Windows PowerShell and running the fixture, which compiles the native helper. The fixture now gets 60 seconds and retains its provisioning and isolation assertions.
 
 ## Short-path reproduction
 
@@ -24,6 +25,7 @@ Use the [Windows runner alias setup](CI_RUNNER_FIX_REPORT.md#reproduction) with 
 | [Windows release verification 45217357719](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45217357719) | Passed all required gates and artifact upload. The optional Chromium step timed out waiting for a reference from the picker fixture, which still supplied a short path in this run. |
 | [Phase 0 verification 45218243644](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243644) | Passed after the Chromium reference fixture update. |
 | [Windows release verification 45218243522](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243522) | Passed all required gates and artifact upload. Chromium passed its reference flow before hitting the port-file lock on the second launch. |
+| [Phase 0 verification 45222286727](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45222286727) | Passed 127 of 128 tests. Windows PowerShell exceeded the helper fixture deadline. |
 
 ## Local verification
 
