@@ -107,7 +107,7 @@ export class AttachmentService {
     return id;
   }
 
-  async upload(sessionID: string, workspace: string, name: string, mime: string, bytes: number, body: () => Promise<Buffer>) {
+  async upload(sessionID: string, workspace: string, name: string, mime: string, bytes: number, body: () => Promise<Buffer>, ownerUpload = true) {
     if (this.pending >= 3) throw new HttpError(429, 'upload-busy');
     if (this.store.attachmentBytes(sessionID) + bytes > quota) throw new HttpError(413, 'session-storage-full');
     this.pending++;
@@ -134,7 +134,7 @@ export class AttachmentService {
         const original = save(sourceName(id), data);
         const converted = projection ? save(projectionName(id), projection) : undefined;
         const record = { id, name, mime, original, projection: converted };
-        this.store.saveAttachment(sessionID, record);
+        this.store.saveAttachment(sessionID, record, ownerUpload);
         return publicAttachment(record);
       } catch (error) {
         try {

@@ -40,8 +40,8 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
       name: localName(knowledgeTool), description: 'Ask an authorized published OEP knowledge vault by ID. Report verified excerpts and citations, or relay the abstention.',
       inputSchema: schema({ vault: { type: 'string' }, question: { type: 'string', maxLength: 500 } }, ['vault', 'question']),
       annotations: readOnly,
-    }, ...delegationTools.map(({ name, description, properties, required, readOnly }) => ({
-      name: localName(name), description, inputSchema: schema(properties, required),
+    }, ...delegationTools.map(({ name, description, properties, required, readOnly, oneOf }) => ({
+      name: localName(name), description, inputSchema: { ...schema(properties, required), ...(oneOf && { oneOf }) },
       annotations: { readOnlyHint: readOnly, destructiveHint: false },
     })), ...remote.tools.map(({ name, description, inputSchema }) => ({
       name: localName(name), description, inputSchema: withMcpTicket(inputSchema),

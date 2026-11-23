@@ -18,8 +18,13 @@ import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
-import { budgetFields, parseDelegationBudgets } from './runs/delegation-ledger.ts';
+import { budgetFields, DelegationError, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
+import { ExternalDelegations } from './runs/external-delegations.ts';
+import { ExternalSources } from './runs/external-sources.ts';
+import { externalProvider, helpers, type Provider, type Snapshot } from './runs/external-ledger.ts';
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperSettings, identifiers, invalidExternal,
+  labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
 import { LocalAuth, header } from './http/auth.ts';
@@ -52,6 +57,7 @@ const assets = new Map([
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/delegations.js', ['src/delegations.js', 'text/javascript; charset=utf-8']],
+  ['/external-helpers.js', ['src/external-helpers.js', 'text/javascript; charset=utf-8']],
   ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
   ['/api.js', ['src/api.js', 'text/javascript; charset=utf-8']],
   ['/review.js', ['src/review.js', 'text/javascript; charset=utf-8']],
@@ -105,7 +111,7 @@ function secureHeaders(response: ServerResponse) {
 }
 
 export async function startAdapter(dataRoot: string, runtime: Runtime, requestStop: () => void, telegramEnabled = false,
-  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment) {
+  requestRestart?: () => void, channelEnvironment?: TelegramEnvironment, syntheticHelper?: (snapshot: Snapshot) => void) {
   const root = canonicalWorkspaceDirectory(dataRoot);
   for (const project of projects) {
     const projectRoot = project.id === 'default' ? root : join(root, project.id);
@@ -134,6 +140,10 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   })();
   const chat = new ChatService(store, runtime, root, join(runtime.root, 'web-turns.jsonl'), (id) => events.notify(id), store, dispatcher, delegations);
   delegations.registerWorker(store, chat, telegram.delegationBi);
+  const knowledgeStore = runtime.knowledge?.reviewStore;
+  const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
+  const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), syntheticHelper);
+  delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
@@ -220,6 +230,42 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 200, { values: store.delegations.budgets(), fields });
       return;
     }
+    if (path === '/api/settings/external-helpers') {
+      if (method === 'POST') {
+        const { settings, warningAccepted } = helperSettings(await body(request));
+        store.delegations.atomic(() => {
+          if (settings.enabled && !store.external.settings(settings.provider).enabled && !warningAccepted) {
+            throw new HttpError(400, 'external-warning-required');
+          }
+          store.external.saveSettings(settings);
+          if (settings.enabled) store.external.ensureTarget(settings.provider);
+        });
+      }
+      send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => ({ ...store.external.settings(provider),
+        name: helpers[provider].name, targetId: helpers[provider].id,
+        classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' })));
+      return;
+    }
+    if (path === '/api/classification/workspace' && method === 'POST') {
+      const { workspaceId, classification } = externalWorkspaceInput(await body(request));
+      store.delegations.atomic(() => store.external.classifyWorkspace(workspaceId, classification));
+      send(response, 200, { classification });
+      return;
+    }
+    if (path === '/api/classification/vault' && method === 'POST' && knowledgeStore) {
+      const { vault, revision, classification, ...extra } = await body(request);
+      if (!identifiers(vault) || !identifiers(revision) || !labelInput(classification) || Object.keys(extra).length) throw invalidExternal();
+      const outcome = knowledgeStore.classifyVault(vault, revision, classification);
+      if (outcome !== 'saved') throw new DelegationError('external-' + outcome);
+      if (classification === 'public') store.external.approveVault(vault, revision, knowledgeStore.vaultClassification(vault)!.revision);
+      send(response, 200, { classification });
+      return;
+    }
+    const externalConfirm = /^\/api\/delegations\/([a-f\d-]{36})\/confirm$/.exec(path);
+    if (externalConfirm && uuid.test(externalConfirm[1]) && method === 'POST') {
+      send(response, 200, external.confirm(externalConfirm[1], await body(request)));
+      return;
+    }
     const delegation = /^\/api\/delegations\/([a-f\d-]{36})(?:\/(cancel|files\/([a-f\d-]{36})(\/preview)?))?$/.exec(path);
     if (delegation) {
       const [, id, action, fileId, preview] = delegation;
@@ -239,6 +285,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         const detail = store.delegations.inspect(id);
         if (!detail) throw new HttpError(404, 'delegation-not-found');
         const row = store.delegations.get(id)!;
+        const externalApproval = external.ownerDetails(id);
+        if (externalApproval) {
+          send(response, 200, { ...detail, externalApproval });
+          return;
+        }
         const [child] = row.childSessionId ? store.sessions(false, row.childSessionId) : [];
         const owner = child && store.sessionOwner(child);
         const run = child && row.childRunId && owner?.origin === 'delegation' && owner.agentID === row.targetAgentId
@@ -379,6 +430,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const saved = store.projectFolders();
       send(response, 200, projects.map((project) => ({
         ...project, workingRoot: join(chat.projectRoot(project.id), 'model-work'),
+        classification: store.external.workspace(legacyWorkspace(project.id)),
         folders: saved.filter((entry) => entry.project === project.id).map((entry) => entry.folder),
       })));
       return;
@@ -696,7 +748,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (runtime.knowledge && path === '/api/knowledge/vaults' && method === 'GET') {
-      send(response, 200, { vaults: runtime.knowledge.overview() });
+      send(response, 200, { vaults: runtime.knowledge.overview().map((vault) => {
+        const label = knowledgeStore?.vaultClassification(vault.id);
+        const classification = label?.label === 'public' && !store.external.vaultApproved(vault.id, vault.revision, label.revision)
+          ? 'unclassified' : label?.label;
+        return { ...vault, classification };
+      }) });
       return;
     }
     if (runtime.knowledge && (path === '/api/knowledge/inspect' || path === '/api/knowledge/import') && method === 'POST') {
@@ -748,6 +805,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const scope = /^\/api\/agents\/([a-z\d_-]{1,80})\/workspaces\/([a-z\d_-]{1,80})\/(sessions(?:\/.*)?)$/.exec(path);
       if (!scope) throw new HttpError(404, 'agent-not-found');
       [, agentID, workspaceID] = scope;
+      if (externalProvider(agentID)) throw new HttpError(404, 'agent-not-found');
       const workspace = store.agentWorkspaces(agentID).find(({ id }) => id === workspaceID);
       if (!workspace) throw new HttpError(404, 'agent-workspace-not-found');
       if (workspace.layout === 'legacy_secondary') project = 'secondary';
@@ -783,6 +841,27 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (method === 'POST' && !['rename', 'remove', 'annotation'].includes(resource) && !store.executionProfile(agentID, workspaceID)) {
       throw new HttpError(409, 'agent-inactive');
+    }
+    if (resource === 'external-sources' && extra === undefined) {
+      if (item === undefined && method === 'GET') {
+        const workspace = store.agentWorkspaces(agentID).find(({ id }) => id === workspaceID)!;
+        send(response, 200, { workspace: { id: workspaceID, classification: store.external.workspace(workspaceID),
+          folders: folderChoices(workspace.folders) }, sources: externalSources.list(session) });
+      } else if (item === undefined) {
+        const sourceId = externalSources.register(session, sourceInput(await body(request)));
+        send(response, 201, externalSources.inspect(session, sourceId));
+      } else if (uuid.test(item) && method === 'POST') {
+        const { sha256, classification, ...extra } = await body(request);
+        if (!hashInput(sha256) || !labelInput(classification) || Object.keys(extra).length) throw invalidExternal();
+        send(response, 200, externalSources.classify(session, item, sha256, classification));
+      } else throw invalidExternal();
+      return;
+    }
+    if (method === 'POST' && resource === 'external-snapshot' && item === undefined && extra === undefined) {
+      const { runId, provider, taskId, inputs, specialistId } = snapshotInput(await body(request));
+      const { id: publicInputId, digest } = store.delegations.atomic(() => externalSources.create(session, runId, provider, taskId, inputs));
+      send(response, 201, { publicInputId, digest, specialistId });
+      return;
     }
     if (method === 'GET' && resource === 'artifacts' && item && uuid.test(item)) {
       if (extra === 'preview') {
@@ -870,7 +949,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       let data: Buffer;
       try { data = openWorkspaceFile(safeRoot, input.file, 20 * 1024 * 1024).data; }
       catch { throw new HttpError(404, 'file-unreadable'); }
-      const attachment = await chat.attachments.upload(id, chat.workspace(session), name, mime, data.length, async () => data);
+      const attachment = await chat.attachments.upload(id, chat.workspace(session), name, mime, data.length, async () => data, false);
       events.notify(id);
       send(response, 201, attachment);
       return;
@@ -897,10 +976,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const cards = agentID === 'main' ? store.delegations.cards(id) : [];
       const delegations = cards.map((card) => {
         const review = 'reviewRef' in card && card.reviewRef?.reviewId;
-        return { ...card, specialistName: runtime.redact(card.specialistName),
+        const pending = card.status === 'queued' && external.pending(card.delegationId);
+        return { ...card, ...(pending && { status: 'awaiting_confirmation' }), specialistName: runtime.redact(card.specialistName),
           published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
       });
-      send(response, 200, { ...state, activity: events.cards(id), delegations });
+      send(response, 200, { ...state, attachments: state.attachments.map((file) => {
+        const sourceId = store.external.attachmentSource(id, file.id);
+        const source = sourceId && store.external.source(id, sourceId);
+        return { ...file, sourceId, classification: source ? store.delegations.attachmentClassification(workspaceID, file.id, file.sha256) : 'unclassified' };
+      }), activity: events.cards(id), delegations });
     }
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'delegation-seen') {
@@ -936,7 +1020,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
         response.setHeader('Connection', 'close');
         request.resume();
       }
-      const detail = error instanceof HttpError ? error : new HttpError(503, 'unavailable');
+      const detail = error instanceof HttpError ? error : error instanceof DelegationError ? externalError(error) : new HttpError(503, 'unavailable');
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
     });
     active.add(operation);

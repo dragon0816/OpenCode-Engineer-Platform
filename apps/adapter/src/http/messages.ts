@@ -1,5 +1,18 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'external-invalid-input': "請檢查外部幫手輸入。",
+  'external-confidential': "機密來源不可交辦給外部幫手。",
+  'external-unclassified': "先將來源與工作資料夾標為公開。",
+  'external-changed': "來源版本已變更。請重新檢查並建立清單。",
+  'external-provenance-missing': "缺少可驗證的來源。",
+  'external-disabled': "此外部幫手尚未啟用。",
+  'external-settings-changed': "外部幫手設定已變更。請重新建立清單。",
+  'external-terms-required': "先確認 Claude Code 的商業條款。",
+  'external-warning-required': "請確認資料傳送提醒。",
+  'external-input-limit': "選取的資料超過容量上限。",
+  'external-confirmation-expired': "交辦確認已過期。",
+  'external-confirmation-invalid': "交辦的確認資訊不符或已取消。",
+  'external-confirmation-replayed': "這筆交辦已經確認。",
   'agent-not-found': "找不到此助理。",
   'agent-workspace-not-found': "找不到此助理的工作資料夾。",
   'agent-settings-invalid': "請檢查助理設定。",

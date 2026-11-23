@@ -25,7 +25,7 @@ import { webAPI } from './web-api.ts';
 
 const alias = 'synthetic-delegation';
 const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
-type Tool = { name: string; parameters: { properties: object; required: string[]; additionalProperties: boolean } };
+type Tool = { name: string; parameters: { properties: object; required: string[]; additionalProperties: boolean; oneOf?: unknown } };
 type Request = Omit<WireRequest, 'tools'> & { tools?: { function: Tool }[] };
 type ModelCall = { name: string; args: Record<string, unknown> };
 
@@ -315,8 +315,12 @@ test('pinned OpenCode authorizes and admits specialist work through the SSE brok
       { type: 'object', properties: {}, required: [], additionalProperties: false });
     const delegateSchema = advertised?.find(({ name }) => name === delegateTool)?.parameters;
     assert.equal(delegateSchema?.additionalProperties, false);
-    assert.deepEqual(delegateSchema?.required, ['specialistId', 'task', 'requestKey']);
-    assert.deepEqual(Object.keys(delegateSchema!.properties).sort(), ['attachmentIds', 'requestKey', 'specialistId', 'task']);
+    assert.deepEqual(delegateSchema?.required, ['specialistId', 'requestKey']);
+    assert.deepEqual(Object.keys(delegateSchema!.properties).sort(), ['attachmentIds', 'publicInputId', 'requestKey', 'specialistId', 'task']);
+    assert.deepEqual(delegateSchema?.oneOf, [
+      { required: ['task'], not: { required: ['publicInputId'] } },
+      { required: ['publicInputId'], not: { anyOf: [{ required: ['task'] }, { required: ['attachmentIds'] }] } },
+    ]);
     const listing = JSON.parse(allowed.results[0]) as { id: string; status: string }[];
     assert.ok(listing.every((item) => Object.keys(item).sort().join(',') === 'id,introduction,name,status'));
     assert.ok(listing.some(({ id, status }) => id === 'synthetic-archived' && status === 'paused'));

@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { Destination } from '../channels/transport.ts';
 import type { ChatService, DelegatedTurnLease, Turn } from '../http/chat.ts';
 import type { BiService } from '../bi/service.ts';
-import { delegationArgs } from '../opencode/delegation-tools.ts';
+import { delegationArgs, externalDelegationArgs } from '../opencode/delegation-tools.ts';
 import { delegateTool, listSpecialistsTool } from '../opencode/permissions.ts';
 import { MiB, type AttachmentService } from './attachments.ts';
 import { DelegationError, type DelegationResult } from './delegation-ledger.ts';
@@ -11,6 +11,8 @@ import type { Dispatcher } from './dispatcher.ts';
 import type { WorkLease, WorkOutcome } from './work-items.ts';
 import { DelegationHandoff } from './delegation-handoff.ts';
 import type { WebSession, WebStore } from './web-store.ts';
+import type { ExternalDelegations } from './external-delegations.ts';
+import { externalProvider } from './external-ledger.ts';
 
 type ParentTurn = { store: WebStore; session: WebSession; input: Turn; channel?: Destination;
   attachments: AttachmentService; workspace: () => string };
@@ -21,6 +23,7 @@ export class DelegationService {
   private readonly dispatcher: Dispatcher;
   private readonly notify: (sessionID: string) => void;
   private readonly stopped = new Map<string, AbortController>();
+  private external?: ExternalDelegations;
 
   constructor(central: WebStore, webRoot: string, dispatcher: Dispatcher, notify: (sessionID: string) => void = () => {}) {
     this.ledger = central.delegations;
@@ -29,6 +32,8 @@ export class DelegationService {
     this.handoff = new DelegationHandoff(webRoot);
     this.handoff.clean((id) => this.ledger.hasFiles(id));
   }
+
+  registerExternal(external: ExternalDelegations) { this.external = external; }
 
   registerWorker(store: WebStore, chat: ChatService, bi?: Pick<BiService, 'delegate' | 'delegationReceipt'>) {
     const landed = (item: WorkLease): Omit<DelegationResult, 'delegationId'> | undefined => {
@@ -237,7 +242,19 @@ export class DelegationService {
           run.hash !== this.requestHash(input) || !this.allows(input.id, store.runStore)) {
         throw new DelegationError('DELEGATION_FORBIDDEN');
       }
-      if (name === listSpecialistsTool && !Object.keys(args).length) return this.ledger.specialists();
+      const external = channel ? undefined : this.external;
+      if (name === listSpecialistsTool && !Object.keys(args).length) {
+        return this.ledger.specialists(Boolean(external)).flatMap<Record<string, unknown>>((item) => {
+          const provider = externalProvider(item.id);
+          if (!provider) return [item];
+          return external && store.external.settings(provider).enabled && store.external.workspace(String(item.id)) === 'public'
+            ? [{ ...item, external: true, provider }] : [];
+        });
+      }
+      if (name === delegateTool && externalProvider(args.specialistId)) {
+        if (!external || !externalDelegationArgs(args)) throw new DelegationError('DELEGATION_ARGUMENTS_INVALID');
+        return external.admit(session, input.id, args);
+      }
       if (name !== delegateTool || !delegationArgs(args)) throw new DelegationError('DELEGATION_ARGUMENTS_INVALID');
       const refs = args.attachmentIds ?? [];
       if (refs.some((id) => !input.attachments.includes(id))) throw new DelegationError('DELEGATION_ATTACHMENT_UNAVAILABLE');

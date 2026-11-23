@@ -149,6 +149,11 @@ export class WorkItems {
       WHERE id=? AND lease_id=? AND state='running'`).run(id, leaseId).changes);
   }
 
+  makeReady(id: string, now: number) {
+    return Boolean(this.db.prepare("UPDATE agent_work_items SET ready_at=? WHERE id=? AND state='queued' AND expires_at>? AND ready_at=expires_at")
+      .run(now, id, now).changes);
+  }
+
   finish({ id, leaseId }: Pick<WorkLease, 'id' | 'leaseId'>, outcome: WorkOutcome, reason?: string) {
     const retain = outcome === 'indeterminate';
     return Boolean(this.db.prepare(`UPDATE agent_work_items SET state=?,reason_code=?,

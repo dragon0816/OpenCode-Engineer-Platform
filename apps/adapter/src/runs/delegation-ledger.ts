@@ -88,17 +88,19 @@ export class DelegationLedger {
       WHERE id=1`).run(...budgetEntries.map(([key]) => input[key as keyof DelegationBudgets]));
   }
 
-  specialists() {
+  specialists(includeExternal = false) {
     return this.db.prepare(`SELECT a.id,a.name,a.introduction,CASE
       WHEN a.state<>'active' THEN 'paused'
       WHEN EXISTS(SELECT 1 FROM agent_work_items w WHERE w.agent_id=a.id AND w.lease_id IS NOT NULL) THEN 'busy'
       WHEN EXISTS(SELECT 1 FROM agent_work_items w WHERE w.agent_id=a.id AND w.state='queued') THEN 'queued'
       ELSE 'available' END AS status
-      FROM agents a WHERE a.role='specialist' ORDER BY a.created_at,a.id`).all();
+      FROM agents a WHERE a.role='specialist' AND (? OR a.id NOT IN ('external-codex-cli','external-claude-code'))
+      ORDER BY a.created_at,a.id`).all(Number(includeExternal));
   }
 
-  checkTarget(id: string) {
-    if (!this.db.prepare("SELECT 1 FROM agents WHERE id=? AND role='specialist' AND state='active'").get(id)) {
+  checkTarget(id: string, external = false) {
+    if (!this.db.prepare("SELECT 1 FROM agents WHERE id=? AND role='specialist' AND state='active' AND (? OR id NOT IN ('external-codex-cli','external-claude-code'))")
+      .get(id, Number(external))) {
       throw new DelegationError('DELEGATION_TARGET_UNAVAILABLE');
     }
   }
@@ -345,12 +347,15 @@ export class DelegationLedger {
     return budget;
   }
 
-  admit(id: string, childRunId: string, parent: DelegationParent, input: DelegationInput, hash: string, files: FileManifest[]) {
-    this.checkTarget(input.specialistId);
+  admit(id: string, childRunId: string, parent: DelegationParent, input: DelegationInput, hash: string, files: FileManifest[],
+    external?: { wait: boolean }) {
+    this.checkTarget(input.specialistId, Boolean(external));
     const budget = this.checkBudget(parent);
     const now = Date.now();
+    const expiresAt = now + budget.queueMs;
     const { item } = this.work.enqueue({ agentId: input.specialistId, source: 'delegation', sourceKey: id, effectClass: 'write',
-      run: { store: 'web', id: childRunId }, expiresAt: now + budget.queueMs, payload: { kind: 'delegation', task: input.task } }, now);
+      run: { store: 'web', id: childRunId }, expiresAt, readyAt: external?.wait ? expiresAt : now,
+      payload: external ? { kind: 'external-delegation' } : { kind: 'delegation', task: input.task } }, now);
     this.db.prepare(`INSERT INTO delegations(id,work_id,parent_store,parent_session_id,parent_run_id,target_agent_id,request_key,
       request_hash,status,reserved_requests,reserved_tools,reserved_ms,created_at,destination)
       VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?,?,?)`).run(id, item.id, parent.store, parent.sessionId, parent.runId, input.specialistId,
