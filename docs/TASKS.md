@@ -252,12 +252,6 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [ ] 在 BI 專職助理的 Web 直接對話提供依會話授權的收件狀態與補件。
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 
-## Phase 3 本機附件參照
-
-- [x] 會話唯讀檔案與資料夾參照、分段讀取、檔案身分核對及分級。
-- [x] Windows 選擇視窗、貼上路徑、超過上傳容量的指引及附加資料面板。
-- [ ] 擁有者驗收原生選擇視窗前景、檔案總管與發行安裝／升級。 [驗證報告](reviews/PHASE3_FILE_REFERENCES_REPORT.md)
-
 ## Phase 3I 切片 1 分級、來源快照與交辦接單
 
 - [x] 已配對工作台可分級工作資料夾、來源檔案與知識庫。檢查來源、版本、雜湊、權限及繼承分級後，固定這次選取的公開資料。
@@ -265,6 +259,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 完成繁中與英文的分級、設定警示及交辦確認介面。中央台帳升至 v7，保留 3B 內部交辦。 [切片 1 驗收紀錄](reviews/PHASE3I_SLICE1_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 - [ ] 切片 2 完成 Windows 隔離、原版 CLI 與供應商個別驗收。切片 3 完成已驗證的差異匯出、預覽及下載。
+
+## Phase 3I 切片 2 Windows 程序與 CLI 執行邊界
+
+- [x] 合成 CLI 驗證執行前分級、額度扣抵、固定引數、隔離工作副本、Job 清理和變更雜湊。設定顯示雙語狀態與停用原因。 [切片 2 驗收紀錄](reviews/PHASE3I_SLICE2_REPORT.md)
+- [ ] 由擁有者在 Windows 測試機驗收專用非管理員帳號、ACL 探測、原版 CLI 版本及登入。兩家幫手各自保持停用，直到個別驗證通過。 [擁有者決議](DECISIONS.md)
+- [ ] 完成正式 scratch 容量限制、啟動與停止收據復原、交辦子會話及子 run。
 
 ## R22 對話附件
 
@@ -278,11 +278,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 
-## Phase 3I 切片 2 Windows 程序與 CLI 執行邊界
+## 聽寫與麥克風權限
 
-- [x] 合成 CLI 驗證執行前分級、額度扣抵、固定引數、隔離工作副本、Job 清理和變更雜湊。設定顯示雙語狀態與停用原因。 [切片 2 驗收紀錄](reviews/PHASE3I_SLICE2_REPORT.md)
-- [ ] 由擁有者在 Windows 測試機驗收專用非管理員帳號、ACL 探測、原版 CLI 版本及登入。兩家幫手各自保持停用，直到個別驗證通過。 [擁有者決議](DECISIONS.md)
-- [ ] 完成正式 scratch 容量限制、啟動與停止收據復原、交辦子會話及子 run。
+- [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
+- [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
+- [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
 
 ## 0.6.0 擁有者驗收第二輪
 
@@ -291,11 +291,6 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 工程設定檔和原始碼可作為 UTF-8 附件，附加資料以等寬原始文字顯示。
 - [x] 助理回覆的巢狀清單支援粗體、斜體、行內程式碼與連結。 [驗收紀錄](reviews/UX_OWNER_TEST_ROUND2_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup` 並合併。
-## 聽寫與麥克風權限
-
-- [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
-- [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
-- [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
 
 ## Phase 3 遠端 MCP OAuth
 
@@ -317,3 +312,17 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 重現會話附件目錄遺失時的 JSON 上傳錯誤。補建受驗證的目錄，加入繁中與英文的錯誤訊息及去識別化的執行稽核。 [根因與驗收紀錄](reviews/FIX_PASTE_JSON_UPLOAD_REPORT.md)
 - [x] 依序通過 lint、型別檢查、107 個測試、發行建置、三輪 Edge 驗收、發行重現性與敏感資料掃描。
 - [ ] 由審核者補跑 `test:e2e:web` 並驗收合併。
+
+## Phase 3 本機附件參照
+
+- [x] 會話唯讀檔案與資料夾參照、分段讀取、檔案身分核對及分級。
+- [x] Windows 選擇視窗、貼上路徑、超過上傳容量的指引及附加資料面板。
+- [ ] 擁有者驗收原生選擇視窗前景、檔案總管與發行安裝／升級。 [驗證報告](reviews/PHASE3_FILE_REFERENCES_REPORT.md)
+
+## OEP 0.8 整合
+
+- [x] 合併本機附件參照、外部模型來源與遠端 MCP OAuth，保留三個分支的決策、需求與工作紀錄。
+- [x] 中央 Web 台帳整合至 v11。合成的 0.7.0 v8、模型來源 v9 與兩種 v10 資料庫涵蓋升級、重複執行及遷移失敗回復。
+- [x] 外部來源的 Web 對話及交辦對當回合選取的參照檢查範圍、分級與檔案身分，再建立隔離工作副本。
+- [x] 依序通過 lint、型別檢查、116 個測試、發行建置、三輪 Chromium 與其餘整合驗證。敏感資料掃描零命中。
+- [ ] 由審核者執行 Web、Excel、安裝、升級及備份驗收，並驗證真實帳號及桌面流程。 [整合驗證紀錄](reviews/INTEGRATION_0_8_REPORT.md)

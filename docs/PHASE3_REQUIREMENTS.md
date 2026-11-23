@@ -312,6 +312,7 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 ### 11.1 Claude Code、Codex 與 LLM Gateway 同一層（R21）
 - 擁有者定義：Claude Code、Codex 等外部 AI 工具與 LLM Gateway 屬於同一層的「模型來源」。設定中選擇要用 LLM Gateway、Claude Code 或 Codex；選外部工具時跳出視窗讓使用者登入該 coding agent；選 LLM Gateway 照原方式連線。
 - 技術負責人建議（待擁有者確認）：模型來源做成**每個助理的設定**（與模型同層），預設主助理用 LLM Gateway；例如「開發助理」選 Codex。這與 3I 設計（外部幫手經交辦路徑）一致，只是把它呈現為模型來源。
+- 限制：選外部來源的助理，所有輸入都會送到該供應商，因此依 D2 只能處理已標公開的資料（機密與未分級擋下）；OEP 的工具以 MCP 提供給外部引擎；執行時沿用簡化隔離（專用 Windows 帳號）。
 - 限制：依 11.3 的補充決議，外部來源預設接受公開與未分級資料，機密及其衍生資料一律擋下。嚴格模式只允許標為公開的資料。OEP 的工具以 MCP 提供給外部引擎時，知識查詢仍限於公開知識庫。執行採用專用 Windows 帳號。
 - 條款：Anthropic 自 2026-02 起明定 Free／Pro／Max 訂閱的 OAuth 不得用於第三方產品，第三方產品應用 Console API key；OpenAI 的 Codex CLI 支援 ChatGPT 帳號登入。建議 Claude Code 採 API key 或公司企業方案，Codex 可用 ChatGPT 帳號登入。
 
@@ -327,6 +328,8 @@ Skill 整合在以下三項完成後開始：(1) LLM Gateway 導入（3A 模型�
 ### 11.4 需要 OAuth 認證的 MCP（擁有者 2026-11-23）
 - OEP 要支援需要認證的遠端 MCP（例如 Gmail、Google Drive、Atlassian），包含 OAuth 登入。
 - 擁有者說明：LLM Gateway 由公司資料中心自建，資料送給 Gateway 模型不會外洩，因此 MCP 取得的資料（例如郵件）交給 Gateway 模型處理可接受。外部 coding agent（Codex、Claude Code）仍依 D2 只收公開資料。
+
+- 外部來源的現行分級規則依 11.3 的補充決議。
 
 ### 11.5 對話中的模型選擇視窗（R23，擁有者 2026-11-23）
 - 對話輸入區的模型選擇改成彈出式選擇視窗（參考 T3 Code 的使用方式，OEP 自行設計外觀）：左側來源欄（常用、LLM Gateway、Codex、Claude Code）、上方搜尋、中間模型清單（目前選擇打勾、可設常用、鍵盤快速鍵）、右側推理強度（低／中／高等，依模型支援顯示，標示預設）、底部顯示「下一則訊息生效」與設定預設。
