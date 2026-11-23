@@ -3,6 +3,7 @@ import { pinIpv4 } from '../../../../packages/knowledge/src/bi/link-intake.ts';
 import { statSync } from 'node:fs';
 import { win32 } from 'node:path';
 import type { ProjectID } from './web-store.ts';
+import type { McpTrust } from './mcp-trust.ts';
 
 const localPath = /^[a-z]:[\\/]/i;
 const unsafePath = /[\u0000-\u001f<>"|?*&^%!]/;
@@ -13,11 +14,12 @@ export const customMcpTool = /^[a-z0-9_]{1,120}$/;
 export const oauthMcpTool = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$/;
 export const customMcpName = (id: string) => `oep_custom_${id}`;
 
-export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp>;
+export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp> & { trust?: McpTrust };
 export type CustomRemoteMcp = ReturnType<typeof validateCustomRemoteMcp>;
 export type CustomMcp = CustomStdioMcp | CustomRemoteMcp;
 
-export const assistantMcpPaused = (server: CustomMcp) => server.transport === 'stdio' || server.localService;
+export const assistantMcpPaused = (server: CustomMcp) => server.transport === 'stdio'
+  ? !server.trust || Boolean(server.trust.changed) : server.localService;
 
 function validateCommon(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new WebMessageError('mcp-invalid-server-id');
@@ -41,7 +43,7 @@ function validateCommon(id: string, input: Record<string, unknown>, projects: re
   }
   if (!Array.isArray(deniedTools) || deniedTools.length > 50 ||
       !deniedTools.every((tool): tool is string => typeof tool === 'string' &&
-        (input.transport === 'remote' && input.oauth ? oauthMcpTool : customMcpTool).test(tool)) ||
+        (input.transport === 'stdio' || input.transport === 'remote' && input.oauth ? oauthMcpTool : customMcpTool).test(tool)) ||
       new Set(deniedTools).size !== deniedTools.length) {
     throw new WebMessageError('mcp-invalid-tool');
   }

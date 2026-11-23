@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { skillDiscovery } from '../../adapter/src/runs/capability-library.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -34,6 +35,7 @@ function config(relay: { baseURL: string; key: string }, aliases: readonly strin
     limit: { context: 32_000, output: 2048 },
   }]));
   if (web) {
+    template.skills = ['./' + skillDiscovery];
     template.agents.inspector.system = 'Answer the user using the supplied content. Explain when a document cannot be read. You are a read-only analysis assistant.';
     template.agents.workbook.system = 'Answer the user using the supplied content. Prepare workbook data only when the server gives a workbook output instruction.';
   }

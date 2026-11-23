@@ -22,13 +22,23 @@ const oauthLabels = { 'signed-in': message('tools.mcp-oauth-signed-in'), 'signed
   reauth: message('tools.mcp-oauth-reauth'), pending: message('tools.mcp-oauth-pending') };
 const placeholder = (value) => /\{env:[A-Za-z_][A-Za-z0-9_]*\}/.test(value);
 
-function remoteSnippet(text) {
+function serverSnippet(text) {
   const record = (value) => value && typeof value === 'object' && !Array.isArray(value);
   const parsed = JSON.parse(text);
   if (!record(parsed)) throw new Error();
   const entries = parsed.type ? [[parsed.name, parsed]] : Object.entries(parsed.mcp ?? parsed.mcpServers ?? parsed);
   if (entries.length !== 1) throw new Error();
   const [name, entry] = entries[0];
+  if (record(entry) && ['local', 'stdio', undefined].includes(entry.type) && entry.command) {
+    if (entry.args !== undefined && !Array.isArray(entry.args)) throw new Error();
+    const command = Array.isArray(entry.command) ? entry.command : [entry.command, ...(entry.args ?? [])];
+    const variables = entry.environment ?? entry.env ?? {};
+    if (!command.length || !command.every((argument) => typeof argument === 'string' && !placeholder(argument)) ||
+        typeof entry.cwd !== 'undefined' && typeof entry.cwd !== 'string' ||
+        !record(variables) || !Object.values(variables).every((value) => typeof value === 'string')) throw new Error();
+    const cwd = entry.cwd ?? command[0].replace(/[\\/][^\\/]+$/, '');
+    return { name, transport: 'stdio', command, cwd, enabled: entry.enabled !== false, variables };
+  }
   if (!record(entry) || entry.type !== 'remote' || typeof entry.url !== 'string' || placeholder(entry.url)) throw new Error();
   const oauth = entry.oauth;
   if (oauth !== undefined && oauth !== false && !record(oauth)) throw new Error();
@@ -41,7 +51,7 @@ function remoteSnippet(text) {
   const scopes = oauth?.scopes ?? oauth?.scope ?? entry.scopes ?? [];
   if ((typeof scopes !== 'string' && (!Array.isArray(scopes) || !scopes.every((scope) => typeof scope === 'string'))) ||
       placeholder(String(scopes))) throw new Error();
-  return { name: typeof name === 'string' ? name : '', url: entry.url, enabled: entry.enabled !== false, oauth,
+  return { name: typeof name === 'string' ? name : '', transport: 'remote', url: entry.url, enabled: entry.enabled !== false, oauth,
     id: id ?? '', secret: secret ?? '', scopes: Array.isArray(scopes) ? scopes.join('\n') : scopes, headers };
 }
 
@@ -62,6 +72,8 @@ export function bindMcpSettings(projects) {
   let saving = false;
   let revision = 0;
   let oauthPoll;
+  let trustPoll;
+  let changing = 0;
   const oauthCards = new Map();
   const results = new Map();
 
@@ -194,13 +206,25 @@ export function bindMcpSettings(projects) {
 
   function importSnippet() {
     let imported;
-    try { imported = remoteSnippet(field('snippet').value); }
+    try { imported = serverSnippet(field('snippet').value); }
     catch { setText(formStatus, message('tools.mcp-import-invalid')); return; }
     field('snippet').value = '';
-    field('transport').value = 'remote';
+    field('transport').value = imported.transport;
     if (imported.name) field('name').value = imported.name;
-    field('url').value = imported.url;
     field('enabled').checked = imported.enabled;
+    rows.replaceChildren();
+    if (imported.transport === 'stdio') {
+      field('executable').value = imported.command[0];
+      field('args').value = imported.command.slice(1).join('\n');
+      field('cwd').value = imported.cwd;
+      for (const [name, value] of Object.entries(imported.variables)) credential({ name, value });
+      transport();
+      form.querySelector('details').open = false;
+      setText(formStatus, message('tools.mcp-import-ready'));
+      (field('name').value ? field('executable') : field('name')).focus();
+      return;
+    }
+    field('url').value = imported.url;
     field('localService').checked = false;
     field('authentication').value = imported.oauth ? 'oauth' : Object.keys(imported.headers).length ? 'headers' : 'none';
     field('oauthClient').value = imported.id || imported.secret ? 'static' : 'dynamic';
@@ -257,6 +281,7 @@ export function bindMcpSettings(projects) {
     const view = ++revision;
     oauthCards.clear();
     find('mcp-restart-bar').hidden = !snapshot.restartRequired;
+    const openGrants = new Set([...list.querySelectorAll('details[data-server][open]')].map((details) => details.dataset.server));
     list.replaceChildren();
     if (!snapshot.servers.length) list.append(element('p', message('tools.no-custom-servers-yet')));
     for (const server of snapshot.servers) {
@@ -279,14 +304,15 @@ export function bindMcpSettings(projects) {
       const actions = element('div', '', 'settings-actions');
       const apply = async (data, button) => {
         button.disabled = true;
+        changing++;
         status.textContent = '';
         try {
           const next = await request(endpoint + '/custom', { data: { id: server.id, ...data } });
           if (['remove', 'oauth-logout', 'oauth-login'].includes(data.action)) results.delete(server.id);
           render(next);
-          (find(heading.id) ?? find('mcp-add')).focus();
+          (button.id && find(button.id) || find(heading.id) || find('mcp-add')).focus();
         } catch (error) { setText(status, errorText(error)); }
-        finally { button.disabled = false; }
+        finally { changing--; button.disabled = false; }
       };
       renderResult(panel, results.get(server.id), server, apply);
       actions.append(control(message('jobs.edit'), (event) => open(server, event.currentTarget)),
@@ -307,7 +333,50 @@ export function bindMcpSettings(projects) {
         }));
       card.append(heading, badges, element('p', joinText([server.transport === 'stdio' ? message('ui.local-program') : message('ui.remote-service'),
         allowed.length ? joinText(allowed, ', ') : message('tools.no-projects-allowed')])));
-      if (server.status === 'paused') card.append(element('p', message('tools.paused-isolation-explanation')));
+      if (server.transport === 'stdio') {
+        const trust = server.trust;
+        const state = element('p', trust?.changed ? message('server.mcp-trust-changed') :
+          trust ? message('capabilities.mcp-trusted') : message('capabilities.mcp-untrusted'));
+        state.setAttribute('role', 'status');
+        card.append(state);
+        if (trust) {
+          const fingerprint = element('p');
+          const signer = element('span', trust.signer || message('capabilities.mcp-unsigned'));
+          if (trust.signer) signer.dataset.uiContent = '';
+          fingerprint.append(signer, ' · ', element('code', trust.sha256));
+          card.append(fingerprint);
+        }
+        if (!trust || trust.changed) card.append(control(trust?.changed ? message('capabilities.mcp-retrust') : message('capabilities.mcp-trust'), (event) => {
+          if (trust?.changed || window.confirm(t('capabilities.mcp-trust-confirm'))) {
+            void apply({ action: 'trust', confirmed: true }, event.currentTarget);
+          }
+        }));
+      } else if (server.status === 'paused') card.append(element('p', message('tools.paused-isolation-explanation')));
+      if (server.enabled && server.status !== 'paused' && snapshot.workspaces?.length) {
+        const grants = element('details');
+        grants.dataset.server = server.id;
+        grants.open = openGrants.has(server.id);
+        grants.append(element('summary', message('capabilities.mcp-grants')));
+        for (const workspace of snapshot.workspaces) {
+          const project = workspace.layout === 'legacy_secondary' ? 'secondary' : 'default';
+          if (!server.appliesToProjects.includes(project)) continue;
+          const grant = element('input');
+          grant.type = 'checkbox';
+          grant.id = `mcp-grant-${server.id}-${workspace.id}`;
+          grant.checked = workspace.servers.includes(server.id);
+          const label = element('label', undefined, 'capability-consent');
+          const name = workspace.name ?? projectLabel(projects().find(({ id }) => id === project) ?? { id: project });
+          const assistant = element('span', workspace.assistantName || message('ui.assistant'));
+          if (workspace.assistantName) assistant.dataset.uiContent = '';
+          label.append(grant, ' ', assistant, ' · ', textNode(name));
+          grants.append(label);
+          grant.addEventListener('change', () => {
+            grant.checked = !grant.checked;
+            void apply({ action: 'grant', workspace: workspace.id, enabled: !grant.checked }, grant);
+          });
+        }
+        if (grants.childElementCount > 1) card.append(grants);
+      }
       if (server.dataScope) {
         const scope = element('p', server.dataScope);
         scope.dataset.uiContent = '';
@@ -335,6 +404,26 @@ export function bindMcpSettings(projects) {
       list.append(card);
     }
     pollOAuth(snapshot.baseRestartRequired ?? snapshot.restartRequired, view);
+    clearTimeout(trustPoll);
+    const unchanged = new Set(snapshot.servers.filter(({ trust }) => trust && !trust.changed).map(({ id }) => id));
+    if (unchanged.size) pollTrust(unchanged, view);
+  }
+
+  function pollTrust(unchanged, view) {
+    trustPoll = setTimeout(async () => {
+      if (view !== revision || !list.checkVisibility()) return;
+      if (!changing && !saving && !editor.open) {
+        try {
+          const changed = await request(endpoint + '/trust-status');
+          if (view === revision && changed.some((id) => unchanged.has(id))) {
+            const next = await request(endpoint + '/custom');
+            if (view === revision) render(next);
+            return;
+          }
+        } catch { /* The next visible-tab refresh can retry. */ }
+      }
+      if (view === revision) pollTrust(unchanged, view);
+    }, 2500);
   }
 
   find('mcp-add').addEventListener('click', (event) => open(undefined, event.currentTarget));

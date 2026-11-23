@@ -69,7 +69,7 @@ async function encodeAvatar(file) {
   return btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (byte) => String.fromCharCode(byte)).join(''));
 }
 
-export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent, restoreAgent }) {
+export function bindAgents({ onChange, close, openChannels, openMcp, openSkills, deleteAgent, restoreAgent }) {
   const view = document.getElementById('agent-view');
   const title = document.getElementById('agent-title');
   const tabs = document.getElementById('agent-tabs');
@@ -227,7 +227,8 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
       return { ...tool, disabled: tool.paused || !tool.enabled || !eligibleProject,
         note };
     }), message('ui.external-tools'), message('agents.no-tools'));
-    parent.append(node('p', message('agents.skills-later')));
+    if (wizard) parent.append(node('p', message('capabilities.skills-after-create')));
+    else parent.append(agentButton(message('capabilities.manage-skills'), openSkills));
     if (!wizard) parent.append(agentButton(message('ui.external-tools'), openMcp));
   }
 

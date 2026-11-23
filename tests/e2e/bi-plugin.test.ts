@@ -102,7 +102,9 @@ async function openBuilder(browser: Browser) {
 async function install(browser: Browser, pair: string) {
   await browser.command('Page.navigate', { url: pair });
   await browser.ready('document.querySelector("#open-capabilities")?.disabled === false');
+  await browser.ready('document.querySelector("#connection").textContent === "已連線"');
   await click(browser, '#open-capabilities');
+  await browser.ready('!document.querySelector("#capabilities-view").hidden');
   await selectFile(browser, '#plugin-file', archive);
   await browser.ready('document.querySelector("#plugin-dialog").open');
   assert.equal(await browser.evaluate('document.querySelector("#plugin-dialog button:last-child").disabled'), true);

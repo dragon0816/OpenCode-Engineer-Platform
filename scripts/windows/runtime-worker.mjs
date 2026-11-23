@@ -11,7 +11,7 @@ const stop = join(control, 'stop');
 const namesFile = join(control, 'mcp-credential-names.json');
 const names = probe && existsSync(namesFile) ? JSON.parse(readFileSync(namesFile, 'utf8')) : [];
 const command = probe
-  ? [process.execPath, [join(import.meta.dirname, 'custom-mcp-probe.mjs'), control]]
+  ? [process.execPath, [join(import.meta.dirname, probe === 'bridge' ? 'custom-mcp-bridge.mjs' : 'custom-mcp-probe.mjs'), control]]
   : [executable, ['serve', '--stdio', '--hostname', '127.0.0.1', '--port', port]];
 const child = spawn(...command, {
   env: probe ? { ...env, ...readCustomMcpCredentials(names) } : env, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,

@@ -13,6 +13,7 @@ import { createSession, promptID, submitOnce, validateSessionProfile } from '../
 import type { Agent } from '../opencode/sessions.ts';
 import { knowledgeTool, readFileTool, retainsPermissions, sessionPermissions, writeFileTool } from '../opencode/permissions.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
+import { projectSkills, skillResourceArgs } from '../runs/capability-library.ts';
 import { legacyWorkspace } from '../runs/agent-ledger.ts';
 import { ModelSeat } from '../opencode/model-seat.ts';
 import { nonceMarker, stripTransportText, transportField } from '../opencode/tool-transport.ts';
@@ -184,10 +185,10 @@ export class ChatService {
   }
 
   private permissions(session: Pick<WebSession, 'project' | 'knowledgeDisabled'>, agentID: string,
-    workspaceID: string, origin: SessionOrigin, vaults: readonly string[], delegation = false) {
+    workspaceID: string, origin: SessionOrigin, vaults: readonly string[], delegation = false, skills: readonly string[] = []) {
     const custom = this.runtime.remoteMcp?.tools.length
       ? this.runtime.remoteMcp.names(this.ledger.executionMcpGrants(agentID, workspaceID), session.project) : [];
-    return sessionPermissions({ agentID, origin, custom, delegation,
+    return sessionPermissions({ agentID, origin, custom, delegation, skills,
       status: Boolean(this.runtime.toolTickets), files: Boolean(this.runtime.toolTickets),
       knowledge: Boolean(this.runtime.toolTickets && vaults.length) });
   }
@@ -212,9 +213,10 @@ export class ChatService {
     this.requireGateway(owner.agentID);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
     const vaults = this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled);
+    const skills = this.ledger.capabilityLibrary().grants(owner.agentID);
     const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, vaults,
-      Boolean(turnId && this.runtime.toolTickets && this.delegations?.allows(turnId, this.store.runStore)));
-    return { ...owner, ...profile, model: session.alias, permissions, vaults };
+      Boolean(turnId && this.runtime.toolTickets && this.delegations?.allows(turnId, this.store.runStore)), skills.map(({ name }) => name));
+    return { ...owner, ...profile, model: session.alias, permissions, vaults, skills };
   }
 
   async askKnowledge(input: AskRequest, signal: AbortSignal, session?: WebSession, channel?: Destination) {
@@ -272,7 +274,10 @@ export class ChatService {
     mkdirSync(join(workspace, 'attachments'));
     mkdirSync(modelWorkspace);
     mkdirSync(join(modelWorkspace, 'generated'));
-    const permissions = this.permissions(local, agentID, workspaceID, origin, this.knowledgeVaults(agentID, workspaceID, local.knowledgeDisabled));
+    const skills = this.ledger.capabilityLibrary().grants(agentID);
+    projectSkills(modelWorkspace, skills);
+    const permissions = this.permissions(local, agentID, workspaceID, origin, this.knowledgeVaults(agentID, workspaceID, local.knowledgeDisabled),
+      false, skills.map(({ name }) => name));
     const upstreamID = await createSession(this.runtime.client, modelWorkspace, agent, alias, permissions);
     const session = { ...local, upstreamID };
     this.store.createSession(session, channel && { ...channel, workspaceID }, owner);
@@ -682,6 +687,13 @@ export class ChatService {
       validateSessionProfile(upstream, run.workspace, session.agent, session.alias);
       const scope = readScope();
       if (scope.model !== run.alias || run.workspace !== this.modelWorkspace(session)) throw new Error('Dispatch scope mismatch');
+      if (projectSkills(run.workspace, scope.skills)) {
+        await until(async (deadline) => {
+          const { data } = await client.skill.list({ location: { directory: run.workspace } }, { signal: AbortSignal.any([deadline, signal]) });
+          const names = new Set(data.map(({ id }) => id));
+          return scope.skills.every(({ name }) => names.has(name)) ? true : undefined;
+        }, 3000);
+      }
       await client.session.update({ sessionID, permissions: scope.permissions }, call());
       const liveScope = () => {
         try { return readScope(); }
@@ -743,6 +755,12 @@ export class ChatService {
         if (name !== readFileTool) return this.delegations?.invoke(name, args, {
           store: this.store, session, input, channel, attachments: this.attachments, workspace: () => this.workspace(session),
         }, toolSignal);
+        if (skillResourceArgs(args)) {
+          const data = scope.skills.some(({ name }) => name === args.skill) &&
+            this.ledger.capabilityLibrary().readResource(scope.agentID, args.skill, args.resource);
+          if (!data) return { isError: true, message: 'This Skill resource is unavailable for the current assistant.' };
+          return readFileResult(args.resource, data, createHash('sha256').update(data).digest('hex'), true);
+        }
         if (referenceReadArgs(args)) {
           const file = selected.references.get(args.reference);
           if (!file || !this.references) return { isError: true, error: 'reference-not-found', message: 'Select the local reference for this turn.' };

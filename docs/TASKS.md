@@ -362,3 +362,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] BI 接受掃描 PDF、PNG 和 JPEG，逐頁辨識並保留頁碼、OCR 引文來源和辨識引擎。雙語建置頁顯示辨識方式與各頁狀態。
 - [x] 驗證 Windows OCR、本機結果保留及 Gateway 圖片備援。Windows x64 bundled 發行內含渲染器與授權清單。
 - [ ] 擁有者用實際掃描文件驗收。以已通過圖片探測的 Gateway 模型驗證真實模型辨識，檔案參照的 OCR 預覽另行評估。 [展示與驗證報告](reviews/PHASE3G_OCR_REPORT.md)
+
+## 能力頁與本機 MCP
+
+- [x] 在主功能提供雙語能力頁，集中安裝 Plugin、管理 Skill 和 MCP、預覽 Workflow，以及匯入已發布知識庫。
+- [x] 接通 OpenCode 原生 Skill、主助理預設組合、逐助理授權與數量警告。接通本機 stdio MCP 的執行檔信任、簽章和雜湊檢查及逐工作區授權。
+- [x] 通過焦點驗收及有序關卡，包含兩輪 Chromium、知識庫、Plugin、BI Plugin 合成資料、原生隔離、發行重現性及零命中掃描。
+- [ ] Phase 3E 建置 Workflow 引擎。定義 capability 對應、參數與輸出驗證、受控試跑、核准、執行紀錄和失敗恢復。另接通有獨立授權的 Skill 腳本工作程序。
+- [ ] 為 loopback HTTP MCP 建立可驗證的服務執行檔身分。以公司的 MXO AI MCP 與真實儀器完成擁有者驗收。
+- [ ] 審核者補跑 Web、Excel、安裝、升級及備份。 [能力頁驗證報告](reviews/UX_CAPABILITIES_PAGE_REPORT.md)

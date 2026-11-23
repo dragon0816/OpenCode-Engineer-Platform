@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { FileIdentity } from '../../../../packages/contracts/src/run.ts';
 import { MiB, uuid } from './attachments.ts';
 import { referenceReadArgs } from './local-references.ts';
+import { skillResourceArgs } from './capability-library.ts';
 import { openWorkspaceFile, scopedPath } from './workspace.ts';
 import { createWorkspaceOutput, writeWorkspaceFile } from './workspace-write.ts';
 import type { OutputDirectory } from './workspace-write.ts';
@@ -18,6 +19,7 @@ export function validOutputName(value: unknown): value is string {
 
 export function fileReadArgs(args: Record<string, unknown>) {
   if ('reference' in args) return referenceReadArgs(args);
+  if ('skill' in args) return skillResourceArgs(args);
   if (Object.keys(args).length !== 1) return false;
   return validOutputName(args.name) ||
     typeof args.attachment === 'string' && uuid.test(args.attachment) ||

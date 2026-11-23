@@ -56,11 +56,14 @@ import { Dispatcher } from './runs/dispatcher.ts';
 import type { Candidate } from '../../../packages/knowledge/src/ingest.ts';
 import { legacyWorkspace, prepareBiWorkspace } from './runs/agent-ledger.ts';
 import { agentManagement } from './http/agents.ts';
+import { capabilityManagement } from './http/capabilities.ts';
 import { DocumentExtraction } from './bi/document-extraction.ts';
 import { receiveBiDocument } from './http/bi-documents.ts';
 import { servePlugins } from './plugins/http.ts';
 import { PluginRuntime } from './plugins/runtime.ts';
 import { recoverPythonJobs } from './plugins/python.ts';
+import { monitorMcpTrust, sameStdioCommand } from './runs/mcp-trust.ts';
+import type { CustomStdioMcp } from './runs/custom-mcp.ts';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -70,6 +73,7 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/local-paths.js', ['src/local-paths.js', 'text/javascript; charset=utf-8']],
   ['/plugins.js', ['src/plugins.js', 'text/javascript; charset=utf-8']],
+  ['/capabilities.js', ['src/capabilities.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
   ['/telegram-setup.js', ['src/telegram-setup.js', 'text/javascript; charset=utf-8']],
@@ -148,6 +152,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   }
   prepareBiWorkspace(root);
   const store = new WebStore(join(root, 'web.sqlite'));
+  try { store.capabilityLibrary().seed(); }
+  catch (error) { store.close(); throw error; }
   const mcpOAuth = runtime.mcpOAuth ?? new McpOAuth(root, openBrowser, mcpCredentials);
   const plugins = (() => {
     try {
@@ -193,6 +199,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram, external);
   const loginExchanges = new Map<string, { owner: string; relay: LoginExchange }>();
+  const capabilities = capabilityManagement(store, runtime.knowledge, referencePicker ?? pickLocalReference);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -219,6 +226,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   let restarting = false;
   let testingMcp = false;
   let refreshingModels = false;
+  const trustworthy = monitorMcpTrust(runtime.mcpFingerprint);
+  function refreshLocalMcpTrust() {
+    for (const server of store.customMcpServers()) {
+      if (server.transport !== 'stdio' || !server.trust || server.trust.changed || trustworthy(server)) continue;
+      const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = server;
+      store.saveCustomMcp({ ...definition, enabled: false, trust: { ...server.trust, changed: true } });
+      runtime.remoteMcp?.revokeLocal(server.id);
+    }
+  }
   const changedCredentials = new Set<string>();
   const oauthStatus = (server: CustomMcp) => {
     const status = mcpOAuth.status(server);
@@ -253,6 +269,12 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl || Boolean(telegramHistory));
     if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
       await servePlugins(plugins, pluginRuntime, path, request, response, csrf, () => body(request, 256 * 1024));
+      return;
+    }
+    if (path.startsWith('/api/capabilities/')) {
+      const caller = new AbortController();
+      response.once('close', () => caller.abort());
+      send(response, 200, await capabilities(path, request, () => body(request), caller.signal));
       return;
     }
     if (telegramHistory) {
@@ -628,9 +650,11 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/settings/mcp/test' && method === 'POST') {
+      refreshLocalMcpTrust();
       const { id } = await body(request);
       const server = store.customMcpServers().find((entry) => entry.id === id);
       if (!server) throw new HttpError(404, 'server-not-found');
+      if (server.transport === 'stdio' && server.trust?.changed) throw new HttpError(409, 'mcp-trust-changed');
       if (testingMcp) throw new HttpError(409, 'probe-busy');
       testingMcp = true;
       try {
@@ -652,13 +676,21 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       } finally { testingMcp = false; }
       return;
     }
+    if (path === '/api/settings/mcp/trust-status' && method === 'GET') {
+      refreshLocalMcpTrust();
+      send(response, 200, store.customMcpServers().filter((server) => server.transport === 'stdio' && server.trust?.changed)
+        .map(({ id }) => id));
+      return;
+    }
     if (path === '/api/settings/mcp/custom') {
+      refreshLocalMcpTrust();
       let changedId: string | undefined;
       if (method === 'POST') {
         const input = await body(request);
         const existing = store.customMcpServers().find(({ id }) => id === input.id);
         if (input.action !== 'create' && !existing) throw new HttpError(404, 'server-not-found');
         if (input.action === 'remove' && existing) {
+          runtime.remoteMcp?.revokeLocal(existing.id);
           mcpOAuth.remove(existing);
           store.removeCustomMcp(existing.id);
         } else if ((input.action === 'oauth-login' || input.action === 'oauth-logout') && existing) {
@@ -686,9 +718,23 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           changedCredentials.add(existing.id);
           send(response, 200, { configured: true });
           return;
+        } else if (input.action === 'trust' && existing) {
+          if (existing.transport !== 'stdio' || input.confirmed !== true) throw new HttpError(400, 'mcp-trust-confirm');
+          const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
+          let trust;
+          try { trust = runtime.mcpFingerprint(existing.command[0]); }
+          catch { throw new HttpError(422, 'mcp-trust-unavailable'); }
+          if (!existing.trust) store.clearCustomMcpGrants(existing.id);
+          store.saveCustomMcp({ ...definition, trust, enabled: true });
+          changedId = existing.id;
+        } else if (input.action === 'grant' && existing) {
+          if (typeof input.workspace !== 'string' || input.workspace.length > 80 || typeof input.enabled !== 'boolean') {
+            throw new HttpError(400, 'agent-mcp-invalid');
+          }
+          store.setCustomMcpWorkspaceGrant(existing, input.workspace, input.enabled);
         } else if (input.action === 'tool' && existing) {
           const { tool, enabled } = input;
-          if (typeof tool !== 'string' || !(oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
+          if (typeof tool !== 'string' || !(existing.transport === 'stdio' || oauthSettings(existing) ? oauthMcpTool : customMcpTool).test(tool) || typeof enabled !== 'boolean') {
             throw new HttpError(400, 'invalid-tool-settings');
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
@@ -699,6 +745,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           store.saveCustomMcp({ ...definition, deniedTools: [...denied] });
         } else if (input.action === 'enable' && existing) {
           if (typeof input.enabled !== 'boolean') throw new HttpError(400, 'invalid-server-enabled');
+          if (input.enabled && existing.transport === 'stdio' && existing.trust?.changed) throw new HttpError(409, 'mcp-trust-changed');
           if (input.enabled && existing.transport === 'remote') {
             try { await pinCustomRemoteMcp(existing, AbortSignal.timeout(5000)); }
             catch { throw new HttpError(400, 'mcp-network-address'); }
@@ -708,13 +755,15 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           }
           const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } = existing;
           store.saveCustomMcp({ ...definition, enabled: input.enabled });
+          if (!input.enabled && existing.transport === 'stdio') runtime.remoteMcp?.revokeLocal(existing.id);
         } else if (input.action === 'create' || input.action === 'update') {
           const id = input.action === 'create' ? randomBytes(16).toString('hex') : existing!.id;
           try {
             const deniedTools = input.action === 'update' ? existing?.deniedTools ?? [] : [];
-            const definitionInput = { ...input, deniedTools: input.oauth ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
+            const definitionInput = { ...input, deniedTools: input.oauth || input.transport === 'stdio'
+              ? deniedTools : deniedTools.filter((tool) => customMcpTool.test(tool)) };
             const projectIDs = projects.map((project) => project.id);
-            const definition = input.transport === 'remote'
+            let definition: CustomMcp = input.transport === 'remote'
               ? validateCustomRemoteMcp(id, definitionInput, projectIDs)
               : validateCustomStdioMcp(id, definitionInput, projectIDs);
             if (definition.transport === 'remote') await pinCustomRemoteMcp(definition, AbortSignal.timeout(5000));
@@ -722,6 +771,13 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
               throw new HttpError(400, 'server-changed');
             }
             mcpOAuth.configure(existing, definition, input.oauthClientId, input.oauthClientSecret);
+            if (existing?.transport === 'stdio' && existing.trust && definition.transport === 'stdio') {
+              const local = definition as CustomStdioMcp;
+              definition = sameStdioCommand(existing, local)
+                ? { ...local, trust: existing.trust, enabled: !existing.trust.changed && local.enabled }
+                : { ...local, trust: { ...existing.trust, changed: true }, enabled: false };
+              if (!definition.enabled) runtime.remoteMcp?.revokeLocal(existing.id);
+            } else if (existing?.transport === 'stdio') runtime.remoteMcp?.revokeLocal(existing.id);
             store.saveCustomMcp(definition);
             changedId = id;
           } catch (error) {
@@ -740,11 +796,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           JSON.stringify(value) === JSON.stringify(entry[key as keyof typeof entry]));
       });
       const oauthStatuses = new Map(servers.map((server) => [server.id, oauthStatus(server)]));
-      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id);
+      const definitionChanged = (server: typeof servers[number]) => !matches(server) || changedCredentials.has(server.id) ||
+        server.transport === 'stdio' && Boolean(server.trust && !server.trust.changed && server.enabled &&
+          !runtime.remoteMcp?.status.has(server.id));
       const baseRestartRequired = servers.some(definitionChanged) ||
         applied.some(({ id }) => !servers.some((server) => server.id === id)) || changedCredentials.size > 0;
       send(response, 200, {
         changedId,
+        workspaces: store.customMcpWorkspaceGrants(),
         baseRestartRequired,
         restartRequired: baseRestartRequired || [...oauthStatuses.values()].some((status) => status?.needsRestart),
         servers: servers.map((server) => ({
@@ -1319,7 +1378,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }).finally(() => {
       if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
           request.url !== '/api/settings/external-helpers/auth/prompt' &&
-          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
+          /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/|capabilities\/knowledge\/)/.test(request.url ?? '')) {
         external.recheckActive();
       }
     });
@@ -1344,9 +1403,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     store.close();
     throw error;
   }
+  const trustTimer = setInterval(() => {
+    try { refreshLocalMcpTrust(); } catch { /* Request-driven refresh will retry. */ }
+  }, 2000);
+  trustTimer.unref();
   return {
     pairURL: () => auth.pairURL(),
     async close() {
+      clearInterval(trustTimer);
       mcpOAuth.close();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const stopped = chat.close();

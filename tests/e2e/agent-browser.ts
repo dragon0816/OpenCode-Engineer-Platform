@@ -100,7 +100,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await step(4);
   await mapping.check('agent-wizard', '#agent-view', { selectors: ['.agent-steps [aria-current=step]', '.agent-choices', '#agent-next', '#agent-cancel'],
     labels: ['上一步', '下一步', '取消'] });
-  assert.match(await page.evaluate<string>("document.querySelector('#agent-fields').textContent"), /Skill 即將開放/);
+  assert.match(await page.evaluate<string>("document.querySelector('#agent-fields').textContent"), /建立助理後，可在「能力」為它啟用技能。/);
   await step(5);
   await setValue('#agent-reply-locale', 'en');
   await activate('#agent-wizard-add-channel');

@@ -133,6 +133,13 @@ async function main() {
     components.push(openCodeComponent({ name: 'OpenCode', version: pin.tag, source: asset, license: 'MIT',
       sha256: pin.windowsX64.sha256, binarySha256: pin.windowsX64.binarySha256,
       openapi: { source: spec, sha256: pin.openapi.sha256 } }, pin));
+    const hermesRevision = '861d0c0ca0813073f3944d4aff88818980beff2a';
+    const skillRoot = 'apps/adapter/default-skills/';
+    const skillLicenses = Object.keys(files).filter((path) => path.startsWith(skillRoot + 'hermes-') && path.endsWith('/LICENSE')).sort();
+    components.push({ name: 'AEP Hermes Skill Pack', version: hermesRevision, type: 'library', license: 'MIT',
+      purl: 'pkg:github/dragon0816/agentic-engineering-platform@' + hermesRevision,
+      source: 'https://github.com/dragon0816/agentic-engineering-platform/tree/' + hermesRevision + '/packages/hermes-skill-pack',
+      text: [skillRoot + 'NOTICE.md', ...skillLicenses].map((path) => Buffer.from(files[path]).toString('utf8')).join('\n\n') });
     const wheels = pythonComponents(read('tests/oracles/requirements.txt').toString('utf8'));
     components.push(...wheels);
     if (bundled) components.push(...await bundleRuntimes(files, JSON.parse(read('config/runtime.pin.json')), wheels, download));

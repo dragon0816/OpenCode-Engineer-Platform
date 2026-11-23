@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import { atRepo } from '../../../launcher/src/paths.ts';
+import { CapabilityLibrary } from './capability-library.ts';
 import type { FileIdentity, RunRecord } from '../../../../packages/contracts/src/run.ts';
 import type { Agent } from '../opencode/sessions.ts';
 import { maxSelectedModels } from '../opencode/gateway.ts';
@@ -8,7 +10,7 @@ import type { GatewayModelCatalog } from '../opencode/gateway.ts';
 import { parseTurnLimits, turnLimitDefaults } from '../opencode/turn-limits.ts';
 import type { TurnLimits } from '../opencode/turn-limits.ts';
 import type { SessionOrigin } from '../opencode/permissions.ts';
-import { Ledger, modelNotesVersion, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
+import { capabilitiesVersion, Ledger, modelNotesVersion, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts';
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import { DelegationLedger, migrateBudgetChoice, verifyBudgetChoice } from './delegation-ledger.ts';
@@ -19,7 +21,7 @@ import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts, migrateTelegramSettings, verifyTelegramSettings } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
 import type { Destination } from '../channels/transport.ts';
-import { validateCustomStdioMcp } from './custom-mcp.ts';
+import { assistantMcpPaused, validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
 import { HttpError } from '../http/errors.ts';
 import { migratePlugins, pluginRegistryVersion, verifyPluginRegistry } from '../plugins/schema.ts';
@@ -124,6 +126,17 @@ const webSchema = `CREATE TABLE IF NOT EXISTS web_session_display (
       mime TEXT
     ) STRICT`;
 
+export function verifyModelNotes(db: DatabaseSync) {
+  db.prepare('SELECT alias, mapped_model, note FROM web_model_notes LIMIT 0');
+}
+
+export function verifyCapabilities(db: DatabaseSync) {
+  db.prepare('SELECT name, description, source, bundled, instructions, files FROM installed_skills LIMIT 0');
+  db.prepare('SELECT name FROM capability_defaults LIMIT 0');
+  db.prepare('SELECT id, definition FROM imported_workflows LIMIT 0');
+  db.prepare('SELECT workspace_id, server_id, enabled FROM workspace_mcp_overrides LIMIT 0');
+}
+
 export class WebStore extends Ledger {
   private readonly telegram: boolean;
   private readonly executionChanges = new Set<() => void>();
@@ -154,6 +167,7 @@ export class WebStore extends Ledger {
         if (!telegram && version < 10) migrateReferences(db);
         if (!telegram && version < pluginRegistryVersion) migratePlugins(db);
         if (!telegram && version < modelNotesVersion) db.exec(readFileSync(atRepo('apps/adapter/migrations/013_model_notes.sql'), 'utf8'));
+        if (!telegram && version < capabilitiesVersion) db.exec(readFileSync(atRepo('apps/adapter/migrations/014_capabilities.sql'), 'utf8'));
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -166,7 +180,8 @@ export class WebStore extends Ledger {
           verifyReferences(db);
           verifyAgentModelSources(db);
           verifyPluginRegistry(db);
-          db.prepare('SELECT alias, mapped_model, note FROM web_model_notes LIMIT 0');
+          verifyModelNotes(db);
+          verifyCapabilities(db);
         }
       },
     });
@@ -181,6 +196,17 @@ export class WebStore extends Ledger {
 
   pluginRegistry(dataRoot: string, oepVersion: string) {
     return new PluginRegistry(this.db, dataRoot, oepVersion);
+  }
+
+  capabilityLibrary() {
+    return new CapabilityLibrary(this.db, (operation) => this.transaction(operation));
+  }
+
+  capabilitiesChanged() { this.executionChanges.forEach((check) => check()); }
+
+  removeKnowledgeRead(vault: string) {
+    this.db.prepare('DELETE FROM agent_knowledge_reads WHERE vault_id=?').run(vault);
+    this.capabilitiesChanged();
   }
 
   get workItems() {
@@ -332,6 +358,7 @@ export class WebStore extends Ledger {
       if (id === 'main' && !this.hasExplicitMainMcpGrants()) this.auditSettings('agent-mcp-main');
       this.db.prepare("DELETE FROM agent_capabilities WHERE agent_id=? AND kind='mcp'").run(id);
       this.db.prepare('DELETE FROM workspace_mcp_grants WHERE workspace_id IN (SELECT id FROM agent_workspaces WHERE agent_id=?)').run(id);
+      this.db.prepare('DELETE FROM workspace_mcp_overrides WHERE workspace_id IN (SELECT id FROM agent_workspaces WHERE agent_id=?)').run(id);
       const grant = this.db.prepare("INSERT INTO agent_capabilities VALUES (?,'mcp',?,1)");
       const workspace = this.db.prepare('INSERT INTO workspace_mcp_grants VALUES (?,?)');
       const definitions = this.customMcpServers();
@@ -456,7 +483,20 @@ export class WebStore extends Ledger {
         ON CONFLICT(id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at
       `).run(id, JSON.stringify(definition), createdAt, now, id);
       if (!changes) throw new Error('最多可設定 20 個自訂 MCP 伺服器。');
-      if (!this.telegram) replaceLegacyMcpGrants(this.db, definition, this.hasExplicitMainMcpGrants());
+      if (!this.telegram) {
+        const explicit = this.hasExplicitMainMcpGrants();
+        if (definition.transport === 'stdio' && !explicit) {
+          this.db.prepare("DELETE FROM agent_capabilities WHERE agent_id='main' AND kind='mcp' AND capability_id=?").run(id);
+        }
+        replaceLegacyMcpGrants(this.db, definition, explicit || definition.transport === 'stdio');
+        const overrides = this.db.prepare(`SELECT o.workspace_id, o.enabled, w.layout FROM workspace_mcp_overrides o
+          JOIN agent_workspaces w ON w.id=o.workspace_id WHERE o.server_id=?`).all(id);
+        for (const override of overrides) {
+          const allowed = definition.appliesToProjects.includes(override.layout === 'legacy_secondary' ? 'secondary' : 'default');
+          if (allowed && override.enabled) this.db.prepare('INSERT OR IGNORE INTO workspace_mcp_grants VALUES (?,?)').run(override.workspace_id!, id);
+          else this.db.prepare('DELETE FROM workspace_mcp_grants WHERE workspace_id=? AND server_id=?').run(override.workspace_id!, id);
+        }
+      }
       return { ...definition, createdAt, updatedAt: now };
     });
     this.executionChanges.forEach((check) => check());
@@ -473,6 +513,55 @@ export class WebStore extends Ledger {
     });
     if (removed) this.executionChanges.forEach((check) => check());
     return removed;
+  }
+
+  customMcpWorkspaceGrants() {
+    return this.db.prepare(`SELECT w.id, w.display_name AS name, w.layout, a.id AS assistantId, a.name AS assistantName
+      FROM agent_workspaces w JOIN agents a ON a.id=w.agent_id WHERE a.state='active' ORDER BY a.created_at,w.id`).all()
+      .map((workspace) => ({ ...workspace, servers: this.db.prepare(`SELECT g.server_id AS id FROM workspace_mcp_grants g
+        JOIN agent_capabilities c ON c.capability_id=g.server_id AND c.agent_id=? AND c.kind='mcp' AND c.enabled=1
+        WHERE g.workspace_id=?`).all(workspace.assistantId!, workspace.id!).map(({ id }) => id) }));
+  }
+
+  setCustomMcpWorkspaceGrant(server: CustomMcp, workspace: string, enabled: boolean) {
+    this.transaction(() => {
+      const row = this.db.prepare(`SELECT w.agent_id, w.layout FROM agent_workspaces w JOIN agents a ON w.agent_id=a.id
+        WHERE w.id=? AND a.state='active'`).get(workspace);
+      if (!row || enabled && (!server.enabled || assistantMcpPaused(server) ||
+          !server.appliesToProjects.includes(row.layout === 'legacy_secondary' ? 'secondary' : 'default'))) {
+        throw new HttpError(400, 'agent-mcp-invalid');
+      }
+      const assistant = String(row.agent_id);
+      const granted = Boolean(this.db.prepare('SELECT 1 FROM workspace_mcp_grants WHERE workspace_id=? AND server_id=?')
+        .get(workspace, server.id));
+      if (assistant === 'main' && !this.hasExplicitMainMcpGrants()) this.auditSettings('agent-mcp-main');
+      this.db.prepare(`INSERT OR IGNORE INTO workspace_mcp_overrides
+        SELECT w.id, ?, EXISTS (SELECT 1 FROM workspace_mcp_grants g WHERE g.workspace_id=w.id AND g.server_id=?)
+        FROM agent_workspaces w WHERE w.agent_id=?`).run(server.id, server.id, assistant);
+      this.db.prepare('INSERT OR REPLACE INTO workspace_mcp_overrides VALUES (?,?,?)').run(workspace, server.id, Number(enabled));
+      if (enabled) {
+        this.db.prepare("INSERT OR REPLACE INTO agent_capabilities VALUES (?,'mcp',?,1)").run(assistant, server.id);
+        this.db.prepare('INSERT OR IGNORE INTO workspace_mcp_grants VALUES (?,?)').run(workspace, server.id);
+      } else {
+        this.db.prepare('DELETE FROM workspace_mcp_grants WHERE workspace_id=? AND server_id=?').run(workspace, server.id);
+        if (!this.db.prepare(`SELECT 1 FROM workspace_mcp_grants g JOIN agent_workspaces w ON w.id=g.workspace_id
+          WHERE w.agent_id=? AND g.server_id=?`).get(assistant, server.id)) {
+          this.db.prepare("DELETE FROM agent_capabilities WHERE agent_id=? AND kind='mcp' AND capability_id=?").run(assistant, server.id);
+        }
+      }
+      if (granted !== enabled) this.db.prepare('UPDATE agents SET config_revision=config_revision+1,updated_at=? WHERE id=?')
+        .run(Date.now(), assistant);
+    });
+    this.capabilitiesChanged();
+  }
+
+  clearCustomMcpGrants(id: string) {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM workspace_mcp_overrides WHERE server_id=?').run(id);
+      this.db.prepare('DELETE FROM workspace_mcp_grants WHERE server_id=?').run(id);
+      this.db.prepare("DELETE FROM agent_capabilities WHERE kind='mcp' AND capability_id=?").run(id);
+    });
+    this.capabilitiesChanged();
   }
 
   onExecutionChange(check: () => void) {

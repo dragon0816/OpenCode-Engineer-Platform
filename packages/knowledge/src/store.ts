@@ -17,7 +17,12 @@ type ReviewDraft = Candidate | ChangeSet | RepositoryReview;
 
 const vaultClassificationsVersion = 2;
 const biOwnershipVersion = 3;
-export const knowledgeSchemaVersion = biOwnershipVersion;
+export const importedKnowledgeVersion = 4;
+export const knowledgeSchemaVersion = importedKnowledgeVersion;
+
+export function verifyPublishedImports(db: DatabaseSync) {
+  db.prepare('SELECT publication, source FROM published_imports LIMIT 0');
+}
 
 const benchmarksMigration = `
   CREATE TABLE IF NOT EXISTS benchmark_sets (
@@ -108,9 +113,17 @@ export class KnowledgeStore {
             migrateBiOwnership(this.db, path);
             this.db.exec(`PRAGMA user_version=${biOwnershipVersion}`);
           }
+          if (version < importedKnowledgeVersion) {
+            this.db.exec(`CREATE TABLE published_imports (
+              publication INTEGER PRIMARY KEY REFERENCES publications(id), source TEXT NOT NULL
+            ) STRICT;`);
+          }
           verifyBiOwnership(this.db);
+          verifyPublishedImports(this.db);
+          if (version < importedKnowledgeVersion) this.db.exec(`PRAGMA user_version=${importedKnowledgeVersion}`);
         });
       }
+      if (readOnly && version >= importedKnowledgeVersion) verifyPublishedImports(this.db);
       this.ownsBi = this.version(readOnly) >= biOwnershipVersion;
       this.activeFilter = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='inactive_vaults'").get()
         ? 'NOT EXISTS (SELECT 1 FROM inactive_vaults WHERE vault=v.id)' : '1';
@@ -201,12 +214,42 @@ export class KnowledgeStore {
     });
   }
 
-  import(snapshot: Snapshot, input: Uint8Array, allowModel = false) {
+  import(snapshot: Snapshot, input: Uint8Array, allowModel = false, source?: string) {
     return this.transaction(() => {
       if (this.managedVault(snapshot.vault.id)) {
         throw new Error('This vault requires a reviewed publication');
       }
-      return this.writeSnapshot(snapshot, input, allowModel);
+      const result = this.writeSnapshot(snapshot, input, allowModel);
+      if (source !== undefined) {
+        this.db.prepare(`INSERT OR IGNORE INTO published_imports
+          SELECT id, ? FROM publications WHERE vault=? AND revision=?`).run(source, result.vault, result.revision);
+        if (!this.publication(result.vault)) {
+          const prior = this.db.prepare('SELECT publication FROM vaults WHERE id=?').get(result.vault);
+          const imported = this.publication(result.vault, result.revision);
+          if (imported && prior?.publication === imported.id && imported.index_hash === imported.manifest_hash) {
+            this.activate(result.vault, imported.id);
+          }
+        }
+      }
+      return result;
+    });
+  }
+
+  publishedImports() {
+    return this.db.prepare(`SELECT v.id, p.title, p.revision, i.source, p.allow_model AS modelEnabled
+      FROM vaults v JOIN publications p ON p.id=v.publication JOIN published_imports i ON i.publication=p.id
+      WHERE ${this.activeFilter} AND NOT EXISTS (SELECT 1 FROM review_schema_heads WHERE vault=v.id)
+      ORDER BY p.title,v.id`).all();
+  }
+
+  removePublishedImport(vault: string, revision: string) {
+    return this.transaction(() => {
+      const publication = this.publication(vault);
+      if (!publication || publication.revision !== revision || this.managedVault(vault) ||
+          !this.db.prepare('SELECT 1 FROM published_imports WHERE publication=?').get(publication.id)) return false;
+      this.db.prepare('INSERT INTO inactive_vaults VALUES (?)').run(vault);
+      this.db.prepare('UPDATE publications SET allow_model=0 WHERE vault=?').run(vault);
+      return true;
     });
   }
 

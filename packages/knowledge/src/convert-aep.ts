@@ -201,8 +201,9 @@ function convertWiki(manifest: Record<string, unknown>, files: Map<string, Buffe
   return snapshot;
 }
 
-export function publishedInput(path: string, wikiRoot?: string) {
-  let original = readLocal(path);
+export function publishedBytes(inputBytes: Buffer, wikiRoot?: string) {
+  if (inputBytes.length > maxSnapshotBytes) invalid('root');
+  let original = inputBytes;
   const bytes = original[0] === 0x1f && original[1] === 0x8b
     ? gunzipSync(original, { maxOutputLength: maxSnapshotBytes }) : original;
   const input = record(decodeJson(bytes), 'root');
@@ -214,4 +215,8 @@ export function publishedInput(path: string, wikiRoot?: string) {
       files: Object.fromEntries([...files].map(([name, content]) => [name, content.toString('base64')])) }));
   } else if (input.format === 'aep-bi-dataset-snapshot/1') snapshot = convertBI(input, bytes);
   return { snapshot: validateSnapshot(snapshot), original };
+}
+
+export function publishedInput(path: string, wikiRoot?: string) {
+  return publishedBytes(readLocal(path), wikiRoot);
 }

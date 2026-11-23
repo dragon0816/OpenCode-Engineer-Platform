@@ -29,8 +29,9 @@ export function startBrokerMcp(tickets: ToolTickets, remote: RemoteMcpBroker) {
       inputSchema: schema({}), annotations: readOnly,
     }, {
       name: localName(readFileTool),
-      description: 'Read a session attachment ID, artifact ID, or current output name. For a selected local reference, pass reference and optional byte offset and length. Folder references accept list:true with optional relative path and after cursor, or a relative file path to read. For PDF extraction use page (1-based); next is the next byte offset within the text or page.',
-      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' }, ...referenceReadSchema }),
+      description: 'Read a session attachment ID, artifact ID, current output name, or an enabled Skill resource (provide skill and relative resource). For a selected local reference, pass reference and optional byte offset and length. Folder references accept list:true with optional relative path and after cursor, or a relative file path to read. For PDF extraction use page (1-based); next is the next byte offset within the text or page.',
+      inputSchema: schema({ attachment: { type: 'string' }, artifact: { type: 'string' }, name: { type: 'string' },
+        skill: { type: 'string', maxLength: 64 }, resource: { type: 'string', maxLength: 200 }, ...referenceReadSchema }),
       annotations: readOnly,
     }, {
       name: localName(writeFileTool), description: 'Create a new UTF-8 file in the current run output.',

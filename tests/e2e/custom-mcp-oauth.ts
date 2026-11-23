@@ -216,6 +216,7 @@ try {
   ] as const) {
     await selectLocale(browser, locale);
     await click('[data-section="mcp"]');
+    await click('#settings-open-mcp');
     await browser.ready("document.querySelector('#mcp-import').checkVisibility()");
     if (!id) {
       await browser.evaluate("document.querySelector('#mcp-import').focus()");

@@ -2,7 +2,7 @@ import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
 import { sendRemoteMcp, statelessMcpVersion } from '../../../../scripts/windows/custom-mcp-remote.mjs';
 import { assistantMcpPaused, customMcpName, customMcpTool, oauthBinding, oauthMcpTool, validateCustomRemoteMcp } from '../runs/custom-mcp.ts';
-import type { CustomMcp, CustomRemoteMcp } from '../runs/custom-mcp.ts';
+import type { CustomMcp, CustomRemoteMcp, CustomStdioMcp } from '../runs/custom-mcp.ts';
 import { readCustomMcpCredentials } from '../runs/custom-mcp-credentials.ts';
 import { projects } from '../runs/web-store.ts';
 import type { ProjectID } from '../runs/web-store.ts';
@@ -10,12 +10,15 @@ import { containsTransport, objectRecord, stripTransport, transportField } from 
 import type { ToolValidator } from './tool-tickets.ts';
 import type { McpOAuth } from './mcp-oauth.ts';
 import { WebMessageError } from '../http/errors.ts';
+import { sameMcpFingerprint, sameStdioCommand } from '../runs/mcp-trust.ts';
+import type { startCustomMcpBridge } from '../../../launcher/src/custom-mcp-bridge.ts';
 
 export type RemoteMcpTransport = typeof sendRemoteMcp;
 type RemoteStatus = 'connected' | 'failed' | 'needs_auth';
 type Tool = { name: string; description: string; inputSchema: Record<string, unknown>; validate: ToolValidator };
 type Connected = {
-  definition: CustomRemoteMcp; tools: (Tool & { upstreamName: string })[];
+  definition: CustomMcp; tools: (Tool & { upstreamName: string })[];
+  bridge?: Awaited<ReturnType<typeof startCustomMcpBridge>>;
   call: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
 };
 
@@ -52,6 +55,13 @@ function redact(value: unknown, secrets: readonly string[], gatewayRedact: (valu
 type Send = (method: string, phase: keyof CustomRemoteMcp['timeouts'], id?: number, params?: unknown,
   stop?: AbortSignal, secrets?: Set<string>) => Promise<unknown>;
 
+async function initializeCatalog(send: Send, secrets: Set<string>) {
+  const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
+    clientInfo: { name: 'OEP assistant broker', version: '1' } }, undefined, secrets))?.protocolVersion;
+  if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
+  await send('notifications/initialized', 'startup', undefined, undefined, undefined, secrets);
+}
+
 function remoteSender(definition: CustomRemoteMcp, headers: Record<string, string>, transport: RemoteMcpTransport, oauth?: McpOAuth) {
   const session: { id?: string; version?: string } = {};
   const send: Send = async (method, phase, id, params, stop, secrets = new Set()) => {
@@ -82,10 +92,7 @@ function remoteSender(definition: CustomRemoteMcp, headers: Record<string, strin
         delete session.version;
       }
     }
-    const protocol = objectRecord(await send('initialize', 'startup', 1, { protocolVersion: '2025-06-18', capabilities: {},
-      clientInfo: { name: 'OEP assistant broker', version: '1' } }, undefined, secrets))?.protocolVersion;
-    if (!['2025-11-25', '2025-06-18', '2025-03-26'].some((version) => version === protocol)) throw new Error('Unsupported MCP protocol');
-    await send('notifications/initialized', 'startup', undefined, undefined, undefined, secrets);
+    await initializeCatalog(send, secrets);
     return list();
   } };
 }
@@ -102,8 +109,10 @@ export async function probeOAuthMcp(definition: CustomRemoteMcp, oauth: McpOAuth
   });
 }
 
+type LocalMcp = { trusted: (definition: CustomStdioMcp) => boolean; open: typeof startCustomMcpBridge };
+
 export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatewayRedact: (value: string) => string,
-  transport: RemoteMcpTransport = sendRemoteMcp, oauth?: McpOAuth) {
+  transport: RemoteMcpTransport = sendRemoteMcp, oauth?: McpOAuth, local?: LocalMcp) {
   const validator = new Ajv({ strict: true, ownProperties: true, addUsedSchema: false });
   const status = new Map<string, RemoteStatus>();
   const servers: Connected[] = [];
@@ -111,21 +120,38 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
   const tools: Tool[] = [];
 
   await Promise.all(definitions.map(async (server) => {
-    if (!server.enabled || !server.appliesToProjects.length || server.transport !== 'remote' || assistantMcpPaused(server)) return;
+    if (!server.enabled || !server.appliesToProjects.length || assistantMcpPaused(server)) return;
+    let bridge: Connected['bridge'];
+    const remoteOAuth = server.transport === 'remote' && server.oauth;
     try {
       const names = server.environment.map(({ name }) => name);
-      const definition = validateCustomRemoteMcp(server.id, { ...server, headers: names }, projects.map(({ id }) => id));
-      const missing = definition.environment.filter(({ reference }) => !process.env[reference]).map(({ reference }) => reference);
-      const user = readCustomMcpCredentials(missing);
-      const headers = Object.fromEntries(definition.environment.map(({ name, reference }) =>
-        [name, process.env[reference] || user[reference]]));
-      if (Object.values(headers).some((value) => !value)) {
-        status.set(server.id, 'needs_auth');
-        return;
+      const definition = server.transport === 'remote'
+        ? validateCustomRemoteMcp(server.id, { ...server, headers: names }, projects.map(({ id }) => id)) : server;
+      const secrets = new Set<string>();
+      let send: Send;
+      let catalog: unknown[];
+      if (definition.transport === 'stdio') {
+        if (!local?.trusted(definition)) throw new Error('Local MCP trust is unavailable');
+        const connection = bridge = await local.open(definition);
+        send = (method, phase, _id, params, signal) => connection.send(method, phase, params, signal);
+        await initializeCatalog(send, secrets);
+        const list = objectRecord(await send('tools/list', 'catalog', 2, {}))?.tools;
+        if (!Array.isArray(list)) throw new Error('Local catalog unavailable');
+        catalog = list.slice(0, 50);
+      } else {
+        const missing = definition.environment.filter(({ reference }) => !process.env[reference]).map(({ reference }) => reference);
+        const user = readCustomMcpCredentials(missing);
+        const headers = Object.fromEntries(definition.environment.map(({ name, reference }) =>
+          [name, process.env[reference] || user[reference]]));
+        if (Object.values(headers).some((value) => !value)) {
+          status.set(server.id, 'needs_auth');
+          return;
+        }
+        for (const value of Object.values(headers)) secrets.add(value);
+        const remote = remoteSender(definition, headers, transport, oauth);
+        send = remote.send;
+        catalog = await remote.catalog(secrets);
       }
-      const secrets = new Set(Object.values(headers));
-      const remote = remoteSender(definition, headers, transport, oauth);
-      const catalog = await remote.catalog(secrets);
       const scrub = (value: unknown, values = secrets) => stripTransport(redact(value, [...values], gatewayRedact));
       const verified: Connected['tools'] = [];
       const namesSeen = new Set<string>();
@@ -133,14 +159,15 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
       for (const entry of catalog) {
         const tool = objectRecord(entry);
         const name = tool?.name;
-        if (typeof name !== 'string' || !(definition.oauth ? oauthMcpTool : customMcpTool).test(name) || scrub(name) !== name) continue;
+        const supportsAliases = Boolean(remoteOAuth || definition.transport === 'stdio');
+        if (typeof name !== 'string' || !(supportsAliases ? oauthMcpTool : customMcpTool).test(name) || scrub(name) !== name) continue;
         if (namesSeen.has(name)) throw new Error('Ambiguous remote tool catalog');
         namesSeen.add(name);
         const inputSchema = objectRecord(tool?.inputSchema);
         if (inputSchema?.type !== 'object' || containsTransport(inputSchema) || !safeSchema(inputSchema)) continue;
         const serialized = JSON.stringify(inputSchema);
         if (serialized.length > 8192 || JSON.stringify(scrub(inputSchema)) !== serialized) continue;
-        const alias = definition.oauth && (name.length > 20 || !customMcpTool.test(name))
+        const alias = supportsAliases && (name.length > 20 || !customMcpTool.test(name))
           ? `x_${createHash('sha256').update(name).digest('hex').slice(0, 18)}` : name;
         if (aliases.has(alias)) throw new Error('Ambiguous remote tool alias');
         try {
@@ -150,7 +177,7 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
             return Buffer.byteLength(payload) <= 64 * 1024 && safeValue(args) &&
               JSON.stringify(scrub(args)) === payload && check(args);
           };
-          const description = typeof tool?.description === 'string' ? String(scrub(tool.description)).slice(0, 300) : 'Run the approved remote tool.';
+          const description = typeof tool?.description === 'string' ? String(scrub(tool.description)).slice(0, 300) : 'Run the approved MCP tool.';
           aliases.add(alias);
           verified.push({ name: `${customMcpName(definition.id)}_${alias}`, upstreamName: name,
             description: alias === name ? description : `${name}. ${description}`, inputSchema, validate });
@@ -158,17 +185,17 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
       }
       if (!verified.length) throw new Error('No verified remote tools');
       let nextID = 3;
-      const connected: Connected = { definition, tools: verified, async call(name, args, signal) {
+      const connected: Connected = { definition, tools: verified, bridge, async call(name, args, signal) {
         const values = new Set(secrets);
         try {
-          const result = await remote.send('tools/call', 'execution', nextID++, { name, arguments: args }, signal, values);
+          const result = await send('tools/call', 'execution', nextID++, { name, arguments: args }, signal, values);
           if (objectRecord(result)?.resultType === 'input_required') {
             return { isError: true, message: 'This remote tool requires an interactive confirmation that OEP cannot complete.' };
           }
           return scrub(result, values);
         }
         catch (error) {
-          if (!definition.oauth || !(error instanceof WebMessageError) || signal.aborted) throw error;
+          if (!remoteOAuth || !(error instanceof WebMessageError) || signal.aborted) throw error;
           const message = error.detail.code === 'mcp-oauth-scope' ? 'This remote tool needs additional permissions. Update the OAuth scopes in External tools and sign in again.'
             : error.detail.code === 'mcp-oauth-token' ? 'The remote service could not refresh its OAuth session. Try again later.'
               : 'Sign in to this remote service in OEP External tools, then try again.';
@@ -178,7 +205,8 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
       status.set(server.id, 'connected');
       servers.push(connected);
     } catch (error) {
-      status.set(server.id, server.oauth && error instanceof WebMessageError && error.detail.code === 'mcp-oauth-login-required'
+      await bridge?.close().catch(() => {});
+      status.set(server.id, remoteOAuth && error instanceof WebMessageError && error.detail.code === 'mcp-oauth-login-required'
         ? 'needs_auth' : 'failed');
     }
   }));
@@ -193,12 +221,15 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
     status, tools,
     timeout: Math.max(80_000, ...servers.map(({ definition }) => definition.timeouts.execution)),
     names(grants: readonly CustomMcp[], project: ProjectID) {
-      return servers.flatMap(({ definition, tools: discovered }) => {
+      return servers.flatMap(({ definition, tools: discovered, bridge }) => {
         const grant = grants.find(({ id }) => id === definition.id);
-        if (!grant?.enabled || grant.transport !== 'remote' || assistantMcpPaused(grant) || grant.url !== definition.url ||
-          oauthBinding(grant) !== oauthBinding(definition) ||
-          JSON.stringify(grant.environment) !== JSON.stringify(definition.environment) ||
+        if (!grant?.enabled || assistantMcpPaused(grant) ||
           !grant.appliesToProjects.includes(project) || !definition.appliesToProjects.includes(project)) return [];
+        if (definition.transport === 'stdio') {
+          if (grant.transport !== 'stdio' || !grant.trust || !definition.trust || !sameMcpFingerprint(grant.trust, definition.trust) ||
+              !sameStdioCommand(grant, definition) || !bridge?.current()) return [];
+        } else if (grant.transport !== 'remote' || grant.url !== definition.url || oauthBinding(grant) !== oauthBinding(definition) ||
+          JSON.stringify(grant.environment) !== JSON.stringify(definition.environment)) return [];
         return discovered.filter(({ upstreamName }) => !definition.deniedTools.includes(upstreamName) && !grant.deniedTools.includes(upstreamName))
           .map(({ name }) => name);
       });
@@ -206,6 +237,16 @@ export async function discoverRemoteMcp(definitions: readonly CustomMcp[], gatew
     async invoke(name: string, args: Record<string, unknown>, signal: AbortSignal) {
       const invocation = invocations.get(name);
       return invocation?.server.call(invocation.upstreamName, args, signal);
+    },
+    revokeLocal(id: string) {
+      const server = servers.find(({ definition }) => definition.id === id);
+      if (!server?.bridge) return;
+      status.delete(id);
+      void server.bridge.close().catch(() => {});
+    },
+    async close() {
+      const stopped = await Promise.allSettled(servers.map((server) => server.bridge?.close()));
+      if (stopped.some((result) => result.status === 'rejected')) throw new Error('Local MCP bridge could not close');
     },
   };
 }

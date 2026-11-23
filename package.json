@@ -33,6 +33,7 @@
     "test:e2e:web": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/web-http.ts",
     "test:e2e:web:real": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/web-http.ts --real",
     "test:e2e:browser": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/web-browser.test.ts",
+    "test:e2e:capabilities": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test tests/e2e/capabilities.test.ts",
     "test:e2e:browser:real": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning tests/e2e/web-browser.test.ts --real",
     "test:e2e:windows": "node --import ./tests/require-test-data.mjs --disable-warning=ExperimentalWarning --test --test-concurrency=1 tests/e2e/windows-launch.test.ts tests/e2e/sse-recovery.test.ts tests/e2e/web-browser.test.ts",
     "runtime": "node --disable-warning=ExperimentalWarning apps/launcher/src/main.ts",
@@ -54,7 +55,8 @@
     "@opencode/client": "2.3.2",
     "ajv": "8.20.0",
     "fflate": "0.8.3",
-    "semver": "7.7.2"
+    "semver": "7.7.2",
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

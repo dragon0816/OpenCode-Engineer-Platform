@@ -6,10 +6,17 @@ type Page = { evaluate<T>(expression: string): Promise<T> };
 type Controls = { selectors?: string[]; labels?: string[] };
 
 const layout = readFileSync(new URL('../../docs/GUI_LAYOUT.md', import.meta.url), 'utf8');
-const ids = [...layout.matchAll(/<!-- ui:([\w-]+) -->$/gm)].map((match) => match[1]);
+const headings = ['### 設定控制項對照', '### 功能控制項對照', '### 助理控制項對照'];
+const mappingRows = headings.flatMap((heading) => {
+  const start = layout.indexOf(heading);
+  const end = layout.indexOf('\n## ', start);
+  assert.ok(start >= 0 && end > start, heading);
+  return layout.slice(start, end).split(/\r?\n/).filter((line) => line.startsWith('| ') && !line.startsWith('| 舊位置'));
+});
+const ids = mappingRows.flatMap((row) => [...row.matchAll(/<!-- ui:([\w-]+) -->$/g)].map((match) => match[1]));
 
-export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature' | 'agent' | 'delegation') {
-  const servers = /^settings-mcp-(?!knowledge$)/;
+export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature' | 'agent' | 'delegation' | 'capabilities') {
+  const servers = /^settings-mcp-(?!(?:knowledge|link)$)/;
   const expected = ids.filter((id) => group === 'servers' ? servers.test(id) :
     id.startsWith(group + '-') && !servers.test(id));
   const covered = new Set<string>();
@@ -40,14 +47,7 @@ export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'featu
     },
 
     finish() {
-      const headings = ['### 設定控制項對照', '### 功能控制項對照', '### 助理控制項對照'];
-      const rows = headings.flatMap((heading) => {
-        const start = layout.indexOf(heading);
-        const end = layout.indexOf('\n## ', start);
-        assert.ok(start >= 0 && end > start, heading);
-        return layout.slice(start, end).split(/\r?\n/).filter((line) => line.startsWith('| ') && !line.startsWith('| 舊位置'));
-      });
-      assert.equal(ids.length, rows.length, 'Every mapping row needs a browser check ID');
+      assert.equal(ids.length, mappingRows.length, 'Every mapping row needs a browser check ID');
       assert.equal(new Set(ids).size, ids.length, 'Mapping IDs must be unique');
       assert.deepEqual([...covered].sort(), [...expected].sort(), 'Checked mapping rows for ' + group);
     },

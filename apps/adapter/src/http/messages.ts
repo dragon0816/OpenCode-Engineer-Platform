@@ -1,5 +1,17 @@
 // Stable workbench message codes and Traditional Chinese text for older clients.
 const messages = {
+  'mcp-trust-confirm': "請確認您信任此本機 stdio 執行檔。",
+  'mcp-trust-unavailable': "無法讀取及辨識執行檔。請確認本機路徑後重試。",
+  'mcp-trust-changed': "執行檔或其簽章已變更，本機工具已停用。確認路徑後，重新信任目前版本即可再次使用。",
+  'skill-package-invalid': "請選擇包含一份 SKILL.md 與支援檔案的本機資料夾或 ZIP。",
+  'skill-frontmatter-invalid': "SKILL.md 需要小寫名稱、最多 1,024 字元的描述，以及操作說明。",
+  'skill-already-installed': "同名的 Skill 已安裝。",
+  'skill-or-assistant-missing': "找不到 Skill 或使用中的助理。",
+  'workflow-package-invalid': "請選擇包含識別資料、說明和步驟的 AEP Workflow JSON 清單。",
+  'workflow-already-imported': "此 Workflow 的識別資料與版本已有不同的定義。",
+  'knowledge-import-unavailable': "目前無法匯入已發布知識庫。",
+  'knowledge-import-changed': "此發布版本已變更或由其他流程管理。請重新整理清單。",
+  'knowledge-package-invalid': "請選擇有效的已發布知識庫 JSON 或 gzip 套件。",
   'reference-unavailable': "無法存取這個本機位置。請選擇允許的本機檔案或資料夾。",
   'reference-not-found': "這個本機參照已移除或不屬於此會話。",
   'reference-changed': "本機檔案或資料夾已變更。請在附加資料中重新確認。",

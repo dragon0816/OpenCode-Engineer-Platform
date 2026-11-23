@@ -17,7 +17,8 @@ const transitions: Record<RunState, RunState[]> = {
 export const runLedgerVersion = 1;
 export const telegramChatLedgerVersion = 3;
 export const modelNotesVersion = 13;
-export const webLedgerVersion = modelNotesVersion;
+export const capabilitiesVersion = 14;
+export const webLedgerVersion = capabilitiesVersion;
 type WebMigration = { version: number; migrate: (db: DatabaseSync, version: number) => void; verify: (db: DatabaseSync) => void };
 
 export class Ledger {

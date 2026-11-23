@@ -41,13 +41,13 @@ function prepareKnowledgeDirectory(path: string) {
   checkDirectory(path);
 }
 
-export function importKnowledgeRepository(path: string, folder: string, allowModel = false) {
+export function importKnowledgeRepository(path: string, folder: string, allowModel = false, source?: string) {
   const { snapshot, original, digestVerified, sizeVerified } = readRepository(folder, path);
   prepareKnowledgeDirectory(dirname(path));
   verifyKnowledgePath(path);
   const store = new KnowledgeStore(path);
   try {
-    const report = store.import(snapshot, original, allowModel);
+    const report = store.import(snapshot, original, allowModel, source);
     const active = store.isCurrent(report.vault, report.revision, report.snapshot);
     return { state: report.state, vault: report.vault, tag: snapshot.repository!.tag, revision: report.revision,
       schemaVersion: snapshot.schema.version, active, digestVerified, sizeVerified, cards: report.cards.length,
@@ -95,7 +95,7 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
     };
     return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       ocrVision: ocrVision(relay, modelSeat, options.aliases, defaultAlias),
-      importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
+      importRepository: (folder: string, allowModel: boolean, source?: string) => importKnowledgeRepository(path, folder, allowModel, source),
       readRepository: (folder: string) => readRepository(folder, path),
       propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias(), beforeRequest?: () => void, maxTokens?: number) =>
         modelSeat.run(() => knowledgeCompletion(relay!, models.has(model) ? model : defaultAlias(), prompt, input, signal, beforeRequest, maxTokens), signal),
