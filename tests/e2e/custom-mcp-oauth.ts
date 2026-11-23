@@ -7,6 +7,7 @@ import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { McpOAuth } from '../../apps/adapter/src/opencode/mcp-oauth.ts';
 import { mcpOAuthStorage } from '../../apps/adapter/src/opencode/mcp-oauth-storage.ts';
+import { readFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { probeOAuthMcp } from '../../apps/adapter/src/opencode/remote-mcp-broker.ts';
 import { customMcpName, oauthBinding, validateCustomRemoteMcp } from '../../apps/adapter/src/runs/custom-mcp.ts';
 import type { CredentialEnvironment } from '../../apps/adapter/src/runs/custom-mcp-credentials.ts';
@@ -323,6 +324,7 @@ try {
     })).status, 202);
     const names = await until(async () => requests.get(policy), 30_000);
     assert.equal(names.includes(brokered), allowed);
+    assert.equal(names.filter((name) => name === readFileTool).length, 1);
     assert.ok(!names.some((name) => name.endsWith('_write_message')));
     if (allowed) await until(async () => (policy === 'scope-error' ? scopeError : toolResult) || undefined, 20_000);
   }
