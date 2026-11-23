@@ -1,5 +1,11 @@
 # OEP 決策紀錄
 
+## 2026-11-23　擁有者決定 Phase 3G-1 本機外掛安裝方式
+
+擁有者要求改用無簽章的本機 `.oepplugin` 安裝，取代原暫定的 OEP 團隊簽章、開發金鑰及公鑰釘選。發行者名稱由套件自行宣告。擁有者在「能力 → 外掛」選檔並確認權限。超出 OEP 相容範圍時顯示警告，由擁有者決定是否繼續。SHA-256 綁定本機接受的套件 bytes，啟動時發現變更就停用並提供「重新安裝／信任目前版本」。新增權限仍須確認。保留可選的套件擴充位置供日後加入簽章。Share Platform 發行另案處理。 [3G-1 實作與驗收](reviews/PHASE3G_SLICE1_REPORT.md)
+
+已發布的知識庫由 OEP 核心持有。停用、回退或移除建置外掛後，已發布版本及助理綁定繼續供查詢。移除保留外掛工作區資料。
+
 ## 2026-11-21　Stage 3 架構整合
 
 以下為已收斂的設計及既有約束。Stage 4 仍待 owner 核准 v2。 [ADR](ARCHITECTURE_DECISIONS.md) · [v2 計畫](IMPLEMENTATION_PLAN_V2.md)
@@ -420,3 +426,6 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 擁有者以 AEP 權利人身分授權，將 AEP 的 BI 擷取相關程式（`feature_plugins/bi_knowledge` 的轉換、擷取、暫存、驗證等 Python 模組）直接移入 OEP 的 BI Knowledge Plugin，改寫成 OEP 的 Plugin worker 與服務接口，並在檔案標頭與 `docs/` 保留來源註記（AEP repo 與 commit）。只移程式，不移 AEP 的資料、fixture、設定或憑證；移入內容須通過 OEP 的 scan 與授權檢查（AEP 內含第三方授權的檔案依其原授權處理）。
 - **理由：** 擁有者要求於週四 demo 從原始文件自動擷取卡片；AEP 已完整開發此流程，沿用可縮短時程並保持品質一致。
 - **捨棄的替代方案：** 只參考行為重新實作（原規則；時程不足）。
+## 2026-11-23 BI 文件擷取工作程序
+- 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
+- PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)

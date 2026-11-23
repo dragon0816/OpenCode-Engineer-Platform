@@ -1,0 +1,58 @@
+{
+  "format": "oep.plugin/v1",
+  "id": "oep.bi-knowledge",
+  "version": "1.0.0",
+  "name": {
+    "en": "BI Knowledge",
+    "zh-TW": "BI 知識庫"
+  },
+  "publisher": "OEP",
+  "oepCompatibility": ">=0.0.0 <1.0.0",
+  "permissions": {
+    "operations": [
+      "worker.run",
+      "review.submit",
+      "publish.request"
+    ],
+    "dataScope": "none",
+    "workers": [
+      "oep.bi-knowledge.document"
+    ],
+    "modelBroker": "approved-gateway",
+    "sourceBroker": "approved-sources"
+  },
+  "components": {
+    "skills": [],
+    "workflows": [],
+    "pythonWorkers": [
+      {
+        "id": "oep.bi-knowledge.document",
+        "version": "1.0.0",
+        "entry": "document.py",
+        "timeoutMs": 30000,
+        "dependencies": [
+          {
+            "distribution": "pypdf",
+            "module": "pypdf"
+          }
+        ]
+      }
+    ],
+    "dataSchemas": [],
+    "pages": [
+      {
+        "id": "oep.bi-knowledge.build",
+        "version": "1.0.0",
+        "entry": "page.json",
+        "titleKey": "page.title",
+        "strings": {
+          "en": "en.json",
+          "zh-TW": "zh-TW.json"
+        }
+      }
+    ],
+    "panels": [],
+    "reviewTypes": [],
+    "collections": []
+  }
+}

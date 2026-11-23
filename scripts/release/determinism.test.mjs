@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { unzipSync } from 'fflate';
+import { biArtifact } from '../plugins/bi.mjs';
+import { verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -19,10 +21,19 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
       execFileSync(process.execPath, ['scripts/release/build-release.mjs', '0.0.0', output, ...(bundled ? ['--bundled'] : [])], { stdio: 'inherit' });
       const archive = readFileSync(join(output, filename));
       assert.equal(readFileSync(join(output, 'SHA256SUMS'), 'utf8'), sha256(archive) + '  ' + filename + '\n');
+      assert.deepEqual(Buffer.from(unzipSync(archive)[biArtifact]), readFileSync(join(output, biArtifact)));
       return archive;
     });
     assert.equal(sha256(archives[0]), sha256(archives[1]));
     const files = unzipSync(archives[0]);
+    assert.ok(files['workers/bi/worker.py']?.length);
+    const plugin = verifyPackage(Buffer.from(files[biArtifact]));
+    assert.equal(plugin.manifest.id, 'oep.bi-knowledge');
+    assert.equal(plugin.payload.has('manifest.sig'), false);
+    for (const [path, data] of plugin.payload) {
+      if (path.startsWith('payload/')) assert.deepEqual(Buffer.from(files['plugins/bi-knowledge/' + path]), data);
+    }
+    assert.match(Buffer.from(files['THIRD_PARTY_LICENSES.md']).toString('utf8'), /pypdf 6\.21\.4/);
     const second = unzipSync(archives[1]);
     for (const path of ['sbom.cdx.json', 'THIRD_PARTY_LICENSES.md', 'NOTICE']) {
       assert.ok(files[path]?.length);
@@ -51,7 +62,7 @@ test('兩次建置的 ZIP 完全相同，且清單涵蓋每個發行檔案', () 
       const pin = JSON.parse(Buffer.from(files['config/opencode.pin.json']));
       assert.equal(upstream, 'opencode ' + pin.tag);
       if (bundled) execFileSync(join(unpacked, 'vendor/python/python.exe'), ['-I', '-c',
-        'import openpyxl, defusedxml, et_xmlfile; assert openpyxl.__version__ == "3.1.5"'], options);
+        'import openpyxl, defusedxml, et_xmlfile, pypdf; assert openpyxl.__version__ == "3.1.5" and pypdf.__version__ == "6.21.4"'], options);
       const node = bundled ? join(unpacked, 'vendor/node/node.exe') : process.execPath;
       execFileSync(node, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
         "await import('./apps/launcher/src/web.ts'); const { goldFixture } = await import('./tests/fixtures/knowledge/gold.ts'); goldFixture();"],

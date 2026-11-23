@@ -14,9 +14,11 @@ export class WorkspacePathError extends Error {
 
 const unsafe = () => new WorkspacePathError();
 const relativeName = /^[a-z\d][a-z\d._-]*(?:\/[a-z\d][a-z\d._-]*)*$/i;
+const pythonPayloadName = /^[a-z\d_][a-z\d._-]*(?:\/[a-z\d_][a-z\d._-]*)*$/i;
 
-export function scopedPath(root: string, name: string) {
-  if (!relativeName.test(name) || name.split('/').some((part) =>
+export function scopedPath(root: string, name: string, kind: 'workspace' | 'python-payload' = 'workspace') {
+  const allowed = kind === 'python-payload' ? pythonPayloadName : relativeName;
+  if (!allowed.test(name) || name.split('/').some((part) =>
     part.endsWith('.') || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) throw unsafe();
   const path = join(root, ...name.split('/'));
   const location = relative(root, path);
@@ -72,9 +74,10 @@ const same = (a: ReturnType<typeof metadata>, b: ReturnType<typeof metadata>) =>
   a.device === b.device && a.inode === b.inode && a.created === b.created && a.modified === b.modified &&
   a.changed === b.changed && a.bytes === b.bytes;
 
-export function openWorkspaceFile(root: string, name: string, maximum: number, expected?: FileIdentity, plain = false): OpenFile {
-  const path = resolve(scopedPath(root, name));
-  windowsAttributes(path, plain ? 'plain' : undefined);
+export function openWorkspaceFile(root: string, name: string, maximum: number, expected?: FileIdentity,
+  plain: boolean | 'python-payload' = false): OpenFile {
+  const path = resolve(scopedPath(root, name, plain === 'python-payload' ? plain : undefined));
+  windowsAttributes(path, plain === true ? 'plain' : undefined);
   const before = metadata(inspectPath(path, false));
   if (before.bytes > maximum || expected && !same(before, expected)) throw unsafe();
   const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));

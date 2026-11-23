@@ -11,14 +11,14 @@ export function knowledgeModel(relay: { baseURL: string; key: string }, alias: s
 }
 
 export async function knowledgeCompletion(relay: { baseURL: string; key: string }, alias: string,
-  prompt: string, input: unknown, signal: AbortSignal, beforeRequest?: () => void): Promise<Awaited<ReturnType<KnowledgeModel>>> {
+  prompt: string, input: unknown, signal: AbortSignal, beforeRequest?: () => void, maxTokens = 1024): Promise<Awaited<ReturnType<KnowledgeModel>>> {
   try {
     signal.throwIfAborted();
     beforeRequest?.();
     const response = await fetch(`${relay.baseURL}/chat/completions`, {
       method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(37_000)]),
       headers: { authorization: `Bearer ${relay.key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: alias, stream: false, max_tokens: 1024, messages: [
+      body: JSON.stringify({ model: alias, stream: false, max_tokens: maxTokens, messages: [
         { role: 'system', content: prompt },
         { role: 'user', content: JSON.stringify(input) },
       ] }),

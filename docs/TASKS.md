@@ -326,3 +326,29 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 外部來源的 Web 對話及交辦對當回合選取的參照檢查範圍、分級與檔案身分，再建立隔離工作副本。
 - [x] 依序通過 lint、型別檢查、116 個測試、發行建置、三輪 Chromium 與其餘整合驗證。敏感資料掃描零命中。
 - [ ] 由審核者執行 Web、Excel、安裝、升級及備份驗收，並驗證真實帳號及桌面流程。 [整合驗證紀錄](reviews/INTEGRATION_0_8_REPORT.md)
+- [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
+- [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
+- [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
+## Phase 3G BI 文件擷取
+- [x] 在知識庫建置頁加入雙語「從文件建立卡片」，支援文字 PDF、核准的 HTTPS 網頁、文字、Markdown 及 HTML。
+- [x] 讀取 BI export 的 schema 結構，分段呼叫 Gateway，逐欄驗證原文引文並檢查與發布卡片的重複。
+- [x] 將通過驗證的卡片送交既有審核及發布，助理依知識庫讀取權限引用來源定位。 [擷取與展示紀錄](reviews/PHASE3G_BI_EXTRACTION_REPORT.md)
+- [ ] 擁有者以候選版驗收實際公開網頁及本機樣本，審核者補跑 Web HTTP、Excel、安裝、升級、備份關卡。
+
+## Phase 3G 切片 1 本機外掛安裝
+
+- [x] 在能力頁選檔安裝，驗證 manifest 與 SHA-256，確認權限及相容性警告，支援啟用、停用、升級、回退與移除。
+- [x] 啟動時重新驗證套件，停用發生變更的外掛並提供信任或重新安裝入口。工作台主功能與中央頁面支援繁中、英文和窄版鍵盤操作。
+- [x] 加入空清冊遷移與升級對帳，使用合成外掛驗證安裝至移除。 [切片 1 報告](reviews/PHASE3G_SLICE1_REPORT.md)
+- [x] 切片 1B 接通 Windows AppContainer、ACL、網路隔離及 Job 監督，驗證工作程序的取消、逾時和宿主異常退出。
+- [x] 接通外掛資料、明確選取來源、Gateway、即時進度及擁有者審核，啟用時掛載頁面、右側面板、工作程序、審核類型和資料集宣告。 [切片 1B 合約](reviews/PHASE3G_SLICE1B_REPORT.md)
+- [ ] 接通 BI 建置外掛、文件格式的可驗證轉檔、資料移轉計畫、3E 能力、`.oepkb` 成品流通及 Share Platform。
+- [ ] 由審核者整合 `integration/0.8`，補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## Phase 3G BI 知識庫外掛
+
+- [x] 整合 BI 文件擷取與外掛執行環境，中央 Web 資料庫升至 v12。修正 0.8 的 BI 檔案上傳回歸。
+- [x] 提供雙語 BI 建置頁及無簽章安裝套件。從 PDF、網址、文字檔或 BI 匯出資料夾建立，經驗證、擁有者審核及發布。
+- [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
+- [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
+- [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)

@@ -19,6 +19,8 @@ import type { Destination } from '../channels/transport.ts';
 import { validateCustomStdioMcp } from './custom-mcp.ts';
 import type { CustomMcp } from './custom-mcp.ts';
 import { HttpError } from '../http/errors.ts';
+import { migratePlugins, pluginRegistryVersion, verifyPluginRegistry } from '../plugins/schema.ts';
+import { PluginRegistry } from '../plugins/registry.ts';
 import { insertLegacySessionOwner, legacyProjects, legacyWorkspace, migrateAgentLedger, replaceLegacyMcpGrants,
   verifyAgentLedger } from './agent-ledger.ts';
 
@@ -148,6 +150,7 @@ export class WebStore extends Ledger {
         // The standalone v10 references branch skipped the v9 model source table.
         if (!telegram && (version < 9 || version === 10)) migrateAgentModelSources(db);
         if (!telegram && version < 10) migrateReferences(db);
+        if (!telegram && version < pluginRegistryVersion) migratePlugins(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -159,6 +162,7 @@ export class WebStore extends Ledger {
           verifyBudgetChoice(db);
           verifyReferences(db);
           verifyAgentModelSources(db);
+          verifyPluginRegistry(db);
         }
       },
     });
@@ -169,6 +173,10 @@ export class WebStore extends Ledger {
       this.centralExternal = new ExternalLedger(this.db);
       this.references = new ReferenceLedger(this.db, (work) => this.transaction(work));
     }
+  }
+
+  pluginRegistry(dataRoot: string, oepVersion: string) {
+    return new PluginRegistry(this.db, dataRoot, oepVersion);
   }
 
   get workItems() {

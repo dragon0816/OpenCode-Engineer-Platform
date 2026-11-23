@@ -128,6 +128,21 @@ export function syntheticRepository(root: string, options: { snapshot?: Snapshot
 }
 
 export const forecast = '年度展望顯示 2031 年共需 900 台，1.6T 燈具約 300 台，2032 年 1.6T 燈具可達 480 台。';
+export const biPluginRepositoryQuote = 'SYN-GAMMA calibration limit is 42 mV.';
+
+export function biPluginRepository(root: string) {
+  const snapshot = smallSnapshot();
+  snapshot.vault = { id: 'synthetic-bi-export', title: 'Synthetic calibration export', kind: 'bi' };
+  snapshot.cards[0] = { ...snapshot.cards[0], title: 'SYN-GAMMA', fields: { 'field-x': '42 mV' } };
+  snapshot.sources[0].ref = 'calibration-note.txt';
+  snapshot.passages[0] = { ...snapshot.passages[0], text: biPluginRepositoryQuote, sha256: sha256(biPluginRepositoryQuote) };
+  const fixture = syntheticRepository(root, { snapshot });
+  writeFileSync(join(root, 'REPO.md'), '# Synthetic calibration export\n');
+  fixture.json('schemas/synthetic/measurement@1.0.0.json', { schema_id: 'synthetic/measurement', version: '1.0.0',
+    types: [{ name: 'Measurement', fields: [{ name: 'setting' }] }] });
+  return fixture;
+}
+
 export const forecastQuestions = [
   '2032 年市場預估 1.6T 燈具的需求是多少？',
   'What is the market estimate for 1.6T lamp demand in 2032?',

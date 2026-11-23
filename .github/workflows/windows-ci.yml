@@ -52,6 +52,7 @@ jobs:
           if-no-files-found: error
           path: |
             dist/OEP-*-windows-x64.zip
+            dist/plugins/BI-Knowledge.oepplugin
             dist/sbom.cdx.json
             dist/SHA256SUMS
       - name: Try Chromium with synthetic data

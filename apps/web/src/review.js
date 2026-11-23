@@ -72,8 +72,10 @@ function showComparison(parent, { previous, candidate }) {
   const sources = new Map(candidate.sources.map((item) => [item.id, item.ref]));
   for (const item of candidate.passages) {
     if (JSON.stringify(item) === JSON.stringify(oldPassages.get(item.id))) continue;
-    evidence.append(element('p', sources.get(item.sourceId)), element('blockquote', item.text));
-    if (item.locator) advanced(evidence).append(element('p', item.locator));
+    const document = item.sourceId.startsWith('source-extract-');
+    const label = document ? joinText([sources.get(item.sourceId), item.locator]) : sources.get(item.sourceId);
+    evidence.append(element('p', label), element('blockquote', item.text));
+    if (item.locator && !document) advanced(evidence).append(element('p', item.locator));
   }
   parent.append(evidence);
 }
@@ -210,7 +212,7 @@ export function bindReview(anchor, onPublish, openPreview) {
       const editor = inputLabel(metadata, message('review.review-draft-json'), 'textarea');
       editor.rows = 12;
       editor.value = JSON.stringify(draft, null, 2);
-      editor.readOnly = row.status !== 'pending';
+      editor.readOnly = row.status !== 'pending' || Boolean(draft.repositorySnapshot);
       const feedback = element('p');
       feedback.setAttribute('role', 'status');
       const controls = element('div');
@@ -259,7 +261,7 @@ export function bindReview(anchor, onPublish, openPreview) {
         }
       }
       if (row.status === 'pending') {
-        action('edit', message('review.save-edits'), () => ({ draft: JSON.parse(editor.value) }), metadata);
+        if (!editor.readOnly) action('edit', message('review.save-edits'), () => ({ draft: JSON.parse(editor.value) }), metadata);
         action('approve', message('jobs.approve'), () => {
           if (JSON.stringify(JSON.parse(editor.value)) !== JSON.stringify(draft)) throw new LocalizedError(message('review.save-the-draft-first'));
           return {};
