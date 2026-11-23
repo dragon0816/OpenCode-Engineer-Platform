@@ -373,7 +373,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await click(`#archived-agent-list ${specialistRow} .agent-row-open`);
   await visible('#restore-agent');
   await click('#restore-agent');
-  await page.ready(`document.querySelector('#agent-list ${specialistRow}') && document.querySelector('#settings-status').textContent === '已還原助理'`);
+  await page.ready(`document.querySelector('#agent-list ${specialistRow}') && document.querySelector('#settings-status').textContent === '已還原助理。'`);
   await click('#close-agent');
   await click(`#sessions [data-session="${specialistSession}"]`);
   await page.ready("!document.querySelector('#prompt').disabled && document.querySelector('#messages .message.assistant')");
