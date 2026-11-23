@@ -14,6 +14,7 @@ The alternate account gets read and execute access to the managed runtime and ac
 2. Obtain the standalone Windows x64 provider executable from its official distribution and record the reviewed three-part version and lowercase SHA-256. Codex uses MXC, which requires a compatible Windows 11 host. Claude Code uses restricted mode, which requires v2.1.248 or later. Run the following in **64-bit Windows PowerShell as administrator**, under the same Windows identity that runs OEP. Run from the review checkout or extracted release root. Supply one complete set of arguments per provider you want to configure. [Codex Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox) · [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
    ```powershell
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
    $codexExe = 'C:\review\providers\codex.exe'
    $codexVersion = '<reviewed three-part version>'
    $codexSha256 = '<reviewed lowercase SHA-256>'
@@ -27,9 +28,9 @@ The alternate account gets read and execute access to the managed runtime and ac
 
    Append `-DataRoot 'C:\absolute\path\inside\owner-profile'` on every setup invocation if the review build uses a custom directory. Rerun with the same arguments to repair or refresh the setup. A provider omitted on a repeat invocation retains its existing pin.
 
-3. Setup creates the non-admin local user `OEPExternalHelper` and its Windows profile, one local-machine-persistent generic credential in the owner's Credential Manager, and `HKLM\SOFTWARE\OEP\ExternalHelper` with the deployment metadata. It creates `%ProgramData%\OEP-ExternalHelper\runtime` for the trusted launcher and pinned provider executables and `%ProgramData%\OEP-ExternalHelper\runs` for working copies. It adds a non-inheriting deny ACE for the helper SID to the owner profile and the default and configured data roots. It places an `.oep-external-helper-sentinel` in each of those roots. The sentinel's read grant makes the probe test whether the account can traverse the protected root.
+3. Setup creates the non-admin local user `OEPExternalHelper` and its Windows profile, the local-machine-persistent `OEP/ExternalHelper/WindowsLogon` credential in the owner's Credential Manager, and `HKLM\SOFTWARE\OEP\ExternalHelper` with the deployment metadata. It creates `%ProgramData%\OEP-ExternalHelper\runtime` for the trusted launcher and pinned provider executables and `%ProgramData%\OEP-ExternalHelper\runs` for working copies. It adds a non-inheriting deny ACE for the helper SID to the owner profile and the default and configured data roots. It places an `.oep-external-helper-sentinel` in each of those roots. The sentinel's read grant makes the probe test whether the account can traverse the protected root.
 4. In OEP, open **Settings → External Helpers** and choose **Check status**. Verify the required version and Windows isolation. Accept the provider warning, enable the provider, and sign in. For Claude Code, first confirm the provider terms and use a Console API key, or use the official CLI as permitted by the applicable agreement. Keep key material out of PowerShell commands.
-5. Run the uninstaller from the same elevated owner PowerShell when the helper is idle. It removes the helper SID's deny ACEs and sentinels, the local account and profile (including its provider sign-ins), the owner's launch credential, the helper files and working copies under ProgramData, and the helper registry key. Keep any needed output before removal. The owner profile, OEP data, and source provider binaries are preserved.
+5. Run the uninstaller from the same elevated owner PowerShell when the helper is idle. It removes the helper SID's deny ACEs and sentinels, the local account and profile (including its provider sign-ins), the owner's launch credential, the helper files and working copies under ProgramData, and the helper registry key. Keep any needed output before removal. The owner profile, OEP data, and source provider binaries are preserved. An empty `HKLM\SOFTWARE\OEP` parent key can be removed separately after checking that it has no values or subkeys.
 
    ```powershell
    .\scripts\windows\Uninstall-OEPExternalHelper.ps1
@@ -60,6 +61,30 @@ The alternate account gets read and execute access to the managed runtime and ac
 - Telegram now checks the specific provider-disabled message where the earlier test expected the general isolation message. It still verifies that the turn never reaches Gateway, and additionally verifies the successful synthetic external response and the opt-in confirmation round trip.
 - The first combined gate attempt started against the isolation commit. It reached the external-helper suite after the default-setting implementation had changed in the worktree and failed because that fixture still assumed confirmation was enabled by default. The fixture now opts in explicitly. The first revised Chromium diagnostic selected the new confidential action on an older public attachment while the list refreshed. The test now waits for the uploaded filename and unclassified state before selecting its public action. The failed and passing Chromium diagnostics reported zero orphans.
 - The first full contract attempt on the revised implementation reported two stale API expectations and a mismatch between the Traditional Chinese server fallback and catalog. The focused rerun passed all three affected contracts after updating the assertions, matching the fallback, and making both classification warning keys visible to the catalog audit.
+
+### Follow-up verification
+
+Windows 11 x64, Node 24.14.1, implementation `d206740a40ffb1a9ba0ef67271536d80e9029d4d`. `npm ci` installed 14 packages. The Phase 0 asset and source directories came from the main checkout. The hook installer initially refused the inherited snapshot path. Its three hooks matched the worktree byte for byte, and the installer succeeded with the worktree's `.githooks` selected. Each gate ran in order with a fresh temporary `OEP_DATA_DIR` and process-local `oep-verify-venv` Python.
+
+| Command | Exit | Observed result | Seconds |
+| --- | ---: | --- | ---: |
+| `npm run lint` | 0 | 306 source and configuration files checked | 1.24 |
+| `npm run typecheck` | 0 | TypeScript completed | 6.42 |
+| `npm test` | 0 | 107 passed, 0 failed, 0 skipped | 18.30 |
+| `npm run build:release` | 0 | Windows x64 ZIP built and scanned | 17.22 |
+| `npm run test:e2e:browser`, run 1 | 0 | Chromium passed, 0 orphans | 147.00 |
+| `npm run test:e2e:browser`, run 2 | 0 | Chromium passed, 0 orphans | 161.76 |
+| `npm run test:e2e:browser`, run 3 | 0 | Chromium passed, 0 orphans | 161.04 |
+| `npm run test:e2e:knowledge` | 0 | 1 passed | 36.14 |
+| `npm run test:telegram` | 0 | 8 passed, including direct external text and confirmation | 38.37 |
+| `npm run test:e2e:mcp` | 0 | Existing broker scope, isolated probes, HTTPS transport, and Chromium passed | 74.40 |
+| `npm run test:contract:native:isolation` | 0 | 5 passed | 29.47 |
+| `npm run test:e2e:delegation` | 0 | 4 passed | 78.64 |
+| `npm run test:e2e:external-helpers` | 0 | 9 passed, including the direct gate and launch-handshake mutation | 117.54 |
+| `npm run test:release:determinism` | 0 | 1 passed, two byte-identical ZIPs | 41.71 |
+| `npm run scan` | 0 | 762 files, 0 hits | 1.67 |
+
+The release ZIP SHA-256 is `8d3ceaaf40ee86ac0c51c1ab13712025781f9faaba0be0ac58d8db1212d9557e`. Ten isolation, execution, and localization files were verified byte for byte in the archive. The contract tests substituted the account and permission operations. The existing restricted-token tests used only synthetic processes and temporary fixture paths. The installed OEP, its data, Windows account setup and system ACL changes, and real provider credentials and binaries stayed outside the run. The dedicated Web, Excel, install, upgrade, and backup gates remain with the reviewer.
 
 ## Checkpoint before the owner revision
 
