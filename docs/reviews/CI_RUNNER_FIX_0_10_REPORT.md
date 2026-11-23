@@ -8,6 +8,7 @@ The branch `ci/fix-0.10-runner` starts at `2c00fbb`. Local verification used Win
 - On the hosted runner, `TEMP` used an 8.3 spelling for the profile directory. The plugin registry joined that spelling into storage paths, which the strict workspace validator rejected when the native path resolved to its long spelling. The registry now canonicalizes the data root before deriving package and staging paths. The adapter also canonicalizes its optional plugin data root before passing it to recovery, document extraction, and the plugin runtime. Canonicalization uses the existing helper, which rejects reparse points and verifies the expanded path.
 - The reference-grant contract passed the runner's short `TEMP` spelling to a mock file picker. The pinned reader deliberately rejects short-name selections. The contract and Chromium picker fixtures now use checked long paths. The contract verifies rejection of the raw alias when one is present. The reference service canonicalizes its protected data root so comparisons block the directory's long spelling even when the application supplied a short one.
 - The Windows release run reported a 206.53 ms median for full-text search. The query plan iterated all passages in the publication and ran the FTS lookup for each row. `CROSS JOIN` makes SQLite evaluate the FTS matches once and look up each matching passage by rowid. The query retains the publication filter and ranking. The contract retains its 200 ms median limit.
+- After the reference fix, the hosted Chromium step reached its second browser launch and hit `EBUSY` while reading `DevToolsActivePort`. The harness now retries an absent or locked port file within the existing startup deadline.
 
 ## Short-path reproduction
 
@@ -22,7 +23,7 @@ Use the [Windows runner alias setup](CI_RUNNER_FIX_REPORT.md#reproduction) with 
 | [Phase 0 verification 45216001490](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45216001490) | Passed all steps and all 128 tests at `cce90e731acc5b5ebd2a974fe0ecf8b614b27454`. The FTS median was 2.07 ms. |
 | [Windows release verification 45217357719](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45217357719) | Passed all required gates and artifact upload. The optional Chromium step timed out waiting for a reference from the picker fixture, which still supplied a short path in this run. |
 | [Phase 0 verification 45218243644](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243644) | Passed after the Chromium reference fixture update. |
-| [Windows release verification 45218243522](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243522) | Clean-runner follow-up with the updated Chromium reference fixture. |
+| [Windows release verification 45218243522](https://github.com/dragon0816/OpenCode-Engineer-Platform/actions/runs/45218243522) | Passed all required gates and artifact upload. Chromium passed its reference flow before hitting the port-file lock on the second launch. |
 
 ## Local verification
 
@@ -43,4 +44,4 @@ The extra workflow commands `npm ci --ignore-scripts`, `npm run build`, `npm run
 
 The local `test:install`, `test:backup` and `test:upgrade` commands reached the maintenance guard, which detected a running OpenCode process and stopped the maintenance operations. The live process was left running. Windows release verification was temporarily enabled for the fix branch to exercise these gates on a clean host. The workflow's push trigger was then restored to `main`.
 
-The local Chromium gate passed the native picker, pasted-path, and file-preview checks in Edge and Chrome. The full browser gate timed out later in those attempts. With a short `TEMP`, the browser stopped earlier when the workbook fixture's synthetic tool call was rejected by the model relay. Those attempts reported zero orphan processes.
+The local Chromium gate passed the native picker, pasted-path, and file-preview checks in Edge and Chrome. The full browser gate timed out later in those attempts. With a short `TEMP`, the browser stopped earlier when the workbook fixture's synthetic tool call was rejected by the model relay. Those attempts reported zero orphan processes. A separate Chromium startup check injected `EBUSY` on the first port-file read and verified that the harness retried and connected to Edge.
