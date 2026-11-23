@@ -259,3 +259,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 完成繁中與英文的分級、設定警示及交辦確認介面。中央台帳升至 v7，保留 3B 內部交辦。 [切片 1 驗收紀錄](reviews/PHASE3I_SLICE1_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
 - [ ] 切片 2 完成 Windows 隔離、原版 CLI 與供應商個別驗收。切片 3 完成已驗證的差異匯出、預覽及下載。
+
+## Phase 3I 切片 2 Windows 程序與 CLI 執行邊界
+
+- [x] 合成 CLI 驗證執行前分級、額度扣抵、固定引數、隔離工作副本、Job 清理和變更雜湊。設定顯示雙語狀態與停用原因。 [切片 2 驗收紀錄](reviews/PHASE3I_SLICE2_REPORT.md)
+- [ ] 完成實際 Windows 專用身分、受控 launcher、WFP 與 TLS 主機名政策、原版 CLI 版本及登入驗收。兩家幫手各自保持停用，直到個別驗證通過。
+- [ ] 完成正式 scratch 容量限制、啟動與停止收據復原、交辦子會話及子 run。

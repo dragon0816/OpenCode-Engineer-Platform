@@ -349,3 +349,7 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - **決策：** 擁有者確認 3I（Claude Code、Codex 外部 coding 幫手）屬於「LLM Gateway 導入」，在 3E 之前完成。3I 設計的四項待決採技術負責人建議預設（見 `docs/PHASE3_REQUIREMENTS.md` 10.7）。
 - **理由：** 擁有者決定順序；預設值偏保守，可逆。
 - **捨棄的替代方案：** 先做 Skill（與擁有者順序不符）。
+
+## 2026-11-23 Phase 3I 切片 2 驗證範圍
+
+- 此檢查點以低完整性 restricted token、暫存目錄標籤及 Windows Job 驗證合成 CLI。正式啟用仍須有專用 Windows 身分、受控 launcher、WFP 及 TLS 主機名過濾和供應商相容證據。在正式邊界完成前兩家幫手維持停用。摘要採本機核對的變更數。未取得停止收據的租約保留待對帳。 [驗收與剩餘工作](reviews/PHASE3I_SLICE2_REPORT.md)
