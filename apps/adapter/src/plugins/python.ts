@@ -75,7 +75,8 @@ async function stagePython(stage: string, files: PythonFiles, signal: AbortSigna
     const from = join(files.base, name);
     if (existsSync(from)) await cp(from, join(stage, name), options);
   }
-  const stdlib = libraries.some(({ name }) => name === 'python312.zip') ? ['python312.zip'] : ['Lib', 'DLLs'];
+  // The embeddable distribution keeps native stdlib extensions next to python.exe.
+  const stdlib = libraries.some(({ name }) => name === 'python312.zip') ? ['python312.zip', '.'] : ['Lib', 'DLLs'];
   await writeFile(join(stage, 'python312._pth'), stdlib.join('\n') + '\n', { flag: 'wx' });
   for (const { path, from } of files.dependencies) {
     signal.throwIfAborted();

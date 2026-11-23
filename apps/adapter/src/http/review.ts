@@ -80,7 +80,8 @@ export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | '
   const result = await complete(proposalInstructions, { source, fields }, signal);
   signal.throwIfAborted();
   if (!('content' in result)) throw new Error('Proposal model unavailable');
-  const response = JSON.parse(result.content.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i, '$1'));
+  type Proposal = { title?: string; fields?: Record<string, { value?: string; quote?: string }>; cards?: Proposal[] };
+  const response = JSON.parse(result.content.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i, '$1')) as Proposal;
   const sourceId = 'source-' + id;
   const proposals = unpublishedVault && Array.isArray(response?.cards) ? response.cards : [response];
   if (!proposals.length || proposals.length > 24) throw new Error('Invalid proposal card count');
@@ -98,9 +99,9 @@ export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | '
         continue;
       }
       values.push([field, entry.value]);
-      evidence.push({ sourceId, cardId, field, start, end: start + quote.length });
+      evidence.push({ sourceId, cardId, field, start, end: start + quote!.length });
     }
-    return { id: cardId, type: 'record' as const, key: cardId, title: proposal?.title, version: '1', fields: Object.fromEntries(values) };
+    return { id: cardId, type: 'record' as const, key: cardId, title: proposal?.title ?? '', version: '1', fields: Object.fromEntries(values) };
   });
   if (rejected.length) return { rejected };
   if (addCards.some(({ title }) => typeof title !== 'string' || !title.trim())) throw new Error('Proposal title missing');

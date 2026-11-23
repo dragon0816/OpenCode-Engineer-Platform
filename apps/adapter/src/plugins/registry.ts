@@ -277,6 +277,7 @@ export class PluginRegistry {
     requirePlugin(row.state !== 'integrity-failed', 'integrity-failed');
     this.requireCompatibility(plugin.manifest.oepCompatibility, allowIncompatible);
     this.db.prepare("UPDATE plugin_installations SET state = 'enabled', generation = ? WHERE plugin_id = ?").run(randomUUID(), id);
+    this.onDeactivate?.(id);
   }
 
   disable(id: string) {

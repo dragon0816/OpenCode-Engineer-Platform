@@ -210,7 +210,8 @@ export class PluginRuntime {
   }
 
   private metadata(grant: Grant) {
-    return directory(join(directory(join(this.root, 'plugin-runtime')), grant.id));
+    const registry = directory(join(this.root, 'plugins'));
+    return directory(join(directory(join(registry, 'runtime')), grant.id));
   }
 
   private draft(grant: Grant, value: unknown) {

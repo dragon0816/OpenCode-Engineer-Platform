@@ -91,7 +91,8 @@ export class ExternalSources {
   }
 
   pluginFile(session: WebSession, id: string, sha256: string) {
-    const source = this.store.external.source(session.id, id);
+    const ledger = this.store.external;
+    const source = ledger.source(session.id, ledger.attachmentSource(session.id, id) ?? id);
     if (!source || !['attachment', 'workspace'].includes(source.descriptor.kind)) throw new DelegationError('external-provenance-missing');
     const { file, data, label } = this.read(session, source, new Map(), new Set());
     if (file.sha256 !== sha256) throw new DelegationError('external-changed');

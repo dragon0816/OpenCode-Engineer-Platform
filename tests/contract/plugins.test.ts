@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { unzipSync, zipSync } from 'fflate';
-import { verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
+import { sha256, verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
 import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { sampleDirectory, sampleID, samplePage, samplePlugin } from '../fixtures/plugins/package.ts';
 
@@ -48,6 +48,11 @@ test('unsigned packages validate manifest, payload bytes and strict ZIP paths', 
   for (const name of ['payload/../worker.py', 'payload/NUL.txt', 'payload/worker.py:stream', 'payload/Worker.py', 'other.json']) {
     assert.throws(() => verifyPackage(pack({ ...entries, [name]: Buffer.from('x') })), /invalid-package/);
   }
+  const native = Buffer.from('synthetic native library placeholder');
+  const withNative = JSON.parse(raw);
+  withNative.files.push({ path: 'vendor/example.pyd', size: native.length, sha256: sha256(native) });
+  assert.throws(() => verifyPackage(pack({ ...entries, 'manifest.json': Buffer.from(JSON.stringify(withNative)),
+    'payload/vendor/example.pyd': native })), /invalid-package/);
   // Opaque extension bytes affect integrity but do not influence admission or publisher identity.
   const extended = verifyPackage(pack({ ...entries, 'manifest.sig': Buffer.from('opaque reserved bytes') }));
   assert.notEqual(extended.digest, plugin.digest);

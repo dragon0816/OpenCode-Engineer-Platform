@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
-import { verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
+import { sha256, verifyPackage } from '../../apps/adapter/src/plugins/package.ts';
+import { WebStore } from '../../apps/adapter/src/runs/web-store.ts';
 import { recoverPythonJobs } from '../../apps/adapter/src/plugins/python.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
 import { KnowledgeStore } from '../../packages/knowledge/src/store.ts';
@@ -30,6 +31,17 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
   const root = dataDirectory();
   const web = join(root, 'web');
   mkdirSync(web);
+  const session = randomUUID();
+  const references = join(root, 'references');
+  mkdirSync(references);
+  writeFileSync(join(references, 'reference.txt'), sourceText);
+  {
+    const store = new WebStore(join(web, 'web.sqlite'));
+    try {
+      store.createSession({ id: session, upstreamID: randomUUID(), agent: 'inspector', alias: 'synthetic-plugin', createdAt: 1 });
+      store.addProjectFolder('default', references);
+    } finally { store.close(); }
+  }
   const knowledge = new KnowledgeStore(join(root, 'knowledge.sqlite'));
   const models: unknown[] = [];
   const runtime = runtimeStub(root, knowledge, async (prompt, input) => {
@@ -39,6 +51,8 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
   const app = await startAdapter(web, runtime, () => {}, false, undefined, undefined, undefined, undefined,
     { dataRoot: root, version: '0.8.0' });
   const network = createServer((connection) => connection.destroy());
+  const previousKey = process.env.OEP_LITELLM_API_KEY;
+  process.env.OEP_LITELLM_API_KEY = randomUUID();
   try {
     await new Promise<void>((resolve) => network.listen(0, '127.0.0.1', resolve));
     const privateFile = join(root, 'unselected.txt');
@@ -100,6 +114,17 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
     assert.equal((await json(await request(route + '/runtime/panels/' + sampleID + '.panel',
       { headers: grantHeader(page.token) }))).title['zh-TW'], '建置詳細資料');
     await json(await call('sources.url', { url: 'https://127.0.0.1/private' }), 422);
+    const attachment = await json(await request(`/api/sessions/${session}/attachments`, {
+      bytes: Buffer.from(sourceText), headers: { 'X-OEP-Filename': 'attachment.txt', 'Content-Type': 'text/plain' },
+    }), 201);
+    const attachSource = await json(await call('sources.reference', { session, source: attachment.id, sha256: attachment.original.sha256 }));
+    assert.equal(attachSource.name, 'attachment.txt');
+    const reference = await json(await request(`/api/sessions/${session}/external-sources`, {
+      data: { kind: 'workspace', folder: sha256(references), path: 'reference.txt' },
+    }), 201);
+    const fileSource = await json(await call('sources.reference', { session, source: reference.id, sha256: reference.sha256 }));
+    assert.equal(fileSource.sha256, sha256(Buffer.from(sourceText)));
+    await json(await call('sources.reference', { session, source: reference.id, sha256: '0'.repeat(64) }), 422);
     const source = await json(await request(route + '/runtime/sources', { bytes: Buffer.from(sourceText),
       headers: { ...grantHeader(page.token), 'X-OEP-Filename': 'synthetic.txt' } }), 201);
     assert.equal((await json(await call('sources.read', { id: source.id }))).base64, Buffer.from(sourceText).toString('base64'));
@@ -177,6 +202,8 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
     assert.equal(knowledge.reviewBase(draft.id).parent, published.revision);
     assert.equal(readFileSync(join(root, 'plugin-data', sampleID, 'last-input.txt'), 'utf8'), sourceText);
   } finally {
+    if (previousKey === undefined) delete process.env.OEP_LITELLM_API_KEY;
+    else process.env.OEP_LITELLM_API_KEY = previousKey;
     network.close();
     await app.close();
     knowledge.close();

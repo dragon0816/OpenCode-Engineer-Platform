@@ -4,6 +4,7 @@ $owner = $null
 $name = $null
 $profileCreated = $false
 $verifiedStop = $false
+$clean = $env:OEP_PLUGIN_CLEAN
 try {
     if ($env:OEP_PLUGIN_INSTANCE -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid plugin worker instance' }
     $name = 'OEP.Plugin.' + $env:OEP_PLUGIN_INSTANCE
@@ -42,13 +43,17 @@ try {
         $sid, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $acl.AddAccessRule($rule)
     $directory.SetAccessControl($acl)
-    if ($owner.HasExited -or [IO.File]::Exists($env:OEP_PLUGIN_STOP)) { exit 2 }
+    $stop = $env:OEP_PLUGIN_STOP
+    $timeout = [int]$env:OEP_PLUGIN_TIMEOUT
+    foreach ($variable in @(Get-ChildItem Env:OEP_PLUGIN_*)) {
+        [Environment]::SetEnvironmentVariable($variable.Name, $null, 'Process')
+    }
+    if ($owner.HasExited -or [IO.File]::Exists($stop)) { exit 2 }
     $job = [PhaseZeroJob]::new($true)
     $null = $job.StartPlugin((Join-Path $stage 'python.exe'), (Join-Path $stage 'bootstrap.py'), $stage, $name)
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     while (!$job.PluginExited(100)) {
-        if ($owner.HasExited -or [IO.File]::Exists($env:OEP_PLUGIN_STOP) -or
-            $elapsed.ElapsedMilliseconds -ge [int]$env:OEP_PLUGIN_TIMEOUT) { exit 2 }
+        if ($owner.HasExited -or [IO.File]::Exists($stop) -or $elapsed.ElapsedMilliseconds -ge $timeout) { exit 2 }
     }
     $code = $job.PluginExitCode()
     $receipt = $job.TerminateAndWait(3000)
@@ -72,5 +77,5 @@ try {
         $deleted = [PhaseZeroJob]::DeleteAppContainerProfile($name)
         if ($deleted -ne 0) { exit 2 }
     }
-    if ($env:OEP_PLUGIN_CLEAN) { [IO.File]::WriteAllText($env:OEP_PLUGIN_CLEAN, '') }
+    if ($clean) { [IO.File]::WriteAllText($clean, '') }
 }
