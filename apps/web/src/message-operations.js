@@ -1,5 +1,5 @@
 import { LocalizedError, message, resolveText, setAttribute, setText, t } from './i18n.js';
-import { request } from './api.js';
+import { errorText, request } from './api.js';
 
 function button(label, action) {
   const element = document.createElement('button');
@@ -27,6 +27,12 @@ async function copy(text) {
   }
 }
 
+export async function saveAnnotation(context, messageID, field, value, reason) {
+  const { annotations } = await request(context.path + '/annotation', { data: { messageID, field, value, reason } });
+  context.annotationVersion = (context.annotationVersion ?? 0) + 1;
+  context.state.annotations = annotations;
+}
+
 export function messageActions(context, item, content, reply, report, notify, updated, openNotes, readOnly = false) {
   const details = document.createElement('details');
   details.className = 'message-actions';
@@ -36,8 +42,7 @@ export function messageActions(context, item, content, reply, report, notify, up
   details.append(summary);
   const current = () => context.state.annotations?.find((entry) => entry.messageID === item.id);
   async function save(field, value, reason) {
-    const { annotations } = await request(context.path + '/annotation', { data: { messageID: item.id, field, value, reason } });
-    context.state.annotations = annotations;
+    await saveAnnotation(context, item.id, field, value, reason);
     updated();
   }
   function add(label, action) {
@@ -67,7 +72,10 @@ export function messageActions(context, item, content, reply, report, notify, up
       const value = window.prompt(t('messages.enter-a-note-up-to-500-characters'), resolveText(current()?.note ?? ''));
       if (value !== null) await save('note', value);
     });
-    add(message('messages.delete-note'), () => save('note', null));
+    add(message('messages.delete-note'), async () => {
+      await save('note', null);
+      notify(message('messages.note-deleted'));
+    });
   }
   add(message('messages.view-session-notes'), () => openNotes(summary));
   details.addEventListener('keydown', (event) => {
@@ -80,13 +88,24 @@ export function messageActions(context, item, content, reply, report, notify, up
   return details;
 }
 
-export function bindNotes(filter, list, download, jump) {
+export function bindNotes(filter, list, download, jump, remove, status) {
   let active;
   let selection = new Set();
-  function render(context = active) {
-    if (context !== active) selection = new Set();
+  const pending = new WeakSet();
+  let fingerprint;
+  let activeReadOnly = false;
+  function render(context, readOnly = false) {
+    if (context !== active) {
+      selection = new Set();
+      fingerprint = undefined;
+      setText(status, '');
+    }
     active = context;
+    activeReadOnly = readOnly;
     const annotations = active?.state?.annotations ?? [];
+    const key = JSON.stringify([annotations, filter.value, readOnly]);
+    if (fingerprint === key) return;
+    fingerprint = key;
     list.replaceChildren();
     for (const entry of annotations) {
       if (filter.value === 'rated' && !entry.rating || filter.value === 'noted' && !entry.note) continue;
@@ -115,7 +134,31 @@ export function bindNotes(filter, list, download, jump) {
         }
         row.append(rating);
       }
-      row.append(button(message('messages.go-to-message'), () => jump(entry.messageID)));
+      const actions = document.createElement('div');
+      actions.className = 'file-actions';
+      actions.append(button(message('messages.go-to-message'), () => jump(entry.messageID)));
+      if (entry.note && !readOnly) {
+        const erase = button(message('messages.delete-note'), async () => {
+          if (pending.has(context)) return;
+          pending.add(context);
+          erase.disabled = true;
+          setText(status, '');
+          try {
+            await remove(context, entry.messageID);
+            if (active !== context) return;
+            if (!erase.isConnected && document.activeElement === document.body) filter.focus();
+            setText(status, message('messages.note-deleted'));
+          } catch (error) {
+            if (active === context) setText(status, errorText(error));
+          } finally {
+            pending.delete(context);
+            erase.disabled = false;
+          }
+        });
+        erase.dataset.deleteNote = '';
+        actions.append(erase);
+      }
+      row.append(actions);
       list.append(row);
     }
     if (!list.children.length) {
@@ -127,7 +170,7 @@ export function bindNotes(filter, list, download, jump) {
     selection = new Set([...selection].filter((id) => annotations.some((entry) => entry.messageID === id && entry.note)));
     download.disabled = !selection.size;
   }
-  filter.addEventListener('change', () => render());
+  filter.addEventListener('change', () => render(active, activeReadOnly));
   download.addEventListener('click', () => {
     const entries = active.state.annotations.filter((entry) => entry.note && selection.has(entry.messageID));
     const data = [t('messages.session-notes'), ...entries.map((entry) => entry.note.split('\n').map((line) => '> ' + line).join('\n'))].join('\n\n');

@@ -543,6 +543,11 @@ export class WebStore extends Ledger {
       .all(sessionID);
   }
 
+  hasAnnotation(sessionID: string, messageID: string) {
+    return Boolean(this.db.prepare('SELECT 1 FROM web_message_annotations WHERE session_id = ? AND message_id = ?')
+      .get(sessionID, messageID));
+  }
+
   annotate(sessionID: string, messageID: string, field: 'note' | 'rating', value: string | null, reason: string | null) {
     this.transaction(() => {
       this.db.prepare('INSERT OR IGNORE INTO web_message_annotations (session_id, message_id) VALUES (?, ?)').run(sessionID, messageID);

@@ -271,3 +271,11 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 與建立精靈共用 Telegram token 設定和私人 `/start` 確認。通道清單提供狀態、管理、改派、更換 token 與移除。
 - [x] 交辦上限提供三種預設，進階保留既有自訂值並以分鐘呈現時間。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
 - [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
+
+## 0.6.0 擁有者驗收第二輪
+
+- [x] 通道設定逐列顯示使用中的助理，可從指定助理、詳情或建立精靈新增 Telegram bot。
+- [x] 訊息選單和會話筆記可刪除筆記並保留評分，重新載入後會套用已儲存的結果。
+- [x] 工程設定檔和原始碼可作為 UTF-8 附件，附加資料以等寬原始文字顯示。
+- [x] 助理回覆的巢狀清單支援粗體、斜體、行內程式碼與連結。 [驗收紀錄](reviews/UX_OWNER_TEST_ROUND2_REPORT.md)
+- [ ] 由審核者補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup` 並合併。

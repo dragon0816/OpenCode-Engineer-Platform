@@ -58,7 +58,7 @@ const messages = {
   'attachment-preview-unavailable': "附件不在原位置、太大或已變更。",
   'attachment-remove-busy': "請等這次處理結束後再移除附件。",
   'attachment-text-encoding': "文字附件須使用 UTF-8 編碼。",
-  'attachment-type': "不支援這種檔案類型。",
+  'attachment-type': "不支援這種檔案類型。支援常見圖片、PDF、Excel 活頁簿和純文字檔（例如設定檔與原始碼）。",
   'attachment-type-mismatch': "檔案內容與所選的類型不符。",
   'avatar-dimensions': "請選擇有效的 PNG 或 JPEG，寬高各不得超過 1024 像素。",
   'avatar-type-or-size': "頭像必須是 90 KiB 以內的 PNG 或 JPEG。",

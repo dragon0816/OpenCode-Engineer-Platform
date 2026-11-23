@@ -128,10 +128,8 @@
           <section id="settings-channels" aria-labelledby="settings-channels-title" hidden>
             <h2 id="settings-channels-title" data-i18n="channels.title"></h2>
             <p class="settings-help" data-i18n="channels.assignment-help"></p>
-            <button id="channel-add" type="button" data-i18n="channels.add-bot"></button>
             <p id="channel-status" role="status"></p>
             <ul id="channel-accounts" class="channel-list" data-i18n-aria-label="channels.table"></ul>
-            <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
             <form id="delegation-budgets" class="settings-group">
               <p data-i18n="delegations.budget-help"></p>
               <fieldset id="delegation-budget-presets">
@@ -406,7 +404,7 @@
           <div class="composer-tools">
             <div class="composer-attachments">
               <button id="pick" type="button" aria-describedby="attachment-help" disabled data-i18n="ui.attach-files"></button>
-              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
+              <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.txt,.md,.csv,.htm,.json,.jsonc,.yaml,.yml,.xml,.log,.ini,.cfg,.conf,.toml,.tsv,.py,.js,.mjs,.cjs,.ts,.tsx,.jsx,.c,.h,.cpp,.hpp,.cs,.java,.go,.rs,.ps1,.sh,.bat,.sql,.html,.css,.scpi,.m" multiple hidden>
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
               <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
@@ -613,6 +611,7 @@
         </details>
       </div>
     </section>
+    <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
     <dialog id="delete-agent-dialog" class="settings-dialog" aria-labelledby="delete-agent-question" aria-describedby="delete-agent-help">
       <form>
         <h2 id="delete-agent-question"></h2>
@@ -668,6 +667,7 @@
       <div role="tabpanel" id="panel-notes" aria-labelledby="tab-notes" tabindex="0" hidden>
         <label><span data-i18n="ui.filter"></span> <select id="notes-filter"><option value="all" data-i18n="ui.all"></option><option value="rated" data-i18n="ui.rated"></option><option value="noted" data-i18n="ui.with-notes"></option></select></label>
         <ul id="session-notes"></ul>
+        <p id="notes-status" role="status"></p>
         <button type="button" id="export-notes" disabled data-i18n="ui.export-selected-notes"></button>
       </div>
     </aside>

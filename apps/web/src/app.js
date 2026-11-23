@@ -1,7 +1,7 @@
 import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
 import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
 import { bindVoice } from './voice.js';
-import { bindNotes, messageActions } from './message-operations.js';
+import { bindNotes, messageActions, saveAnnotation } from './message-operations.js';
 import { bindCommands } from './commands.js';
 import { bindKnowledge } from './knowledge.js';
 import { bindMcpSettings } from './mcp-settings.js';
@@ -81,7 +81,14 @@ const renderNotes = bindNotes(find('notes-filter'), find('session-notes'), find(
   if (panelNarrow.matches) closePanel(false);
   message.focus();
   message.scrollIntoView({ block: 'center' });
-});
+}, async (context, id) => {
+  await saveAnnotation(context, id, 'note', null);
+  if (current === context) updateNotes(context);
+}, find('notes-status'));
+
+function updateNotes(context) {
+  renderNotes(context, sessionAgent(context.id)?.state === 'archived');
+}
 let current;
 let uploadBusy = false;
 let sending = false;
@@ -192,6 +199,80 @@ const atBottom = () => messages.scrollHeight - messages.clientHeight - messages.
 messages.addEventListener('scroll', () => { jump.hidden = atBottom(); });
 jump.addEventListener('click', () => { messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
 
+function inlineMarkdown(target, text, allowLinks = true) {
+  const stack = [];
+  const parent = () => stack.at(-1)?.element ?? target;
+  let offset = 0;
+  for (const match of text.matchAll(/\\[\\`*_[\]()!]|(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)|\[([^\[\]\n]+)\]\(([^\s()]+(?:\([^\s()]*\)[^\s()]*)*)\)|\*+|_+/g)) {
+    const [token, ticks, code, label, href] = match;
+    parent().append(text.slice(offset, match.index));
+    offset = match.index + token.length;
+    if (token.startsWith('\\')) parent().append(token.slice(1));
+    else if (ticks) parent().append(node('code', /^ .*\S.* $/.test(code) ? code.slice(1, -1) : code));
+    else if (label) {
+      let url;
+      try { url = new URL(href); }
+      catch { /* An invalid destination is displayed as source text. */ }
+      if (allowLinks && ['http:', 'https:'].includes(url?.protocol)) {
+        const link = node('a');
+        link.href = url.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        inlineMarkdown(link, label, false);
+        parent().append(link);
+      } else parent().append(token);
+    } else {
+      const before = text[match.index - 1] ?? ' ';
+      const after = text[offset] ?? ' ';
+      const intraword = token[0] === '_' && /[\p{L}\p{N}]/u.test(before) && /[\p{L}\p{N}]/u.test(after);
+      if (intraword || token.length > 3) { parent().append(token); continue; }
+      let remaining = token;
+      while (/\S/u.test(before) && stack.length &&
+          (remaining === stack.at(-1).marker || token.length === 3 && remaining.startsWith(stack.at(-1).marker))) {
+        const { marker, element } = stack.pop();
+        remaining = remaining.slice(marker.length);
+        parent().append(element);
+      }
+      if (/\S/u.test(after) && remaining) {
+        const markers = remaining.length === 3 ? [remaining.slice(0, 2), remaining[0]] : [remaining];
+        for (const marker of markers) stack.push({ marker, element: node(marker.length === 2 ? 'strong' : 'em') });
+      } else parent().append(remaining);
+    }
+  }
+  parent().append(text.slice(offset));
+  while (stack.length) {
+    const { marker, element } = stack.pop();
+    parent().append(marker);
+    while (element.firstChild) parent().append(element.firstChild);
+  }
+  return target;
+}
+
+const markdownItem = (line) => /^([ \t]*)([-*+]|\d+\.)[ \t]+(.*)$/.exec(line);
+const listIndent = (indent) => indent.replaceAll('\t', '    ').length;
+
+function appendMarkdownList(target, lines, start) {
+  const levels = [];
+  const base = listIndent(markdownItem(lines[start])[1]);
+  let index = start;
+  for (; index < lines.length; index++) {
+    const match = markdownItem(lines[index]);
+    if (!match || listIndent(match[1]) < base) break;
+    const indent = listIndent(match[1]);
+    const ordered = match[2].endsWith('.');
+    while (levels.length && (levels.at(-1).indent > indent ||
+        levels.at(-1).indent === indent && levels.at(-1).ordered !== ordered)) levels.pop();
+    if (levels.at(-1)?.indent !== indent) {
+      const list = node(ordered ? 'ol' : 'ul');
+      if (ordered) list.start = Number.parseInt(match[2], 10);
+      (levels.at(-1)?.list.lastElementChild ?? target).append(list);
+      levels.push({ indent, ordered, list });
+    }
+    levels.at(-1).list.append(inlineMarkdown(node('li'), match[3]));
+  }
+  return index;
+}
+
 function appendMarkdown(target, text) {
   const lines = text.replaceAll('\r\n', '\n').split('\n');
   const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((value) => value.trim());
@@ -213,28 +294,23 @@ function appendMarkdown(target, text) {
       target.append(section);
     } else if (/^#{1,6} /.test(line)) {
       const count = line.indexOf(' ');
-      target.append(node(`h${Math.min(count + 1, 6)}`, line.slice(count + 1)));
-    } else if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
-      const ordered = /^\s*\d+\. /.test(line);
-      const pattern = ordered ? /^\s*\d+\. / : /^\s*[-*+] /;
-      const list = node(ordered ? 'ol' : 'ul');
-      list.append(node('li', line.replace(pattern, '')));
-      while (i < lines.length && pattern.test(lines[i])) list.append(node('li', lines[i++].replace(pattern, '')));
-      target.append(list);
+      target.append(inlineMarkdown(node(`h${Math.min(count + 1, 6)}`), line.slice(count + 1)));
+    } else if (markdownItem(line)) {
+      i = appendMarkdownList(target, lines, i - 1);
     } else if (line.includes('|') && i < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i]) && cells(lines[i]).every((value) => /^:?-{3,}:?$/.test(value))) {
       i++;
       const wrapper = node('div', '', 'message-table');
       const table = node('table');
       const head = table.createTHead().insertRow();
-      head.append(...cells(line).map((value) => node('th', value)));
+      head.append(...cells(line).map((value) => inlineMarkdown(node('th'), value)));
       const body = table.createTBody();
       while (i < lines.length && lines[i].includes('|')) {
-        body.insertRow().append(...cells(lines[i++]).map((value) => node('td', value)));
+        body.insertRow().append(...cells(lines[i++]).map((value) => inlineMarkdown(node('td'), value)));
       }
       wrapper.append(table);
       target.append(wrapper);
     } else if (line.trim()) {
-      target.append(node('p', line));
+      target.append(inlineMarkdown(node('p'), line));
     }
   }
 }
@@ -325,8 +401,8 @@ function render(context) {
         replies.set(id, reference);
         renderReply();
         prompt.focus();
-      }, showError, (text) => { setText(find('command-toast'), text); },
-      () => { if (current === context) renderNotes(context); },
+      }, showError, (text) => { if (current === context) setText(find('command-toast'), text); },
+      () => { if (current === context) updateNotes(context); },
       (trigger) => openSection('notes', trigger), sessionAgent(id)?.state === 'archived'));
       fragment.append(entry);
       if (item.runId) anchors.set(item.runId, entry);
@@ -360,7 +436,7 @@ function render(context) {
     showError(detail ? limitErrors[detail.code] ?? serverText(detail) : state.stateError || latest?.error);
   }
   renderPanel(context);
-  renderNotes(context);
+  updateNotes(context);
   setControls();
 }
 
@@ -545,13 +621,6 @@ async function openPreview(file, url, context, opener, { plainText = false } = {
       objectURL = URL.createObjectURL(data);
       image.src = objectURL;
       body.append(image);
-    } else if (extension === 'html' || extension === 'htm') {
-      const frame = node('iframe');
-      setAttribute(frame, 'title', file.name);
-      frame.setAttribute('sandbox', '');
-      frame.inert = true;
-      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark">${data}`;
-      body.append(node('p', message('chat.the-preview-shows-file-content-only')), frame);
     } else if (extension === 'csv' || extension === 'xlsx') {
       renderSheets(body, readSheets(data, extension === 'xlsx'));
     } else if (extension === 'md') appendMarkdown(body, data);
@@ -732,8 +801,10 @@ function refresh(context) {
     context.timer = undefined;
     context.refreshing = true;
     try {
+      const annotationVersion = context.annotationVersion;
       const state = await request(`${context.path}/state`, { signal: context.abort.signal });
       if (current !== context || stopped) return;
+      if (context.annotationVersion !== annotationVersion) state.annotations = context.state.annotations;
       context.state = state;
       render(context);
     } catch (error) {
@@ -1368,9 +1439,12 @@ function updateTopAgent(id) {
 let agentOpener;
 const agentView = find('agent-view');
 const agentEditor = bindAgents({ onChange: refreshAgents, close: () => find('close-agent').click(),
-  openChannels: (accountId) => { if (openAgentSettings('channels') && accountId) void loadChannels(accountId); },
+  openChannels: ({ accountId, ...options }) => {
+    if (accountId) void channelSettings.replace(accountId, options.opener, options.onSaved);
+    else channelSettings.open(options);
+  },
   openMcp: () => openAgentSettings('mcp'), deleteAgent, restoreAgent });
-const loadChannels = bindChannels(() => assistantEntries, refreshAgents);
+const channelSettings = bindChannels(() => assistantEntries, refreshAgents);
 const deleteAgentDialog = find('delete-agent-dialog');
 let deletion;
 
@@ -1986,7 +2060,7 @@ async function loadMcpSettings() {
 }
 
 function loadActiveSettingsSection() {
-  if (activeSettingsSection === 'channels') void loadChannels();
+  if (activeSettingsSection === 'channels') void channelSettings.load();
   if (activeSettingsSection === 'mcp') void loadMcpSettings();
   if (activeSettingsSection === 'integrations') void loadTelegramStatus();
   if (activeSettingsSection === 'external-helpers') void loadExternalSettings(find('external-helper-settings'), find('external-helper-settings-status'));

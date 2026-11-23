@@ -979,7 +979,9 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
           (reason !== null && (typeof reason !== 'string' || reason.length > 200))) {
         throw new HttpError(400, 'invalid-annotation');
       }
-      if (!(await chat.state(session)).messages?.some((message) => message.id === messageID) || !sessions.has(id)) {
+      // A stored annotation can be removed even when the runtime cannot load its message.
+      const stored = value === null && store.hasAnnotation(id, messageID);
+      if ((!stored && !(await chat.state(session)).messages?.some((message) => message.id === messageID)) || !sessions.has(id)) {
         throw new HttpError(404, 'message-not-found');
       }
       store.annotate(id, messageID, field, value, value === null ? null : reason);

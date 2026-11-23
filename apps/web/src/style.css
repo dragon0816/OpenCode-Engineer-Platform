@@ -320,10 +320,11 @@ summary { cursor: pointer; }
 
 .message { width: fit-content; max-width: min(100%, 72ch); }
 .message.user { margin-inline-start: auto; }
-.message strong { display: inline-block; margin-bottom: var(--space-1); }
+.message > strong { display: inline-block; margin-bottom: var(--space-1); }
 .message :is(h2, h3, h4, h5, h6, ul, ol, p) { margin-block: var(--space-1) var(--space-2); }
 .message :is(pre, .message-table) { overflow: auto; margin: var(--space-1) 0; }
 .message pre { padding: var(--space-2); background: var(--code-surface); border-radius: 6px; }
+:is(.message > div, .preview-body) :not(pre) > code { background: var(--code-surface); border-radius: 3px; padding-inline: .2em; }
 .message table { border-collapse: collapse; }
 .message :is(th, td) { padding: var(--space-1) var(--space-2); border: 1px solid var(--control-border); }
 #jump-latest { align-self: center; margin-block: var(--space-1); }
@@ -348,7 +349,9 @@ summary { cursor: pointer; }
 
 #new-session { width: 32px; flex: none; }
 #session-search::placeholder, #prompt::placeholder { color: var(--muted); opacity: 1; }
-.message ul, .message ol { padding-inline-start: 1.5em; }
+:is(.message > div, .preview-body) :is(ul, ol) { padding-inline-start: 1.5em; }
+:is(.message > div, .preview-body) ul { list-style-type: disc; }
+:is(.message > div, .preview-body) :is(ul, ol) ul { list-style-type: circle; }
 @media (max-width: 800px) {
   .messages { padding: var(--space-3); }
   #composer { padding: var(--space-2) var(--space-3); }
@@ -400,8 +403,7 @@ summary { cursor: pointer; }
 #file-preview h2 { overflow-wrap: anywhere; }
 .preview-body { margin-block: var(--space-2); overflow-wrap: anywhere; }
 .preview-body img { display: block; max-width: 100%; max-height: 55vh; object-fit: contain; }
-.preview-body iframe { display: block; width: 100%; min-height: 180px; background: var(--surface); border: 1px solid var(--line); }
-.preview-body pre { color: var(--text); background: var(--code-surface); padding: .75rem; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
+.preview-body pre { color: var(--text); background: var(--code-surface); padding: .75rem; font-family: monospace; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
 .table-scroll { max-height: 45vh; overflow: auto; margin-block: var(--space-1); }
 .files table { border-collapse: collapse; width: 100%; }
 .files :is(th, td) { border: 1px solid var(--control-border); padding: var(--space-1) var(--space-2); min-width: 2rem; }
@@ -498,15 +500,20 @@ summary { cursor: pointer; }
 .agent-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-2); }
 .agent-summary dt { font-weight: 600; }
 .agent-summary dd { margin: 0; }
-.channel-list { list-style: none; padding: 0; margin-block: var(--space-3) var(--space-5); }
-.channel-list > li {
+.channel-list, .channel-bots { list-style: none; padding: 0; }
+.channel-list { margin-block: var(--space-3) var(--space-5); }
+.channel-list > li { border-block-end: 1px solid var(--line); padding-block: var(--space-3); overflow-wrap: anywhere; }
+.channel-list h3 { margin-block: 0 var(--space-2); }
+.channel-list > li > button { margin-block-start: var(--space-2); }
+.channel-bots > li {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; gap: var(--space-3);
-  align-items: start; padding-block: var(--space-3); border-block-end: 1px solid var(--line); overflow-wrap: anywhere;
+  align-items: start; padding-block: var(--space-2);
 }
 .channel-list p { margin: 0; color: var(--muted); }
+.channel-bots [role="status"] { grid-column: 1 / -1; }
 .channel-list button { justify-self: start; }
 @media (max-width: 800px) {
-  .channel-list > li { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .channel-bots > li { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
 }
 .settings-dialog {
   inline-size: min(32rem, calc(100vw - 2rem)); max-block-size: calc(100dvh - 2rem); overflow: auto;

@@ -17,6 +17,7 @@ type Options = {
   selectSetting: (section: string) => Promise<unknown>;
   captures: boolean;
   captureAgentManagement: boolean;
+  captureOwnerRound2: boolean;
   syntheticBotToken: string;
   secondBotToken: string;
   startTelegramSetup(chat: string): void;
@@ -26,7 +27,7 @@ type Options = {
 const name = '資料查核';
 const reviewID = 'sample-agent-review';
 
-export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures, captureAgentManagement,
+export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures, captureAgentManagement, captureOwnerRound2,
   syntheticBotToken, secondBotToken, startTelegramSetup, seedLegacyBudget }: Options) {
   const mapping = mappingChecks(page, 'agent');
   const press = () => key('Enter', 'Enter', 13);
@@ -99,6 +100,8 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   assert.match(await page.evaluate<string>("document.querySelector('#agent-fields').textContent"), /Skill 即將開放/);
   await step(5);
   await setValue('#agent-reply-locale', 'en');
+  await activate('#agent-wizard-add-channel');
+  await visible('#agent-channel-token');
   await setValue('#agent-channel-token', syntheticBotToken);
   assert.equal(await page.evaluate("document.querySelector('#agent-channel-token').type"), 'password');
   await page.evaluate("document.querySelector('#agent-channel-token').focus()");
@@ -127,7 +130,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   const specialistRow = `[data-agent="${specialist}"]`;
   assert.equal(await page.evaluate(`document.querySelector('${specialistRow}').textContent.includes('@SampleDataBot')`), true);
   await mapping.check('agent-detail', '#agent-view', { selectors: ['#agent-tab-basic', '#agent-tab-model', '#agent-tab-knowledge',
-    '#agent-tab-channel', '#agent-tab-trigger', '#agent-tab-ability', '#agent-model', '#agent-reply-locale', '#save-assistant', '#delete-agent', '.agent-channel-token button'] });
+    '#agent-tab-channel', '#agent-tab-trigger', '#agent-tab-ability', '#agent-model', '#agent-reply-locale', '#save-assistant', '#delete-agent', '.agent-channel-token button', '#agent-add-channel'] });
   await click('#agent-tab-channel');
   assert.match(await page.evaluate<string>("document.querySelector('.agent-channel-token').textContent"), /已設定 token（@SampleDataBot）.*更換 token/);
   assert.equal(await page.evaluate("Boolean(document.querySelector('#agent-panel-channel input[type=password]'))"), false);
@@ -179,11 +182,18 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await press();
   await page.ready(`document.querySelector('#agent-title').textContent === ${JSON.stringify(name + ' 副本')} &&
     document.querySelector('#settings-status').textContent === '已儲存'`);
+  const copyID = await page.evaluate<string>(`[...document.querySelectorAll('.agent-row-open strong')]
+    .find(entry => entry.textContent === ${JSON.stringify(name + ' 副本')}).closest('[data-agent]').dataset.agent`);
+  const copyAdd = `[data-channel-agent="${copyID}"] [data-channel-action=add]`;
 
   await openChannels();
   await page.ready("document.querySelector('#channel-accounts').textContent.includes('正常運作') && document.querySelector('#channel-accounts').textContent.includes('需要重新設定 token')");
-  assert.equal(await page.evaluate("[...document.querySelectorAll('#channel-accounts li')].every(row => row.querySelectorAll('button').length === 1)"), true);
-  await page.evaluate("document.querySelector('#channel-add').focus()");
+  assert.equal(await page.evaluate("[...document.querySelectorAll('#channel-accounts [data-channel]')].every(row => row.querySelectorAll('button').length === 1 && row.querySelector('button[data-channel-action=manage]'))"), true);
+  assert.equal(await page.evaluate("[...document.querySelectorAll('#channel-accounts [data-channel-agent]')].every(row => row.querySelectorAll(':scope > [data-channel-action=add]').length === 1)"), true);
+  assert.deepEqual(await page.evaluate("[...document.querySelectorAll('#channel-accounts [data-channel-agent]')].map(row => row.dataset.channelAgent).sort()"),
+    await page.evaluate("[...document.querySelectorAll('#agent-list [data-agent]')].map(row => row.dataset.agent).sort()"));
+  await page.ready(`document.querySelector('${copyAdd}')?.previousElementSibling.textContent === '尚未設定通道' && !document.querySelector('#channel-status').textContent`);
+  await page.evaluate(`document.querySelector('${copyAdd}').focus()`);
   await press();
   await visible('#channel-token');
   await setValue('#channel-token', syntheticBotToken);
@@ -194,9 +204,10 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await visible('#channel-agent');
   await page.ready("document.querySelector('#channel-dialog').textContent.includes('@SampleAlertsBot')");
   assert.equal(await page.evaluate("Boolean(document.querySelector('#channel-owner-confirm'))"), false);
+  assert.equal(await page.evaluate("document.querySelector('#channel-agent').value"), copyID);
   await setValue('#channel-agent', 'main');
   await click('#channel-save');
-  await page.ready("!document.querySelector('#channel-dialog').open && document.querySelector('#channel-accounts').textContent.includes('@SampleAlertsBot')");
+  await page.ready("!document.querySelector('#channel-dialog').open && [...document.querySelectorAll('[data-channel-agent=main] [data-channel]')].some(row => row.textContent.includes('@SampleAlertsBot') && row.querySelector('[role=status]')?.textContent === '已儲存')");
   for (const [preset, expected] of [
     ['lean', [2, 3, 6, 18, 12, 36, 5]], ['relaxed', [5, 10, 20, 60, 100, 300, 20]],
     ['standard', [3, 5, 10, 30, 30, 90, 10]],
@@ -240,12 +251,14 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await mapping.check('agent-review-source', '#review-view', { selectors: ['.review-agent-source'] });
 
   const shot = async (label: string, theme: string, viewport: string, locale: string) => {
-    const changed = ['detail', 'wizard-channel', 'channels', 'channel-manage', 'delete', 'budget'];
-    const currentGallery = captureAgentManagement && changed.includes(label) &&
-      (theme === 'light' && viewport === 'wide' && locale === 'zh-TW' || theme === 'dark' && viewport === 'narrow' && locale === 'en');
-    if (!captures && !currentGallery) return;
+    const galleryFrame = theme === 'light' && viewport === 'wide' && locale === 'zh-TW' ||
+      theme === 'dark' && viewport === 'narrow' && locale === 'en';
+    const ownerGallery = captureOwnerRound2 && galleryFrame && ['detail-channel', 'wizard-channel', 'channels', 'channel-setup'].includes(label);
+    const agentGallery = captureAgentManagement && galleryFrame && ['detail', 'wizard-channel', 'channels', 'channel-manage', 'delete', 'budget'].includes(label);
+    if (!captures && !ownerGallery && !agentGallery) return;
     const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    writeFileSync(join('docs', 'validation', 'gui', `${currentGallery ? 'ux-agent' : 'slice4'}-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
+    const prefix = ownerGallery ? 'owner-round2' : agentGallery ? 'ux-agent' : 'slice4';
+    writeFileSync(join('docs', 'validation', 'gui', `${prefix}-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
   };
   const check = async (selector: string, contrast: string, context: string) => {
     await assertUiTextInThemes(page, selector);
@@ -256,9 +269,9 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   for (const [width, height, viewport] of matrix) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${width < 800}`);
-    for (const locale of captures || captureAgentManagement ? ['zh-TW', 'en'] as const : ['zh-TW'] as const) {
+    for (const locale of ['zh-TW', 'en'] as const) {
       await selectLocale(page, locale);
-      for (const theme of captures || captureAgentManagement ? ['light', 'dark'] : ['light']) {
+      for (const theme of captures || captureAgentManagement || captureOwnerRound2 ? ['light', 'dark'] : ['light']) {
         await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; window.scrollTo(0, 0)`);
         await rail();
         await page.evaluate("document.querySelector('#rail-assistants').open = true; document.querySelector('#rail-assistants').scrollIntoView({block:'center'})");
@@ -270,6 +283,15 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await page.evaluate('window.scrollTo(0, 0)');
         if (locale === 'zh-TW' && theme === 'light') await check('#agent-view', '#save-assistant', viewport + ' agent details');
         await shot('detail', theme, viewport, locale);
+        await activate('#agent-tab-channel');
+        await visible('#agent-add-channel');
+        await shot('detail-channel', theme, viewport, locale);
+        await activate('#agent-add-channel');
+        await visible('#channel-token');
+        await visible('#channel-agent');
+        assert.equal(await page.evaluate("document.querySelector('#channel-agent').value"), specialist);
+        await key('Escape', 'Escape', 27);
+        await page.ready("!document.querySelector('#channel-dialog').open && document.activeElement.id === 'agent-add-channel'");
         if (captureAgentManagement) {
           await activate('#delete-agent');
           await visible('#delete-agent-dialog[open]');
@@ -283,6 +305,10 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await setValue('#assistant-name', name);
         for (const [index, wizardStep] of ['basic', 'model', 'knowledge', 'ability', 'channel', 'trigger', 'confirm'].entries()) {
           if (index) await step(index + 1, true);
+          if (wizardStep === 'channel') {
+            await activate('#agent-wizard-add-channel');
+            await visible('#agent-channel-token');
+          }
           await page.evaluate('window.scrollTo(0, 0)');
           if (locale === 'zh-TW' && theme === 'light') await check('#agent-view', '#agent-next', `${viewport} wizard ${wizardStep}`);
           await shot('wizard-' + wizardStep, theme, viewport, locale);
@@ -291,10 +317,17 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
         await openChannels();
         await page.evaluate('window.scrollTo(0, 0)');
         if (locale === 'zh-TW' && theme === 'light') {
-          await check('#settings-channels', '#channel-add', viewport + ' channels');
-          assert.equal(await page.evaluate("getComputedStyle(document.querySelector('#channel-accounts li')).gridTemplateColumns.split(' ').length"), width < 800 ? 1 : 3);
+          await check('#settings-channels', '[data-channel-action=add]', viewport + ' channels');
+          assert.equal(await page.evaluate("getComputedStyle(document.querySelector('.channel-bots > li')).gridTemplateColumns.split(' ').length"), width < 800 ? 1 : 3);
         }
         await shot('channels', theme, viewport, locale);
+        await activate(copyAdd);
+        await visible('#channel-token');
+        await visible('#channel-agent');
+        assert.equal(await page.evaluate("document.querySelector('#channel-agent').value"), copyID);
+        await shot('channel-setup', theme, viewport, locale);
+        await key('Escape', 'Escape', 27);
+        await page.ready(`!document.querySelector('#channel-dialog').open && document.activeElement.matches('${copyAdd}')`);
         if (captureAgentManagement) {
           const selector = `[data-channel] button[aria-label$="@SampleDataBot"]`;
           await activate(selector);
@@ -317,7 +350,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await page.ready("!matchMedia('(max-width: 800px)').matches && !document.querySelector('#session-sidebar').hidden");
   await selectLocale(page, 'zh-TW');
   await openChannels();
-  const binding = await page.evaluate<string>(`[...document.querySelectorAll('#channel-accounts li')]
+  const binding = await page.evaluate<string>(`[...document.querySelectorAll('#channel-accounts [data-channel]')]
     .find(row => row.querySelector('strong').textContent === '@SampleDataBot').dataset.channel`);
   await page.evaluate('window.confirm = () => true');
   const channelRow = `[data-channel="${binding}"]`;
@@ -340,7 +373,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     assert.equal(await page.evaluate("document.querySelector('#channel-save').disabled"), true);
     await click('#channel-confirm-assignment');
     await click('#channel-save');
-    await page.ready(`!document.querySelector('#channel-dialog').open && document.querySelector('${channelRow} p')?.textContent === ${JSON.stringify(assignment)}`);
+    await page.ready(`!document.querySelector('#channel-dialog').open && document.querySelector('${channelRow}')?.closest('#channel-accounts > li').querySelector('h3').textContent === ${JSON.stringify(assignment)}`);
   }
   const alerts = `[data-channel] button[aria-label$="@SampleAlertsBot"]`;
   await click(alerts);
@@ -362,7 +395,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await visible('#restore-agent');
   await page.ready(`!document.querySelector('#agent-list ${specialistRow}') && !document.querySelector('#archived-agents').open`);
   await openChannels();
-  await page.ready(`document.querySelector('${channelRow} p')?.textContent === '尚未指定助理'`);
+  await page.ready(`document.querySelector('${channelRow}')?.closest('#channel-accounts > li').querySelector('h3').textContent === '尚未指定助理'`);
   await rail();
   await activate('#archived-agents > summary');
   await page.ready(`document.querySelector('#archived-agent-list ${specialistRow} .agent-row-open')?.textContent.includes('已刪除') &&
