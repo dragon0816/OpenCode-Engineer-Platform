@@ -36,6 +36,8 @@ const loginLabels = {
   probeFailed: message('externalHelpers.status.probeFailed'), unknown: message('externalHelpers.status.loginUnknown'),
   reauthRequired: message('externalHelpers.status.reauthRequired'),
 };
+const loginLabel = ({ login, account }) => login === 'signedIn' && account ?
+  message('externalHelpers.status.signedInAccount', { account }) : loginLabels[login];
 
 export const modelChoice = (source, alias) => source === 'gateway' ? alias ?? '' : `external:${source}`;
 
@@ -118,60 +120,183 @@ export function openExternalLogin(setting, opener, onChange) {
   const close = view.actions.querySelector('button');
   setText(close, message('externalHelpers.login.close'));
   const stop = new AbortController();
-  const method = node('select');
   const isClaude = setting.provider === 'claude_code';
-  const keyChoice = isClaude ? message('externalHelpers.login.consoleKey') : message('externalHelpers.login.apiKey');
-  method.append(optionText(isClaude ? message('externalHelpers.login.claudeCli') : message('externalHelpers.login.chatgpt'), 'cli'),
-    optionText(keyChoice, 'key'));
-  if (isClaude) method.value = 'key';
-  const key = node('input');
-  key.type = 'password';
-  key.autocomplete = 'off';
-  key.maxLength = 1024;
-  const keyField = field(key, keyChoice);
+  const account = isClaude ? message('externalHelpers.login.claudeCli') : message('externalHelpers.login.chatgpt');
   const live = node('p');
   live.setAttribute('role', 'status');
   const setup = node('p');
-  const signIn = node('button', message('externalHelpers.login.signIn'));
+  const signIn = node('button', account);
   signIn.type = 'submit';
+  const device = button(message('externalHelpers.login.device'), () => change({ action: 'device' }));
   const signOut = button(message('externalHelpers.login.signOut'), () => change({ action: 'logout' }));
+  const cancel = button(message('externalHelpers.login.cancel'), () => promptAction('cancel'));
+  cancel.dataset.loginCancel = '';
+  const advanced = node('details');
+  const keyChoice = isClaude ? message('externalHelpers.login.consoleKey') : message('externalHelpers.login.apiKey');
+  const password = (length) => {
+    const input = node('input');
+    input.type = 'password';
+    input.autocomplete = 'off';
+    input.maxLength = length;
+    return input;
+  };
+  const key = password(1024);
+  const code = password(512);
+  const keyButton = button(message('externalHelpers.login.keySignIn'), () => {
+    if (key.value) void change({ action: 'key', key: key.value });
+    else key.focus();
+  });
+  advanced.append(node('summary', message('externalHelpers.login.advanced')),
+    node('p', message('externalHelpers.login.apiBilling')), field(key, keyChoice), keyButton);
+  const prompt = node('div');
+  prompt.className = 'external-login-prompt';
+  const link = node('a', message('externalHelpers.login.openPage'));
+  link.className = 'external-login-link';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  const codeDisplay = node('code');
+  const copy = (label, value) => button(label, async () => {
+    try {
+      await navigator.clipboard.writeText(value());
+      setText(view.status, message('externalHelpers.login.copied'));
+    } catch { setText(view.status, message('externalHelpers.login.copyFailed')); }
+  });
+  const urlRow = node('div');
+  urlRow.className = 'settings-actions';
+  urlRow.append(link, copy(message('externalHelpers.login.copyUrl'), () => link.href));
+  const browserHelp = node('p', message('externalHelpers.login.sameComputer'));
+  const codeRow = node('div');
+  codeRow.className = 'settings-actions';
+  codeRow.append(node('span', message('externalHelpers.login.deviceCode')), codeDisplay,
+    copy(message('externalHelpers.login.copyCode'), () => codeDisplay.textContent));
+  const codeEntry = node('div');
+  const submitCode = button(message('externalHelpers.login.submitCode'), () => {
+    const value = code.value.trim();
+    if (value) void promptAction('code', value);
+    else code.focus();
+  });
+  codeEntry.append(field(code, message('externalHelpers.login.pasteCode')), submitCode);
+  prompt.append(browserHelp, urlRow, codeRow, codeEntry);
   let status = setting.status;
   let busy = false;
+  let exchange;
+  let promptTimer;
+
+  function showPrompt(next = {}) {
+    prompt.hidden = !next.url && !next.deviceCode && !next.pasteCode;
+    browserHelp.hidden = urlRow.hidden = !next.url;
+    if (next.url) link.href = next.url;
+    else link.removeAttribute('href');
+    codeRow.hidden = !next.deviceCode;
+    codeDisplay.textContent = next.deviceCode ?? '';
+    codeEntry.hidden = !next.pasteCode;
+  }
   function render() {
     const installed = status.isolation === 'verified' && status.installation === 'detected';
     const terms = !isClaude || setting.termsConfirmed;
-    const useKey = method.value === 'key';
-    setText(live, loginLabels[status.login]);
+    setText(live, loginLabel(status));
     setText(setup, status.isolation !== 'verified' ? message('externalHelpers.settings.setup') :
       !installed ? message('server.external-cli-unsupported') : !terms ? message('server.external-terms-required') : '');
-    keyField.hidden = !useKey;
-    key.required = useKey;
-    method.disabled = key.disabled = signIn.disabled = busy || !installed || !terms;
+    signIn.disabled = device.disabled = key.disabled = keyButton.disabled = busy || !installed || !terms;
+    device.hidden = isClaude;
+    cancel.hidden = !exchange;
     signOut.disabled = busy || !installed || !['signedIn', 'reauthRequired', 'probeFailed'].includes(status.login);
+  }
+  async function readPrompt(id) {
+    if (exchange !== id || stop.signal.aborted) return;
+    try {
+      const next = await request(settingsRoute + '/auth/prompt', { data: { action: 'poll', exchange: id }, signal: stop.signal });
+      if (exchange !== id || stop.signal.aborted) return;
+      showPrompt(next);
+    } catch {
+      if (exchange !== id || stop.signal.aborted) return;
+    }
+    promptTimer = setTimeout(() => void readPrompt(id), 350);
+  }
+  async function promptAction(action, value) {
+    code.value = '';
+    if (!exchange) return;
+    const id = exchange;
+    const actionButton = action === 'cancel' ? cancel : submitCode;
+    actionButton.disabled = true;
+    try {
+      await request(settingsRoute + '/auth/prompt', {
+        data: { action, exchange: id, ...(value && { code: value }) }, signal: stop.signal,
+      });
+      if (exchange === id && action === 'code') {
+        codeEntry.hidden = true;
+        if (!cancel.hidden) cancel.focus();
+      }
+    } catch (error) {
+      if (exchange === id && view.dialog.open) setText(view.status, errorText(error));
+    } finally { actionButton.disabled = false; }
   }
   async function change(data) {
     if (busy) return;
     busy = true;
     key.value = '';
+    const login = data.action === 'cli' || data.action === 'device';
+    if (login) exchange = crypto.randomUUID();
     render();
-    setText(view.status, message('chat.checking'));
+    setText(view.status, login ? message('externalHelpers.login.waiting') : message('chat.checking'));
+    if (exchange) {
+      cancel.focus();
+      const id = exchange;
+      promptTimer = setTimeout(() => void readPrompt(id), 150);
+    }
     try {
-      status = await request(settingsRoute + '/auth', { data: { provider: setting.provider, ...data }, signal: stop.signal });
-      if (view.dialog.open) setText(view.status, '');
+      status = await request(settingsRoute + '/auth', {
+        data: { provider: setting.provider, ...data, ...(exchange && { exchange }) }, signal: stop.signal,
+      });
+      if (!view.dialog.open) return;
+      setText(view.status, '');
       onChange?.(status);
-    } catch (error) { if (view.dialog.open) setText(view.status, errorText(error)); }
-    finally { busy = false; render(); }
+    } catch (error) {
+      if (view.dialog.open) {
+        setText(view.status, errorText(error));
+        try {
+          status = await request(settingsRoute + '/recheck', { data: { provider: setting.provider }, signal: stop.signal });
+          if (view.dialog.open) onChange?.(status);
+        } catch { /* Retain the authentication outcome in the dialog. */ }
+      }
+    } finally {
+      clearTimeout(promptTimer);
+      const returnFocus = view.dialog.open && (prompt.contains(document.activeElement) ||
+        document.activeElement === cancel || document.activeElement === document.body);
+      exchange = undefined;
+      busy = false;
+      code.value = '';
+      showPrompt();
+      render();
+      if (returnFocus) (signIn.disabled ? close : signIn).focus();
+    }
   }
-  method.addEventListener('change', () => { key.value = ''; render(); });
-  view.dialog.addEventListener('close', () => { key.value = ''; stop.abort(); });
+  view.dialog.addEventListener('close', () => {
+    key.value = code.value = '';
+    clearTimeout(promptTimer);
+    stop.abort();
+  });
+  for (const [input, action] of [[key, keyButton], [code, submitCode]]) {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        action.click();
+      }
+    });
+  }
   view.form.addEventListener('submit', (event) => {
     event.preventDefault();
-    if (!signIn.disabled) void change(method.value === 'key' ? { action: 'key', key: key.value } : { action: 'cli' });
+    if (!signIn.disabled) void change({ action: 'cli' });
   });
-  view.body.append(node('p', message('externalHelpers.login.publicOnly', { provider: setting.name })), live, setup,
-    field(method, message('externalHelpers.login.method')), keyField);
-  view.actions.prepend(signIn, signOut);
+  view.body.append(node('p', message('externalHelpers.login.publicOnly', { provider: setting.name })), live, setup, prompt);
+  view.actions.prepend(signIn, device, signOut, cancel);
+  view.form.append(advanced);
+  showPrompt();
   render();
+  if (!signIn.disabled) {
+    signIn.autofocus = true;
+    close.autofocus = false;
+  }
   view.open();
   return view.dialog;
 }
@@ -208,7 +333,7 @@ export async function loadExternalSettings(root, status, onChange) {
       const check = setting.status;
       const installed = check.isolation === 'verified' && check.installation === 'detected';
       group.append(node('p', check.isolation === 'verified' ? message('externalHelpers.status.isolationVerified') :
-        message('externalHelpers.status.isolationUnavailable')), node('p', detected[check.installation]), node('p', loginLabels[check.login]));
+        message('externalHelpers.status.isolationUnavailable')), node('p', detected[check.installation]), node('p', loginLabel(check)));
       if (check.isolation !== 'verified') group.append(node('p', message('externalHelpers.settings.setup')));
       if (check.version) group.append(node('p', message('externalHelpers.status.version', { version: check.version })));
       if (check.pinnedVersion) group.append(node('p', message('externalHelpers.status.pinnedVersion', { version: check.pinnedVersion })));

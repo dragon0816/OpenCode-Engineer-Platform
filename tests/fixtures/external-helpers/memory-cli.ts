@@ -2,11 +2,13 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ExternalExecutor, type ExternalIsolation } from '../../../apps/adapter/src/runs/external-executor.ts';
 
-export function memoryHelper(root: string, beforeRelease?: () => void) {
+export function memoryHelper(root: string, beforeRelease?: () => void, authFixture?: () => ExternalIsolation | undefined) {
   const pin = { version: '1.2.3' as const, sha256: 'a'.repeat(64) };
   const launched: string[] = [];
   const isolation: ExternalIsolation = {
-    async connect(provider) {
+    async connect(provider, signal) {
+      const auth = await authFixture?.()?.connect(provider, signal);
+      if (auth && !('pin' in auth)) return auth;
       return {
         pin, sha256: pin.sha256,
         async probe(args) {
@@ -15,6 +17,7 @@ export function memoryHelper(root: string, beforeRelease?: () => void) {
             : provider === 'codex_cli' ? 'Logged in using ChatGPT' : '{"loggedIn":true,"authMethod":"api_key"}';
           return { exit: 0, stdout, members: 1, orphans: 0 };
         },
+        ...auth,
         async run(_args, { work, prompt }, signal, release) {
           signal.throwIfAborted();
           beforeRelease?.();

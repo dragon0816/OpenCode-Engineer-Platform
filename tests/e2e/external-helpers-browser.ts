@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { chromium } from './chromium.ts';
 import type { webAPI } from './web-api.ts';
 import { assertWorkbenchFits, selectLocale } from './gui-locales.ts';
+import type { subscriptionHelper } from '../fixtures/external-helpers/subscription.ts';
 
 type Options = {
   page: Awaited<ReturnType<typeof chromium>>;
@@ -11,9 +12,10 @@ type Options = {
   selectSetting: (section: string) => Promise<unknown>;
   signOut: () => void;
   referencePicker?: boolean;
+  startSubscriptionTests: () => ReturnType<typeof subscriptionHelper>;
 };
 
-export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting, signOut, referencePicker }: Options) {
+export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting, signOut, referencePicker, startSubscriptionTests }: Options) {
   const enter = () => key('Enter', 'Enter', 13);
   const escape = () => key('Escape', 'Escape', 27);
   const focus = async (selector: string) => {
@@ -185,18 +187,21 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
     menu.value = 'external:codex_cli';
     menu.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
-  await page.ready(`Boolean(document.querySelector('${dialog} select'))`);
+  await page.ready(`Boolean(document.querySelector('${accept}'))`);
   const loginText = await page.evaluate<string>(`document.querySelector('${dialog}').textContent`);
   assert.match(loginText, /Codex sign-in/);
   assert.match(loginText, /Signed out/);
   assert.match(loginText, /Confidential data is blocked/);
   assert.match(loginText, /Strict mode allows only public data/);
-  assert.deepEqual(await page.evaluate(`Array.from(document.querySelector('${dialog} select').options, option => option.textContent)`),
-    ['ChatGPT account', 'OpenAI API key']);
-  assert.equal(await page.evaluate(`document.querySelector('${dialog} input').type`), 'password');
-  await focus(dialog + ' select');
-  await key('End', 'End', 35);
-  await page.ready(`document.querySelector('${dialog} input').checkVisibility()`);
+  assert.equal(await page.evaluate(`document.activeElement === document.querySelector('${accept}')`), true);
+  assert.equal(await page.evaluate(`document.querySelector('${accept}').textContent`), 'Sign in with ChatGPT');
+  const advanced = dialog + ' details';
+  assert.equal(await page.evaluate(`document.querySelector('${advanced} summary').textContent`), 'Advanced');
+  assert.equal(await page.evaluate(`document.querySelector('${advanced} input').checkVisibility()`), false);
+  await activate(advanced + ' summary');
+  await page.ready(`document.querySelector('${advanced} input').checkVisibility()`);
+  assert.equal(await page.evaluate(`document.querySelector('${advanced} input').type`), 'password');
+  assert.match(await page.evaluate<string>(`document.querySelector('${advanced} label').textContent`), /OpenAI API key/);
   await assertWorkbenchFits(page, 'external sign-in en 390');
   await escape();
   await page.ready(`!document.querySelector('${dialog}') && document.activeElement.id === 'session-alias'`);
@@ -205,6 +210,66 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
   const { agent } = await json(await api.get('/api/agents/main'));
   assert.equal(agent.modelSource, 'codex_cli');
   await json(await api.post('/api/agents/main', { revision: agent.revision, action: 'edit', modelSource: 'gateway' }));
+
+  const helpers = '/api/settings/external-helpers';
+  const manage = (provider: string) => '#external-helper-settings [data-external-login="' + provider + '"]';
+  const contains = (text: string) => `document.querySelector('${dialog}')?.textContent.includes(${JSON.stringify(text)})`;
+  await page.evaluate('document.querySelector("#open-settings").click()');
+  await selectSetting('external-helpers');
+  await activate(manage('claude_code'));
+  assert.match(await page.evaluate<string>(`document.querySelector('${dialog}').textContent`), /Setup-OEPExternalHelper\.ps1/);
+  assert.equal(await page.evaluate(`document.querySelector('${accept}').disabled`), true);
+  await escape();
+  await page.ready(`!document.querySelector('${dialog}')`);
+
+  const fixture = startSubscriptionTests();
+  const claude = (await json(await api.get(helpers)))[1];
+  await json(await api.post(helpers, { provider: claude.provider, enabled: claude.enabled, confirmEachRun: claude.confirmEachRun,
+    termsConfirmed: true, revision: claude.revision }));
+  for (const provider of ['codex_cli', 'claude_code']) await json(await api.post(helpers + '/recheck', { provider }));
+  await selectSetting('projects');
+  await selectSetting('external-helpers');
+  await selectLocale(page, 'zh-TW');
+  await page.evaluate(`Object.defineProperty(navigator.clipboard, 'writeText', {
+    value: async (value) => { window.oepSyntheticClipboard = value; }, configurable: true
+  })`);
+  await activate(manage('codex_cli'));
+  await page.ready(contains('使用 ChatGPT 帳號登入'));
+  const device = dialog + ' .settings-actions > button[type=submit] + button';
+  await activate(device);
+  const prompt = dialog + ' .external-login-prompt';
+  const link = prompt + ' a[href]';
+  await page.ready(`document.querySelector('${prompt} code').textContent === 'ABCD-EFGH'`);
+  assert.deepEqual(await page.evaluate(`(() => {
+    const link = document.querySelector('${link}');
+    return [link.textContent, link.href, link.target, link.rel];
+  })()`), ['開啟登入頁面', 'https://auth.openai.com/codex/device', '_blank', 'noopener noreferrer']);
+  await activate(prompt + ' div:has(> code) button');
+  assert.equal(await page.evaluate('window.oepSyntheticClipboard'), 'ABCD-EFGH');
+  fixture.approveDevice();
+  await page.ready(contains('已使用供應商帳號登入'));
+  await activate(device + ' + button');
+  await page.ready(contains('尚未登入'));
+  await escape();
+  await page.ready(`!document.querySelector('${dialog}')`);
+
+  await selectLocale(page, 'en');
+  await activate(manage('claude_code'));
+  await page.ready(contains('Sign in with a Claude subscription'));
+  await activate(accept);
+  await page.ready(`document.querySelector('${prompt} input').checkVisibility()`);
+  await focus(prompt + ' input');
+  await page.evaluate(`document.activeElement.value = ${JSON.stringify(fixture.code)}`);
+  await enter();
+  await page.ready(contains('Signed in (owner@example.test)'));
+  await activate(device + ' + button');
+  await page.ready(contains('Signed out'));
+  await activate(accept);
+  await page.ready(`document.querySelector('${link}')?.checkVisibility()`);
+  await activate(dialog + ' [data-login-cancel]');
+  await page.ready(contains('Sign-in cancelled.'));
+  await escape();
+  await page.ready(`!document.querySelector('${dialog}') && document.activeElement === document.querySelector(${JSON.stringify(manage('claude_code'))})`);
   await selectLocale(page, 'zh-TW');
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   console.log('External helper settings, confirmation, model source and sign-in passed in Chromium.');
