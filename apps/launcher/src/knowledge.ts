@@ -6,6 +6,7 @@ import { KnowledgeAsk } from '../../../packages/knowledge/src/ask.ts';
 import type { AskRequest } from '../../../packages/knowledge/src/ask.ts';
 import { inspectRepository, readRepository } from '../../../packages/knowledge/src/repository.ts';
 import { KnowledgeStore } from '../../../packages/knowledge/src/store.ts';
+import { queryBi, type BiQuery } from '../../../packages/knowledge/src/bi/query.ts';
 import { checkDirectory } from '../../adapter/src/runs/workspace.ts';
 import { ModelSeat } from '../../adapter/src/opencode/model-seat.ts';
 
@@ -92,7 +93,21 @@ export async function startKnowledgeRuntime(profile: string, audit: string,
       const limited = beforeRequest && model ? new KnowledgeAsk(queryStore, knowledgeModel(relay!, model, beforeRequest)) : service;
       return (inTurn ? nested : modelSeat).run(() => limited.ask(input, signal, undefined, authorized), signal);
     };
-    return { get ask() { return ask(); }, scopedAsk, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
+    const biBindings = (vaults: readonly string[]) => vaults.flatMap(vault => {
+      const publication = queryStore.biModelPublication(vault);
+      return publication ? [publication] : [];
+    });
+    const scopedBi = (input: BiQuery, signal: AbortSignal, resolve: () => AskScope | undefined) => {
+      signal.throwIfAborted();
+      const current = resolve();
+      const publication = current?.vaults.includes(input.vault) && queryStore.biModelPublication(input.vault);
+      const snapshot = publication && queryStore.snapshot(input.vault, publication.revision);
+      if (!snapshot || !publication || !queryStore.isCurrent(input.vault, publication.revision, publication.hash, true)) {
+        return { state: 'abstain', reason: 'vault-unavailable' };
+      }
+      return { vault: input.vault, revision: publication.revision, snapshotHash: publication.hash, ...queryBi(snapshot, input) };
+    };
+    return { get ask() { return ask(); }, scopedAsk, scopedBi, biBindings, benchmarks, reviewStore: store, overview: () => queryStore.overview(), inspectRepository,
       importRepository: (folder: string, allowModel: boolean) => importKnowledgeRepository(path, folder, allowModel),
       readRepository: (folder: string) => readRepository(folder, path),
       propose: (prompt: string, input: unknown, signal: AbortSignal, model = defaultAlias(), beforeRequest?: () => void, maxTokens?: number) =>

@@ -656,6 +656,13 @@ const schema = this.reviewSchema(input.vault.id, base);
     });
   }
 
+  biModelPublication(vault: string) {
+    const current = this.publication(vault);
+    if (current?.kind === 'bi' && current.allow_model && current.index_hash === current.manifest_hash) {
+      return { id: vault, title: current.title, revision: current.revision, hash: current.manifest_hash };
+    }
+  }
+
   vaultClassification(vault: string) {
     if (!this.publication(vault)) return;
     const row = this.db.prepare('SELECT classification,updated_at AS revision FROM vault_classifications WHERE vault_id=?').get(vault);

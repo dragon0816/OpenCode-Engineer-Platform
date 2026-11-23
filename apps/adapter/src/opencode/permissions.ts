@@ -5,11 +5,12 @@ export const statusTool = 'oep_status';
 export const readFileTool = 'oep_file_read';
 export const writeFileTool = 'oep_file_write';
 export const knowledgeTool = 'oep_knowledge_ask';
+export const biQueryTool = 'oep_bi_query';
 export const listSpecialistsTool = 'oep_list_specialists';
 export const delegateTool = 'oep_delegate_to_specialist';
 
 type PermissionScope = { origin: SessionOrigin; agentID: string; status?: boolean;
-  files?: boolean; knowledge?: boolean; delegation?: boolean; custom?: readonly string[] };
+  files?: boolean; knowledge?: boolean; biQuery?: boolean; delegation?: boolean; custom?: readonly string[] };
 
 // The separate Phase 1 acceptance runner still exercises the pinned native Workbook template.
 export function nativeContractPermissions(workbook: boolean): Permission[] {
@@ -31,6 +32,7 @@ export function sessionPermissions(scope?: PermissionScope): Permission[] {
     allow(writeFileTool);
   }
   if (scope.knowledge) allow(knowledgeTool);
+  if (scope.biQuery) allow(biQueryTool);
   if (scope.delegation && scope.agentID === 'main' && (scope.origin === 'web' || scope.origin === 'channel')) {
     allow(listSpecialistsTool);
     allow(delegateTool);
