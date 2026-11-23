@@ -77,19 +77,19 @@ def check(ok):
 
 
 @contextmanager
-def child(parent, name, directory, create=False):
+def child(parent, name, directory, create=False, read=False):
     buffer = c.create_unicode_buffer(name)
     length = len(name.encode("utf-16-le"))
     text = UnicodeString(length, length + 2, c.cast(buffer, w.LPWSTR))
     # OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE. Each open resolves a single component.
     attributes = ObjectAttributes(c.sizeof(ObjectAttributes), parent, c.pointer(text), 0x1040)
     handle = w.HANDLE()
-    access = READ_ATTRIBUTES | SYNCHRONIZE | (TRAVERSE if directory else 0x10002)  # DELETE | FILE_WRITE_DATA
+    access = READ_ATTRIBUTES | SYNCHRONIZE | (TRAVERSE if directory else 1 if read else 0x10002)
     # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | directory/non-directory.
     options = 0x200020 | (1 if directory else 0x40)
     # Deny delete sharing on ancestors. Exclusive sharing on the staging file.
     status = open_child(c.byref(handle), access, c.byref(attributes), c.byref(IoStatus()), None,
-                        0, 3 if directory else 0, 2 if create else 1, options, None, 0)
+                        0, 3 if directory else 1 if read else 0, 2 if create else 1, options, None, 0)
     if status < 0:
         raise c.WinError(status_error(status))
     try:

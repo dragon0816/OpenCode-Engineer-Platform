@@ -7,7 +7,11 @@ import type { FileIdentity } from '../../../../packages/contracts/src/run.ts';
 
 export type OpenFile = { identity: FileIdentity; data: Buffer };
 
-const unsafe = () => new Error('Workspace file is missing, unsafe, or changed');
+export class WorkspacePathError extends Error {
+  constructor(message = 'Workspace file is missing, unsafe, or changed') { super(message); }
+}
+
+const unsafe = () => new WorkspacePathError();
 const relativeName = /^[a-z\d][a-z\d._-]*(?:\/[a-z\d][a-z\d._-]*)*$/i;
 
 export function scopedPath(root: string, name: string) {

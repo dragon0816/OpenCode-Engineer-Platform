@@ -27,6 +27,7 @@ const exact = new Set([
   'tests/oracles/verify_xlsx.py', 'tests/oracles/requirements.txt', 'tests/fixtures/d08/oracle.json',
   'tests/fixtures/knowledge/gold.ts', 'tests/fixtures/knowledge/gold.v1.json', 'tests/fixtures/knowledge/gold.v2.json',
   'workers/office/xlsx_to_text.py', 'workers/files/windows_write.py', 'docs/OPERATIONS.md', 'docs/validation/p2-windows-web.md',
+  'workers/office/reference_extractors.py', 'workers/files/windows_reference.py',
 ]);
 
 function verified(bytes, expected) {

@@ -1,5 +1,5 @@
 import { formatDate, formatNumber, getLocale, initializeLocale, joinText, LocalizedError, message, optionText, resolveText, setAttribute, setLocale, setText, t } from './i18n.js';
-import { connect, errorText, projectLabel, request, RequestError, serverText } from './api.js';
+import { connect, errorText, projectLabel, request, RequestError, serverText, uploadAttachment } from './api.js';
 import { bindVoice } from './voice.js';
 import { bindNotes, messageActions, saveAnnotation } from './message-operations.js';
 import { bindCommands } from './commands.js';
@@ -10,6 +10,7 @@ import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } 
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
 import { classificationControl, loadExternalSettings, openExternalIntake } from './external-helpers.js';
+import { pastedLocalPaths } from './local-paths.js';
 
 initializeLocale();
 
@@ -43,6 +44,8 @@ const sessionTitle = find('session-title');
 const attachmentList = find('attachments');
 const artifactList = find('artifacts');
 const uploadStatus = find('upload-status');
+const referencePicker = find('reference-picker');
+const attachPastedPaths = find('attach-pasted-paths');
 const connection = find('connection');
 const notice = find('error');
 const labels = { inspector: message('ui.data-analysis'), workbook: message('ui.excel-worksheets') };
@@ -127,6 +130,12 @@ function setControls() {
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped || inactive;
   find('project-read-button').disabled = uploadBusy;
+  referencePicker.hidden = !current || stopped || inactive;
+  find('pick-reference-file').disabled = pick.disabled;
+  find('pick-reference-folder').disabled = pick.disabled;
+  find('project-reference-button').disabled = pick.disabled;
+  attachPastedPaths.hidden = !current?.pathPaste;
+  attachPastedPaths.disabled = pick.disabled;
   send.disabled = !current || uploadBusy || sending || stopped || inactive || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
@@ -451,8 +460,14 @@ function renderPanel(context) {
   const previousButtons = new Map([...resources.children].map((button) => [button.dataset.file, button]));
   const resourceButtons = [];
   function addResource(file, url) {
-    const button = previousButtons.get(url)
-      ?? action(file.name, () => void openPreview(file, url, context, button));
+    const old = previousButtons.get(url);
+    const button = old && old.dataset.revision === file.revision ? old
+      : action(file.name, () => void openPreview(file, url, context, button));
+    if (file.kind === 'reference') {
+      button.classList.add('reference-chip');
+      button.title = file.location;
+      button.dataset.revision = file.revision;
+    }
     button.dataset.file = url;
     setAttribute(button, 'aria-label', message('chat.preview-name', { name: file.name }));
     resourceButtons.push(button);
@@ -472,7 +487,15 @@ function renderPanel(context) {
     const entry = node('li');
     entry.append(label);
     if (attachment.converted) entry.append(node('small', message('chat.converted-to-csv-with-worksheet-names-and')));
-    const url = `${path}/attachments/${attachment.id}`;
+    const url = `${path}/${attachment.kind === 'reference' ? 'references' : 'attachments'}/${attachment.id}`;
+    if (attachment.kind === 'reference') {
+      label.title = attachment.location;
+      label.classList.add('reference-chip');
+      addReferenceDetails(entry, attachment, url, context);
+      addResource(attachment, url);
+      attachmentList.append(entry);
+      continue;
+    }
     addFileDetails(entry, attachment, url, context, true);
     const classification = node('div', undefined, 'external-classification');
     classificationControl(classification, attachment.classification, attachment.name, attachment.sourceId ? () =>
@@ -529,6 +552,45 @@ function fileType(file) {
   return file.name.includes('.') ? file.name.split('.').at(-1).toUpperCase() : file.mime;
 }
 
+async function changeReference(url, file, context, command) {
+  try {
+    await request(url, { data: { revision: file.revision, ...command }, signal: context.abort.signal });
+    if (current !== context) return;
+    if (command.action === 'remove') context.selected.delete(file.id);
+    if (command.action !== 'open' && panelTabs.has(url)) closeTab(url);
+    if (command.action !== 'open') refresh(context);
+    showError();
+  } catch (error) { if (current === context) showError(error); }
+}
+
+function addReferenceDetails(entry, file, url, context) {
+  const preview = action(message('chat.preview'), () => void openPreview(file, url, context, preview));
+  const open = action(message('references.explorer'), () => void changeReference(url, file, context, { action: 'open' }));
+  const remove = action(message('chat.remove'), () => {
+    if (confirm(t('chat.remove-name', { name: file.name }))) void changeReference(url, file, context, { action: 'remove' });
+  });
+  const actions = node('div', undefined, 'file-actions');
+  actions.append(preview, open, remove);
+  const advanced = node('details');
+  const confirmIdentity = action(message('references.reconfirm'), () => {
+    if (confirm(t('references.confirm-changed', { name: file.name }))) {
+      void changeReference(url, file, context, { action: 'reconfirm' });
+    }
+  });
+  const label = node('label', message('references.classification'));
+  const select = node('select');
+  select.append(optionText(message('references.unclassified'), 'unclassified'),
+    optionText(message('references.public'), 'public'), optionText(message('references.confidential'), 'confidential'));
+  select.value = file.classification;
+  select.disabled = file.classification === 'confidential';
+  select.addEventListener('change', () => void changeReference(url, file, context, { action: 'classify', classification: select.value }));
+  label.append(select);
+  advanced.append(node('summary', message('ui.advanced')), label, confirmIdentity);
+  const info = file.folder ? message('references.folder')
+    : message('chat.size-type-date', { size: formatFileSize(file.bytes), type: fileType(file), date: formatDate(file.modifiedAt) });
+  entry.append(node('small', info), actions, advanced);
+}
+
 function addFileDetails(entry, file, url, context, attachment = false) {
   const download = node('a', attachment ? message('chat.download') : file.name);
   download.href = url;
@@ -575,6 +637,7 @@ async function openPreview(file, url, context, opener, { plainText = false } = {
     showTab(url, opener);
     return;
   }
+  if (file.kind === 'reference') return openReferencePreview(file, url, context, opener);
   const abort = new AbortController();
   let objectURL;
   const panel = node('div');
@@ -627,6 +690,37 @@ async function openPreview(file, url, context, opener, { plainText = false } = {
     else body.append(node('pre', data));
   } catch {
     if (!abort.signal.aborted && current === context) setText(body, message('chat.could-not-preview-this-file-download-it'));
+  }
+}
+
+async function openReferencePreview(file, url, context, opener) {
+  const abort = new AbortController();
+  const panel = node('div');
+  const body = node('div', message('chat.loading-preview'), 'preview-body');
+  panel.append(node('h2', file.name), body);
+  find('file-preview').append(panel);
+  addTab(url, file.name, panel, () => { abort.abort(); panel.remove(); });
+  showTab(url, opener);
+  try {
+    const preview = await request(url + '/preview', { signal: AbortSignal.any([abort.signal, context.abort.signal]) });
+    if (abort.signal.aborted || current !== context) return;
+    body.replaceChildren();
+    if (preview.entries) {
+      const list = node('ul');
+      for (const entry of preview.entries) list.append(node('li', entry.name + (entry.kind === 'folder' ? '/' : '')));
+      if (list.children.length) body.append(list);
+      else body.append(node('p', message('references.empty-folder')));
+    } else body.append(node('pre', preview.text));
+    if (preview.next !== null || preview.pages > 1) body.append(node('small', message('references.first-chunk')));
+  } catch (error) {
+    if (!abort.signal.aborted && current === context) {
+      setText(body, errorText(error));
+      if (error.detail?.code === 'reference-changed') body.append(action(message('references.reconfirm'), () => {
+        if (confirm(t('references.confirm-changed', { name: file.name }))) {
+          void changeReference(url, file, context, { action: 'reconfirm' });
+        }
+      }));
+    }
   }
 }
 
@@ -1040,6 +1134,7 @@ document.addEventListener('keydown', (event) => {
 function select(id) {
   voice.cancel();
   find('project-read').open = false;
+  referencePicker.open = false;
   if (current) drafts.set(current.id, { text: prompt.value, workbook: workbook.checked });
   current?.events.close();
   current?.abort.abort();
@@ -1313,27 +1408,59 @@ async function upload(files) {
   showError();
   setControls();
   let succeeded = 0;
+  let oversized = 0;
   const failures = [];
-  for (const file of files) {
-    if (current !== context || stopped) break;
-    if (file.size > 20 * 1024 * 1024) { failures.push(message('chat.name-this-file-exceeds-20-mb-choose', { name: file.name })); continue; }
-    setText(uploadStatus, message('chat.uploading-name', { name: file.name }));
-    try {
-      const result = await request(`${context.path}/attachments`, { file });
-      context.selected.add(result.id);
-      succeeded++;
-    } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
+  try {
+    for (const file of files) {
+      if (current !== context || stopped) break;
+      if (file.size > 20 * 1024 * 1024) { oversized++; continue; }
+      setText(uploadStatus, message('chat.uploading-name', { name: file.name }));
+      try {
+        const result = await uploadAttachment(context.path, file);
+        context.selected.add(result.id);
+        succeeded++;
+      } catch (error) { failures.push(joinText([file.name, errorText(error)])); }
+    }
+    if (current === context && !stopped) {
+      setText(uploadStatus, joinText([
+        succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '',
+        failures.length ? message('chat.attach-files-failed', { count: failures.length }) : '',
+        oversized ? message('references.oversized') : '',
+      ], ' '));
+      if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
+      refresh(context);
+    }
+  } finally {
+    uploadBusy = false;
+    setControls();
   }
-  if (current === context && !stopped) {
-    setText(uploadStatus, joinText([
-      succeeded ? message('chat.upload-complete-files-count-select-the-files', { count: succeeded }) : '',
-      failures.length ? message('chat.attach-files-failed', { count: failures.length }) : '',
-    ], ' '));
-    if (failures.length) { context.requestError = true; showError(joinText(failures, '\n')); }
-    refresh(context);
-  }
-  uploadBusy = false;
+}
+
+async function addReferences(data, onAttach) {
+  const context = current;
+  if (pick.disabled) return;
+  uploadBusy = true;
   setControls();
+  showError();
+  setText(uploadStatus, 'picker' in data ? message('references.waiting-picker') : '');
+  try {
+    const result = await request(context.path + '/references', { data, signal: context.abort.signal });
+    if (current !== context) return;
+    for (const file of result.references) context.selected.add(file.id);
+    setText(uploadStatus, result.references.length ? message('references.attached', { count: result.references.length }) : '');
+    if (result.references.length) {
+      onAttach?.();
+      refresh(context);
+    }
+  } catch (error) {
+    if (current === context) {
+      setText(uploadStatus, '');
+      showError(error);
+    }
+  } finally {
+    uploadBusy = false;
+    setControls();
+  }
 }
 
 function namePastedFile(file) {
@@ -2263,6 +2390,24 @@ async function createAgentSession(agentId, workspaceId) {
   return current;
 }
 pick.addEventListener('click', () => fileInput.click());
+for (const kind of ['file', 'folder']) find('pick-reference-' + kind).addEventListener('click', () => {
+  referencePicker.open = false;
+  void addReferences({ picker: kind, locale: getLocale() });
+});
+find('project-reference-button').addEventListener('click', () =>
+  void addReferences({ folder: find('project-read-folder').value }, () => { find('project-read').open = false; }));
+attachPastedPaths.addEventListener('click', () => {
+  const context = current;
+  const paste = context?.pathPaste;
+  if (!paste) return;
+  void addReferences({ paths: paste.paths }, () => {
+    if (prompt.value.slice(paste.start, paste.start + paste.text.length) === paste.text) {
+      prompt.setRangeText('', paste.start, paste.start + paste.text.length, 'end');
+    }
+    context.pathPaste = undefined;
+    prompt.focus();
+  });
+});
 fileInput.addEventListener('change', () => {
   void upload([...fileInput.files]);
   fileInput.value = '';
@@ -2297,9 +2442,11 @@ prompt.addEventListener('paste', (event) => {
       }
     }
   }
-  if (!files.length) return;
-  event.preventDefault();
   const text = data.getData('text/plain');
+  const paths = files.length ? [] : pastedLocalPaths(text);
+  if (!files.length && !paths.length) return;
+  event.preventDefault();
+  const start = prompt.selectionStart;
   // Use the browser's editing command to keep selection, maxlength and undo behavior.
   if (text && !document.execCommand('insertText', false, text)) {
     const { selectionStart, selectionEnd, maxLength, value } = prompt;
@@ -2308,7 +2455,18 @@ prompt.addEventListener('paste', (event) => {
     prompt.setRangeText(inserted, selectionStart, selectionEnd, 'end');
     prompt.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: inserted }));
   }
-  void upload(files.map(namePastedFile));
+  if (files.length) void upload(files.map(namePastedFile));
+  else {
+    current.pathPaste = { paths, start, text: prompt.value.slice(start, prompt.selectionEnd) };
+    setControls();
+  }
+});
+prompt.addEventListener('input', () => {
+  const paste = current?.pathPaste;
+  if (paste && prompt.value.slice(paste.start, paste.start + paste.text.length) !== paste.text) {
+    current.pathPaste = undefined;
+    setControls();
+  }
 });
 const executeCommand = bindCommands(prompt, find('slash-palette'), find('command-toast'), {
   async '/new'() {

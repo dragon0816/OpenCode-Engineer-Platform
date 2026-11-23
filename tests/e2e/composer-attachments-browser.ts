@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { until } from '../../scripts/phase0/probe-http.ts';
+import { benchmarkJson, benchmarkNames } from '../fixtures/benchmark-upload.ts';
 import type { chromium } from './chromium.ts';
 import { selectLocale } from './gui-locales.ts';
 
@@ -9,6 +11,148 @@ const gif = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const hint = "document.querySelector('#drop-hint')";
 const prompt = "document.querySelector('#prompt')";
 const status = "document.querySelector('#upload-status')";
+const picker = "document.querySelector('#file-input')";
+
+export async function verifyLocalReferences(page: Page, files: { picked: string; pasted: string; folder: string },
+  click: (selector: string) => Promise<void>) {
+  const label = () => page.evaluate<string>("document.querySelector('#reference-picker summary').textContent");
+  assert.equal(await label(), '附加本機檔案／資料夾');
+  await click('#reference-picker summary');
+  await click('#pick-reference-file');
+  await page.ready("document.querySelector('.reference-chip[title$=\"picker-reference.csv\"]')");
+  const picked = await page.evaluate<string>("document.querySelector('#chat-resources .reference-chip').title");
+  assert.equal(picked, files.picked);
+  await selectLocale(page, 'en');
+  assert.equal(await label(), 'Attach local files or folder');
+  await click('#reference-picker summary');
+  await click('#pick-reference-folder');
+  await page.ready("document.querySelector('#chat-resources .reference-chip[title$=\"synthetic folder\"]')");
+  const clip = '"' + files.pasted + '"\r\n' + files.picked;
+  assert.equal(await page.evaluate(`(() => {
+    ${prompt}.value = 'Synthetic instructions\\n';
+    ${prompt}.setSelectionRange(${prompt}.value.length, ${prompt}.value.length);
+    const data = new DataTransfer();
+    data.setData('text/plain', ${JSON.stringify(clip)});
+    return !${prompt}.dispatchEvent(new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:data}));
+  })()`), true);
+  assert.equal(await page.evaluate("document.querySelector('#attach-pasted-paths').textContent"), 'Attach as file references');
+  await click('#attach-pasted-paths');
+  await page.ready("document.querySelector('#chat-resources .reference-chip[title$=\"pasted-reference.json\"]')");
+  assert.equal(await page.evaluate(`${prompt}.value`), 'Synthetic instructions\n');
+  await click('#chat-resources .reference-chip[title$="pasted-reference.json"]');
+  await page.ready("document.querySelector('#file-preview pre')?.textContent.includes('Synthetic JSON preview')");
+  await click('#close-files');
+  for (const locale of ['en', 'zh-TW'] as const) {
+    await selectLocale(page, locale);
+    for (const kind of ['drop', 'paste']) {
+      assert.equal(await page.evaluate(`(() => {
+        const data = new DataTransfer();
+        data.items.add(new File([new Uint8Array(20 * 1024 * 1024 + 1)], 'oversized.csv', {type:'text/csv'}));
+        const event = ${JSON.stringify(kind)} === 'paste'
+          ? new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:data})
+          : new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:data});
+        return !${prompt}.dispatchEvent(event);
+      })()`), true);
+      assert.match(await page.evaluate<string>(`${status}.textContent`),
+        locale === 'en' ? /20 MiB.*Attach local files or folder/ : /20 MiB.*附加本機檔案／資料夾/);
+      assert.equal(await page.evaluate("document.querySelector('#error').hidden"), true);
+    }
+  }
+  await page.evaluate(`${prompt}.value = ''`);
+  console.log('Local references passed in Chromium (fake native picker, pasted paths, preview, oversized drop/paste, zh-TW and en).');
+}
+
+const paste = (page: Page, name: string, content: string | number[], type: string) => page.evaluate(`(() => {
+  const data = new DataTransfer();
+  const content = ${JSON.stringify(content)};
+  data.items.add(new File([typeof content === 'string' ? content : Uint8Array.from(content)],
+    ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
+  return !${prompt}.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+})()`);
+
+export async function verifyBenchmarkUploads(page: Page, audit: string, click: (selector: string) => Promise<void>) {
+  const { root } = await page.command<{ root: { nodeId: number } }>('DOM.getDocument');
+  const { nodeId } = await page.command<{ nodeId: number }>('DOM.querySelector', { nodeId: root.nodeId, selector: '#file-input' });
+  const rows = (name: string) =>
+    `[...document.querySelectorAll('#attachments li')].filter(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
+  const expectBenchmark = async (name: string, count: number) => {
+    const selected = `${rows(name)}.filter(row => row.querySelector('input').checked && row.querySelector('[data-classification="unclassified"]')).length`;
+    await page.ready(`${selected} === ${count} || !document.querySelector('#error').hidden`);
+    assert.equal(await page.evaluate<number>(selected), count, await page.evaluate<string>("document.querySelector('#error').textContent"));
+    assert.match(await page.evaluate<string>(`${status}.textContent`), /已上傳 1/);
+    assert.equal(await page.evaluate("document.querySelector('#error').hidden"), true);
+  };
+  await page.evaluate(`${picker}.addEventListener('click', event => {
+    const input = event.currentTarget;
+    input.dataset.observedPickerClicks = Number(input.dataset.observedPickerClicks ?? 0) + 1;
+  });`);
+  const openPicker = async () => {
+    const count = await page.evaluate<number>(`Number(${picker}.dataset.observedPickerClicks ?? 0)`);
+    await click('#pick');
+    assert.equal(await page.evaluate<number>(`Number(${picker}.dataset.observedPickerClicks)`), count + 1);
+  };
+  await page.command('Page.setInterceptFileChooserDialog', { enabled: true });
+  try {
+    for (const name of benchmarkNames) {
+      let count = 0;
+      for (const type of ['', 'application/json']) {
+        assert.equal(await paste(page, name, benchmarkJson, type), true);
+        await expectBenchmark(name, ++count);
+        const data = `const data = new DataTransfer();
+          data.items.add(new File([${JSON.stringify(benchmarkJson)}], ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));`;
+        assert.equal(await page.evaluate(`(() => {
+          ${data}
+          return !${prompt}.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+        })()`), true);
+        await expectBenchmark(name, ++count);
+        await openPicker();
+        await page.evaluate(`(() => {
+          ${data}
+          ${picker}.files = data.files;
+          ${picker}.dispatchEvent(new Event('change', { bubbles: true }));
+        })()`);
+        await expectBenchmark(name, ++count);
+      }
+      const path = join(audit, name);
+      writeFileSync(path, benchmarkJson);
+      await openPicker();
+      await page.command('DOM.setFileInputFiles', { nodeId, files: [path] });
+      await expectBenchmark(name, ++count);
+      await page.evaluate(`${rows(name)}.forEach(row => row.querySelector('input').click())`);
+    }
+  } finally { await page.command('Page.setInterceptFileChooserDialog', { enabled: false }); }
+  const diagnosticFile = join(audit, 'web-uploads.jsonl');
+  const failure = async (name: string, error: string, message: string, code: string) => {
+    const read = `void Object.defineProperty(File.prototype, 'arrayBuffer', {
+      configurable: true, value: () => Promise.reject(${error})
+    });`;
+    await page.evaluate(read);
+    try { assert.equal(await paste(page, name, benchmarkJson, ''), true); }
+    finally { await page.evaluate("delete File.prototype.arrayBuffer"); }
+    await page.ready(`!document.querySelector('#error').hidden &&
+      document.querySelector('#error').textContent.includes(${JSON.stringify(name + ' · ' + message)})`);
+    assert.equal(await page.evaluate(`${rows(name)}.length`), 0);
+    await until(async () => {
+      if (!existsSync(diagnosticFile)) return;
+      const entries = readFileSync(diagnosticFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      const entry = entries.find((entry) => entry.code === code);
+      if (!entry) return;
+      assert.deepEqual(entry, { event: 'attachment-upload-failed', code, at: new Date(entry.at).toISOString() });
+      return true;
+    });
+  };
+  await failure('unreadable (1).json', 'new DOMException("synthetic private path", "NotReadableError")',
+    '無法讀取這個檔案。請確認檔案仍可存取，再重新附加。', 'upload-client-file-read');
+  await selectLocale(page, 'en');
+  await page.ready(`document.querySelector('#error').textContent.includes("Couldn’t read this file. Check that it’s accessible and attach it again.")`);
+  await selectLocale(page, 'zh-TW');
+  await failure('unexpected (1).json', 'new Error("合成私密錯誤")', 'OEP 無法完成操作。請稍後再試。', 'upload-client-unexpected');
+  const retry = '合成重試 (1).json';
+  assert.equal(await paste(page, retry, benchmarkJson, 'application/json'), true);
+  await expectBenchmark(retry, 1);
+  await page.evaluate(`${rows(retry)}[0].querySelector('input').click()`);
+  console.log('Benchmark JSON uploads and upload diagnostics passed in Chromium (paste, drop and file picker).');
+}
 
 export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean, captureEngineering: boolean) {
   const attachment = (name: string) =>
@@ -152,13 +296,6 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
     assert.match(await page.evaluate<string>(`${status}.textContent`), /Could not attach files \(1\)/);
     for (const name of ['paste-photo.gif', 'paste-photo.webp']) await preview(name);
 
-    const paste = (name: string, content: string | number[], type: string) => page.evaluate(`(() => {
-      const data = new DataTransfer();
-      const content = ${JSON.stringify(content)};
-      data.items.add(new File([typeof content === 'string' ? content : Uint8Array.from(content)],
-        ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
-      return !${prompt}.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
-    })()`);
     const json = '{\n  "compilerOptions": { "strict": true }\n}\n';
     const python = 'def sample():\n    return "合成"\n';
     for (const [width, height, layout, locale, pasted, dropped] of [
@@ -171,7 +308,7 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
       for (const [name, content, type] of [pasted, dropped]) {
         const rows = `[...document.querySelectorAll('#attachments li')].filter(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
         const count = await page.evaluate<number>(`${rows}.length`);
-        if (type) assert.equal(await paste(name, content, type), true);
+        if (type) assert.equal(await paste(page, name, content, type), true);
         else await (await drag('#prompt', [name], undefined, content))();
         await page.ready(`${rows}.length === ${count + 1} && ${rows}.at(-1).querySelector('input').checked &&
           ${rows}.at(-1).querySelector('[data-classification=unclassified]')`);
@@ -188,7 +325,7 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
         await page.evaluate("document.querySelector('#close-files').click()");
       }
       const rejected = 'binary.json';
-      assert.equal(await paste(rejected, [0x50, 0x4b, 0x03, 0x04, 0x00], 'application/json'), true);
+      assert.equal(await paste(page, rejected, [0x50, 0x4b, 0x03, 0x04, 0x00], 'application/json'), true);
       const encodingError = locale === 'en' ? 'Text attachments must use UTF-8 encoding.' : '文字附件須使用 UTF-8 編碼。';
       await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(rejected + ' · ' + encodingError)})`);
       assert.equal(await page.evaluate(`Boolean(${attachment(rejected)})`), false);

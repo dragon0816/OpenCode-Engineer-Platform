@@ -1,9 +1,45 @@
+import { appendFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { maxUpload, uploadName, uploadType } from '../runs/attachments.ts';
+import { WorkspacePathError } from '../runs/workspace.ts';
 import type { ChatService } from './chat.ts';
 import type { WebSession } from '../runs/web-store.ts';
 import { header } from './auth.ts';
 import { HttpError } from './errors.ts';
+
+const clientUploadCodes = ['upload-client-file-read', 'upload-client-response', 'upload-client-unexpected'] as const;
+type ClientUploadCode = typeof clientUploadCodes[number];
+type ServerUploadCode = 'upload-storage-unavailable' | 'upload-storage-full' | 'upload-busy' | 'upload-incomplete';
+
+function auditUpload(path: string, code: ClientUploadCode | ServerUploadCode | 'upload-unexpected') {
+  const entry = JSON.stringify({ event: 'attachment-upload-failed', code, at: new Date().toISOString() });
+  try { appendFileSync(path, entry + '\n', { mode: 0o600 }); }
+  catch { console.error(entry); }
+}
+
+export function reportClientUpload(path: string, input: Record<string, unknown>) {
+  const code = clientUploadCodes.find((code) => code === input.code);
+  if (!code || Object.keys(input).length !== 1) throw new HttpError(400, 'invalid-json');
+  auditUpload(path, code);
+}
+
+function uploadSystemError(error: unknown): { status: number; code: ServerUploadCode } | undefined {
+  const { code, errcode } = error instanceof Error ? error as NodeJS.ErrnoException & { errcode?: number } : {};
+  // Extended SQLite result codes retain the primary result in the low byte.
+  const sqlite = code === 'ERR_SQLITE_ERROR' && errcode !== undefined ? errcode & 0xff : 0;
+  if (code === 'ECONNRESET') return { status: 400, code: 'upload-incomplete' };
+  if (sqlite === 5 || sqlite === 6) return { status: 429, code: 'upload-busy' };
+  if (code === 'ENOSPC' || code === 'EDQUOT' || sqlite === 13) return { status: 507, code: 'upload-storage-full' };
+  if (error instanceof WorkspacePathError || ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EBUSY', 'EROFS', 'EIO'].includes(code ?? '') ||
+      [8, 10, 14].includes(sqlite)) return { status: 503, code: 'upload-storage-unavailable' };
+}
+
+export function uploadFailure(error: unknown, audit: string) {
+  if (error instanceof HttpError) return error;
+  const known = uploadSystemError(error);
+  auditUpload(audit, known?.code ?? 'upload-unexpected');
+  return known ? new HttpError(known.status, known.code) : error;
+}
 
 export function upload(request: IncomingMessage, chat: ChatService, session: WebSession) {
   const rawLength = header(request, 'content-length');

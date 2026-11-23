@@ -28,11 +28,11 @@ const sourceVersion = (file: SnapshotFile): string =>
 
 export class ExternalSources {
   private readonly store: WebStore;
-  private readonly chat: Pick<ChatService, 'attachments' | 'workspace'>;
+  private readonly chat: Pick<ChatService, 'attachments' | 'workspace' | 'references'>;
   private readonly root: string;
   private readonly knowledge?: KnowledgeStore;
 
-  constructor(store: WebStore, chat: Pick<ChatService, 'attachments' | 'workspace'>, root: string, knowledge?: KnowledgeStore) {
+  constructor(store: WebStore, chat: Pick<ChatService, 'attachments' | 'workspace' | 'references'>, root: string, knowledge?: KnowledgeStore) {
     this.store = store;
     this.chat = chat;
     this.root = root;
@@ -169,9 +169,13 @@ export class ExternalSources {
       const workspace = this.store.agentWorkspaces(this.store.sessionOwner(session)!.agentID).find(({ id }) => id === workspaceId);
       const folder = workspace?.folders.find((value) => sha256(value) === descriptor.folder);
       if (!folder || isInside(this.root, folder) || blockedName.test(descriptor.path)) throw new DelegationError('external-provenance-missing');
+      let path: string;
+      try { path = scopedPath(folder, descriptor.path); }
+      catch { throw new DelegationError('external-changed'); }
+      if (this.chat.references?.confidential(path)) throw new DelegationError('external-confidential');
       try {
         checkDirectory(folder);
-        if (isInside(this.root, scopedPath(folder, descriptor.path))) throw new Error('Private path');
+        if (isInside(this.root, path)) throw new Error('Private path');
         const opened = openWorkspaceFile(folder, descriptor.path, maxUpload);
         data = opened.data;
         provenance = { folder: descriptor.folder, path: descriptor.path, identity: opened.identity };

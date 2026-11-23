@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import type { Runtime } from '../../apps/launcher/src/runtime.ts';
+import { benchmarkJson, benchmarkNames } from '../fixtures/benchmark-upload.ts';
 
 test('local API restricts routing, pairing, mutations, file intake and session ownership', async () => {
   mkdirSync('.phase0', { recursive: true });
@@ -130,6 +132,71 @@ test('local API restricts routing, pairing, mutations, file intake and session o
     assert.equal(state.attachments.length, 1);
     assert.equal(state.messages.length, 0);
     assert.ok(!JSON.stringify(state).includes(root));
+    const benchmarkUpload = (path: string, name: string, type: string) =>
+      fetch(origin + path + '/attachments', { method: 'POST',
+        headers: { ...headers, 'content-type': type, 'x-oep-filename': encodeURIComponent(name) }, body: benchmarkJson });
+    const expectBenchmark = async (path: string, name: string, type: string) => {
+      const response = await benchmarkUpload(path, name, type);
+      const result = await response.json();
+      assert.equal(response.status, 201, `${name} (${type}): ${result.errorDetail?.code ?? 'upload'}`);
+      assert.equal(result.name, name);
+      assert.equal(result.mime, 'text/plain');
+      assert.equal(result.bytes, Buffer.byteLength(benchmarkJson));
+      assert.equal(result.converted, false);
+      assert.ok(!('path' in result));
+      const preview = await fetch(origin + path + '/attachments/' + result.id + '/preview', { headers: { cookie } });
+      assert.equal(preview.status, 200);
+      assert.equal(await preview.text(), benchmarkJson);
+    };
+    for (const name of benchmarkNames) {
+      for (const type of ['application/octet-stream', 'application/json']) await expectBenchmark(a, name, type);
+    }
+    // A file-only snapshot preserves the session row but omits its empty attachment directories.
+    const restoredWorkspace = join(root, 'sessions', second.id);
+    rmdirSync(join(restoredWorkspace, 'attachments'));
+    rmdirSync(restoredWorkspace);
+    await expectBenchmark(b, benchmarkNames[0], 'application/octet-stream');
+
+    const { id: blockedSession } = await (await post('/api/sessions', { agent: 'inspector' })).json();
+    const scoped = '/api/agents/main/workspaces/legacy-default/sessions/' + blockedSession;
+    const blockedFolder = join(root, 'sessions', blockedSession, 'attachments');
+    rmdirSync(blockedFolder);
+    writeFileSync(blockedFolder, 'synthetic storage blocker');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = await benchmarkUpload(scoped, benchmarkNames[1], 'application/json');
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).errorDetail.code, 'upload-storage-unavailable');
+    }
+    assert.equal(readFileSync(blockedFolder, 'utf8'), 'synthetic storage blocker');
+    unlinkSync(blockedFolder);
+    await expectBenchmark(scoped, benchmarkNames[1], 'application/json');
+
+    // Fail source registration after the original is staged and the attachment insert has run.
+    const savedFiles = readdirSync(blockedFolder);
+    using fault = new DatabaseSync(join(root, 'web.sqlite'));
+    fault.exec("CREATE TRIGGER synthetic_upload_fault BEFORE INSERT ON external_sources BEGIN SELECT RAISE(ABORT, 'synthetic private storage detail'); END");
+    try {
+      const response = await benchmarkUpload(scoped, benchmarkNames[0], 'application/json');
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).errorDetail.code, 'unavailable');
+      assert.deepEqual(readdirSync(blockedFolder), savedFiles);
+      const state = await (await fetch(origin + scoped + '/state', { headers: { cookie } })).json();
+      assert.equal(state.attachments.length, 1);
+      assert.ok(state.attachments[0].sourceId);
+    } finally { fault.exec('DROP TRIGGER synthetic_upload_fault'); }
+    await expectBenchmark(scoped, benchmarkNames[0], 'application/json');
+
+    const diagnostics = scoped + '/attachment-diagnostics';
+    assert.equal((await post(diagnostics, { code: 'upload-client-file-read' }, { 'x-oep-csrf': 'bad' })).status, 403);
+    assert.equal((await post(diagnostics, { code: root })).status, 400);
+    assert.equal((await post(diagnostics, { code: 'upload-client-file-read', filename: benchmarkNames[0] })).status, 400);
+    assert.equal((await post(diagnostics, { code: 'upload-client-file-read' })).status, 200);
+    const audit = readFileSync(join(root, 'web-uploads.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(audit.map(({ code }) => code),
+      [...Array(4).fill('upload-storage-unavailable'), 'upload-unexpected', 'upload-client-file-read']);
+    for (const entry of audit) assert.deepEqual(entry,
+      { event: 'attachment-upload-failed', code: entry.code, at: new Date(entry.at).toISOString() });
+
     writeFileSync(join(root, 'sessions', first.id, 'attachments', 'staging-00000000-0000-0000-0000-000000000000.tmp'), 'orphan');
     assert.equal((await post('/api/stop', {})).status, 202);
     assert.equal(stops, 1);

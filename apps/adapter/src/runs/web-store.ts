@@ -10,6 +10,7 @@ import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import { DelegationLedger, migrateBudgetChoice, verifyBudgetChoice } from './delegation-ledger.ts';
 import { migrateExternalHelpers, verifyExternalHelpers } from './external-schema.ts';
+import { migrateReferences, ReferenceLedger, verifyReferences } from './reference-ledger.ts';
 import { ExternalLedger, externalProvider } from './external-ledger.ts';
 import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts, migrateTelegramSettings, verifyTelegramSettings } from '../channels/accounts.ts';
@@ -123,6 +124,7 @@ export class WebStore extends Ledger {
   private readonly centralWorkItems?: WorkItems;
   private readonly centralDelegations?: DelegationLedger;
   private readonly centralExternal?: ExternalLedger;
+  readonly references?: ReferenceLedger;
 
   constructor(file: string) {
     const telegram = basename(file).toLowerCase() === 'telegram-chat.sqlite';
@@ -141,6 +143,7 @@ export class WebStore extends Ledger {
           migrateTelegramSettings(db);
           migrateBudgetChoice(db);
         }
+        if (!telegram && version < 10) migrateReferences(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -150,6 +153,7 @@ export class WebStore extends Ledger {
           verifyExternalHelpers(db);
           verifyTelegramSettings(db);
           verifyBudgetChoice(db);
+          verifyReferences(db);
         }
       },
     });
@@ -158,6 +162,7 @@ export class WebStore extends Ledger {
       this.centralWorkItems = new WorkItems(this.db);
       this.centralDelegations = new DelegationLedger(this.db, this.centralWorkItems);
       this.centralExternal = new ExternalLedger(this.db);
+      this.references = new ReferenceLedger(this.db, (work) => this.transaction(work));
     }
   }
 
