@@ -297,6 +297,13 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
 - [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
 
+## Phase 3 遠端 MCP OAuth
+
+- [x] 加入 OAuth 探索、原生瀏覽器授權、靜態與自動註冊、使用者範圍權杖保護、更新及登出。助理執行沿用 broker 的逐助理及工作資料夾權限。
+- [x] 外部工具支援雙語 OAuth 設定、狀態、連線測試及 OpenCode JSON 匯入。環境變數佔位提示由擁有者自行填寫。
+- [x] 完成依序驗收，包含三輪 Chromium、合成 HTTPS OAuth、原生隔離、交辦、重現建置及敏感資料掃描零命中。
+- [ ] 由擁有者確認 Gmail 帳號和組織政策，並補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。 [驗收與 Gmail 操作](reviews/PHASE3_MCP_OAUTH_REPORT.md)
+
 ## Phase 3I 每個助理的模型來源
 
 - [x] 助理詳情、建立精靈與對話模型選單分組顯示 Gateway 和外部來源。Web 台帳 v9 保留既有 Gateway 助理與模型。

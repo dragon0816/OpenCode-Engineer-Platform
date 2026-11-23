@@ -15,6 +15,8 @@ import { openBiReviewStore, verifyBiSourceOwners, verifyBiSourceReceipts } from 
 import { biOwnershipTables, legacyBiOwnership, openBiChannelStore, verifyBiOwnership } from '../../packages/knowledge/src/bi/ownership.ts';
 import { dataMigrations } from './data-migrations.ts';
 import { diagnosticPath, isOepDatabase } from './snapshot-paths.mjs';
+import { mcpOAuthFolder } from '../../apps/adapter/src/opencode/mcp-oauth-storage.ts';
+import { mcpOAuthCredentialName } from '../../apps/adapter/src/runs/custom-mcp-credentials.ts';
 
 const [mode, root, destination] = process.argv.slice(2);
 const quote = (name) => '"' + name.replaceAll('"', '""') + '"';
@@ -57,8 +59,9 @@ async function credentials() {
     const mcp = hasTable.get('mcp_servers') ? db.prepare('SELECT id, definition FROM mcp_servers').iterate() : [];
     for (const { id, definition } of mcp) {
       if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid MCP identifier');
-      const { transport, environment } = JSON.parse(definition);
+      const { transport, environment, oauth } = JSON.parse(definition);
       const remote = transport === 'remote';
+      if (remote && oauth?.client === 'static') names.add(mcpOAuthCredentialName(id));
       for (const { name, reference } of environment) {
         const valid = remote ? /^[A-Za-z][A-Za-z0-9_-]{0,63}$/ : /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
         const suffix = remote ? name.toUpperCase().replaceAll('-', '_') : name.toUpperCase();
@@ -94,7 +97,7 @@ function useDatabase(path, operation) {
 function excluded(name) {
   const parts = name.split('/');
   return parts[0] === 'maintenance.log' || parts[0] === 'backup.manifest.json' ||
-    (parts[0] === 'web' && (/^launch-/.test(parts[1]) || /^open-.*\.request$/.test(parts[1]))) ||
+    (parts[0] === 'web' && (parts[1] === mcpOAuthFolder || /^launch-/.test(parts[1]) || /^open-.*\.request$/.test(parts[1]))) ||
     basename(name).toLowerCase() === 'auth.json';
 }
 

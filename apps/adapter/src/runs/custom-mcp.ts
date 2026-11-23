@@ -10,6 +10,7 @@ const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const blockedEnvironment = /^(?:PATH|PATHEXT|COMSPEC|SYSTEMROOT|SYSTEMDRIVE|WINDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|TEMP|TMP|PSMODULEPATH|PYTHON.*|NODE_.*|BUN_.*|DENO_.*|LD_.*|DYLD_.*|OPENCODE_.*|OEP_.*)$/i;
 
 export const customMcpTool = /^[a-z0-9_]{1,120}$/;
+export const oauthMcpTool = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$/;
 export const customMcpName = (id: string) => `oep_custom_${id}`;
 
 export type CustomStdioMcp = ReturnType<typeof validateCustomStdioMcp>;
@@ -39,7 +40,8 @@ function validateCommon(id: string, input: Record<string, unknown>, projects: re
     throw new WebMessageError('mcp-invalid-project');
   }
   if (!Array.isArray(deniedTools) || deniedTools.length > 50 ||
-      !deniedTools.every((tool): tool is string => typeof tool === 'string' && customMcpTool.test(tool)) ||
+      !deniedTools.every((tool): tool is string => typeof tool === 'string' &&
+        (input.transport === 'remote' && input.oauth ? oauthMcpTool : customMcpTool).test(tool)) ||
       new Set(deniedTools).size !== deniedTools.length) {
     throw new WebMessageError('mcp-invalid-tool');
   }
@@ -82,6 +84,23 @@ export function validateCustomStdioMcp(id: string, input: Record<string, unknown
 const headerName = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const managedHeader = /^(?:host|connection|transfer-encoding|content-length|content-type|accept|accept-encoding|upgrade|te|trailer|expect|proxy-.+|mcp-.+)$/i;
 
+export type McpOAuthSettings = { client: 'static' | 'dynamic'; scopes: string[] };
+
+export function oauthScopes(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length > 50 || !value.every((scope): scope is string =>
+    typeof scope === 'string' && /^[\x21\x23-\x5b\x5d-\x7e]{1,512}$/.test(scope))) return;
+  return [...new Set(value)].sort();
+}
+
+export function oauthSettings(server: CustomMcp) {
+  return server.transport === 'remote' ? server.oauth : undefined;
+}
+
+export function oauthBinding(server: CustomMcp) {
+  return server.transport === 'remote' && server.oauth
+    ? JSON.stringify([server.url, server.localService, server.oauth.client, server.oauth.scopes]) : undefined;
+}
+
 export function validateCustomRemoteMcp(id: string, input: Record<string, unknown>, projects: readonly ProjectID[]) {
   const common = validateCommon(id, input, projects);
   const { transport, url: rawUrl, headers, localService } = input;
@@ -91,6 +110,15 @@ export function validateCustomRemoteMcp(id: string, input: Record<string, unknow
     throw new WebMessageError('mcp-url-invalid');
   }
   if (!Array.isArray(headers) || headers.length > 30) throw new WebMessageError('mcp-header-limit');
+  let oauth: McpOAuthSettings | undefined;
+  if (input.oauth !== undefined) {
+    const settings = input.oauth as Partial<McpOAuthSettings> | null;
+    const scopes = oauthScopes(settings?.scopes);
+    if (!scopes || (settings?.client !== 'static' && settings?.client !== 'dynamic') || headers.length) {
+      throw new WebMessageError('mcp-oauth-settings');
+    }
+    oauth = { client: settings.client, scopes };
+  }
   const names = new Set<string>();
   const environment = headers.map((name: unknown) => {
     const suffix = typeof name === 'string' ? name.toUpperCase().replaceAll('-', '_') : '';
@@ -100,7 +128,7 @@ export function validateCustomRemoteMcp(id: string, input: Record<string, unknow
     names.add(suffix);
     return { name, reference: `OEP_MCP_${id.toUpperCase()}_${suffix}` };
   });
-  return { ...common, transport: transport as 'remote', url: url.href, localService, environment };
+  return { ...common, transport: transport as 'remote', url: url.href, localService, environment, ...(oauth && { oauth }) };
 }
 
 export async function pinCustomRemoteMcp(server: CustomRemoteMcp, signal: AbortSignal) {
