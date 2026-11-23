@@ -65,3 +65,11 @@
 - 擁有者指示：**暫停升級**，等擁有者測到一個階段、明確說可以時才升級。修正照常開發、驗證、合併到 main。
 - 試用回饋記錄在 `docs/PHASE3_REQUIREMENTS.md` 第 11 節；進行中：`ux/owner-test-round-2`（通道以助理為主、筆記刪除、文字類附件、清單內粗體）。
 - 2026-11-23：擁有者表示設定部分已測完一輪，**同意在進行中的修正完成後升級**（owner-test-round-2、dictation-microphone；model-sources 若尚未完成則下一次升級再含）。升級前照例用資料複本試跑遷移。
+
+## 2026-11-23 晚：BI Knowledge 驗證版
+
+- 擁有者安裝版 0.9.0（含 0.8 的外部模型來源、MCP OAuth、檔案參照、貼上修正，以及 BI 文件擷取與 Plugin 系統）。擁有者 OEP_PYTHON 已依 `tests/oracles/requirements.txt`（含 hash）安裝 pypdf 6.21.4。
+- BI Knowledge 外掛安裝檔：`dist/plugins/BI-Knowledge.oepplugin`（另複製一份到擁有者桌面）。
+- 真實資料實跑（market-intel＋公司 Gateway）：安裝、匯入、驗證、審核、發布、綁定皆成功；自動測試的英文泛問被模型以 abstain 拒答，需改為依證據內容出題（待修）。
+- 時程：週二擁有者驗證、週三修改並在乾淨電腦安裝驗收、週四發布給同事。給同事的版本應使用內含 Python 的 bundled 建置（`OEP_TEST_BUNDLED`／build-release bundled 模式），並隱藏或標示未完成功能（外部 coding agent 需管理員設定、Share Platform 未串接）。
+- 待辦：信任本機 MCP（MXO AI MCP）、BI live 測試出題、同事安裝說明、乾淨機安裝驗收。
