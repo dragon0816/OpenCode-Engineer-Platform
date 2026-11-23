@@ -32,6 +32,7 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
   const web = join(root, 'web');
   mkdirSync(web);
   const session = randomUUID();
+  mkdirSync(join(web, 'sessions', session, 'attachments'), { recursive: true });
   const references = join(root, 'references');
   mkdirSync(references);
   writeFileSync(join(references, 'reference.txt'), sourceText);
@@ -117,7 +118,7 @@ test('paired page routes scope worker jobs, sources, and owner publication to th
     const attachment = await json(await request(`/api/sessions/${session}/attachments`, {
       bytes: Buffer.from(sourceText), headers: { 'X-OEP-Filename': 'attachment.txt', 'Content-Type': 'text/plain' },
     }), 201);
-    const attachSource = await json(await call('sources.reference', { session, source: attachment.id, sha256: attachment.original.sha256 }));
+    const attachSource = await json(await call('sources.reference', { session, source: attachment.id, sha256: attachment.sha256 }));
     assert.equal(attachSource.name, 'attachment.txt');
     const reference = await json(await request(`/api/sessions/${session}/external-sources`, {
       data: { kind: 'workspace', folder: sha256(references), path: 'reference.txt' },
