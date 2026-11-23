@@ -976,15 +976,16 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const cards = agentID === 'main' ? store.delegations.cards(id) : [];
       const delegations = cards.map((card) => {
         const review = 'reviewRef' in card && card.reviewRef?.reviewId;
-        const pending = card.status === 'queued' && external.pending(card.delegationId);
+        const approval = store.external.confirmation(card.delegationId);
+        const pending = card.status === 'queued' && approval?.decision === null;
         return { ...card, ...(pending && { status: 'awaiting_confirmation' }), specialistName: runtime.redact(card.specialistName),
+          ...(approval?.decision && { externalConfirmation: { decision: approval.decision, at: approval.decidedAt } }),
           published: Boolean(review && runtime.knowledge?.reviewStore.publicationNotice(review)) };
       });
       send(response, 200, { ...state, attachments: state.attachments.map((file) => {
         const sourceId = store.external.attachmentSource(id, file.id);
-        const source = sourceId && store.external.source(id, sourceId);
-        return { ...file, sourceId, classification: source ? store.delegations.attachmentClassification(workspaceID, file.id, file.sha256) : 'unclassified' };
-      }), activity: events.cards(id), delegations });
+        return { ...file, sourceId, classification: store.delegations.attachmentClassification(workspaceID, file.id, file.sha256) };
+      }), workspaceClassification: store.external.workspace(workspaceID), activity: events.cards(id), delegations });
     }
     else if (method === 'GET' && resource === 'events') events.add(response, session.id);
     else if (method === 'POST' && resource === 'delegation-seen') {

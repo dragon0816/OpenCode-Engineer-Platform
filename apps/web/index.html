@@ -115,6 +115,7 @@
           <button type="button" data-section="integrations" aria-controls="settings-integrations" data-i18n="ui.integrations"></button>
           <button type="button" data-section="input" aria-controls="settings-input" data-i18n="ui.input"></button>
           <button type="button" data-section="mcp" aria-controls="settings-mcp" data-i18n="ui.external-tools"></button>
+          <button type="button" data-section="external-helpers" aria-controls="settings-external-helpers" data-i18n="externalHelpers.settings.title"></button>
           <button type="button" data-section="runtime" aria-controls="settings-runtime" data-i18n="ui.runtime"></button>
           <button type="button" data-section="about" aria-controls="settings-about" data-i18n="ui.about"></button>
         </nav>
@@ -240,6 +241,7 @@
             <p class="settings-help" data-i18n="ui.view-the-projects-working-folder-and-choose"></p>
             <label><span data-i18n="ui.project"></span> <select id="folder-project"></select></label>
             <p id="project-working-root"></p>
+            <div id="project-classification" class="external-classification"></div>
             <h3 data-i18n="ui.read-only-folders"></h3>
             <ul id="project-folder-list"></ul>
             <form id="project-folder-form">
@@ -250,6 +252,12 @@
                 <p id="project-folder-status" role="status"></p>
               </div>
             </form>
+          </section>
+          <section id="settings-external-helpers" aria-labelledby="settings-external-helpers-title" hidden>
+            <h2 id="settings-external-helpers-title" data-i18n="externalHelpers.settings.title"></h2>
+            <p class="settings-help" data-i18n="externalHelpers.settings.intakeOnly"></p>
+            <div id="external-helper-settings"></div>
+            <p id="external-helper-settings-status" role="status"></p>
           </section>
           <section id="settings-integrations" aria-labelledby="settings-integrations-title" hidden>
             <h2 id="settings-integrations-title" data-i18n="ui.integrations"></h2>
@@ -414,6 +422,7 @@
               <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.pdf,.xlsx,.txt,.md,.csv,.html,.htm" multiple hidden>
               <span id="attachment-help" hidden data-i18n="ui.select-or-drop-images-pdf-excel-web"></span>
               <button id="manage-attachments" type="button" aria-controls="chat-files" hidden data-i18n="ui.selected-attachments"></button>
+              <button id="prepare-external-helper" type="button" hidden data-i18n="externalHelpers.intake.title"></button>
             </div>
             <label class="composer-model"><span data-i18n="ui.model"></span> <select id="session-alias" aria-describedby="session-model-help session-model-status session-model-fallback" disabled></select></label>
             <div class="composer-input-options">
@@ -457,6 +466,7 @@
       </header>
       <div class="knowledge-body">
         <section id="knowledge-overview" role="tabpanel" aria-labelledby="knowledge-tab-overview">
+          <div id="vault-classification" class="external-classification"></div>
           <p class="page-help" data-i18n="ui.browse-published-cards-or-search-source-passages"></p>
           <dl id="vault-details"></dl>
           <details id="vault-advanced">

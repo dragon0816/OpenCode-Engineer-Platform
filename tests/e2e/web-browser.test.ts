@@ -10,6 +10,7 @@ import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
+import { verifyExternalHelpersInBrowser } from './external-helpers-browser.ts';
 import { dataDirectory } from './test-data.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
 import { until } from '../../scripts/phase0/probe-http.ts';
@@ -65,6 +66,7 @@ const settingsPages = [
   ['integrations', '整合', ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status', '#knowledge-configured', '#telegram-main-status', '#telegram-bi-status', '#telegram-configured', '.settings-advanced li']],
   ['input', '輸入', ['#enable-microphone', '#microphone-settings-status']],
   ['mcp', '外部工具', ['#mcp-knowledge-status', '#mcp-knowledge-tools', '#mcp-open-knowledge-settings', '#mcp-add', '#mcp-servers', '#mcp-restart-bar #mcp-restart', '#mcp-status']],
+  ['external-helpers', '外部幫手', ['#external-helper-settings fieldset input', '#external-helper-settings-status']],
   ['runtime', '執行環境', ['#runtime-status', '#runtime-details dd:nth-of-type(2)', '#runtime-agent', '#runtime-fingerprints dd:nth-of-type(4)']],
   ['about', '關於', ['#about-details dd:nth-of-type(4)', '#about-details dd:nth-of-type(5) a', '#about-details dd:nth-of-type(6) a', '#about-status']],
 ] as const;
@@ -82,6 +84,7 @@ const settingsRows: Record<string, Record<string, string[]>> = {
   },
   limits: { limits: ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status'] },
   projects: { projects: ['#folder-project option', '#project-working-root', '#project-folder-list'] },
+  'external-helpers': {},
   integrations: {
     integration: ['#knowledge-toolbox', '#atlas-url', '#knowledge-settings button[type=submit]', '#open-atlas', '#knowledge-settings-status'],
     'integration-advanced': ['details summary', 'details li:nth-of-type(4)'],
@@ -128,6 +131,13 @@ const synthetic: typeof fetch = async (target, init) => {
     assert.match(user, /資料查核/);
     assert.match(user, /保留來源引用/);
     return completion(model, [{ role: 'assistant', content: '已核對合成資料' }], 'stop');
+  }
+  const external = /specialistId=([a-z-]+).*?publicInputId=([a-f\d-]{36}).*?requestKey=([a-f\d-]{36})/.exec(user);
+  if (external) {
+    assert.ok(!user.includes('Synthetic public coding task') && !user.includes('Synthetic selected public text'));
+    if (messages.at(-1)?.role !== 'tool') return completion(model, toolCall(0, 'call_external_helper', delegateTool,
+      { specialistId: external[1], publicInputId: external[2], requestKey: external[3] }), 'tool_calls');
+    return completion(model, [{ role: 'assistant', content: '已接單。' }], 'stop');
   }
   if (user.includes('SYNTHETIC_DELEGATION_RESULTS') || user.includes('做成 BI 卡片')) {
     const count = messages.slice(messages.findLastIndex(({ role }) => role === 'user') + 1).filter(({ role }) => role === 'tool').length;
@@ -1546,6 +1556,7 @@ try {
         await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures: process.env.OEP_CAPTURE_SLICE4 === '1' });
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
+        await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");
