@@ -405,6 +405,8 @@ public static class OepHelperNative
 
     private static void TestWrite()
     {
+        Environment.CurrentDirectory = Environment.GetEnvironmentVariable("OEP_HELPER_WORK");
+        Environment.SetEnvironmentVariable("OEP_HELPER_WORK", null);
         foreach (string directory in new[] { Environment.CurrentDirectory, Path.GetTempPath() })
         {
             string write = Path.Combine(directory, Guid.NewGuid().ToString("N"));

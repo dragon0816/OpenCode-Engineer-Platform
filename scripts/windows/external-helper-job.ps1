@@ -26,12 +26,13 @@ function Set-HelperRunTraverse($Run, $Policy, [bool]$Grant) {
     Set-Acl -LiteralPath $folder -AclObject $acl
 }
 
-function Get-HelperEnvironment($Policy, $Runtime, $Scratch, $Provider) {
+function Get-HelperEnvironment($Policy, $Runtime, $Work, $Scratch, $Provider) {
     $windows = [Environment]::GetFolderPath('Windows')
     $profile = $Policy.HelperProfile
     $paths = [ordered]@{
         APPDATA = Join-Path $profile 'AppData\Roaming'
         LOCALAPPDATA = Join-Path $profile 'AppData\Local'
+        OEP_HELPER_WORK = $Work
         PATH = "$Runtime;$(Join-Path $windows 'System32')"
         SystemRoot = $windows
         TEMP = $Scratch
@@ -130,8 +131,8 @@ function Invoke-HelperJob($Request, $Policy) {
             Grant-HelperWork $work $scratch $inputs $Policy
             [IO.File]::WriteAllText($marker, $id, [Text.UTF8Encoding]::new($false))
             Set-HelperRunTraverse $run $Policy $true
-            $environment = Get-HelperEnvironment $Policy $runtime $scratch $Request.provider
-            $result = [OepHelperNative]::Run($bootstrap, [string[]]$argsForChild, $work, $environment, [string]$Request.input,
+            $environment = Get-HelperEnvironment $Policy $runtime $work $scratch $Request.provider
+            $result = [OepHelperNative]::Run($bootstrap, [string[]]$argsForChild, $runtime, $environment, [string]$Request.input,
                 ($mode -eq 'interactive'), ($Request.operation -eq 'run'), [int]$Request.owner, $timeout)
         } finally {
             Clear-HelperRun $runs $marker $Policy
