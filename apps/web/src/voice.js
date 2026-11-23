@@ -1,25 +1,25 @@
 import { message, setAttribute, setText } from './i18n.js';
 
 const unavailableKey = 'oep.speech-service-unavailable';
-const unavailableMessage = 'voice.speech-service-unavailable';
-const permissionDenied = 'voice.microphone-access-denied';
-const genericError = 'voice.could-not-complete-dictation-try-again';
-const noSpeech = 'voice.no-speech-detected-try-again-or-type';
+const unavailableMessage = message('voice.speech-service-unavailable');
+const permissionDenied = message('voice.microphone-access-denied');
+const genericError = message('voice.could-not-complete-dictation-try-again');
+const noSpeech = message('voice.no-speech-detected-try-again-or-type');
 const mediaErrors = new Map([
   ['NotAllowedError', permissionDenied],
-  ['NotFoundError', 'voice.microphone-not-found'],
-  ['NotReadableError', 'voice.microphone-not-readable'],
+  ['NotFoundError', message('voice.microphone-not-found')],
+  ['NotReadableError', message('voice.microphone-not-readable')],
 ]);
 const speechErrors = new Map([
   ['not-allowed', permissionDenied],
   ['service-not-allowed', unavailableMessage],
-  ['audio-capture', 'voice.microphone-capture-failed'],
+  ['audio-capture', message('voice.microphone-capture-failed')],
   ['no-speech', noSpeech],
 ]);
 const permissionMessages = new Map([
-  ['denied', 'voice.microphone-status-denied'],
-  ['granted', 'voice.microphone-status-granted'],
-  ['prompt', 'voice.microphone-status-prompt'],
+  ['denied', message('voice.microphone-status-denied')],
+  ['granted', message('voice.microphone-status-granted')],
+  ['prompt', message('voice.microphone-status-prompt')],
 ]);
 
 function settingsURL() {
@@ -58,8 +58,8 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
 
   function disableDictation() {
     button.setAttribute('aria-disabled', 'true');
-    setAttribute(button, 'title', message(unavailableMessage));
-    setAttribute(button, 'aria-description', message(unavailableMessage));
+    setAttribute(button, 'title', unavailableMessage);
+    setAttribute(button, 'aria-description', unavailableMessage);
   }
 
   function finish() {
@@ -83,7 +83,7 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
     permissionCheck = check;
     const state = await check;
     if (permissionCheck === check && dialog.open) {
-      setText(permissionStatus, message(permissionMessages.get(state) ?? 'voice.microphone-status-unknown'));
+      setText(permissionStatus, permissionMessages.get(state) ?? message('voice.microphone-status-unknown'));
     }
   }
 
@@ -98,26 +98,26 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
     void refreshPermission();
   }
 
-  function fail(key) {
+  function fail(reason) {
     finish();
-    if (key === permissionDenied) {
+    if (reason === permissionDenied) {
       showPermissionHelp();
     } else if (dialog.open) {
       dialog.close();
     }
-    if (key === unavailableMessage) {
+    if (reason === unavailableMessage) {
       serviceUnavailable = true;
       sessionStorage.setItem(unavailableKey, '1');
       disableDictation();
     }
-    if (key) report(message(key));
+    if (reason) report(reason);
   }
 
   async function start() {
     if (attempt || !enabled.checked || composer.disabled || serviceUnavailable) return;
     const Speech = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Speech || !navigator.mediaDevices?.getUserMedia) {
-      fail('voice.this-browser-doesnt-support-dictation-enter-the');
+      fail(message('voice.this-browser-doesnt-support-dictation-enter-the'));
       return;
     }
     const current = { context: getContext(), recognition: undefined };
@@ -144,7 +144,7 @@ export function bindVoice(enabled, button, status, composer, getContext, report)
       capture.onresult = (event) => {
         if (attempt !== current || current.context !== getContext() || composer.disabled) return;
         const text = event.results[event.resultIndex]?.[0]?.transcript?.trim();
-        if (!text) { report(message(noSpeech)); return; }
+        if (!text) { report(noSpeech); return; }
         composer.value = (composer.value ? composer.value + ' ' + text : text).slice(0, composer.maxLength);
         composer.focus();
         report();
