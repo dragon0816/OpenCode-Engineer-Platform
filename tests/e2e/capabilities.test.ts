@@ -86,12 +86,12 @@ test('imports Skills and AEP Workflows, loads only enabled Skill text, and binds
       assert.ok(names.includes(readFileTool));
       assert.equal(names.includes(biQueryTool), Boolean(boundBiVault));
       if (!boundBiVault) {
-        assert.doesNotMatch(instructions, /BI knowledge-query procedure/);
+        assert.doesNotMatch(user, /BI knowledge-query procedure/);
         return completion(model, [{ role: 'assistant', content: 'Synthetic BI unavailable' }], 'stop');
       }
       assert.ok(names.includes(knowledgeTool));
-      assert.match(instructions, /BI knowledge-query procedure/);
-      assert.ok(instructions.includes(boundBiVault));
+      assert.match(user, /BI knowledge-query procedure/);
+      assert.ok(user.includes(boundBiVault));
       if (latest?.role !== 'tool') return completion(model, toolCall(0, 'imported_bi_card',
         biQueryTool, { vault: boundBiVault, card: passage.cardId }), 'tool_calls');
       assert.match(JSON.stringify(latest.content), /±0\.8 dB/);
