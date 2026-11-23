@@ -193,6 +193,7 @@ export class ChatService {
       throw new HttpError(409, 'session-unavailable');
     }
     const profile = this.profile(owner.agentID, owner.workspaceID, session.project);
+    this.requireGateway(owner.agentID);
     if (!this.runtime.aliases.includes(session.alias)) throw new HttpError(400, 'unapproved-model');
     const vaults = this.knowledgeVaults(owner.agentID, owner.workspaceID, session.knowledgeDisabled);
     const permissions = this.permissions(session, owner.agentID, owner.workspaceID, origin, vaults,
@@ -205,12 +206,24 @@ export class ChatService {
       try {
         if (session) return this.executionScope(session, channel);
         if (!channel) return;
+        this.requireGateway(channel.agentId);
         const workspaceID = this.ledger.defaultWorkspace(channel.agentId);
         if (!workspaceID) return;
         const profile = this.profile(channel.agentId, workspaceID, 'default');
         return { model: profile.defaultModel ?? this.runtime.alias, vaults: this.knowledgeVaults(channel.agentId, workspaceID) };
       } catch { /* Invalid session ownership or ledger state blocks the query. */ }
     });
+  }
+
+  private requireGateway(agentID: string) {
+    const source = this.ledger.agentModelSource(agentID);
+    if (source === 'gateway') return;
+    const status = this.delegations?.externalStatus(source);
+    if (!this.ledger.external.settings(source).enabled) throw new HttpError(409, 'external-disabled');
+    if (status?.isolation !== 'verified') throw new HttpError(409, 'external-isolation-unavailable');
+    if (status.installation !== 'detected') throw new HttpError(409, 'external-cli-unsupported');
+    if (status.login !== 'signedIn') throw new HttpError(409, 'external-cli-login-unavailable');
+    throw new HttpError(409, 'external-model-execution-unavailable');
   }
 
   async create(agent: Agent, project: ProjectID = 'default', requestedAlias?: string, channel?: Destination,
@@ -365,6 +378,8 @@ export class ChatService {
       return publicRun(existing.run);
     }
     if (this.store.hasTurn(input.id)) throw new HttpError(409, 'message-id-unavailable');
+    const owner = this.store.sessionOwner(session);
+    if (owner) this.requireGateway(owner.agentID);
     const prior = this.store.turns(session.id).at(-1);
     if (prior && (active.has(prior.state) || prior.state === 'indeterminate')) throw new HttpError(409, 'turn-pending');
     if (input.workbook && session.agent !== 'workbook') throw new HttpError(400, 'workbook-assistant-required');

@@ -12,7 +12,7 @@ import type { WorkLease, WorkOutcome } from './work-items.ts';
 import { DelegationHandoff } from './delegation-handoff.ts';
 import type { WebSession, WebStore } from './web-store.ts';
 import type { ExternalDelegations } from './external-delegations.ts';
-import { externalProvider } from './external-ledger.ts';
+import { externalProvider, type Provider } from './external-ledger.ts';
 import { helperReady } from './external-cli.ts';
 
 type ParentTurn = { store: WebStore; session: WebSession; input: Turn; channel?: Destination;
@@ -21,12 +21,14 @@ type ParentTurn = { store: WebStore; session: WebSession; input: Turn; channel?:
 export class DelegationService {
   readonly handoff: DelegationHandoff;
   readonly ledger: WebStore['delegations'];
+  private readonly central: WebStore;
   private readonly dispatcher: Dispatcher;
   private readonly notify: (sessionID: string) => void;
   private readonly stopped = new Map<string, AbortController>();
   private external?: ExternalDelegations;
 
   constructor(central: WebStore, webRoot: string, dispatcher: Dispatcher, notify: (sessionID: string) => void = () => {}) {
+    this.central = central;
     this.ledger = central.delegations;
     this.dispatcher = dispatcher;
     this.notify = notify;
@@ -35,6 +37,8 @@ export class DelegationService {
   }
 
   registerExternal(external: ExternalDelegations) { this.external = external; }
+
+  externalStatus(provider: Provider) { return this.external?.status(provider); }
 
   registerWorker(store: WebStore, chat: ChatService, bi?: Pick<BiService, 'delegate' | 'delegationReceipt'>) {
     const landed = (item: WorkLease): Omit<DelegationResult, 'delegationId'> | undefined => {
@@ -114,6 +118,7 @@ export class DelegationService {
         if (performance.now() >= deadline) abort('execution-deadline');
         signal.throwIfAborted();
         this.ledger.checkTarget(row.targetAgentId);
+        if (store.agentModelSource(row.targetAgentId) !== 'gateway') throw new DelegationError('DELEGATION_TARGET_UNAVAILABLE');
       };
       const meter = (kind: 'tools' | 'requests', cap: number) => {
         check();
@@ -245,7 +250,7 @@ export class DelegationService {
       if (name === listSpecialistsTool && !Object.keys(args).length) {
         return this.ledger.specialists(Boolean(external)).flatMap<Record<string, unknown>>((item) => {
           const provider = externalProvider(item.id);
-          if (!provider) return [item];
+          if (!provider) return this.central.agentModelSource(String(item.id)) === 'gateway' ? [item] : [];
           return external && helperReady(external.status(provider)) && store.external.settings(provider).enabled &&
             store.external.workspace(String(item.id)) === 'public'
             ? [{ ...item, external: true, provider }] : [];
@@ -274,6 +279,7 @@ export class DelegationService {
       const prior = this.ledger.atomic(() => this.ledger.replay(parent, args.requestKey, hash));
       if (prior) return prior;
       this.ledger.checkTarget(args.specialistId);
+      if (this.central.agentModelSource(args.specialistId) !== 'gateway') throw new DelegationError('DELEGATION_TARGET_UNAVAILABLE');
       this.ledger.checkBudget(parent);
       const id = randomUUID();
       try {

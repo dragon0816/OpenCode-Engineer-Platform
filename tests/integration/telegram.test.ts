@@ -236,6 +236,13 @@ test('paired channel settings verify a third bot, route specialist sessions and 
     assert.equal(receives.get(73)!.at(-1), 3);
     assert.equal(prompts.length, 3);
     assert.equal(sends.length, 5);
+    {
+      using db = new DatabaseSync(join(root, 'web.sqlite'));
+      db.prepare('INSERT INTO agent_model_sources (agent_id,source) VALUES (?,?)').run('main', 'codex_cli');
+    }
+    thirdEvent = 3;
+    await ready(() => sends.some(({ bot, text }) => bot === 73 && text.includes('Windows 隔離')));
+    assert.equal(prompts.length, 3, 'an external-source Telegram message must not reach Gateway');
   } finally {
     firstPrompt.resolve();
     releaseStalePoll.resolve();

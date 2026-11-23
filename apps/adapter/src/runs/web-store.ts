@@ -9,8 +9,8 @@ import { Ledger, telegramChatLedgerVersion, webLedgerVersion } from './ledger.ts
 import { migrateWorkItems, verifyWorkItems, WorkItems } from './work-items.ts';
 import { migrateDelegations, verifyDelegations } from './delegation-schema.ts';
 import { DelegationLedger, migrateBudgetChoice, verifyBudgetChoice } from './delegation-ledger.ts';
-import { migrateExternalHelpers, verifyExternalHelpers } from './external-schema.ts';
-import { ExternalLedger, externalProvider } from './external-ledger.ts';
+import { migrateAgentModelSources, migrateExternalHelpers, verifyAgentModelSources, verifyExternalHelpers } from './external-schema.ts';
+import { ExternalLedger, externalProvider, type Provider } from './external-ledger.ts';
 import type { WorkRequest } from './work-items.ts';
 import { legacyAllowlistRef, migrateChannelAccounts, migrateTelegramSettings, verifyTelegramSettings } from '../channels/accounts.ts';
 import type { ChannelAccount, LegacyChannel } from '../channels/accounts.ts';
@@ -26,8 +26,10 @@ export type ProjectID = typeof projects[number]['id'];
 
 export type WebSession = { project: ProjectID; id: string; upstreamID: string; agent: Agent; alias: string; createdAt: number; title?: string | null; knowledgeDisabled?: number };
 export type Attachment = { id: string; name: string; mime: string; original: FileIdentity; projection?: FileIdentity };
+export type ModelSource = 'gateway' | Provider;
 export type AgentSettings = {
   name?: string; introduction?: string; instructions?: string; defaultModel?: string | null; replyLocale?: 'zh-TW' | 'en';
+  modelSource?: ModelSource;
   avatar?: { bytes: Buffer; mime: string } | null; knowledgeReads?: string[]; mcpGrants?: string[];
 };
 type WebOwner = { agentId: string; workspaceID: string; origin?: 'delegation' };
@@ -141,6 +143,7 @@ export class WebStore extends Ledger {
           migrateTelegramSettings(db);
           migrateBudgetChoice(db);
         }
+        if (!telegram && version < 9) migrateAgentModelSources(db);
       },
       verify(db) {
         verifyAgentLedger(db, file, telegram);
@@ -150,6 +153,7 @@ export class WebStore extends Ledger {
           verifyExternalHelpers(db);
           verifyTelegramSettings(db);
           verifyBudgetChoice(db);
+          verifyAgentModelSources(db);
         }
       },
     });
@@ -257,11 +261,12 @@ export class WebStore extends Ledger {
   agents() {
     return this.db.prepare(`SELECT id, role, builtin_key AS builtin, state, name, introduction, instructions,
       avatar IS NOT NULL AS hasAvatar, default_model_id AS defaultModel, reply_locale AS replyLocale,
+      COALESCE((SELECT source FROM agent_model_sources WHERE agent_id=agents.id), 'gateway') AS modelSource,
       config_revision AS revision FROM agents WHERE id NOT IN ('external-codex-cli','external-claude-code')
       ORDER BY builtin_key IS NULL, id<>'main', created_at, id`).all() as {
         id: string; role: 'orchestrator' | 'specialist'; builtin: 'main' | 'bi' | null; state: 'active' | 'archived';
         name: string; introduction: string; instructions: string; hasAvatar: number; defaultModel: string | null;
-        replyLocale: 'zh-TW' | 'en'; revision: number;
+        modelSource: ModelSource; replyLocale: 'zh-TW' | 'en'; revision: number;
       }[];
   }
 
@@ -297,6 +302,9 @@ export class WebStore extends Ledger {
   }
 
   private saveAgentBindings(id: string, settings: AgentSettings) {
+    if (settings.modelSource === 'gateway') this.db.prepare('DELETE FROM agent_model_sources WHERE agent_id=?').run(id);
+    else if (settings.modelSource) this.db.prepare(`INSERT INTO agent_model_sources (agent_id,source) VALUES (?,?)
+      ON CONFLICT(agent_id) DO UPDATE SET source=excluded.source`).run(id, settings.modelSource);
     if (settings.knowledgeReads) {
       this.db.prepare('DELETE FROM agent_knowledge_reads WHERE agent_id=?').run(id);
       const add = this.db.prepare('INSERT INTO agent_knowledge_reads VALUES (?,?)');
@@ -342,6 +350,11 @@ export class WebStore extends Ledger {
       if (!agent) throw new HttpError(404, 'agent-not-found');
       if (agent.revision !== revision) throw new HttpError(409, 'agent-revision-conflict');
       if (agent.state !== 'active') throw new HttpError(409, 'agent-inactive');
+      if (settings?.modelSource && settings.modelSource !== agent.modelSource &&
+          (this.agentStatus(id) !== 'available' || channelStatus !== 'available' ||
+            this.db.prepare("SELECT 1 FROM agent_work_items WHERE agent_id=? AND (state='queued' OR lease_id IS NOT NULL) LIMIT 1").get(id))) {
+        throw new HttpError(409, 'model-change-busy');
+      }
       if (!settings) {
         if (agent.builtin) throw new HttpError(409, 'agent-builtin');
         if (!unbindChannels && this.telegramAccounts().some((row) => row.agentId === id && row.state === 'enabled')) {
@@ -481,6 +494,10 @@ export class WebStore extends Ledger {
         revision: number; name: string; introduction: string; instructions: string; replyLocale: 'zh-TW' | 'en';
         defaultModel: string | null; relativeRoot: string; workspaceName: string;
       } | undefined;
+  }
+
+  agentModelSource(agentID: string): ModelSource {
+    return this.db.prepare('SELECT source FROM agent_model_sources WHERE agent_id=?').get(agentID)?.source as Provider ?? 'gateway';
   }
 
   executionMcpGrants(agentID: string, workspaceID: string) {

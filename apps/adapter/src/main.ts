@@ -24,7 +24,7 @@ import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external
 import { helperReady } from './runs/external-cli.ts';
 import { ExternalSources } from './runs/external-sources.ts';
 import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
-import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperSettings, identifiers, invalidExternal,
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -148,7 +148,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
   const externalSources = new ExternalSources(store, chat, root, knowledgeStore);
   const external = new ExternalDelegations(store, dispatcher, externalSources, (id) => events.notify(id, 'delegation'), externalOptions);
   delegations.registerExternal(external);
-  const management = agentManagement(root, store, runtime, telegram);
+  const management = agentManagement(root, store, runtime, telegram, external);
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -250,7 +250,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       if (method === 'POST') {
         const { settings, warningAccepted } = helperSettings(await body(request));
         store.delegations.atomic(() => {
-          if (settings.enabled) external.requiresReady(settings.provider);
+          if (settings.enabled && !store.external.settings(settings.provider).enabled) external.requiresInstalled(settings.provider);
           if (settings.enabled && !store.external.settings(settings.provider).enabled && !warningAccepted) {
             throw new HttpError(400, 'external-warning-required');
           }
@@ -261,7 +261,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, 200, (Object.keys(helpers) as Provider[]).map((provider) => {
         const status = external.status(provider);
         const settings = store.external.settings(provider);
-        return { ...settings, enabled: settings.enabled && helperReady(status), status,
+        return { ...settings, available: settings.enabled && helperReady(status), status,
           name: helpers[provider].name, targetId: helpers[provider].id,
           classification: store.external.workspace(helpers[provider].id) ?? 'unclassified' };
       }));
@@ -271,6 +271,14 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       const { provider, ...extra } = await body(request);
       if (!isProvider(provider) || Object.keys(extra).length) throw invalidExternal();
       send(response, 200, await external.refresh(provider));
+      return;
+    }
+    if (path === '/api/settings/external-helpers/auth' && method === 'POST') {
+      const auth = helperAuth(await body(request));
+      const client = new AbortController();
+      response.once('close', () => client.abort());
+      const status = await external.authenticate(auth.provider, auth.request, AbortSignal.any([client.signal, AbortSignal.timeout(180_000)]));
+      if (!response.destroyed) send(response, 200, status);
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {

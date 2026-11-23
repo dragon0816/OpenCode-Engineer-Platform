@@ -9,7 +9,8 @@ import { bindJobs, loadJobSummary } from './jobs.js';
 import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } from './agents.js';
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
-import { classificationControl, loadExternalSettings, openExternalIntake } from './external-helpers.js';
+import { classificationControl, externalModelBlock, groupModelOptions, loadExternalSettings, modelChoice, openExternalIntake,
+  openExternalLogin } from './external-helpers.js';
 
 initializeLocale();
 
@@ -21,6 +22,7 @@ let projects = [];
 let project = 'default';
 let projectBusy = false;
 let assistantEntries = [];
+let externalModels = [];
 const sessionScopes = new Map();
 const sessionsPath = (agentId, workspaceId) => `/api/agents/${agentId}/workspaces/${workspaceId}/sessions`;
 const sessionPath = (id) => {
@@ -106,9 +108,11 @@ function runningID(context) {
 
 function setControls() {
   const external = find('prepare-external-helper');
-  external.hidden = !current || sessionScopes.get(current.id)?.agentId !== 'main';
+  const assistant = sessionAgent(current?.id);
+  const selectedExternal = Boolean(assistant && assistant.modelSource !== 'gateway');
+  external.hidden = !current || sessionScopes.get(current.id)?.agentId !== 'main' || selectedExternal;
   external.disabled = sending || stopped || Boolean(runningID(current));
-  const inactive = sessionAgent(current?.id)?.state === 'archived';
+  const inactive = assistant?.state === 'archived';
   const cancellable = !stopped && Boolean(runningID(current));
   send.hidden = cancellable;
   cancelTurn.hidden = !cancellable;
@@ -120,7 +124,7 @@ function setControls() {
   voice.update();
   find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped || inactive;
   find('project-read-button').disabled = uploadBusy;
-  send.disabled = !current || uploadBusy || sending || stopped || inactive || Boolean(current.pendingID || current.aliasUpdating) ||
+  send.disabled = !current || uploadBusy || sending || stopped || inactive || selectedExternal || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
 }
 
@@ -1516,11 +1520,19 @@ function renderAgents() {
 }
 
 async function refreshAgents() {
-  const { agents: entries } = await request('/api/agents');
-  if (JSON.stringify(entries) === JSON.stringify(assistantEntries)) return;
+  const { agents: entries, externalModels: choices } = await request('/api/agents');
+  const currentAgent = sessionAgent(current?.id);
+  const modelsChanged = JSON.stringify(choices) !== JSON.stringify(externalModels) ||
+    currentAgent?.modelSource !== entries.find(({ id }) => id === currentAgent?.id)?.modelSource;
+  externalModels = choices;
+  if (JSON.stringify(entries) === JSON.stringify(assistantEntries)) {
+    if (modelsChanged && !current?.aliasUpdating) updateSessionAlias();
+    return;
+  }
   const focused = document.activeElement.closest?.('.agent-row[data-agent]');
   const previousState = sessionAgent(current?.id)?.state;
   assistantEntries = entries;
+  if (modelsChanged && !current?.aliasUpdating) updateSessionAlias();
   renderAgents();
   updateAgentBranding();
   renderSessions();
@@ -1595,12 +1607,21 @@ function aliasOptions(select, selected, aliases, configuredDefault) {
 }
 function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
+  const source = sessionAgent(current?.id)?.modelSource ?? 'gateway';
+  const external = externalModels.find(({ provider }) => provider === source);
   const aliases = modelSettings?.aliases.map(({ alias }) => alias) ?? [];
-  const fallback = session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
-  aliasOptions(sessionAlias, fallback ?? session?.alias, aliases, modelSettings?.defaultAlias);
+  const fallback = !external && session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
+  groupModelOptions(sessionAlias, aliases.map((alias) => optionText(alias === modelSettings.defaultAlias ?
+    message('chat.default-in-settings-model', { model: alias }) : alias, alias)), externalModels,
+    modelChoice(source, fallback ?? session?.alias));
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
-  find('session-model-hint').hidden = aliases.length !== 1 || modelSettings.selected.length !== 1;
-  if (modelSettings) setText(model, session?.alias ?? modelSettings.defaultAlias);
+  find('session-model-hint').hidden = Boolean(external) || aliases.length !== 1 || modelSettings.selected.length !== 1;
+  if (modelSettings) setText(model, external?.name ?? session?.alias ?? modelSettings.defaultAlias);
+  setText(find('model-source'), external ? message('externalHelpers.settings.title') : message('ui.external-model-service'));
+  setText(find('session-model-help'), external ? message('externalHelpers.models.appliesToAssistant') : message('ui.changes-apply-to-the-next-message'));
+  const externalStatus = find('session-external-model-status');
+  externalStatus.hidden = !external;
+  setText(find('session-external-model-reason'), external ? externalModelBlock(external) : '');
   let notice = '';
   if (fallback) notice = message('model.fallback-next', { model: fallback });
   else if (current?.modelFallback) notice = message('model.fallback-used', { model: current.modelFallback });
@@ -1810,23 +1831,39 @@ sessionAlias.addEventListener('change', async () => {
   const context = current;
   const status = find('session-model-status');
   if (!context) return;
+  const assistant = sessionAgent(context.id);
+  const alias = sessionAlias.value;
+  const external = externalModels.find(({ provider }) => modelChoice(provider) === alias);
+  const source = external?.provider ?? 'gateway';
+  let openLogin = false;
   context.aliasUpdating = true;
   setControls();
   try {
-    const session = await request(`${context.path}/model`, { data: { alias: sessionAlias.value } });
-    knownSessions.set(session.id, session);
+    if (assistant && assistant.modelSource !== source) {
+      await request('/api/agents/' + assistant.id, { data: { action: 'edit', revision: assistant.revision, modelSource: source,
+        ...(external ? {} : { defaultModel: alias }) } });
+      await refreshAgents();
+    }
+    if (external) openLogin = external.status.login !== 'signedIn';
+    else {
+      const session = await request(`${context.path}/model`, { data: { alias } });
+      knownSessions.set(session.id, session);
+    }
     context.modelFallback = undefined;
     if (current === context) setText(status, message('chat.model-switched'));
   } catch (error) {
-    if (current === context) setText(status, error.status === 409 ? message('chat.wait-for-this-turn-to-finish') : message('chat.could-not-switch-models-try-again'));
+    if (current === context) setText(status, error.detail?.code === 'model-change-busy' ? message('chat.wait-for-this-turn-to-finish') :
+      errorText(error, message('chat.could-not-switch-models-try-again')));
   } finally {
     context.aliasUpdating = false;
     if (current === context) {
       updateSessionAlias();
       setControls();
+      if (openLogin) openExternalLogin(external, sessionAlias, () => void refreshAgents().catch(() => {}));
     }
   }
 });
+find('session-external-model-settings').addEventListener('click', () => openAgentSettings('external-helpers'));
 function modelDirty() {
   return modelSettings && (defaultAlias.value !== modelSettings.configuredDefaultAlias ||
     selectedModels.size !== modelSettings.selected.length || modelSettings.selected.some((id) => !selectedModels.has(id)));
@@ -1989,7 +2026,8 @@ function loadActiveSettingsSection() {
   if (activeSettingsSection === 'channels') void loadChannels();
   if (activeSettingsSection === 'mcp') void loadMcpSettings();
   if (activeSettingsSection === 'integrations') void loadTelegramStatus();
-  if (activeSettingsSection === 'external-helpers') void loadExternalSettings(find('external-helper-settings'), find('external-helper-settings-status'));
+  if (activeSettingsSection === 'external-helpers') void loadExternalSettings(find('external-helper-settings'), find('external-helper-settings-status'),
+    () => void refreshAgents().catch(() => {}));
 }
 
 function switchSettingsSection(section) {

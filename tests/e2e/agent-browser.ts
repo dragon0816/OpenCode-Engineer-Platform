@@ -90,6 +90,9 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await setValue('#assistant-introduction', '核對合成資料');
   await setValue('#assistant-instructions', '列出可核對的來源');
   await step(2);
+  const groups = await page.evaluate<{ label: string; disabled: number }[]>(`[...document.querySelectorAll('#agent-model optgroup')].map(group =>
+    ({ label: group.label, disabled: group.querySelectorAll('option:disabled').length }))`);
+  assert.deepEqual(groups, [{ label: 'LLM Gateway', disabled: 0 }, { label: '外部 coding agent', disabled: 2 }]);
   const model = await page.evaluate<string>("document.querySelector('#agent-model option:nth-child(2)').value");
   await setValue('#agent-model', model);
   await step(3);
@@ -134,6 +137,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await click('#agent-tab-basic');
   await key('ArrowRight', 'ArrowRight', 39);
   await page.ready("document.activeElement.id === 'agent-tab-model' && !document.querySelector('#agent-panel-model').hidden");
+  assert.equal(await page.evaluate("document.querySelector('#agent-model optgroup option:disabled').textContent"), 'Codex（到設定啟用）');
   assert.equal(await page.evaluate("document.querySelector('#agent-model').value"), model);
   await key('Home', 'Home', 36);
   await setValue('#assistant-instructions', '保留來源引用');

@@ -3,7 +3,8 @@ import { DelegationError } from './delegation-ledger.ts';
 import type { Provider } from './external-ledger.ts';
 
 export type CliVersion = `${number}.${number}.${number}`;
-export type LoginState = 'unknown' | 'signedIn' | 'signedOut' | 'probeFailed';
+export type LoginState = 'unknown' | 'signedIn' | 'signedOut' | 'probeFailed' | 'reauthRequired';
+export type HelperAuthAction = { action: 'cli' | 'logout' } | { action: 'key'; key: string };
 export type HelperStatus = {
   installation: 'unknown' | 'missing' | 'detected' | 'unsupported';
   isolation: 'unavailable' | 'verified';
@@ -52,6 +53,13 @@ export function cliArgs(provider: Provider, operation: 'version' | 'login' | 'ru
     '--disallowedTools', 'mcp__*', '--max-turns', String(turns)];
 }
 
+export function cliAuthArgs(provider: Provider, action: HelperAuthAction['action']) {
+  if (provider === 'claude_code') return action === 'key' ? [] : ['auth', action === 'logout' ? 'logout' : 'login'];
+  const config = [...codexAuth, '-c', 'check_for_update_on_startup=false'];
+  if (action === 'logout') return [...config, 'logout'];
+  return [...config, 'login', ...(action === 'key' ? ['--with-api-key'] : [])];
+}
+
 export function cliVersion(provider: Provider, output: string): CliVersion | undefined {
   const pattern = provider === 'codex_cli' ? /^codex-cli (\d{1,5}\.\d{1,5}\.\d{1,5})$/ : /^(\d{1,5}\.\d{1,5}\.\d{1,5}) \(Claude Code\)$/;
   return pattern.exec(output.trim())?.[1] as CliVersion | undefined;
@@ -65,13 +73,15 @@ function object(input: string): Record<string, unknown> {
 
 export function cliLogin(provider: Provider, exit: number, output: string): LoginState {
   if (provider === 'codex_cli') {
-    if (exit === 0 && /^Logged in using ChatGPT(?:\r?\n)?$/.test(output)) return 'signedIn';
+    if (exit === 0 && /^(?:Logged in using ChatGPT|Logged in using an API key(?: - [^\r\n]{1,128})?)(?:\r?\n)?$/.test(output)) return 'signedIn';
     if (exit === 1 && /^Not logged in(?:\r?\n)?$/.test(output)) return 'signedOut';
     return 'probeFailed';
   }
   try {
-    const { loggedIn, authMethod } = object(output);
-    if (exit === 0 && loggedIn === true && authMethod === 'claude.ai') return 'signedIn';
+    const { loggedIn, authMethod, loginExpiresAt } = object(output);
+    if (exit === 0 && loggedIn === true && (authMethod === 'claude.ai' || authMethod === 'api_key')) {
+      return typeof loginExpiresAt === 'string' && Date.parse(loginExpiresAt) <= Date.now() ? 'reauthRequired' : 'signedIn';
+    }
     if (exit === 1 && loggedIn === false && authMethod === 'none') return 'signedOut';
   } catch { /* Fail closed on unknown protocol output. */ }
   return 'probeFailed';

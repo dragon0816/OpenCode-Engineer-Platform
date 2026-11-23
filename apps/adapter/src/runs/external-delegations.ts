@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sha256 } from '../../../../packages/knowledge/src/snapshot.ts';
 import { DelegationError, type DelegationParent, type DelegationResult } from './delegation-ledger.ts';
 import type { Dispatcher } from './dispatcher.ts';
-import { helperReady, unavailableHelper, type HelperStatus } from './external-cli.ts';
+import { helperReady, unavailableHelper, type HelperAuthAction, type HelperStatus } from './external-cli.ts';
 import { ExternalExecutionUnknown, type ExternalExecutor } from './external-executor.ts';
 import { externalProvider, type Provider, type Snapshot } from './external-ledger.ts';
 import type { ExternalSources } from './external-sources.ts';
@@ -134,15 +134,27 @@ export class ExternalDelegations {
 
   requiresReady(provider: Provider) {
     if (this.options.synthetic) return;
+    this.requiresInstalled(provider);
+    if (!helperReady(this.status(provider))) throw new DelegationError('external-cli-login-unavailable');
+  }
+
+  requiresInstalled(provider: Provider) {
     const status = this.status(provider);
     if (status.isolation !== 'verified') throw new DelegationError('external-isolation-unavailable');
     if (status.installation !== 'detected') throw new DelegationError('external-cli-unsupported');
-    if (!helperReady(status)) throw new DelegationError('external-cli-login-unavailable');
   }
 
   async refresh(provider: Provider) {
     await this.options.executor?.refresh(provider, AbortSignal.timeout(10_000));
     return this.status(provider);
+  }
+
+  async authenticate(provider: Provider, action: HelperAuthAction, signal: AbortSignal) {
+    if (provider === 'claude_code' && action.action !== 'logout' && !this.store.external.settings(provider).termsConfirmed) {
+      throw new DelegationError('external-terms-required');
+    }
+    if (!this.options.executor) throw new DelegationError('external-isolation-unavailable');
+    return this.options.executor.authenticate(provider, action, signal);
   }
 
   recheckActive() {

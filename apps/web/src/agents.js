@@ -1,16 +1,16 @@
 import { bindFilePicker, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
 import { errorText, projectLabel, request } from './api.js';
-import { classificationControl } from './external-helpers.js';
+import { classificationControl, groupModelOptions, modelChoice, openExternalLogin } from './external-helpers.js';
 import { cancelTelegramSetup, setupReady, telegramSetup } from './telegram-setup.js';
 
 const steps = ['basic', 'model', 'knowledge', 'ability', 'channel', 'trigger', 'confirm'];
 const detailTabs = ['basic', 'model', 'knowledge', 'channel', 'trigger', 'ability'];
-const detailFields = ['name', 'introduction', 'instructions', 'avatar', 'defaultModel', 'replyLocale', 'knowledgeReads', 'mcpGrants'];
+const detailFields = ['name', 'introduction', 'instructions', 'avatar', 'defaultModel', 'modelSource', 'replyLocale', 'knowledgeReads', 'mcpGrants'];
 const stepLabels = { basic: message('agents.step-basic'), model: message('agents.tab-model'), knowledge: message('agents.tab-knowledge'),
   ability: message('agents.tab-ability'), channel: message('agents.tab-channel'), trigger: message('agents.tab-trigger'), confirm: message('agents.step-confirm') };
 const tabLabels = { ...stepLabels, basic: message('agents.tab-basic') };
 const fieldLabels = { defaultModel: message('agents.defaultModel'), replyLocale: message('agents.replyLocale') };
-export const newAgentValues = () => ({ name: '', introduction: '', instructions: '', defaultModel: null,
+export const newAgentValues = () => ({ name: '', introduction: '', instructions: '', defaultModel: null, modelSource: 'gateway',
   replyLocale: 'zh-TW', knowledgeReads: [], mcpGrants: [] });
 
 function builtinText(agent, field, label, original = '') {
@@ -170,13 +170,18 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
 
   function model(parent) {
     const select = field(parent, 'defaultModel', node('select'), 'agent-model');
-    select.append(optionText(message('agents.follow-global'), ''));
-    for (const alias of snapshot.models) select.append(optionText(snapshot.appliedModels.includes(alias) ? alias :
-      message('agents.model-pending', { model: alias }), alias));
+    const choices = [optionText(message('agents.follow-global'), ''), ...snapshot.models.map((alias) =>
+      optionText(snapshot.appliedModels.includes(alias) ? alias : message('agents.model-pending', { model: alias }), alias))];
     if (draft.defaultModel && !snapshot.models.includes(draft.defaultModel)) {
-      select.append(optionText(message('agents.model-unavailable', { model: draft.defaultModel }), draft.defaultModel));
+      choices.push(optionText(message('agents.model-unavailable', { model: draft.defaultModel }), draft.defaultModel));
     }
-    select.value = draft.defaultModel || '';
+    groupModelOptions(select, choices, snapshot.externalModels, modelChoice(draft.modelSource, draft.defaultModel));
+    select.addEventListener('change', () => {
+      const setting = snapshot.externalModels.find(({ provider }) => modelChoice(provider) === select.value);
+      if (setting?.enabled && setting.status.login !== 'signedIn') {
+        openExternalLogin(setting, select, (next) => { setting.status = next; void onChange().catch(() => {}); });
+      }
+    });
     parent.append(node('small', message('agents.model-help')));
   }
 
@@ -273,7 +278,8 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
     const lists = (chosen, choices, label) => chosen.map((id) => choices.find((item) => item.id === id)?.[label] || id).join(', ');
     for (const [label, value] of [
       [message('ui.assistant-name'), draft.name], [message('agents.folders'), message('agents.new-folder')],
-      [fieldLabels.defaultModel, draft.defaultModel || message('agents.follow-global')],
+      [fieldLabels.defaultModel, snapshot.externalModels.find(({ provider }) => provider === draft.modelSource)?.name ||
+        draft.defaultModel || message('agents.follow-global')],
       [message('agents.read-vaults'), lists(draft.knowledgeReads, snapshot.vaults, 'title')],
       [message('ui.external-tools'), lists(draft.mcpGrants, snapshot.tools, 'name')],
       [message('agents.connection'), (tokenSetup || channel) && (tokenSetup?.botName || channel?.botName || message('channels.bot'))],
@@ -295,7 +301,11 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
       const control = controls.get(key);
       if (!control || key === 'avatar') continue;
       if (Array.isArray(control)) next[key] = control.filter(({ checked }) => checked).map(({ value }) => value).sort();
-      else next[key] = control.value || (key === 'defaultModel' ? null : '');
+      else if (key === 'defaultModel') {
+        const setting = snapshot.externalModels.find(({ provider }) => modelChoice(provider) === control.value);
+        next.modelSource = setting?.provider ?? 'gateway';
+        if (!setting) next.defaultModel = control.value || null;
+      } else next[key] = control.value || '';
     }
     return next;
   }
@@ -500,6 +510,7 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
         Object.assign(draft, { name: t('agents.copy-name', { name: resolveText(agentName(source)) }),
           introduction: resolveText(agentIntroduction(source)), instructions: source.instructions,
           defaultModel: detail.models.includes(source.defaultModel) ? source.defaultModel : null,
+          modelSource: source.modelSource,
           knowledgeReads: source.knowledgeReads.filter((read) => detail.vaults.some(({ id }) => id === read)) });
         draft.name = draft.name.slice(0, 80);
         if (source.hasAvatar) {

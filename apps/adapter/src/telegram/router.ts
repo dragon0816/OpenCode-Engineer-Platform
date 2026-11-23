@@ -23,22 +23,25 @@ export class TelegramRouter {
   private readonly sessions: WebStore;
   private readonly fileApi: (accountId: string) => TelegramApi | undefined;
   private readonly locale: (agentId: string) => ChannelLocale;
+  private readonly externalSource: (agentId: string) => boolean;
   readonly bi: BiService;
 
   constructor(inbox: TelegramInbox, runtime: Runtime, chat: ChatService, sessions: WebStore, biApi?: TelegramApi,
     locale: (agentId: string) => ChannelLocale = () => 'zh-TW', fileApi: (accountId: string) => TelegramApi | undefined = () => biApi,
-    biModel: () => string | undefined = () => undefined) {
+    biModel: () => string | undefined = () => undefined, externalSource: (agentId: string) => boolean = () => false) {
     this.inbox = inbox;
     this.chat = chat;
     this.sessions = sessions;
     this.fileApi = fileApi;
     this.locale = locale;
+    this.externalSource = externalSource;
     this.bi = new BiService(inbox, biProposalServices(runtime.knowledge, biModel));
   }
 
   async handle(row: Intake, signal: AbortSignal, lease?: Lease) {
     const message = JSON.parse(row.payload) as Message;
     const origin = row.destination ?? { ...legacyBinding(row.bot), conversationKey: topicKey(row.topic) };
+    if (this.externalSource(origin.agentId)) return channelText(this.locale(origin.agentId)).externalSource;
     if (row.bot === 'main') return this.chatMessage(row, origin, message.text ?? '', signal, lease);
     const locale = this.locale(origin.agentId);
     const messages = channelText(locale);

@@ -7,11 +7,12 @@ type Options = {
   page: Awaited<ReturnType<typeof chromium>>;
   api: Awaited<ReturnType<typeof webAPI>>;
   key: (key: string, code: string, windowsVirtualKeyCode: number) => Promise<void>;
-  reload: () => Promise<void>;
+  reload: (connection?: string) => Promise<void>;
   selectSetting: (section: string) => Promise<unknown>;
+  signOut: () => void;
 };
 
-export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting }: Options) {
+export async function verifyExternalHelpersInBrowser({ page, api, key, reload, selectSetting, signOut }: Options) {
   const enter = () => key('Enter', 'Enter', 13);
   const escape = () => key('Escape', 'Escape', 27);
   const focus = async (selector: string) => {
@@ -125,6 +126,40 @@ export async function verifyExternalHelpersInBrowser({ page, api, key, reload, s
       assert.deepEqual(receipt.externalApproval.inputs.map(({ name }: { name: string }) => name), [name]);
     }
   }
+  signOut();
+  await reload('Connected');
+  await page.ready(`!document.querySelector('#session-alias').disabled &&
+    document.querySelector('#session-alias option[value="external:codex_cli"]')?.disabled === false`);
+  assert.deepEqual(await page.evaluate(`Array.from(document.querySelectorAll('#session-alias optgroup'), group => group.label)`),
+    ['LLM Gateway', 'External coding agents']);
+  assert.equal(await page.evaluate(`document.querySelector('#session-alias option[value="external:claude_code"]').textContent`),
+    'Claude Code (enable in Settings)');
+  await page.evaluate(`(() => {
+    const menu = document.querySelector('#session-alias');
+    menu.focus();
+    menu.value = 'external:codex_cli';
+    menu.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await page.ready(`Boolean(document.querySelector('${dialog} select'))`);
+  const loginText = await page.evaluate<string>(`document.querySelector('${dialog}').textContent`);
+  assert.match(loginText, /Codex sign-in/);
+  assert.match(loginText, /Signed out/);
+  assert.match(loginText, /classified as public/);
+  assert.deepEqual(await page.evaluate(`Array.from(document.querySelector('${dialog} select').options, option => option.textContent)`),
+    ['ChatGPT account', 'OpenAI API key']);
+  assert.equal(await page.evaluate(`document.querySelector('${dialog} input').type`), 'password');
+  await focus(dialog + ' select');
+  await key('End', 'End', 35);
+  await page.ready(`document.querySelector('${dialog} input').checkVisibility()`);
+  await assertWorkbenchFits(page, 'external sign-in en 390');
+  await escape();
+  await page.ready(`!document.querySelector('${dialog}') && document.activeElement.id === 'session-alias'`);
+  assert.equal(await page.evaluate("document.querySelector('#send').disabled"), true);
+  assert.match(await page.evaluate<string>("document.querySelector('#session-external-model-reason').textContent"), /Sign in to this provider/);
+  const { agent } = await json(await api.get('/api/agents/main'));
+  assert.equal(agent.modelSource, 'codex_cli');
+  await json(await api.post('/api/agents/main', { revision: agent.revision, action: 'edit', modelSource: 'gateway' }));
   await selectLocale(page, 'zh-TW');
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  console.log('External helper settings, confirmation, model source and sign-in passed in Chromium.');
 }

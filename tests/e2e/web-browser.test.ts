@@ -228,6 +228,7 @@ try {
       throw new Error('Unexpected synthetic Telegram request');
     }
   }
+  let helperSignedIn = true;
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
     writeCredential(name, value) {
@@ -236,7 +237,7 @@ try {
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
   }, real ? undefined : { intakeFixture: (provider) => provider === 'codex_cli'
-    ? { installation: 'detected', isolation: 'verified', login: 'signedIn', version: '1.2.3', pinnedVersion: '1.2.3' }
+    ? { installation: 'detected', isolation: 'verified', login: helperSignedIn ? 'signedIn' : 'signedOut', version: '1.2.3', pinnedVersion: '1.2.3' }
     : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } });
   try {
     const page = await chromium(join(root, 'chromium'));
@@ -1589,7 +1590,8 @@ try {
           } });
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
-        await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting });
+        await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting,
+          signOut: () => { helperSignedIn = false; } });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");
