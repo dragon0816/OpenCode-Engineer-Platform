@@ -102,7 +102,6 @@ function mappedGatewayModel(params: { model?: unknown; api_base?: unknown; api_k
 async function discoverMappedModels(options: GatewayConnection, ids: Set<string>, signal: AbortSignal) {
   for (const versioned of [true, false]) {
     const { target, markers } = gatewayEndpoint(options, 'model/info', versioned);
-    if (target.protocol !== 'https:' && !['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)) return;
     try {
       const value = await gatewayDiscoveryJson(target, options, signal) as { data?: unknown } | null | undefined;
       if (!Array.isArray(value?.data)) continue;
