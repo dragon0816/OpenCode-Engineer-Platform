@@ -31,7 +31,8 @@ const real = process.argv.includes('--real');
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
 const captureEnglish = process.env.OEP_CAPTURE_GUI_EN === '1';
 const captureAgentManagement = process.env.OEP_CAPTURE_AGENT_MANAGEMENT === '1';
-assert.ok(!(real && (captureGallery || captureEnglish || captureAgentManagement)), 'The GUI gallery requires synthetic data');
+const captureOwnerRound2 = process.env.OEP_CAPTURE_OWNER_ROUND2 === '1';
+assert.ok(!(real && (captureGallery || captureEnglish || captureAgentManagement || captureOwnerRound2)), 'The GUI gallery requires synthetic data');
 const screenshotViewports = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
 const capturePanels = captureGallery || captureEnglish || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
 const root = join(dataDirectory(), 'OEP 瀏覽器驗收');
@@ -198,7 +199,10 @@ const synthetic: typeof fetch = async (target, init) => {
     }
   } else assert.ok(user.includes(readFileSync(asset(item.name)).toString('base64')));
   return completion(model, [{ role: 'assistant', content: item.agent === 'workbook'
-    ? '# 合成量測摘要\n- 讀取工作表\n- 建立合成結果\n\n| 項目 | 數值 |\n| --- | --- |\n| SYN-48B | 12.5 |\n\n```text\nSYN-48B\n```\n<script>window.injected=1</script><img src=x onerror=window.injected=1> [測試](javascript:alert(1))'
+    ? ['# 合成量測摘要', '- **回答問題**：讀取工作表', '  1. **建立 *合成結果***，使用 `**SYN-48B**`',
+      '     - [**參考資料**](https://docs.invalid/reference)', '- _核對格式_，保留 \\* 字元', '',
+      '| 項目 | 數值 |', '| --- | --- |', '| SYN-48B | 12.5 |', '', '```text', 'SYN-48B', '```',
+      '<script>window.injected=1</script><img src=x onerror=window.injected=1> [測試](javascript:alert(1))'].join('\n')
     : item.expected }], 'stop');
 };
 
@@ -660,6 +664,28 @@ try {
           { selector: '.message td', property: 'borderTopColor' },
         ]);
         assert.equal(await page.evaluate("!window.injected && !document.querySelector('#messages script, #messages img, #messages a[href^=javascript]')"), true);
+        for (const [width, height, layout] of screenshotViewports) {
+          await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+          await page.ready(`innerWidth === ${width}`);
+          for (const locale of ['zh-TW', 'en'] as const) {
+            await selectLocale(page, locale);
+            assert.deepEqual(await page.evaluate(`(() => {
+              const list = document.querySelector('.message.assistant > div > ul');
+              const link = list?.querySelector('ol > li > ul > li > a');
+              return [list?.querySelector(':scope > li > strong')?.textContent, list?.querySelector('ol strong em')?.textContent,
+                list?.querySelector('ol code')?.textContent, link?.querySelector('strong')?.textContent,
+                link?.getAttribute('href'), link?.rel, list?.querySelector(':scope > li > em')?.textContent, list?.lastElementChild.textContent];
+            })()`), ['回答問題', '合成結果', '**SYN-48B**', '參考資料', 'https://docs.invalid/reference', 'noopener noreferrer', '核對格式', '核對格式，保留 * 字元']);
+            assert.equal(await page.evaluate("getComputedStyle(document.querySelector('.message.assistant > div > ul')).listStyleType"), 'disc');
+            if (captureOwnerRound2 && (layout === 'wide' && locale === 'zh-TW' || layout === 'narrow' && locale === 'en')) {
+              await page.evaluate(`document.querySelector('.message.assistant > div > ul').scrollIntoView({ block: '${layout === 'narrow' ? 'start' : 'center'}' })`);
+              const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
+              writeFileSync(resolve('docs/validation/gui', `owner-round2-markdown-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
+            }
+          }
+        }
+        await page.command('Emulation.clearDeviceMetricsOverride');
+        await selectLocale(page, 'zh-TW');
         await page.evaluate(`
           document.querySelector('.tool-card summary').click();
           document.documentElement.dataset.beforeToolReload = 'true';
@@ -1491,7 +1517,7 @@ try {
               } else {
                 await openPanel('open-notes');
                 await page.ready("document.querySelector('#session-notes [data-delete-note]')?.checkVisibility()");
-                if (captureAgentManagement && (layout === 'wide' && locale === 'zh-TW' || layout === 'narrow' && locale === 'en')) {
+                if (captureOwnerRound2 && (layout === 'wide' && locale === 'zh-TW' || layout === 'narrow' && locale === 'en')) {
                   const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
                   writeFileSync(resolve('docs/validation/gui', `owner-round2-notes-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
                 }
@@ -1577,7 +1603,7 @@ try {
           }
           await page.command('Emulation.clearDeviceMetricsOverride');
         }
-        await verifyComposerAttachments(page, audit, process.env.OEP_CAPTURE_COMPOSER_DROP === '1', captureAgentManagement);
+        await verifyComposerAttachments(page, audit, process.env.OEP_CAPTURE_COMPOSER_DROP === '1', captureOwnerRound2);
         await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();
@@ -1631,7 +1657,7 @@ try {
         await slash('/stop');
         await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
 
-        await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captureAgentManagement,
+        await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captureAgentManagement, captureOwnerRound2,
           syntheticBotToken, secondBotToken, startTelegramSetup, captures: process.env.OEP_CAPTURE_SLICE4 === '1',
           seedLegacyBudget() {
             using db = new DatabaseSync(join(root, 'web.sqlite'));

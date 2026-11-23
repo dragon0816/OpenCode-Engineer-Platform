@@ -17,6 +17,7 @@ type Options = {
   selectSetting: (section: string) => Promise<unknown>;
   captures: boolean;
   captureAgentManagement: boolean;
+  captureOwnerRound2: boolean;
   syntheticBotToken: string;
   secondBotToken: string;
   startTelegramSetup(chat: string): void;
@@ -26,7 +27,7 @@ type Options = {
 const name = '資料查核';
 const reviewID = 'sample-agent-review';
 
-export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures, captureAgentManagement,
+export async function verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures, captureAgentManagement, captureOwnerRound2,
   syntheticBotToken, secondBotToken, startTelegramSetup, seedLegacyBudget }: Options) {
   const mapping = mappingChecks(page, 'agent');
   const press = () => key('Enter', 'Enter', 13);
@@ -250,13 +251,14 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
   await mapping.check('agent-review-source', '#review-view', { selectors: ['.review-agent-source'] });
 
   const shot = async (label: string, theme: string, viewport: string, locale: string) => {
-    const changed = ['detail', 'detail-channel', 'wizard-channel', 'channels', 'channel-setup', 'channel-manage', 'delete', 'budget'];
-    const currentGallery = captureAgentManagement && changed.includes(label) &&
-      (theme === 'light' && viewport === 'wide' && locale === 'zh-TW' || theme === 'dark' && viewport === 'narrow' && locale === 'en');
-    if (!captures && !currentGallery) return;
+    const galleryFrame = theme === 'light' && viewport === 'wide' && locale === 'zh-TW' ||
+      theme === 'dark' && viewport === 'narrow' && locale === 'en';
+    const ownerGallery = captureOwnerRound2 && galleryFrame && ['detail-channel', 'wizard-channel', 'channels', 'channel-setup'].includes(label);
+    const agentGallery = captureAgentManagement && galleryFrame && ['detail', 'wizard-channel', 'channels', 'channel-manage', 'delete', 'budget'].includes(label);
+    if (!captures && !ownerGallery && !agentGallery) return;
     const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    const prefix = ['detail-channel', 'wizard-channel', 'channels', 'channel-setup'].includes(label) ? 'owner-round2' : 'ux-agent';
-    writeFileSync(join('docs', 'validation', 'gui', `${currentGallery ? prefix : 'slice4'}-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
+    const prefix = ownerGallery ? 'owner-round2' : agentGallery ? 'ux-agent' : 'slice4';
+    writeFileSync(join('docs', 'validation', 'gui', `${prefix}-${label}-${locale}-${viewport}-${theme}.png`), Buffer.from(data, 'base64'));
   };
   const check = async (selector: string, contrast: string, context: string) => {
     await assertUiTextInThemes(page, selector);
@@ -269,7 +271,7 @@ export async function verifyAgentWorkbench({ page, runtime, click, key, reload, 
     await page.ready(`innerWidth === ${width} && document.querySelector('#session-sidebar').hidden === ${width < 800}`);
     for (const locale of ['zh-TW', 'en'] as const) {
       await selectLocale(page, locale);
-      for (const theme of captures || captureAgentManagement ? ['light', 'dark'] : ['light']) {
+      for (const theme of captures || captureAgentManagement || captureOwnerRound2 ? ['light', 'dark'] : ['light']) {
         await page.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; window.scrollTo(0, 0)`);
         await rail();
         await page.evaluate("document.querySelector('#rail-assistants').open = true; document.querySelector('#rail-assistants').scrollIntoView({block:'center'})");

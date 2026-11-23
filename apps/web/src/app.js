@@ -199,6 +199,80 @@ const atBottom = () => messages.scrollHeight - messages.clientHeight - messages.
 messages.addEventListener('scroll', () => { jump.hidden = atBottom(); });
 jump.addEventListener('click', () => { messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
 
+function inlineMarkdown(target, text, allowLinks = true) {
+  const stack = [];
+  const parent = () => stack.at(-1)?.element ?? target;
+  let offset = 0;
+  for (const match of text.matchAll(/\\[\\`*_[\]()!]|(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)|\[([^\[\]\n]+)\]\(([^\s()]+(?:\([^\s()]*\)[^\s()]*)*)\)|\*+|_+/g)) {
+    const [token, ticks, code, label, href] = match;
+    parent().append(text.slice(offset, match.index));
+    offset = match.index + token.length;
+    if (token.startsWith('\\')) parent().append(token.slice(1));
+    else if (ticks) parent().append(node('code', /^ .*\S.* $/.test(code) ? code.slice(1, -1) : code));
+    else if (label) {
+      let url;
+      try { url = new URL(href); }
+      catch { /* An invalid destination is displayed as source text. */ }
+      if (allowLinks && ['http:', 'https:'].includes(url?.protocol)) {
+        const link = node('a');
+        link.href = url.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        inlineMarkdown(link, label, false);
+        parent().append(link);
+      } else parent().append(token);
+    } else {
+      const before = text[match.index - 1] ?? ' ';
+      const after = text[offset] ?? ' ';
+      const intraword = token[0] === '_' && /[\p{L}\p{N}]/u.test(before) && /[\p{L}\p{N}]/u.test(after);
+      if (intraword || token.length > 3) { parent().append(token); continue; }
+      let remaining = token;
+      while (/\S/u.test(before) && stack.length &&
+          (remaining === stack.at(-1).marker || token.length === 3 && remaining.startsWith(stack.at(-1).marker))) {
+        const { marker, element } = stack.pop();
+        remaining = remaining.slice(marker.length);
+        parent().append(element);
+      }
+      if (/\S/u.test(after) && remaining) {
+        const markers = remaining.length === 3 ? [remaining.slice(0, 2), remaining[0]] : [remaining];
+        for (const marker of markers) stack.push({ marker, element: node(marker.length === 2 ? 'strong' : 'em') });
+      } else parent().append(remaining);
+    }
+  }
+  parent().append(text.slice(offset));
+  while (stack.length) {
+    const { marker, element } = stack.pop();
+    parent().append(marker);
+    while (element.firstChild) parent().append(element.firstChild);
+  }
+  return target;
+}
+
+const markdownItem = (line) => /^([ \t]*)([-*+]|\d+\.)[ \t]+(.*)$/.exec(line);
+const listIndent = (indent) => indent.replaceAll('\t', '    ').length;
+
+function appendMarkdownList(target, lines, start) {
+  const levels = [];
+  const base = listIndent(markdownItem(lines[start])[1]);
+  let index = start;
+  for (; index < lines.length; index++) {
+    const match = markdownItem(lines[index]);
+    if (!match || listIndent(match[1]) < base) break;
+    const indent = listIndent(match[1]);
+    const ordered = match[2].endsWith('.');
+    while (levels.length && (levels.at(-1).indent > indent ||
+        levels.at(-1).indent === indent && levels.at(-1).ordered !== ordered)) levels.pop();
+    if (levels.at(-1)?.indent !== indent) {
+      const list = node(ordered ? 'ol' : 'ul');
+      if (ordered) list.start = Number.parseInt(match[2], 10);
+      (levels.at(-1)?.list.lastElementChild ?? target).append(list);
+      levels.push({ indent, ordered, list });
+    }
+    levels.at(-1).list.append(inlineMarkdown(node('li'), match[3]));
+  }
+  return index;
+}
+
 function appendMarkdown(target, text) {
   const lines = text.replaceAll('\r\n', '\n').split('\n');
   const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((value) => value.trim());
@@ -220,28 +294,23 @@ function appendMarkdown(target, text) {
       target.append(section);
     } else if (/^#{1,6} /.test(line)) {
       const count = line.indexOf(' ');
-      target.append(node(`h${Math.min(count + 1, 6)}`, line.slice(count + 1)));
-    } else if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
-      const ordered = /^\s*\d+\. /.test(line);
-      const pattern = ordered ? /^\s*\d+\. / : /^\s*[-*+] /;
-      const list = node(ordered ? 'ol' : 'ul');
-      list.append(node('li', line.replace(pattern, '')));
-      while (i < lines.length && pattern.test(lines[i])) list.append(node('li', lines[i++].replace(pattern, '')));
-      target.append(list);
+      target.append(inlineMarkdown(node(`h${Math.min(count + 1, 6)}`), line.slice(count + 1)));
+    } else if (markdownItem(line)) {
+      i = appendMarkdownList(target, lines, i - 1);
     } else if (line.includes('|') && i < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i]) && cells(lines[i]).every((value) => /^:?-{3,}:?$/.test(value))) {
       i++;
       const wrapper = node('div', '', 'message-table');
       const table = node('table');
       const head = table.createTHead().insertRow();
-      head.append(...cells(line).map((value) => node('th', value)));
+      head.append(...cells(line).map((value) => inlineMarkdown(node('th'), value)));
       const body = table.createTBody();
       while (i < lines.length && lines[i].includes('|')) {
-        body.insertRow().append(...cells(lines[i++]).map((value) => node('td', value)));
+        body.insertRow().append(...cells(lines[i++]).map((value) => inlineMarkdown(node('td'), value)));
       }
       wrapper.append(table);
       target.append(wrapper);
     } else if (line.trim()) {
-      target.append(node('p', line));
+      target.append(inlineMarkdown(node('p'), line));
     }
   }
 }
