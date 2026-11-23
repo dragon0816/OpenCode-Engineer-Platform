@@ -36,13 +36,14 @@ function verifyDirectory({ root, inode }: OutputDirectory) {
   if (String(checkDirectory(root, true).ino) !== inode) throw new DelegationError('external-copy-unsafe');
 }
 
-export function createExternalCopy(root: string, runId: string, provider: Snapshot['provider']) {
+export function createExternalCopy(root: string, runId: string, provider: Snapshot['provider'], dedicatedRoot = false) {
   if (!uuid.test(runId)) throw new DelegationError('external-copy-unsafe');
-  const agents = ensure(root, 'agents');
-  const target = ensure(agents.root, helpers[provider].id);
-  const external = ensure(target.root, 'external');
-  const run = createWorkspaceOutput(external.root, runId);
-  return new ExternalCopy(run);
+  if (!dedicatedRoot) {
+    const agents = ensure(root, 'agents');
+    const target = ensure(agents.root, helpers[provider].id);
+    root = ensure(target.root, 'external').root;
+  }
+  return new ExternalCopy(createWorkspaceOutput(root, runId));
 }
 
 function removeTree(folder: OutputDirectory, check: () => void) {

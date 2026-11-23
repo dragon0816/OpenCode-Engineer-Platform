@@ -2,6 +2,51 @@
 
 `phase-3i/model-sources` branches from the requested `8de6a94` and merges `phase-3i/slice-2-cli` at `9c78471`. The branch is local. This review covers persisted model selection, authentication UI/API, and execution refusal while the production Windows boundary is pending.
 
+## Dedicated Windows account on `phase-3i/model-sources-2`
+
+The follow-up starts at `81ba31b`. The Windows launcher uses the owner-managed account for sign-in, status, sign-out, and the existing public-snapshot delegation path. It verifies the alternate account SID, checks for Administrators membership, removes the token's bypass-traverse privilege, requires access-denied results for the protected sentinels, and tests writes in the working copy and scratch directory. The helper executable and its descendants run in a kill-on-close Job. A pinned provider binary stays open without write or delete sharing during the operation. The adapter revalidates the snapshot at the release handshake, before the helper starts the provider process.
+
+The alternate account gets read and execute access to the managed runtime and access to its active working copy. OEP makes the reference directory read-only and revokes access to the copy after the Job stops. The account has its own Windows profile for provider credentials. The account's launch password lives in the OEP owner's Credential Manager, and the Claude Console key, when configured, lives in the helper's Credential Manager. The launcher sends provider API keys through a private stdin pipe. It displays official interactive login in a console under the helper account. [Windows alternate-credential process API](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-createprocesswithlogonw) · [Windows credential persistence](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)
+
+### Owner setup and removal
+
+1. Use a separate Windows 11 x64 review host or VM with an OEP owner account that can approve UAC as itself. Initialize the review build's OEP data directory under that account. The default is `%LOCALAPPDATA%\OEP`. For a custom location, both the default and custom directories must exist under the same owner profile.
+2. Obtain the standalone Windows x64 provider executable from its official distribution and record the reviewed three-part version and lowercase SHA-256. Run the following in **64-bit Windows PowerShell as administrator**, under the same Windows identity that runs OEP. Run from the review checkout or extracted release root. Supply one complete set of arguments per provider you want to configure.
+
+   ```powershell
+   $codexExe = 'C:\review\providers\codex.exe'
+   $codexVersion = '<reviewed three-part version>'
+   $codexSha256 = '<reviewed lowercase SHA-256>'
+   .\scripts\windows\Setup-OEPExternalHelper.ps1 -CodexExe $codexExe -CodexVersion $codexVersion -CodexSha256 $codexSha256
+
+   $claudeExe = 'C:\review\providers\claude.exe'
+   $claudeVersion = '<reviewed three-part version>'
+   $claudeSha256 = '<reviewed lowercase SHA-256>'
+   .\scripts\windows\Setup-OEPExternalHelper.ps1 -ClaudeExe $claudeExe -ClaudeVersion $claudeVersion -ClaudeSha256 $claudeSha256
+   ```
+
+   Append `-DataRoot 'C:\absolute\path\inside\owner-profile'` on every setup invocation if the review build uses a custom directory. Rerun with the same arguments to repair or refresh the setup. A provider omitted on a repeat invocation retains its existing pin.
+
+3. Setup creates the non-admin local user `OEPExternalHelper` and its Windows profile, one local-machine-persistent generic credential in the owner's Credential Manager, and `HKLM\SOFTWARE\OEP\ExternalHelper` with the deployment metadata. It creates `%ProgramData%\OEP-ExternalHelper\runtime` for the trusted launcher and pinned provider executables and `%ProgramData%\OEP-ExternalHelper\runs` for working copies. It adds a non-inheriting deny ACE for the helper SID to the owner profile and the default and configured data roots. It places an `.oep-external-helper-sentinel` in each of those roots. The sentinel's read grant makes the probe test whether the account can traverse the protected root.
+4. In OEP, open **Settings → External Helpers** and choose **Check status**. Verify the required version and Windows isolation. Accept the provider warning, enable the provider, and sign in. For Claude Code, first confirm the provider terms and use a Console API key, or use the official CLI as permitted by the applicable agreement. Keep key material out of PowerShell commands.
+5. Run the uninstaller from the same elevated owner PowerShell when the helper is idle. It removes the helper SID's deny ACEs and sentinels, the local account and profile (including its provider sign-ins), the owner's launch credential, the helper files and working copies under ProgramData, and the helper registry key. Keep any needed output before removal. The owner profile, OEP data, and source provider binaries are preserved.
+
+   ```powershell
+   .\scripts\windows\Uninstall-OEPExternalHelper.ps1
+   ```
+
+### Manual verification on the review host
+
+- Before setup, check that sign-in and enablement require verified Windows isolation. After setup, repeat the same setup command. Check that the local account SID stays the same and belongs only to the local Users group.
+- Check both providers with a published executable and the reviewed pin. A missing provider should report a missing CLI after isolation has passed. Recheck after temporarily renaming a private sentinel on the disposable host. Isolation should fail. Restore the sentinel and recheck. On the disposable host, also check that a readable sentinel causes failure and rerun setup to restore protection.
+- Check Codex API-key sign-in, the official interactive sign-in in the helper console, and sign-out. Check Claude Console API-key sign-in, permitted official CLI sign-in, and sign-out. Repeat status checks after reopening OEP. Saving a Claude Console key verifies the stored credential is present. Provider acceptance is exercised by a real request on the review host.
+- Submit one synthetic public snapshot through **Prepare external delegation**. Confirm it, check the terminal state and changed-file count, and verify the CLI Job is gone. Check that unclassified, confidential, and changed input never starts the CLI.
+- Uninstall twice. Confirm the helper account, helper profile, generic credential entry, ProgramData directory, registry key, and sentinel files have been removed. Confirm OEP data is still present and **Check status** again reports unverified Windows isolation.
+
+### Remaining execution work
+
+External-source assistants still refuse standard Web and Telegram turns, and the internal delegation path still refuses external-source targets. The existing public-snapshot delegation path runs through the Windows boundary. Phase D still needs the normal chat and delegation routing, external reply bubbles and verified downloads, and the public-vault and controlled-file MCP bridge. Genuine alternate logon, effective ACL behavior, and provider compatibility remain owner review items on the separate host.
+
 ## Delivered
 
 - The assistant detail page, creation wizard, and composer group Gateway models and external coding agents. Enabled providers are selectable and disabled providers point to External Helpers. The composer changes the external source for the whole assistant. While the source is Gateway, the composer still changes the Gateway alias for the current session.
@@ -31,11 +76,9 @@
 
 2. In a disposable review build, open **Settings → External Helpers** and choose **Manage sign-in** or **Recheck status**. The build should report unverified Windows isolation and block authentication. Open **Assistant details → Model** and check the grouped options. In a fresh profile both providers show **enable in Settings**. An upgraded profile with a previously enabled provider can select it and see the isolation reason.
 
-## Pending production setup and manual check
+## Original checkpoint scope
 
-The owner setup and uninstall commands are pending. The planned setup is an explicit elevated action on a disposable Windows 11 host. It creates one non-admin local account, stores a generated launch password in Windows credentials, and grants access to the helper working-copy root. The verification must establish that the account can write there and is denied reads of sentinels in the owner profile and the OEP data root (`%LOCALAPPDATA%\OEP` by default). The Claude Console key belongs in the dedicated account's User-scope credential storage. Uninstall must remove the dedicated account and credential, revoke the ACL entries it added, and preserve the owner data. Keep real provider authentication and execution for review of that follow-up.
-
-After the launcher and setup land, check the following on the separate host with synthetic public files. Sign in under the dedicated account and confirm the displayed status, perform one public request on each supported provider, check the reply and file manifest, then log out. Exercise Web, synthetic Telegram, and delegation. Verify that missing or confidential classifications block the run. Check that a missing private sentinel or one readable by the helper fails isolation verification. Run the owner uninstall and verify that the app reports isolation unavailable again.
+At `81ba31b`, the owner setup and uninstall scripts, native alternate-account launching, and production verification were pending. The follow-up above records the owner setup and the open execution work.
 
 ## Assertions
 

@@ -13,6 +13,7 @@ export type VerifiedCli = {
   // The boundary must pin the executable object for probes and the job, not only its pathname.
   pin: { version: CliVersion; sha256: string };
   sha256: string;
+  copyRoot?: string;
   probe(args: string[], signal: AbortSignal): Promise<CliReceipt>;
   // Interactive output belongs to the provider's window. Keys enter through stdin or the helper account's credential store.
   authenticate?(args: string[], action: HelperAuthAction, signal: AbortSignal): Promise<void>;
@@ -108,7 +109,7 @@ export class ExternalExecutor {
         status.installation !== 'detected' ? 'external-cli-unsupported' : 'external-cli-login-unavailable');
     }
     const args = cliArgs(provider, 'run', turns);
-    const copy = createExternalCopy(this.#root, runId, provider);
+    const copy = createExternalCopy(candidate.copyRoot ?? this.#root, runId, provider, candidate.copyRoot !== undefined);
     let released = false;
     let zero = false;
     try {

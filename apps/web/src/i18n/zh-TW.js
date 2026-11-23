@@ -30,7 +30,7 @@ export default {
   'externalHelpers.login.publicOnly': "輸入給這個助理的資料會傳送至 {provider}。只允許使用已分級為公開的資料。",
   'externalHelpers.status.probeFailed': "無法驗證登入狀態",
   'externalHelpers.status.isolationVerified': "已驗證 Windows 隔離",
-  'externalHelpers.status.isolationUnavailable': "尚未驗證 Windows 隔離。須驗證專用 Windows 身分與網路政策後，才能啟用此外部幫手。",
+  'externalHelpers.status.isolationUnavailable': "尚未驗證 Windows 隔離。OEP 須驗證專用 Windows 帳號及其檔案存取權限，才能啟用此外部幫手。",
   'externalHelpers.status.version': "已安裝版本 {version}",
   'externalHelpers.status.pinnedVersion': "指定版本 {version}",
   'externalHelpers.event.budgetUnavailable': "工具或請求額度已用盡",

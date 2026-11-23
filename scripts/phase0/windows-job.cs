@@ -82,6 +82,8 @@ public sealed class PhaseZeroJob : IDisposable
     private static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting information, uint size, IntPtr returned);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcess(string executable, StringBuilder command, IntPtr processAttributes,
         IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
@@ -107,6 +109,11 @@ public sealed class PhaseZeroJob : IDisposable
     private static extern bool CloseHandle(IntPtr handle);
 
     private IntPtr job;
+
+    public void Assign(IntPtr process)
+    {
+        if (!AssignProcessToJobObject(job, process)) throw new Win32Exception();
+    }
 
     public PhaseZeroJob() : this(0, 0, 0) { }
 

@@ -30,7 +30,7 @@ export default {
   'externalHelpers.login.publicOnly': "Inputs to this assistant are sent to {provider}. Use only data that has been classified as public.",
   'externalHelpers.status.probeFailed': "Login verification failed",
   'externalHelpers.status.isolationVerified': "Windows isolation verified",
-  'externalHelpers.status.isolationUnavailable': "Windows isolation is unverified. This helper stays disabled until its Windows identity and network policy can be verified.",
+  'externalHelpers.status.isolationUnavailable': "Windows isolation is unverified. This helper stays disabled until OEP verifies the dedicated account and its file access.",
   'externalHelpers.status.version': "Installed version {version}",
   'externalHelpers.status.pinnedVersion': "Required version {version}",
   'externalHelpers.event.budgetUnavailable': "Tool or request budget exhausted",

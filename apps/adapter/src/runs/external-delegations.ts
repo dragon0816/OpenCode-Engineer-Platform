@@ -145,7 +145,7 @@ export class ExternalDelegations {
   }
 
   async refresh(provider: Provider) {
-    await this.options.executor?.refresh(provider, AbortSignal.timeout(10_000));
+    await this.options.executor?.refresh(provider, AbortSignal.timeout(30_000));
     return this.status(provider);
   }
 
