@@ -81,7 +81,6 @@ export default {
   'biBuilder.progress': "Build progress",
   'biBuilder.run': "Run all stages",
   'biBuilder.runConvert': "Run Convert",
-  'biBuilder.runLog': "Run log",
   'biBuilder.retry': "Retry build",
   'biBuilder.openReview': "Open review and publish",
   'biBuilder.history': "Source status",

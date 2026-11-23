@@ -468,7 +468,7 @@ export async function openBiBuilder(area, api, signal, openReview, draft, openPa
       const log = element('ol');
       for (const { state, at } of current.events) log.append(element('li', () =>
         `${formatDate(new Date(at))()} · ${resolveText(states[state] ?? state)}`));
-      panel.body.append(element('h3', message('biBuilder.runLog')), log);
+      panel.body.append(element('h3', message('jobs.run-history')), log);
     }
     for (const { locator, text } of current.conversion?.preview ?? []) {
       const excerpt = element('details');
