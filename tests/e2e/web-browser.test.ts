@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
@@ -29,6 +29,7 @@ import type { WireRequest } from './synthetic-completion.ts';
 import { webAPI } from './web-api.ts';
 import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/permissions.ts';
 import { memoryHelper } from '../fixtures/external-helpers/memory-cli.ts';
+import { subscriptionHelper } from '../fixtures/external-helpers/subscription.ts';
 
 const real = process.argv.includes('--real');
 const referencesRoot = !real && process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'oep-browser-reference-')) : undefined;
@@ -249,7 +250,9 @@ try {
     writeFileSync(referenceFixtures.pasted, '{"name":"Synthetic JSON preview"}');
   }
   let helperSignedIn = true;
-  const helper = real ? undefined : memoryHelper(root);
+  let subscriptionLogin = false;
+  const subscription = real ? undefined : subscriptionHelper(root, join(dirname(root), 'synthetic-subscription-profile'));
+  const helper = real ? undefined : memoryHelper(root, undefined, () => subscriptionLogin ? subscription?.isolation : undefined);
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
     readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
     writeCredential(name, value) {
@@ -257,7 +260,7 @@ try {
       else credentials.set(name, value);
     },
     createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
-  }, real ? undefined : { executor: helper!.executor, intakeFixture: (provider) => provider === 'codex_cli'
+  }, real ? undefined : { executor: helper!.executor, intakeFixture: (provider) => subscriptionLogin ? undefined : provider === 'codex_cli'
     ? { installation: 'detected', isolation: 'verified', login: helperSignedIn ? 'signedIn' : 'signedOut', version: '1.2.3', pinnedVersion: '1.2.3' }
     : { installation: 'unknown', isolation: 'unavailable', login: 'unknown' } }, undefined, referenceFixtures ? async (kind) => [kind === 'file' ? referenceFixtures.picked : referenceFixtures.folder] : undefined);
   try {
@@ -1687,7 +1690,8 @@ try {
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
         await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting,
-          signOut: () => { helperSignedIn = false; }, referencePicker: Boolean(referenceFixtures) });
+          signOut: () => { helperSignedIn = false; }, referencePicker: Boolean(referenceFixtures),
+          startSubscriptionTests: () => { subscriptionLogin = true; return subscription!; } });
 
       }
       await page.evaluate("document.querySelector('#top-menu-trigger').click(); document.querySelector('#stop').click()");

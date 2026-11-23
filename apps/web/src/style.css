@@ -169,7 +169,7 @@ h2 { font-size: var(--text-base); margin-bottom: var(--space-2); }
 .composer-footer { justify-content: space-between; margin-top: var(--space-1); }
 .compose-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-3); }
 button, textarea, select, input { font: inherit; }
-button, textarea, select, input:not([type="checkbox"], [type="radio"], [type="file"]), ::file-selector-button {
+button, textarea, select, input:not([type="checkbox"], [type="radio"], [type="file"]), ::file-selector-button, .external-login-link {
   border: 1px solid var(--control-border); border-radius: var(--radius-control); color: inherit; background: var(--surface); padding: var(--space-2) var(--space-2);
 }
 button:not(:disabled) { cursor: pointer; }
@@ -827,5 +827,11 @@ summary { cursor: pointer; }
 }
 .external-dialog textarea { inline-size: 100%; min-block-size: 6rem; }
 .external-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.external-dialog details label,
+.external-login-prompt label { display: block; margin-block: .6rem; }
+.external-login-link { color: var(--link); }
+.external-login-prompt code { user-select: all; }
+.external-dialog code[data-ui-content],
+#external-helper-settings code[data-ui-content] { display: block; overflow-wrap: anywhere; }
 .external-dialog li small { margin-inline-start: .4rem; }
 #external-helper-settings fieldset { min-inline-size: 0; margin-block: .75rem; }

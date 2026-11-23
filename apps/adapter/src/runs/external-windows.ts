@@ -5,6 +5,7 @@ import { DelegationError } from './delegation-ledger.ts';
 import type { CliVersion } from './external-cli.ts';
 import type { CliReceipt, ExternalIsolation, VerifiedCli } from './external-executor.ts';
 import type { Provider } from './external-ledger.ts';
+import { loginOutput, type LoginRelay } from './external-login.ts';
 
 type Pin = VerifiedCli['pin'];
 type Inspection =
@@ -12,12 +13,12 @@ type Inspection =
   | { isolation: 'verified'; installation: 'missing' | 'unsupported' }
   | { isolation: 'verified'; pin: Pin; copyRoot: string };
 type Invocation = {
-  provider: Provider; operation: 'version' | 'status' | 'key' | 'cli' | 'logout' | 'run';
+  provider: Provider; operation: 'version' | 'status' | 'key' | 'cli' | 'device' | 'logout' | 'run';
   pin: Pin; arguments: string[]; input?: string; runId?: string;
 };
 export interface WindowsHelperOs {
   inspect(provider: Provider, signal: AbortSignal): Promise<Inspection>;
-  invoke(request: Invocation, signal: AbortSignal, release?: () => void): Promise<CliReceipt>;
+  invoke(request: Invocation, signal: AbortSignal, release?: () => void, relay?: LoginRelay): Promise<CliReceipt>;
 }
 
 const unavailable = { isolation: 'unavailable', installation: 'unknown' } as const;
@@ -25,17 +26,26 @@ const invalid = () => new DelegationError('external-isolation-unavailable');
 const supervisor = fileURLToPath(new URL('../../../../scripts/windows/external-helper-job.ps1', import.meta.url));
 const maximumOutput = 200_000;
 
-export function windowsHelperOs(dataRoot: string): WindowsHelperOs {
+function startSupervisor() {
   const windows = process.env.SystemRoot;
-  async function request(data: Record<string, unknown>, signal: AbortSignal, release?: () => void): Promise<unknown> {
+  if (process.platform !== 'win32' || !windows) throw invalid();
+  const powershell = join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor], {
+    cwd: dirname(supervisor), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
+    env: { SystemRoot: windows, WINDIR: windows, TEMP: process.env.TEMP, TMP: process.env.TMP },
+  });
+}
+
+export function windowsHelperOs(dataRoot: string, launch = startSupervisor): WindowsHelperOs {
+  async function request(data: Record<string, unknown>, signal: AbortSignal, release?: () => void, relay?: LoginRelay): Promise<unknown> {
     signal.throwIfAborted();
-    if (process.platform !== 'win32' || !windows) throw invalid();
-    const powershell = join(windows, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor], {
-      cwd: dirname(supervisor), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
-      env: { SystemRoot: windows, WINDIR: windows, TEMP: process.env.TEMP, TMP: process.env.TMP },
+    const child = launch();
+    const payload = JSON.stringify({ ...data, dataRoot, owner: process.pid, relay: Boolean(relay) }) + '\n';
+    const output = relay && loginOutput(data.provider as Provider, (prompt) => relay.publish(prompt));
+    relay?.bind((code) => {
+      signal.throwIfAborted();
+      child.stdin.write('code:' + code + '\n');
     });
-    const payload = JSON.stringify({ ...data, dataRoot, owner: process.pid }) + '\n';
     return new Promise((done, reject) => {
       let buffer = '';
       let released = false;
@@ -45,7 +55,11 @@ export function windowsHelperOs(dataRoot: string): WindowsHelperOs {
         child.stdin.end();
         killAfter ??= setTimeout(() => child.kill(), 6_000);
       };
-      const deadline = setTimeout(cancel, data.operation === 'run' ? 605_000 : data.operation === 'cli' ? 174_000 : 14_000);
+      const login = data.operation === 'cli' || data.operation === 'device';
+      const deadline = setTimeout(() => {
+        if (login) failure ??= new DelegationError('external-auth-timeout');
+        cancel();
+      }, data.operation === 'run' ? 605_000 : login ? 174_000 : 14_000);
       signal.addEventListener('abort', cancel, { once: true });
       child.stdin.on('error', () => {});
       child.on('error', () => { failure ??= invalid(); });
@@ -53,6 +67,15 @@ export function windowsHelperOs(dataRoot: string): WindowsHelperOs {
         if (failure) return;
         buffer += chunk;
         if (buffer.length > maximumOutput) { failure = invalid(); cancel(); return; }
+        if (output) {
+          while (buffer.startsWith('out:') || buffer.startsWith('err:')) {
+            const separator = buffer.indexOf('\n');
+            if (separator === -1) break;
+            output(buffer.startsWith('out:') ? 0 : 1, Buffer.from(buffer.slice(4, separator).trimEnd(), 'base64'));
+            buffer = buffer.slice(separator + 1);
+          }
+          return;
+        }
         if (!release || released || !buffer.includes('\n')) return;
         const separator = buffer.indexOf('\n');
         if (buffer.slice(0, separator).trim() !== 'ready') return;
@@ -88,13 +111,14 @@ export function windowsHelperOs(dataRoot: string): WindowsHelperOs {
           typeof result.pin.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(result.pin.sha256) || typeof result.copyRoot !== 'string') throw invalid();
       return { isolation: 'verified', pin: { version: result.pin.version as CliVersion, sha256: result.pin.sha256 }, copyRoot: result.copyRoot };
     },
-    async invoke(data, signal, release) {
-      const result = await request(data, signal, release) as Partial<CliReceipt> | null;
+    async invoke(data, signal, release, relay) {
+      const result = await request(data, signal, release, relay) as Partial<CliReceipt> | null;
       if (!result || result.exit !== null && !Number.isSafeInteger(result.exit) || !Number.isSafeInteger(result.members) ||
-          !Number.isSafeInteger(result.orphans) || typeof result.stdout !== 'string' ||
-          result.reason != null && result.reason !== 'external-cli-output-limit') throw invalid();
+          !Number.isSafeInteger(result.orphans) || typeof result.stdout !== 'string' || result.stderr != null && typeof result.stderr !== 'string' ||
+          result.reason != null && result.reason !== 'external-cli-output-limit' && result.reason !== 'external-auth-setup-required') throw invalid();
+      const decode = (value: string) => new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(value, 'base64'));
       return { exit: result.exit!, members: result.members!, orphans: result.orphans!, reason: result.reason ?? undefined,
-        stdout: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(result.stdout, 'base64')) };
+        stdout: decode(result.stdout), ...(result.stderr && { stderr: decode(result.stderr) }) };
     },
   };
 }
@@ -108,12 +132,16 @@ export function windowsExternalIsolation(dataRoot: string, os = windowsHelperOs(
       if (!('pin' in result)) return result;
       const { pin, copyRoot } = result;
       const invoke = (operation: Invocation['operation'], args: string[], stop: AbortSignal, input?: string,
-        runId?: string, release?: () => void) => os.invoke({ provider, operation, pin, arguments: args, input, runId }, stop, release);
+        runId?: string, release?: () => void, relay?: LoginRelay) => os.invoke({ provider, operation, pin, arguments: args, input, runId }, stop, release, relay);
       return {
         pin, sha256: pin.sha256, copyRoot,
         probe: (args, stop) => invoke(args[0] === '--version' ? 'version' : 'status', args, stop),
-        authenticate: async (args, action, stop) => {
-          const receipt = await invoke(action.action, args, stop, action.action === 'key' ? action.key + '\n' : undefined);
+        authenticate: async (args, action, stop, relay) => {
+          const receipt = await invoke(action.action, args, stop, action.action === 'key' ? action.key + '\n' : undefined,
+            undefined, undefined, relay);
+          stop.throwIfAborted();
+          if (receipt.reason === 'external-auth-setup-required') throw new DelegationError(receipt.reason);
+          if (receipt.exit === null && !receipt.reason && receipt.orphans === 0) throw new DelegationError('external-auth-timeout');
           if (receipt.exit !== 0 || receipt.reason || receipt.orphans !== 0) throw new DelegationError('external-auth-failed');
         },
         run: (args, copy, stop, release) => {

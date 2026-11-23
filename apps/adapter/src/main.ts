@@ -25,9 +25,10 @@ import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, p
 import { DelegationService } from './runs/delegation.ts';
 import { ExternalDelegations, type ExternalWorkerOptions } from './runs/external-delegations.ts';
 import { helperReady } from './runs/external-cli.ts';
+import { LoginExchange } from './runs/external-login.ts';
 import { ExternalSources } from './runs/external-sources.ts';
 import { externalProvider, helpers, isProvider, type Provider } from './runs/external-ledger.ts';
-import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperSettings, identifiers, invalidExternal,
+import { externalError, externalWorkspaceInput, folderChoices, hashInput, helperAuth, helperAuthPrompt, helperSettings, identifiers, invalidExternal,
   labelInput, snapshotInput, sourceInput } from './http/external-helpers.ts';
 import { maxSelectedModels } from './opencode/gateway.ts';
 import { parseAvatar } from './http/avatar.ts';
@@ -191,6 +192,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     (id, directory, digest) => delegations.exportExternalChanges(id, directory, digest), runtime.redact);
   delegations.registerExternal(external);
   const management = agentManagement(root, store, runtime, telegram, external);
+  const loginExchanges = new Map<string, { owner: string; relay: LoginExchange }>();
   const sessionOwner = (session: Parameters<typeof publicSession>[0], agentID: string, workspaceID: string) => {
     const owner = store.sessionOwner(session);
     return owner?.origin === 'web' && owner.agentID === agentID && owner.workspaceID === workspaceID;
@@ -336,11 +338,41 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/settings/external-helpers/auth' && method === 'POST') {
-      const auth = helperAuth(await body(request));
-      const client = new AbortController();
+      const { provider, request: action, exchange } = helperAuth(await body(request, 4096));
+      if (exchange && loginExchanges.has(exchange)) throw new DelegationError('external-auth-busy');
+      const relay = exchange ? new LoginExchange() : undefined;
+      const client = relay?.client ?? new AbortController();
+      const timeout = AbortSignal.timeout(180_000);
       response.once('close', () => client.abort());
-      const status = await external.authenticate(auth.provider, auth.request, AbortSignal.any([client.signal, AbortSignal.timeout(180_000)]));
-      if (!response.destroyed) send(response, 200, status);
+      if (response.destroyed) return;
+      if (exchange && relay) loginExchanges.set(exchange, { owner: csrf, relay });
+      try {
+        const status = await external.authenticate(provider, action, AbortSignal.any([client.signal, timeout]), relay);
+        if (!response.destroyed) send(response, 200, status);
+      } catch (error) {
+        if (response.destroyed) return;
+        if (timeout.aborted) throw new DelegationError('external-auth-timeout');
+        if (client.signal.aborted) throw new DelegationError('external-auth-cancelled');
+        throw error;
+      } finally {
+        if (exchange) loginExchanges.delete(exchange);
+      }
+      return;
+    }
+    if (path === '/api/settings/external-helpers/auth/prompt' && method === 'POST') {
+      const prompt = helperAuthPrompt(await body(request, 1024));
+      const { exchange, action } = prompt;
+      const entry = loginExchanges.get(exchange);
+      const relay = entry?.owner === csrf ? entry.relay : undefined;
+      if (action === 'poll') send(response, 200, relay?.prompt ?? {});
+      else {
+        if (!relay) throw new DelegationError('external-auth-code-unavailable');
+        if (action === 'cancel') {
+          relay.client.abort();
+          relay.prompt = {};
+        } else relay.submit(prompt.code);
+        send(response, 200, {});
+      }
       return;
     }
     if (path === '/api/classification/workspace' && method === 'POST') {
@@ -1270,6 +1302,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       send(response, detail.status, { error: detail.message, errorDetail: detail.detail });
     }).finally(() => {
       if (request.method === 'POST' && response.headersSent && response.statusCode < 300 &&
+          request.url !== '/api/settings/external-helpers/auth/prompt' &&
           /^\/api\/(?:classification\/|agents(?:\/|$)|settings\/(?:external-helpers|knowledge)|knowledge\/)/.test(request.url ?? '')) {
         external.recheckActive();
       }

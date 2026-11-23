@@ -13,9 +13,9 @@ export async function webAPI(pairURL: string) {
   return {
     origin,
     get: (path: string, signal?: AbortSignal) => fetch(origin + path, { headers: { cookie, 'x-oep-csrf': csrf }, signal }),
-    post: (path: string, data: object) => fetch(origin + path, {
+    post: (path: string, data: object, signal?: AbortSignal) => fetch(origin + path, {
       method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'x-oep-csrf': csrf },
-      body: JSON.stringify(data),
+      body: JSON.stringify(data), signal,
     }),
     upload: (path: string, name: string, data: string) => fetch(origin + path, {
       method: 'POST', headers: { cookie, origin, 'content-type': 'text/plain', 'x-oep-csrf': csrf,

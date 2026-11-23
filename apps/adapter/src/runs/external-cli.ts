@@ -4,13 +4,14 @@ import type { Provider } from './external-ledger.ts';
 
 export type CliVersion = `${number}.${number}.${number}`;
 export type LoginState = 'unknown' | 'signedIn' | 'signedOut' | 'probeFailed' | 'reauthRequired';
-export type HelperAuthAction = { action: 'cli' | 'logout' } | { action: 'key'; key: string };
+export type HelperAuthAction = { action: 'cli' | 'device' | 'logout' } | { action: 'key'; key: string };
 export type HelperStatus = {
   installation: 'unknown' | 'missing' | 'detected' | 'unsupported';
   isolation: 'unavailable' | 'verified';
   login: LoginState;
   version?: CliVersion;
   pinnedVersion?: CliVersion;
+  account?: string;
 };
 
 export const unavailableHelper: HelperStatus = { installation: 'unknown', isolation: 'unavailable', login: 'unknown' };
@@ -57,7 +58,8 @@ export function cliAuthArgs(provider: Provider, action: HelperAuthAction['action
   if (provider === 'claude_code') return action === 'key' ? [] : ['auth', action === 'logout' ? 'logout' : 'login'];
   const config = [...codexAuth, '-c', 'check_for_update_on_startup=false'];
   if (action === 'logout') return [...config, 'logout'];
-  return [...config, 'login', ...(action === 'key' ? ['--with-api-key'] : [])];
+  const flag = action === 'key' ? '--with-api-key' : action === 'device' ? '--device-auth' : undefined;
+  return [...config, 'login', ...(flag ? [flag] : [])];
 }
 
 export function cliVersion(provider: Provider, output: string): CliVersion | undefined {
@@ -71,21 +73,41 @@ function object(input: string): Record<string, unknown> {
   return data as Record<string, unknown>;
 }
 
-export function cliLogin(provider: Provider, exit: number, output: string): LoginState {
+const accountEmail = (email: unknown) => typeof email === 'string' && email.length <= 254 &&
+  /^[a-z\d.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z\d-]+(?:\.[a-z\d-]+)+$/i.test(email) ? email : undefined;
+
+export function cliLoginDetails(provider: Provider, exit: number, output: string): Pick<HelperStatus, 'login' | 'account'> {
+  const value = output.trim();
   if (provider === 'codex_cli') {
-    if (exit === 0 && /^(?:Logged in using ChatGPT|Logged in using an API key(?: - [^\r\n]{1,128})?)(?:\r?\n)?$/.test(output)) return 'signedIn';
-    if (exit === 1 && /^Not logged in(?:\r?\n)?$/.test(output)) return 'signedOut';
-    return 'probeFailed';
+    if (exit === 0 && /^(?:Logged in using ChatGPT|Logged in using an API key(?: - [^\r\n]{1,128})?|API key configured - [^\r\n]{1,128}(?:\r?\nAuthentication is checked when you send a request\.)?)$/.test(value)) {
+      return { login: 'signedIn' };
+    }
+    if (exit === 1 && value === 'Not logged in') return { login: 'signedOut' };
+    if (exit === 1 && /^(?:Login expired|(?:Error checking login status: )?(?:The )?(?:access |refresh )?token (?:has )?expired)[.!]?$/i.test(value)) {
+      return { login: 'reauthRequired' };
+    }
+    return { login: 'probeFailed' };
   }
   try {
-    const { loggedIn, authMethod, loginExpiresAt } = object(output);
+    const { loggedIn, authMethod, loginExpiresAt, email } = object(value);
+    if (typeof loggedIn === 'boolean' && (authMethod === 'claude.ai' || authMethod === 'api_key' || authMethod === 'none') &&
+        typeof loginExpiresAt === 'string' && Date.parse(loginExpiresAt) <= Date.now()) return { login: 'reauthRequired' };
     if (exit === 0 && loggedIn === true && (authMethod === 'claude.ai' || authMethod === 'api_key')) {
-      return typeof loginExpiresAt === 'string' && Date.parse(loginExpiresAt) <= Date.now() ? 'reauthRequired' : 'signedIn';
+      const account = accountEmail(email);
+      return { login: 'signedIn', ...(account && { account }) };
     }
-    if (exit === 1 && loggedIn === false && authMethod === 'none') return 'signedOut';
-  } catch { /* Fail closed on unknown protocol output. */ }
-  return 'probeFailed';
+    if (exit === 1 && loggedIn === false && authMethod === 'none') return { login: 'signedOut' };
+  } catch {
+    if (exit === 1 && /^(?:Not logged in|Not logged in\. Run claude auth login\.)$/i.test(value)) return { login: 'signedOut' };
+    if (exit === 1 && /^(?:Login expired|(?:OAuth )?token (?:has )?expired)[.!]?$/i.test(value)) return { login: 'reauthRequired' };
+    if (exit === 0 && /^(?:Logged in (?:with|using) (?:Claude\.ai|Claude subscription|Claude account|an API key))\.?$/i.test(value)) {
+      return { login: 'signedIn' };
+    }
+  }
+  return { login: 'probeFailed' };
 }
+
+export const cliLogin = (provider: Provider, exit: number, output: string) => cliLoginDetails(provider, exit, output).login;
 
 export function checkCliResult(provider: Provider, output: string) {
   try {
