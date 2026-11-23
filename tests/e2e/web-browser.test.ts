@@ -1159,9 +1159,10 @@ try {
         await page.evaluate("window.addEventListener('message', event => { if (event.data === 'oep-preview-script') window.previewScript = true; })");
         await page.ready("document.querySelector('#attachments').textContent.includes('sample.html')");
         await previewAttachment('sample.html');
-        await page.ready("document.querySelector('#file-preview iframe')?.getAttribute('sandbox') === ''");
+        const htmlSource = "document.querySelector('#file-preview > div:not([hidden]) pre')?.textContent.includes('<p>合成 HTML</p><script>')";
+        await page.ready(htmlSource);
         await page.evaluate("new Promise(resolve => setTimeout(resolve, 150))");
-        assert.equal(await page.evaluate("!window.previewScript && !document.querySelector('#file-preview iframe').contentDocument"), true);
+        assert.equal(await page.evaluate("!window.previewScript && !document.querySelector('#file-preview :is(iframe, script)')"), true);
         await previewAttachment('sample.md');
         await page.ready("document.querySelector('#file-preview .preview-body')?.textContent.includes('合成標題')");
         await previewAttachment('sample.csv');
@@ -1205,7 +1206,7 @@ try {
           ['marker.png', 'png', "document.querySelector('#file-preview img')?.naturalWidth > 0"],
           ['sample.jpg', 'jpeg', "document.querySelector('#file-preview img')?.naturalWidth > 0"],
           ['marker.pdf', 'pdf', "document.querySelector('#file-preview').textContent.includes('目前無法預覽 PDF')"],
-          ['sample.html', 'html', "document.querySelector('#file-preview iframe')?.getAttribute('sandbox') === ''"],
+          ['sample.html', 'html', htmlSource],
         ];
         for (const [name, , ready] of previews) {
           await previewAttachment(name);
@@ -1576,7 +1577,7 @@ try {
           }
           await page.command('Emulation.clearDeviceMetricsOverride');
         }
-        await verifyComposerAttachments(page, audit, process.env.OEP_CAPTURE_COMPOSER_DROP === '1');
+        await verifyComposerAttachments(page, audit, process.env.OEP_CAPTURE_COMPOSER_DROP === '1', captureAgentManagement);
         await page.evaluate("if (document.querySelector('#session-sidebar').hidden) document.querySelector('#toggle-sidebar').click()");
         await page.evaluate(`
           document.querySelector('[aria-current=true]').nextElementSibling.querySelector('[data-action=remove]').click();

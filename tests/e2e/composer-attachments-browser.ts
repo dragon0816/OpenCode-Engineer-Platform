@@ -10,7 +10,7 @@ const hint = "document.querySelector('#drop-hint')";
 const prompt = "document.querySelector('#prompt')";
 const status = "document.querySelector('#upload-status')";
 
-export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean) {
+export async function verifyComposerAttachments(page: Page, audit: string, capture: boolean, captureEngineering: boolean) {
   const attachment = (name: string) =>
     `[...document.querySelectorAll('#attachments li')].find(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
   const resource = (name: string) =>
@@ -19,12 +19,12 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
     const { left, top, width, height } = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
     return { x: Math.floor(left + width / 2), y: Math.floor(top + height / 2) };
   })()`);
-  const drag = async (selector: string, names: string[], text?: string) => {
+  const drag = async (selector: string, names: string[], text?: string, content = 'Synthetic composer attachment') => {
     const at = await point(selector);
     assert.equal(await page.evaluate(`document.elementFromPoint(${at.x}, ${at.y}).closest(${JSON.stringify(selector)})?.matches(${JSON.stringify(selector)})`), true);
     const files = names.map((name) => {
       const path = join(audit, name);
-      writeFileSync(path, 'Synthetic composer attachment');
+      writeFileSync(path, content);
       return path;
     });
     const data = { items: text ? [{ mimeType: 'text/plain', data: text }] : [], files, dragOperationsMask: 1 };
@@ -148,11 +148,54 @@ export async function verifyComposerAttachments(page: Page, audit: string, captu
     assert.equal(await page.evaluate(`Boolean(${attachment('paste-unsupported.bin')})`), false);
     await selectLocale(page, 'en');
     assert.match(await page.evaluate<string>("document.querySelector('#error').textContent"), /This file type isn’t supported/);
+    assert.match(await page.evaluate<string>("document.querySelector('#error').textContent"), /image.*PDF.*Excel.*plain text.*configuration or source code/);
     assert.match(await page.evaluate<string>(`${status}.textContent`), /Could not attach files \(1\)/);
     for (const name of ['paste-photo.gif', 'paste-photo.webp']) await preview(name);
+
+    const paste = (name: string, content: string | number[], type: string) => page.evaluate(`(() => {
+      const data = new DataTransfer();
+      const content = ${JSON.stringify(content)};
+      data.items.add(new File([typeof content === 'string' ? content : Uint8Array.from(content)],
+        ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
+      return !${prompt}.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+    })()`);
+    const json = '{\n  "compilerOptions": { "strict": true }\n}\n';
+    const python = 'def sample():\n    return "合成"\n';
+    for (const [width, height, layout, locale, pasted, dropped] of [
+      [390, 844, 'narrow', 'en', ['tsconfig.json', json, 'application/json'], ['sample.py', python]],
+      [1440, 900, 'wide', 'zh-TW', ['sample.py', python, 'text/x-python'], ['tsconfig.json', json]],
+    ] as const) {
+      await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await page.ready(`innerWidth === ${width}`);
+      await selectLocale(page, locale);
+      for (const [name, content, type] of [pasted, dropped]) {
+        const rows = `[...document.querySelectorAll('#attachments li')].filter(row => row.querySelector('label').textContent === ${JSON.stringify(name)})`;
+        const count = await page.evaluate<number>(`${rows}.length`);
+        if (type) assert.equal(await paste(name, content, type), true);
+        else await (await drag('#prompt', [name], undefined, content))();
+        await page.ready(`${rows}.length === ${count + 1} && ${rows}.at(-1).querySelector('input').checked &&
+          ${rows}.at(-1).querySelector('[data-classification=unclassified]')`);
+        await page.evaluate(`[...document.querySelectorAll('#chat-resources button')]
+          .filter(button => button.textContent === ${JSON.stringify(name)}).at(-1).click()`);
+        await page.ready(`(() => {
+          const pre = document.querySelector('#file-preview > div:not([hidden]) pre');
+          return pre?.textContent === ${JSON.stringify(content)} && getComputedStyle(pre).fontFamily.includes('monospace');
+        })()`);
+        if (captureEngineering && name === 'tsconfig.json') {
+          const { data } = await page.command<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+          writeFileSync(join('docs', 'validation', 'gui', `owner-round2-text-preview-${locale}-${layout}.png`), Buffer.from(data, 'base64'));
+        }
+        await page.evaluate("document.querySelector('#close-files').click()");
+      }
+      const rejected = 'binary.json';
+      assert.equal(await paste(rejected, [0x50, 0x4b, 0x03, 0x04, 0x00], 'application/json'), true);
+      const encodingError = locale === 'en' ? 'Text attachments must use UTF-8 encoding.' : '文字附件須使用 UTF-8 編碼。';
+      await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(rejected + ' · ' + encodingError)})`);
+      assert.equal(await page.evaluate(`Boolean(${attachment(rejected)})`), false);
+    }
   } finally {
     await selectLocale(page, 'zh-TW');
     await page.command('Emulation.clearDeviceMetricsOverride');
   }
-  console.log('Composer attachments passed in Chromium (zh-TW and en, 390 px).');
+  console.log('Composer attachments passed in Chromium (zh-TW and en, 390 px and 1440 px).');
 }

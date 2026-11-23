@@ -362,3 +362,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 - 畫面以密碼欄接收 token，設定中暫存在服務記憶體。確認後沿用 Windows 使用者範圍憑證和不含 token 的台帳參照。新參照由帳號識別碼產生，進階欄位可在瀏覽器算出名稱。既有憑證名稱可繼續使用，既有 bot 的身分與歷史綁定保留。
 - 精簡每則最多 2 件，每件 3 分鐘。標準每則 3 件，每件 5 分鐘。寬鬆每則 5 件，每件 10 分鐘。每件模型請求及工具呼叫上限依序為 6／18、10／30、20／60，各乘以件數作為每則訊息上限。排隊時間依序為 5、10、20 分鐘。
 - v8 保留既有額度的原始毫秒值。沒有預設選擇紀錄時，原始預設顯示為標準。其餘既有值以進階「自訂」顯示，時間換算成分鐘。 [驗收紀錄](reviews/UX_AGENT_MANAGEMENT_REPORT.md)
+
+## 2026-11-23 工程文字附件
+
+- 選取、貼上、拖放與唯讀資料夾匯入共用副檔名和內容檢查。新增 JSON／JSONC、YAML、XML、LOG、INI／CFG／CONF、TOML、TSV、Python、JavaScript／TypeScript、C／C++、C#、Java、Go、Rust、PowerShell、Shell、Batch、SQL、HTML、CSS、SCPI 與 MATLAB `.m`；各格式以 `text/plain` 提供 UTF-8 文字。保留 TXT、Markdown、CSV、HTM、Excel、PDF 與圖片。
+- 文字必須通過嚴格 UTF-8 解碼和控制字元檢查。沿用單檔 20 MiB、會話配額 200 MiB、一則訊息的文字總量 1 MiB，以及附加資料的文字預覽上限 1 MiB。沿用附件的資料分類。HTML 在右側以原始文字呈現。

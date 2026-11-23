@@ -552,13 +552,6 @@ async function openPreview(file, url, context, opener, { plainText = false } = {
       objectURL = URL.createObjectURL(data);
       image.src = objectURL;
       body.append(image);
-    } else if (extension === 'html' || extension === 'htm') {
-      const frame = node('iframe');
-      setAttribute(frame, 'title', file.name);
-      frame.setAttribute('sandbox', '');
-      frame.inert = true;
-      frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark">${data}`;
-      body.append(node('p', message('chat.the-preview-shows-file-content-only')), frame);
     } else if (extension === 'csv' || extension === 'xlsx') {
       renderSheets(body, readSheets(data, extension === 'xlsx'));
     } else if (extension === 'md') appendMarkdown(body, data);
