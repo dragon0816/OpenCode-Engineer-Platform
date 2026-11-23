@@ -227,14 +227,35 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
   function channelFields(parent) {
     field(parent, 'replyLocale', replyLanguage(draft.replyLocale), 'agent-reply-locale');
     if (!wizard) {
-      for (const { accountId, botName } of entry.channels) {
-        const row = node('div', undefined, 'agent-channel-token');
-        row.append(node('p', botName ? message('channels.token-configured-bot', { bot: botName }) :
-          message('channels.token-configured')), agentButton(message('channels.replace-token'), () => openChannels(accountId)));
-        parent.append(row);
+      const bots = node('div');
+      const feedback = node('p');
+      feedback.setAttribute('role', 'status');
+      const id = entry.id;
+      const add = agentButton(message('channels.add-bot'), () => openChannels({ agentId: id, opener: add, onSaved }));
+      add.id = 'agent-add-channel';
+      let noticeTimer;
+      function onSaved(accounts, notice) {
+        if (!parent.isConnected) return;
+        entry.channels = accounts.filter(({ agentId, state }) => agentId === id && state === 'enabled');
+        drawBots();
+        add.focus();
+        setText(feedback, notice);
+        clearTimeout(noticeTimer);
+        noticeTimer = setTimeout(() => setText(feedback, ''), 5000);
       }
-      if (!entry.channels.length) parent.append(node('p', message('agents.no-channel')));
-      parent.append(agentButton(message('channels.title'), () => openChannels()));
+      function drawBots() {
+        bots.replaceChildren();
+        for (const { accountId, botName } of entry.channels) {
+          const row = node('div', undefined, 'agent-channel-token');
+          const replace = agentButton(message('channels.replace-token'), () => openChannels({ accountId, opener: replace, onSaved }));
+          row.append(node('p', botName ? message('channels.token-configured-bot', { bot: botName }) :
+            message('channels.token-configured')), replace);
+          bots.append(row);
+        }
+        if (!entry.channels.length) bots.append(node('p', message('agents.no-channel')));
+      }
+      drawBots();
+      parent.append(bots, add, feedback);
       return;
     }
     const select = field(parent, 'channel', node('select'), 'agent-channel', message('agents.connection'));
@@ -261,7 +282,12 @@ export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent
       channel = connections.find((item) => item.accountId === select.value);
       clearSetup();
     });
-    parent.append(node('p', message('channels.wizard-help')), setupControl, skip);
+    const setupDetails = node('details');
+    setupDetails.open = Boolean(tokenSetup);
+    const summary = node('summary', message('channels.add-bot'));
+    summary.id = 'agent-wizard-add-channel';
+    setupDetails.append(summary, node('p', message('channels.wizard-help')), setupControl, skip);
+    parent.append(setupDetails);
   }
 
   function trigger(parent) {

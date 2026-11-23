@@ -61,7 +61,7 @@ const pinged: string[] = [];
 const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
 const settingsPages = [
   ['assistant', '助理', ['#open-main-agent']],
-  ['channels', '助理與通道', ['#channel-accounts', '#channel-add', '#channel-accounts button', '#delegation-budget-presets', '#delegation-budget-advanced']],
+  ['channels', '助理與通道', ['#channel-accounts', '[data-channel-action=add]', '#channel-accounts button', '#delegation-budget-presets', '#delegation-budget-advanced']],
   ['appearance', '外觀', ['#theme', '#density', '#save-appearance', '#appearance-status']],
   ['model', '模型', ['#default-alias', '#save-model', '#recheck-model', '#model-settings-status', '#model-credentials', '#model-health li']],
   ['limits', '回合限制', ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status']],
@@ -76,7 +76,7 @@ const settingsPages = [
 const settingsRows: Record<string, Record<string, string[]>> = {
   assistant: { 'assistant-link': ['#open-main-agent'] },
   channels: {
-    channels: ['#channel-accounts', '#channel-add', '#channel-accounts button'],
+    channels: ['#channel-accounts', '[data-channel-action=add]', '#channel-accounts button'],
     'delegation-limit': ['#delegation-budget-presets', '#delegation-preset-standard', '#delegation-budget-advanced', '#budget-queueMs', '#save-delegation-budgets'],
   },
   appearance: {

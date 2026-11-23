@@ -1368,9 +1368,12 @@ function updateTopAgent(id) {
 let agentOpener;
 const agentView = find('agent-view');
 const agentEditor = bindAgents({ onChange: refreshAgents, close: () => find('close-agent').click(),
-  openChannels: (accountId) => { if (openAgentSettings('channels') && accountId) void loadChannels(accountId); },
+  openChannels: ({ accountId, ...options }) => {
+    if (accountId) void channelSettings.replace(accountId, options.opener, options.onSaved);
+    else channelSettings.open(options);
+  },
   openMcp: () => openAgentSettings('mcp'), deleteAgent, restoreAgent });
-const loadChannels = bindChannels(() => assistantEntries, refreshAgents);
+const channelSettings = bindChannels(() => assistantEntries, refreshAgents);
 const deleteAgentDialog = find('delete-agent-dialog');
 let deletion;
 
@@ -1986,7 +1989,7 @@ async function loadMcpSettings() {
 }
 
 function loadActiveSettingsSection() {
-  if (activeSettingsSection === 'channels') void loadChannels();
+  if (activeSettingsSection === 'channels') void channelSettings.load();
   if (activeSettingsSection === 'mcp') void loadMcpSettings();
   if (activeSettingsSection === 'integrations') void loadTelegramStatus();
   if (activeSettingsSection === 'external-helpers') void loadExternalSettings(find('external-helper-settings'), find('external-helper-settings-status'));

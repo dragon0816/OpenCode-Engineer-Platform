@@ -125,7 +125,6 @@ function bindDelegationBudgets() {
 
 export function bindChannels(getAgents, refreshAgents) {
   const list = document.getElementById('channel-accounts');
-  const add = document.getElementById('channel-add');
   const dialog = document.getElementById('channel-dialog');
   const status = document.getElementById('channel-status');
   const loadBudgets = bindDelegationBudgets();
@@ -133,25 +132,41 @@ export function bindChannels(getAgents, refreshAgents) {
   let rendered;
   let loadVersion = 0;
 
-  function row(account) {
+  function botRow(account) {
     const item = node('li');
     item.dataset.channel = account.accountId;
-    const assigned = account.state === 'disabled' ? undefined : getAgents().find(({ id }) => id === account.agentId);
     const bot = node('strong', channelName(account));
-    const assignment = node('p', assigned ? agentName(assigned) : message('channels.no-assistant'));
     bot.toggleAttribute('data-ui-content', Boolean(account.botName));
-    assignment.toggleAttribute('data-ui-content', Boolean(assigned && typeof agentName(assigned) === 'string'));
-    const identity = node('div');
-    identity.append(bot, assignment);
     const info = node('div');
     const state = channelState(account);
     const [label, hint] = channelStates[state];
     if (label) info.append(node('strong', label));
     info.append(node('p', hint));
-    const manage = agentButton(message('channels.manage'), () => open(account, false, manage));
+    const manage = agentButton(message('channels.manage'), () => open({ account, opener: manage }));
     setAttribute(manage, 'aria-label', message('channels.manage-bot', { bot: channelName(account) }));
     manage.dataset.channelAction = 'manage';
-    item.append(identity, info, manage);
+    item.append(bot, info, manage);
+    return item;
+  }
+
+  function row(agent, accounts) {
+    const item = node('li');
+    const name = agent ? agentName(agent) : message('channels.no-assistant');
+    const title = node('h3', name);
+    title.toggleAttribute('data-ui-content', typeof name === 'string');
+    item.append(title);
+    if (accounts.length) {
+      const bots = node('ul');
+      bots.className = 'channel-bots';
+      bots.append(...accounts.map(botRow));
+      item.append(bots);
+    } else item.append(node('p', message('agents.no-channel')));
+    if (agent) {
+      item.dataset.channelAgent = agent.id;
+      const add = agentButton(message('channels.add-bot'), () => open({ agentId: agent.id, opener: add }));
+      add.dataset.channelAction = 'add';
+      item.append(add);
+    }
     return item;
   }
 
@@ -161,13 +176,19 @@ export function bindChannels(getAgents, refreshAgents) {
       const { accounts } = await channelRequest();
       if (version !== loadVersion) return;
       entries = accounts;
-      const key = JSON.stringify([accounts, getAgents().map(({ id, name, state }) => [id, name, state])]);
+      const agents = getAgents().filter(({ state }) => state === 'active');
+      const key = JSON.stringify([accounts, agents.map(({ id, name }) => [id, name])]);
       if (key === rendered) return;
       rendered = key;
       const focused = document.activeElement.closest('[data-channel]')?.dataset.channel;
-      list.replaceChildren(...entries.map(row));
+      const focusedAdd = document.activeElement.closest('[data-channel-action="add"]')?.closest('[data-channel-agent]').dataset.channelAgent;
+      const assigned = (id) => entries.filter(({ agentId, state }) => agentId === id && state === 'enabled');
+      const unassigned = entries.filter(({ agentId, state }) => state !== 'enabled' || !agents.some(({ id }) => id === agentId));
+      list.replaceChildren(...agents.map((agent) => row(agent, assigned(agent.id))));
+      if (unassigned.length) list.append(row(undefined, unassigned));
       if (focused) manageButton(focused)?.focus();
-      if (!entries.length) list.append(node('li', message('channels.no-bots')));
+      if (focusedAdd) addButton(focusedAdd)?.focus();
+      setText(status, '');
     } catch (error) {
       if (version === loadVersion) setText(status, errorText(error));
     }
@@ -177,7 +198,11 @@ export function bindChannels(getAgents, refreshAgents) {
     return list.querySelector(`[data-channel="${CSS.escape(id)}"] button`);
   }
 
-  function open(account, replace, opener) {
+  function addButton(id) {
+    return list.querySelector(`[data-channel-agent="${CSS.escape(id)}"] [data-channel-action="add"]`);
+  }
+
+  function open({ account, agentId, replace, opener, onSaved }) {
     if (dialog.open) return;
     const heading = node('h2', account ? message('channels.manage-bot', { bot: channelName(account) }) : message('channels.add-bot'));
     heading.id = 'channel-dialog-title';
@@ -191,7 +216,7 @@ export function bindChannels(getAgents, refreshAgents) {
     const select = node('select');
     select.id = 'channel-agent';
     label.htmlFor = select.id;
-    const original = account?.state === 'disabled' ? '' : account?.agentId ?? '';
+    const original = account?.state === 'disabled' ? '' : account?.agentId ?? agentId ?? '';
     const active = getAgents().filter(({ id, state }) => state === 'active' && (account?.handler !== 'bi_intake' || id === 'bi'));
     select.append(optionText(message('channels.no-assistant'), ''), ...active.map((agent) => {
       const option = optionText(agentName(agent), agent.id);
@@ -209,6 +234,7 @@ export function bindChannels(getAgents, refreshAgents) {
     let editingToken = !account;
     let busy = false;
     let removed = false;
+    let saved = false;
     const save = node('button', message('channels.save-bot'));
     save.id = 'channel-save';
     save.type = 'submit';
@@ -221,7 +247,6 @@ export function bindChannels(getAgents, refreshAgents) {
     function sync() {
       const ready = Boolean(setupReady(setup));
       const change = Boolean(account && select.value !== original);
-      assignment.hidden = !account && !ready;
       confirmLabel.hidden = !change;
       close.disabled = busy;
       save.disabled = busy || change && !confirm.checked || (editingToken ? !ready || !account && !select.value : !change);
@@ -264,9 +289,9 @@ export function bindChannels(getAgents, refreshAgents) {
         if (busy) return;
         if (!window.confirm(t('channels.confirm-remove'))) return;
         void perform(remove, async () => {
-          await channelRequest({ action: 'remove', ...target, confirmed: true });
+          const result = await channelRequest({ action: 'remove', ...target, confirmed: true });
           removed = true;
-          await updated();
+          await updated(result.accounts);
         });
       });
       remove.className = 'danger-action';
@@ -274,13 +299,25 @@ export function bindChannels(getAgents, refreshAgents) {
       actions.append(recheck, remove);
     } else editToken();
 
-    async function updated() {
-      const focus = account?.accountId;
-      dialog.close();
+    async function updated(accounts) {
+      const id = account?.accountId ?? accounts.find((item) => !entries.some(({ accountId }) => accountId === item.accountId))?.accountId;
       await refreshAgents().catch(() => {});
-      await load();
-      if (!dialog.open) (focus && manageButton(focus) || add).focus();
-      setText(status, removed ? message('channels.removed') : message('chat.saved'));
+      if (!list.closest('[hidden]')) await load();
+      const feedback = removed ? message('channels.removed') : message('chat.saved');
+      saved = true;
+      dialog.close();
+      if (onSaved) onSaved(accounts, feedback);
+      else {
+        const button = (id && manageButton(id)) || addButton(select.value || original);
+        button?.focus();
+        const notice = node('p');
+        notice.setAttribute('role', 'status');
+        const row = button?.closest('[data-channel], [data-channel-agent]');
+        if (row) row.append(notice);
+        else list.after(notice);
+        setText(notice, feedback);
+        setTimeout(() => notice.remove(), 5000);
+      }
     }
 
     select.addEventListener('change', () => { confirm.checked = false; sync(); });
@@ -290,21 +327,22 @@ export function bindChannels(getAgents, refreshAgents) {
       if (save.disabled) return;
       void perform(save, async () => {
         if (editingToken) {
-          await channelRequest({ action: 'setup-save', setupId: setup.setupId, ownerConfirmed: setup.ownerConfirmed === true,
+          const result = await channelRequest({ action: 'setup-save', setupId: setup.setupId, ownerConfirmed: setup.ownerConfirmed === true,
             agentId: select.value || null, confirmed: true });
           setup = undefined;
+          await updated(result.accounts);
         } else {
           const action = !select.value ? 'unbind' : account.state === 'enabled' ? 'rebind' : 'bind';
-          await channelRequest({ action, ...target, ...(select.value && { agentId: select.value }), confirmed: true });
+          const result = await channelRequest({ action, ...target, ...(select.value && { agentId: select.value }), confirmed: true });
+          await updated(result.accounts);
         }
-        await updated();
       });
     });
     dialog.oncancel = (event) => { if (busy) event.preventDefault(); };
     dialog.addEventListener('close', () => {
       cancelTelegramSetup(setup);
-      dialog.replaceChildren();
-      if (opener?.isConnected) opener.focus();
+      if (!dialog.open) dialog.replaceChildren();
+      if (!saved && !dialog.open && opener?.isConnected && !opener.closest('[hidden]')) opener.focus();
     }, { once: true });
     form.append(tokenPanel, assignment, actions, feedback);
     if (account?.managedToken) form.append(credentialDetails(account.accountId));
@@ -315,16 +353,13 @@ export function bindChannels(getAgents, refreshAgents) {
     else if (!account) form.querySelector('input').focus();
   }
 
-  add.addEventListener('click', () => open(undefined, false, add));
   setInterval(() => {
     if (!list.closest('[hidden]') && !dialog.open) void load();
   }, 5000);
 
-  return async (replaceAccountId) => {
-    await Promise.all([load(), loadBudgets()]);
-    if (replaceAccountId) {
-      const account = entries.find(({ accountId }) => accountId === replaceAccountId);
-      if (account) open(account, true, manageButton(replaceAccountId));
-    }
-  };
+  return { load: () => Promise.all([load(), loadBudgets()]), open, async replace(accountId, opener, onSaved) {
+    await load();
+    const account = entries.find((item) => item.accountId === accountId);
+    if (account && opener.isConnected && !opener.closest('[hidden]')) open({ account, replace: true, opener, onSaved });
+  } };
 }
