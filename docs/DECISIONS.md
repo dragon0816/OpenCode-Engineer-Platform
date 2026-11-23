@@ -429,3 +429,8 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 ## 2026-11-23 BI 文件擷取工作程序
 - 擁有者授權移植 AEP BI 程式碼。OEP 以受控 Python 工作程序執行轉檔、分段及 schema 結構投影。來源網路存取沿用 OEP 核准的 HTTPS 來源與固定 DNS 位址，模型請求使用既有 Gateway，送審及發布沿用 OEP 的交易與引文驗證。
 - PDF 文字層沿用檔案參照分支的 `pypdf` 6.21.4 與受限 worker。BSD-3-Clause 授權全文納入發行通知及 SBOM，以固定 SHA-256 驗證 wheel。Bundled 發行包沿用 Python wheel 安裝流程。一般發行與開發環境以 `OEP_PYTHON` 指定的 Python 執行 `-m pip install --require-hashes -r tests/oracles/requirements.txt`。 [pypdf 6.21.4](https://pypi.org/project/pypdf/6.21.4/)
+
+## 2026-11-23 BI 掃描頁 OCR
+
+- BI 以 `pypdf` 逐頁讀取可用文字層。需要轉成圖片的頁面在既有 Windows AppContainer 內使用 `pypdfium2` 5.15.2。發行鎖定 Windows x64 wheel 的 SHA-256，bundled 發行含 PDFium DLL，並在 NOTICE、第三方授權及 SBOM 列出套件。Python binding 採 `Apache-2.0 OR BSD-3-Clause`，wheel 所附 PDFium 與其他元件授權一併保留。 [pypdfium2 5.15.2](https://pypi.org/project/pypdfium2/5.15.2/)
+- Windows PowerShell 5.1 提供已驗證的 WinRT 投影。宿主透過 BI 轉檔工作程序的 broker，將有界 PNG 或 JPEG 交給 `Windows.Media.Ocr`。本機 OCR 只需作業系統的辨識語言包。Gateway 圖片辨識依選用模型的探測結果啟用，沿用同一個模型請求席位。 [Windows.Media.Ocr](https://learn.microsoft.com/en-us/uwp/api/windows.media.ocr.ocrengine) · [驗證紀錄](reviews/PHASE3G_OCR_REPORT.md)

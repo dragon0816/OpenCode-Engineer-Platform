@@ -352,3 +352,9 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
 - [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
 - [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)
+
+## Phase 3G 掃描文件 OCR
+
+- [x] BI 接受掃描 PDF、PNG 和 JPEG，逐頁辨識並保留頁碼、OCR 引文來源和辨識引擎。雙語建置頁顯示辨識方式與各頁狀態。
+- [x] 驗證 Windows OCR、本機結果保留及 Gateway 圖片備援。Windows x64 bundled 發行內含渲染器與授權清單。
+- [ ] 擁有者用實際掃描文件驗收。以已通過圖片探測的 Gateway 模型驗證真實模型辨識，檔案參照的 OCR 預覽另行評估。 [展示與驗證報告](reviews/PHASE3G_OCR_REPORT.md)
