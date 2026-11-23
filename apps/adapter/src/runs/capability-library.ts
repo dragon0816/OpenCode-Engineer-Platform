@@ -125,7 +125,7 @@ export function readWorkflow(bytes: Uint8Array) {
     if (!id || kind !== 'workflow' || typeof description !== 'string' || !description.trim() || !Array.isArray(steps) ||
       !steps.length || !steps.every((step) => ref(record(step)?.capability ?? step)) || !Array.isArray(parameters) ||
       !parameters.every((param) => typeof record(param)?.name === 'string')) throw new Error('Invalid workflow');
-    return { id, description, steps, parameters };
+    return { id, description, steps, parameters, definition };
   } catch { throw new HttpError(400, 'workflow-package-invalid'); }
 }
 
@@ -213,7 +213,10 @@ export class CapabilityLibrary {
 
   workflows() {
     return this.db.prepare('SELECT definition FROM imported_workflows ORDER BY id').all()
-      .map(({ definition }) => JSON.parse(String(definition)) as ReturnType<typeof readWorkflow>);
+      .map(({ definition }) => {
+        const { definition: _manifest, ...preview } = JSON.parse(String(definition)) as ReturnType<typeof readWorkflow>;
+        return preview;
+      });
   }
 
   importWorkflow(bytes: Uint8Array) {

@@ -3,7 +3,6 @@ import { getLocale, message, setText, t } from './i18n.js';
 
 const find = (id) => document.getElementById(id);
 const endpoint = '/api/capabilities/';
-const copy = (key, params) => message('capabilities.' + key, params);
 
 function element(tag, content, className) {
   const node = document.createElement(tag);
@@ -13,14 +12,14 @@ function element(tag, content, className) {
 }
 
 function action(label, handler) {
-  const button = element('button', copy(label));
+  const button = element('button', label);
   button.type = 'button';
   button.addEventListener('click', handler);
   return button;
 }
 
 function replaceList(list, rows, empty) {
-  list.replaceChildren(...(rows.length ? rows : [element('li', copy(empty))]));
+  list.replaceChildren(...(rows.length ? rows : [element('li', empty)]));
 }
 
 function upload(button, input, send) {
@@ -66,54 +65,55 @@ export function bindCapabilityTabs(view, loadMcp) {
       const row = element('li', undefined, 'plugin-row');
       const info = element('div');
       info.append(element('strong', name), element('span', description),
-        element('span', copy(bundled ? 'skill-bundled' : 'source', { source })));
+        element('span', bundled ? message('capabilities.skill-bundled', { source }) : message('capabilities.source', { source })));
       const controls = element('div', undefined, 'plugin-actions');
       const toggle = element('input');
       toggle.type = 'checkbox';
       toggle.checked = checked;
       const label = element('label');
-      label.append(toggle, element('span', copy('skill-enable', { name })));
+      label.append(toggle, element('span', message('capabilities.skill-enable', { name })));
       toggle.addEventListener('change', () => {
         toggle.checked = checked;
         if (!checked && enabled.length >= warningLimit && !window.confirm(t('capabilities.skill-limit'))) return;
         void mutate('skills', 'enable', { data: { name, assistant: id, enabled: !checked } }, `skill-enable-${name}`);
       });
       toggle.id = `skill-enable-${name}`;
-      controls.append(label, action('uninstall', () => {
+      controls.append(label, action(message('capabilities.uninstall'), () => {
         if (window.confirm(t('capabilities.skill-remove-confirm', { name }))) {
           void mutate('skills', 'remove', { data: { name } }, 'install-skill');
         }
       }));
       row.append(info, controls);
       return row;
-    }), 'skill-empty');
+    }), message('capabilities.skill-empty'));
   }
 
   function renderWorkflows(workflows) {
     replaceList(workflowList, workflows.map(({ id, description, parameters, steps }) => {
       const details = element('details');
       details.append(element('summary', id), element('p', description),
-        element('h3', copy('workflow-parameters')), element('pre', JSON.stringify(parameters, null, 2)),
-        element('h3', copy('workflow-steps')), element('pre', JSON.stringify(steps, null, 2)));
+        element('h3', message('capabilities.workflow-parameters')), element('pre', JSON.stringify(parameters, null, 2)),
+        element('h3', message('capabilities.workflow-steps')), element('pre', JSON.stringify(steps, null, 2)));
       const row = element('li');
       row.append(details);
       return row;
-    }), 'workflow-empty');
+    }), message('capabilities.workflow-empty'));
   }
 
   function renderKnowledge(vaults) {
     replaceList(knowledgeList, vaults.map(({ id, title, revision, source, modelEnabled }) => {
       const row = element('li', undefined, 'plugin-row');
       const info = element('div');
-      info.append(element('strong', title), element('span', copy('knowledge-version', { revision })),
-        element('span', copy('source', { source })), element('span', copy(modelEnabled ? 'knowledge-bind' : 'knowledge-local')));
-      row.append(info, action('remove', () => {
+      info.append(element('strong', title), element('span', message('capabilities.knowledge-version', { revision })),
+        element('span', message('capabilities.source', { source })),
+        element('span', modelEnabled ? message('capabilities.knowledge-bind') : message('capabilities.knowledge-local')));
+      row.append(info, action(message('capabilities.remove'), () => {
         if (window.confirm(t('capabilities.knowledge-remove-confirm', { name: title }))) {
           void mutate('knowledge', 'remove', { data: { id, revision } }, 'import-published-knowledge');
         }
       }));
       return row;
-    }), 'knowledge-empty');
+    }), message('capabilities.knowledge-empty'));
   }
 
   async function refresh(section) {
@@ -135,13 +135,13 @@ export function bindCapabilityTabs(view, loadMcp) {
     busy.add(section);
     const { status, render } = sections[section];
     const opener = document.activeElement;
-    setText(find(status), copy('working'));
+    setText(find(status), message('capabilities.working'));
     try {
       const state = await request(`${endpoint}${section}/${operation}`, options);
       if (state !== null) {
         states.set(section, state);
         render(state);
-        setText(find(status), copy('saved'));
+        setText(find(status), message('capabilities.saved'));
       } else find(status).replaceChildren();
       if (focus && !opener?.isConnected && !view.hidden && selected === section) find(focus).focus();
     } catch (error) { setText(find(status), errorText(error)); }

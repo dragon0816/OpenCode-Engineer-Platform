@@ -335,7 +335,8 @@ export function bindMcpSettings(projects) {
         allowed.length ? joinText(allowed, ', ') : message('tools.no-projects-allowed')])));
       if (server.transport === 'stdio') {
         const trust = server.trust;
-        const state = element('p', message(trust?.changed ? 'server.mcp-trust-changed' : trust ? 'capabilities.mcp-trusted' : 'capabilities.mcp-untrusted'));
+        const state = element('p', trust?.changed ? message('server.mcp-trust-changed') :
+          trust ? message('capabilities.mcp-trusted') : message('capabilities.mcp-untrusted'));
         state.setAttribute('role', 'status');
         card.append(state);
         if (trust) {
@@ -345,7 +346,7 @@ export function bindMcpSettings(projects) {
           fingerprint.append(signer, ' · ', element('code', trust.sha256));
           card.append(fingerprint);
         }
-        if (!trust || trust.changed) card.append(control(message(trust?.changed ? 'capabilities.mcp-retrust' : 'capabilities.mcp-trust'), (event) => {
+        if (!trust || trust.changed) card.append(control(trust?.changed ? message('capabilities.mcp-retrust') : message('capabilities.mcp-trust'), (event) => {
           if (trust?.changed || window.confirm(t('capabilities.mcp-trust-confirm'))) {
             void apply({ action: 'trust', confirmed: true }, event.currentTarget);
           }

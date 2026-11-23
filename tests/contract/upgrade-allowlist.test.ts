@@ -58,7 +58,7 @@ function seedV8(data: string, names = ['web', 'telegram-chat', 'knowledge', 'tel
   return join(web, 'web.sqlite');
 }
 
-test('0.7.0 and the intermediate ledgers reconcile to v12 and remain stable on the second run', (t) => {
+test('0.7.0 and the intermediate ledgers reconcile to v13 and remain stable on the second run', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'oep-integration-upgrade-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [state, prior, model, references] of [
@@ -85,7 +85,7 @@ test('0.7.0 and the intermediate ledgers reconcile to v12 and remain stable on t
     backup(data, copy);
     const first = JSON.parse(migrate(data));
     const second = JSON.parse(migrate(data));
-    const versions = { web: [prior, 13], 'telegram-chat': [3, 3], knowledge: [4, 4], telegram: [2, 2], runs: [1, 1] };
+    const versions = { web: [prior, 13], 'telegram-chat': [3, 3], knowledge: [3, 4], telegram: [2, 2], runs: [1, 1] };
     for (const [store, expected] of Object.entries(versions)) {
       const name = `web/${store}.sqlite`;
       const { before, after } = first[name];
@@ -353,7 +353,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
       using db = new DatabaseSync(join(web, 'knowledge.sqlite'));
       db.exec('PRAGMA user_version=1');
       reconcile(/【web\/knowledge.sqlite】.*SQLite user_version 與新版不符/);
-      db.exec('PRAGMA user_version=3');
+      db.exec('PRAGMA user_version=4');
     }
     const repeat = JSON.parse(migrate(data));
     for (const { before, after } of Object.values(repeat) as { before: unknown; after: unknown }[]) {
@@ -508,7 +508,8 @@ test('same-version repair reconciles the historical candidate schema and rejects
     const data = join(root, 'data');
     const copy = join(root, 'backup');
     const release = join(root, 'candidate');
-    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0', 'node_modules/semver']) {
+    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0',
+      'node_modules/semver', 'node_modules/fflate', 'node_modules/yaml']) {
       cpSync(path, join(release, path), { recursive: true });
     }
     const store = join(release, knowledgeStorePath);
