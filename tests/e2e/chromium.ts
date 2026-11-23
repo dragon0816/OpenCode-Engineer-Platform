@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { until, waitForExit } from '../../scripts/phase0/probe-http.ts';
 
@@ -9,6 +9,15 @@ export async function chromium(profile: string) {
     join(process.env.ProgramFiles!, 'Google/Chrome/Application/chrome.exe'),
   ].find(existsSync);
   if (!binary) throw new Error('Chromium browser unavailable');
+  // Keep test downloads inside the disposable profile instead of the user's Downloads folder.
+  const downloads = join(profile, 'downloads');
+  mkdirSync(join(profile, 'Default'), { recursive: true });
+  mkdirSync(downloads, { recursive: true });
+  const preferences = join(profile, 'Default', 'Preferences');
+  if (!existsSync(preferences)) {
+    writeFileSync(preferences, JSON.stringify({ download: { default_directory: downloads, prompt_for_download: false, directory_upgrade: true },
+      savefile: { default_directory: downloads } }));
+  }
   const browser = spawn(binary, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-first-run', '--disable-background-networking', '--window-size=1280,900', 'about:blank'],
   { windowsHide: true, stdio: 'ignore' });
