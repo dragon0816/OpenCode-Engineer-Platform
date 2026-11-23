@@ -134,7 +134,20 @@ export function parseManifest(raw: Buffer) {
   const components = {
     skills: array(definitions.skills, entry('.json')),
     workflows: array(definitions.workflows, entry('.json')),
-    pythonWorkers: array(definitions.pythonWorkers, entry('.py')),
+    pythonWorkers: array(definitions.pythonWorkers, (value) => {
+      const worker = object(value, ['id', 'version', 'entry'], ['dependencies', 'timeoutMs']);
+      const dependencies = array(worker.dependencies ?? [], (value) => {
+        const dependency = object(value, ['distribution', 'module']);
+        const distribution = string(dependency.distribution, 80);
+        const module = string(dependency.module, 80);
+        requirePlugin(/^[a-z\d][a-z\d_.-]*$/i.test(distribution) && /^[a-z_][a-z\d_]*$/i.test(module));
+        return { distribution, module };
+      }, 16);
+      unique(dependencies.map(({ distribution }) => distribution.toLowerCase().replace(/[._-]+/g, '-')));
+      const timeoutMs = worker.timeoutMs ?? 120_000;
+      requirePlugin(typeof timeoutMs === 'number' && Number.isSafeInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 600_000);
+      return { ...entry('.py')({ id: worker.id, version: worker.version, entry: worker.entry }), dependencies, timeoutMs };
+    }),
     dataSchemas: array(definitions.dataSchemas, entry('.json')),
     pages: array(definitions.pages, view),
     panels: array(definitions.panels, view),
@@ -161,7 +174,8 @@ export function parseManifest(raw: Buffer) {
 }
 
 export type PluginManifest = ReturnType<typeof parseManifest>;
-type View = { id: string; title: Localized; paragraphs: Localized[] };
+type View = { id: string; title: Localized; paragraphs: Localized[];
+  actions?: { worker: string; label: Localized; panel?: string; reviewType?: string }[] };
 
 function readViews(manifest: PluginManifest, payload: ReadonlyMap<string, Buffer>) {
   const views: View[] = [];
@@ -171,12 +185,25 @@ function readViews(manifest: PluginManifest, payload: ReadonlyMap<string, Buffer
     return strictJSON(bytes);
   };
   for (const component of [...manifest.components.pages, ...manifest.components.panels]) {
-    const page = object(json(component.entry), ['format', 'paragraphs']);
+    const page = object(json(component.entry), ['format', 'paragraphs'], ['actions']);
     requirePlugin(page.format === 'oep.plugin.page/v1');
     const keys = array(page.paragraphs, messageKey, 16);
-    const catalogs = locales.map((language) => object(json(component.strings[language]), [component.titleKey, ...keys]));
+    const actions = array(page.actions ?? [], (value) => {
+      const action = object(value, ['worker', 'labelKey'], ['panel', 'reviewType']);
+      const worker = string(action.worker);
+      const panel = action.panel === undefined ? undefined : string(action.panel);
+      const reviewType = action.reviewType === undefined ? undefined : string(action.reviewType);
+      requirePlugin(manifest.components.pages.some(({ id }) => id === component.id) &&
+        manifest.permissions.workers.includes(worker) &&
+        (panel === undefined || manifest.components.panels.some(({ id }) => id === panel)) &&
+        (reviewType === undefined || manifest.components.reviewTypes.some(({ id }) => id === reviewType)));
+      return { worker, labelKey: messageKey(action.labelKey), panel, reviewType };
+    }, 8);
+    const catalogs = locales.map((language) => object(json(component.strings[language]),
+      [...new Set([component.titleKey, ...keys, ...actions.map(({ labelKey }) => labelKey)])]));
     const label = (key: string): Localized => ({ 'zh-TW': string(catalogs[0][key], 2000), en: string(catalogs[1][key], 2000) });
-    views.push({ id: component.id, title: label(component.titleKey), paragraphs: keys.map(label) });
+    views.push({ id: component.id, title: label(component.titleKey), paragraphs: keys.map(label),
+      ...(actions.length ? { actions: actions.map(({ labelKey, ...action }) => ({ ...action, label: label(labelKey) })) } : {}) });
   }
   for (const component of [...manifest.components.dataSchemas, ...manifest.components.skills, ...manifest.components.workflows]) {
     const value = json(component.entry);
@@ -195,9 +222,14 @@ export function verifyPackage(bytes: Buffer) {
   for (const file of manifest.files) {
     const bytes = entries.get('payload/' + file.path);
     requirePlugin(bytes?.length === file.size && sha256(bytes) === file.sha256, 'digest-mismatch');
+    if (manifest.components.pythonWorkers.length) {
+      requirePlugin(!/\.(?:pyd|dll|exe|com|sys|ocx|so|dylib|whl|pyc|pth|zip)$/i.test(file.path) &&
+        !(bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 64 &&
+          bytes.readUInt32LE(60) <= bytes.length - 4 && bytes.readUInt32LE(bytes.readUInt32LE(60)) === 0x4550));
+    }
   }
   const views = readViews(manifest, entries);
-  return { manifest, digest: sha256(bytes), views, bytes };
+  return { manifest, digest: sha256(bytes), views, bytes, payload: entries };
 }
 
 export type VerifiedPlugin = ReturnType<typeof verifyPackage>;

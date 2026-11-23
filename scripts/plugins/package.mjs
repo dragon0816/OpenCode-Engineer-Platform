@@ -25,7 +25,7 @@ function main(args) {
       if (entry.isDirectory()) addPayload([...parts, entry.name]);
       else {
         if (!entry.isFile() || files.length >= entryLimit - 2) throw new Error('Invalid payload entry or too many files');
-        const { data, identity } = openWorkspaceFile(root, 'payload/' + path, fileLimit);
+        const { data, identity } = openWorkspaceFile(root, 'payload/' + path, fileLimit, undefined, 'python-payload');
         total += data.length;
         if (total > archiveLimit) throw new Error('Payload exceeds the package size limit');
         files.push({ path, size: data.length, sha256: identity.sha256 });

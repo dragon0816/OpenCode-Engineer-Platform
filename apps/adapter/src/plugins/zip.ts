@@ -20,7 +20,7 @@ export function requirePlugin(condition: unknown, code = 'invalid-package'): ass
 }
 
 export function payloadPath(path: string) {
-  return path.length <= 200 && /^[a-z\d][a-z\d._-]*(?:\/[a-z\d][a-z\d._-]*)*$/i.test(path) &&
+  return path.length <= 200 && /^[a-z\d_][a-z\d._-]*(?:\/[a-z\d_][a-z\d._-]*)*$/i.test(path) &&
     path.split('/').every((part) => part.length <= 80 && !part.endsWith('.') &&
       !/^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(part) && part.toLowerCase() !== 'auth.json');
 }

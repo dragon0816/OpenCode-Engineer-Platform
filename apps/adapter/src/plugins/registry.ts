@@ -7,6 +7,7 @@ import { checkDirectory, openWorkspaceFile } from '../runs/workspace.ts';
 import { compatibleWith, digestPattern, pluginID, sha256, verifyPackage, version } from './package.ts';
 import type { VerifiedPlugin } from './package.ts';
 import { archiveLimit, PluginError, requirePlugin } from './zip.ts';
+import { validatePythonDependencies } from './python.ts';
 
 type State = 'enabled' | 'disabled' | 'integrity-failed';
 type Package = { plugin_id: string; version: string; artifact: string; digest: string; description: string };
@@ -54,6 +55,7 @@ export class PluginRegistry {
   private readonly packages: string;
   private readonly staging: string;
   private readonly previews = new Map<string, Preview>();
+  onDeactivate?: (id: string) => void;
 
   constructor(db: DatabaseSync, dataRoot: string, oepVersion: string) {
     this.db = db;
@@ -106,8 +108,9 @@ export class PluginRegistry {
   private checked(row: Package) {
     try { return this.readArtifact(row); }
     catch {
-      this.db.prepare(`UPDATE plugin_installations SET state = 'integrity-failed', generation = ?
+      const changed = this.db.prepare(`UPDATE plugin_installations SET state = 'integrity-failed', generation = ?
         WHERE plugin_id = ? AND version = ? AND state <> 'integrity-failed'`).run(randomUUID(), row.plugin_id, row.version);
+      if (changed.changes) this.onDeactivate?.(row.plugin_id);
       throw new PluginError('integrity-failed');
     }
   }
@@ -173,6 +176,7 @@ export class PluginRegistry {
   }
 
   private acceptCurrent(row: Installation, plugin: VerifiedPlugin) {
+    validatePythonDependencies(plugin);
     const current = describe(plugin);
     requirePlugin(description(row).dataContract === current.dataContract, 'migration-unsupported');
     this.commit(() => {
@@ -180,6 +184,7 @@ export class PluginRegistry {
         .run(plugin.digest, JSON.stringify(current), row.plugin_id, row.version);
       this.db.prepare("UPDATE plugin_installations SET state = 'enabled', generation = ? WHERE plugin_id = ?").run(randomUUID(), row.plugin_id);
     });
+    this.onDeactivate?.(row.plugin_id);
   }
 
   trustCurrent(id: string, owner: string) {
@@ -221,12 +226,14 @@ export class PluginRegistry {
       return;
     }
     const details = describe(plugin);
+    validatePythonDependencies(plugin);
     if (row) {
       requirePlugin(repairing || semver.gt(selected, row.version), 'version-conflict');
       if (row.state !== 'integrity-failed') this.checked(row);
       requirePlugin(description(row).dataContract === details.dataContract, 'migration-unsupported');
     }
     this.installArchive(plugin, details, row, repairing ? tracked : undefined);
+    if (row) this.onDeactivate?.(id);
   }
 
   private installArchive(plugin: VerifiedPlugin, details: Description, row?: Installation, repair?: Package) {
@@ -275,6 +282,7 @@ export class PluginRegistry {
   disable(id: string) {
     this.installed(id);
     this.db.prepare("UPDATE plugin_installations SET state = 'disabled', generation = ? WHERE plugin_id = ? AND state = 'enabled'").run(randomUUID(), id);
+    this.onDeactivate?.(id);
   }
 
   rollback(id: string, allowIncompatible: boolean) {
@@ -288,6 +296,7 @@ export class PluginRegistry {
     // Upgrades and repairs preserve the declared data contract.
     this.db.prepare(`UPDATE plugin_installations SET version = ?, previous_version = ?, state = ?, generation = ? WHERE plugin_id = ?`)
       .run(prior.version, row.version, row.state === 'integrity-failed' ? 'disabled' : row.state, randomUUID(), id);
+    this.onDeactivate?.(id);
   }
 
   uninstall(id: string) {
@@ -298,16 +307,26 @@ export class PluginRegistry {
       this.db.prepare("INSERT INTO plugin_operations VALUES (?, ?, 'uninstall', NULL, NULL)").run(operationId, id);
       this.db.prepare('DELETE FROM plugin_installations WHERE plugin_id = ?').run(id);
     });
+    this.onDeactivate?.(id);
     try { this.cleanup({ operation_id: operationId, plugin_id: id, operation: 'uninstall', version: null }); }
     catch { return { cleanupPending: true }; }
     return { cleanupPending: false };
   }
 
-  page(id: string, pageID: string, expectedDigest: string) {
+  active(id: string, expectedDigest: string) {
     const row = this.installed(id);
     requirePlugin(row.state === 'enabled', 'disabled');
     requirePlugin(digestPattern.test(expectedDigest) && row.digest === expectedDigest, 'preview-expired');
-    const plugin = this.checked(row);
+    return { plugin: this.checked(row), generation: row.generation };
+  }
+
+  current(id: string, generation: string) {
+    const row = this.installation(id);
+    return row?.state === 'enabled' && row.generation === generation;
+  }
+
+  page(id: string, pageID: string, expectedDigest: string) {
+    const { plugin } = this.active(id, expectedDigest);
     requirePlugin(plugin.manifest.components.pages.some(({ id }) => id === pageID), 'page-not-found');
     return plugin.views.find(({ id }) => id === pageID)!;
   }
