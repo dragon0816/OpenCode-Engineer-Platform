@@ -284,3 +284,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 聽寫前請求麥克風權限，分別處理權限、裝置和語音服務錯誤，並提供雙語設定對話框。 [根因與驗收紀錄](reviews/UX_DICTATION_REPORT.md)
 - [x] 依序通過 lint、型別檢查、單元與契約測試、發行建置、三輪 Edge 驗收、發行重現性和敏感資料掃描。
 - [ ] 由審核者補跑 `test:e2e:web`，並在擁有者的 Edge 設定檔確認實際麥克風提示及語音服務狀態。
+
+## Phase 3G 切片 1 本機外掛安裝
+
+- [x] 在能力頁選檔安裝，驗證 manifest 與 SHA-256，確認權限及相容性警告，支援啟用、停用、升級、回退與移除。
+- [x] 啟動時重新驗證套件，停用發生變更的外掛並提供信任或重新安裝入口。工作台主功能與中央頁面支援繁中、英文和窄版鍵盤操作。
+- [x] 加入空清冊遷移與升級對帳，使用合成外掛驗證安裝至移除。 [切片 1 報告](reviews/PHASE3G_SLICE1_REPORT.md)
+- [ ] 補上 Windows 程序身分、ACL、網路隔離實證及 Job 路徑。接通工作資料、審核／發布與進度 API，再實測 Python 無法讀取範圍外的檔案。
+- [ ] 接通附加資料面板、領域審核及資料集註冊、資料遷移計畫和 3E 能力。BI 建置外掛、`.oepkb` 成品流通及 Share Platform 依後續切片處理。
+- [ ] 由審核者整合 `integration/0.8`，補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。
