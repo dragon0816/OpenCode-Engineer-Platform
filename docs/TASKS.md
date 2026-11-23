@@ -352,3 +352,12 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 驗證助理可引用文件及 BI 匯出庫的證據，移除外掛並重開 adapter 後仍可問答。
 - [x] 完成雙語流程截圖與有序驗證。兩輪 Chromium 零孤兒程序，發行重現性通過，敏感資料掃描零命中。
 - [ ] 擁有者用本機 BI 匯出與實際 Gateway 驗收。審核者負責 Web、Excel、安裝、升級與備份關卡。 [展示與驗證報告](reviews/PHASE3G_BI_PLUGIN_REPORT.md)
+
+## 能力頁與本機 MCP
+
+- [x] 在主功能提供雙語能力頁，集中安裝 Plugin、管理 Skill 和 MCP、預覽 Workflow，以及匯入已發布知識庫。
+- [x] 接通 OpenCode 原生 Skill、主助理預設組合、逐助理授權與數量警告。接通本機 stdio MCP 的執行檔信任、簽章和雜湊檢查及逐工作區授權。
+- [x] 通過焦點驗收及有序關卡，包含兩輪 Chromium、知識庫、Plugin、BI Plugin 合成資料、原生隔離、發行重現性及零命中掃描。
+- [ ] Phase 3E 建置 Workflow 引擎。定義 capability 對應、參數與輸出驗證、受控試跑、核准、執行紀錄和失敗恢復。另接通有獨立授權的 Skill 腳本工作程序。
+- [ ] 為 loopback HTTP MCP 建立可驗證的服務執行檔身分。以公司的 MXO AI MCP 與真實儀器完成擁有者驗收。
+- [ ] 審核者補跑 Web、Excel、安裝、升級及備份。 [能力頁驗證報告](reviews/UX_CAPABILITIES_PAGE_REPORT.md)
