@@ -11,6 +11,7 @@ import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
 import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
 import { verifyComposerAttachments } from './composer-attachments-browser.ts';
+import { verifyDictation } from './dictation-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
 import { verifyExternalHelpersInBrowser } from './external-helpers-browser.ts';
 import { dataDirectory } from './test-data.ts';
@@ -1423,25 +1424,8 @@ try {
           document.querySelector('[data-section=about]').click();
         `);
         await page.ready("document.querySelector('#about-details').textContent.includes('MIT')");
-        await page.evaluate(`
-          document.querySelector('#close-settings').click();
-          window.SpeechRecognition = class {
-            start() {
-              queueMicrotask(() => {
-                if (window.syntheticSpeechError) this.onerror({ error: window.syntheticSpeechError });
-                else this.onresult({ resultIndex: 0, results: [[{ transcript: '合成語音' }]] });
-                this.onend();
-              });
-            }
-            abort() {}
-          };
-          document.querySelector('#microphone').click();
-        `);
-        await page.ready("document.querySelector('#prompt').value === '合成語音'");
-        for (const [error, label] of [['not-allowed', '請在瀏覽器允許麥克風權限'], ['network', '無法完成聽寫']]) {
-          await page.evaluate(`window.syntheticSpeechError = ${JSON.stringify(error)}; document.querySelector('#microphone').click()`);
-          await page.ready(`document.querySelector('#error').textContent.includes(${JSON.stringify(label)})`);
-        }
+        await page.evaluate("document.querySelector('#close-settings').click()");
+        await verifyDictation(page, reload);
         const annotationIsolation = await page.evaluate<number[]>(`(async () => {
           const first = '/api/projects/default/sessions/' + ${JSON.stringify(selected)};
           const second = '/api/projects/secondary/sessions/' + ${JSON.stringify(other)};
