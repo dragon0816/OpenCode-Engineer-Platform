@@ -379,3 +379,9 @@ Slice 4B 留下的整合問題：Web 啟動器共用單一 OpenCode 執行環境
 
 - 選取、貼上、拖放與唯讀資料夾匯入共用副檔名和內容檢查。新增 JSON／JSONC、YAML、XML、LOG、INI／CFG／CONF、TOML、TSV、Python、JavaScript／TypeScript、C／C++、C#、Java、Go、Rust、PowerShell、Shell、Batch、SQL、HTML、CSS、SCPI 與 MATLAB `.m`；各格式以 `text/plain` 提供 UTF-8 文字。保留 TXT、Markdown、CSV、HTM、Excel、PDF 與圖片。
 - 文字必須通過嚴格 UTF-8 解碼和控制字元檢查。沿用單檔 20 MiB、會話配額 200 MiB、一則訊息的文字總量 1 MiB，以及附加資料的文字預覽上限 1 MiB。沿用附件的資料分類。HTML 在右側以原始文字呈現。
+
+## 2026-11-23 外部模型來源的使用方式與資料規則簡化
+
+- **決策：** 選用 Codex／Claude Code 的助理與一般助理相同，直接對話即可，移除「準備外部交辦」按鈕與定稿對話框。資料規則改為預設只擋「機密」標記的資料（含其衍生內容），未分級資料可送出；設定中保留「嚴格模式：只允許標為公開的資料」（預設關閉）。送出時與執行時各檢查一次，逐次確認預設關閉。
+- **理由：** 擁有者決定；原流程需額外定稿步驟，且未分級即擋下造成大量摩擦。
+- **捨棄的替代方案：** 原 D2 預設（未分級一律擋下）改為嚴格模式選項保留。
