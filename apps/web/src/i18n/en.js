@@ -1,5 +1,6 @@
 export default {
   'externalHelpers.settings.title': "External Helpers",
+  'externalHelpers.settings.signInHelp': "Use your own provider account under the helper’s dedicated Windows identity.",
   'externalHelpers.settings.recheck': "Check status",
   'externalHelpers.status.installationUnknown': "CLI installation unchecked",
   'externalHelpers.status.detected': "Supported CLI detected",

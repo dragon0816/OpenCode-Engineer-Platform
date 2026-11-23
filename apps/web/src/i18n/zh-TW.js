@@ -1,5 +1,6 @@
 export default {
   'externalHelpers.settings.title': "外部幫手",
+  'externalHelpers.settings.signInHelp': "請以幫手專用的 Windows 身分，登入你自己的供應商帳號。",
   'externalHelpers.settings.recheck': "重新檢查狀態",
   'externalHelpers.status.installationUnknown': "尚未檢查 CLI 安裝狀態",
   'externalHelpers.status.detected': "已偵測到支援的 CLI",
