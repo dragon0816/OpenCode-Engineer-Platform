@@ -1000,6 +1000,7 @@ export default {
   'ui.add-question-set': "Add question set",
   'ui.add-read-only-folder': "Add read-only folder",
   'ui.add-server': "Add server",
+  'ui.explanation': "About this",
   'ui.advanced': "Advanced",
   'ui.advanced-import-and-export': "Advanced import and export",
   'ui.all': "All",

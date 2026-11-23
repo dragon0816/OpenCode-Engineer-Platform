@@ -1000,6 +1000,7 @@ export default {
   'ui.add-question-set': "新增題集",
   'ui.add-read-only-folder': "加入唯讀資料夾",
   'ui.add-server': "新增伺服器",
+  'ui.explanation': "說明",
   'ui.advanced': "進階",
   'ui.advanced-import-and-export': "進階匯入與匯出",
   'ui.all': "全部",
