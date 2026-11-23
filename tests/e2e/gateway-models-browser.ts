@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startAdapter } from '../../apps/adapter/src/main.ts';
 import { startRuntime } from '../../apps/launcher/src/runtime.ts';
@@ -16,6 +17,9 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
   mkdirSync(profile, { recursive: true });
   const [a, b, c, d] = ['synthetic-model-a', 'synthetic-model-b', 'synthetic-model-c', 'synthetic-model-d'];
   const key = randomUUID();
+  const upstreamKey = randomUUID();
+  const apiBase = 'https://synthetic-upstream.invalid/v1';
+  let mappedModel = 'gpt-5.5';
   let ids = [a, b, c];
   let failDiscovery = false;
   let discoveries = 0;
@@ -30,6 +34,13 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
       discoveries++;
       if (failDiscovery) send(response, 503, { detail: key });
       else send(response, 200, { object: 'list', data: ids.map((id) => ({ object: 'model', id })) });
+      return;
+    }
+    if (request.method === 'GET' && request.url === '/v1/model/info') {
+      send(response, 200, { data: [
+        { model_name: a, litellm_params: { model: 'hosted_vllm/' + mappedModel, api_base: apiBase, api_key: upstreamKey } },
+        { model_name: b, litellm_params: { model: 'openai/' + b, api_base: apiBase, api_key: upstreamKey } },
+      ] });
       return;
     }
     assert.equal(request.method, 'POST');
@@ -87,6 +98,54 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     };
     const values = (selector: string) => evaluate<string[]>(
       `[...document.querySelectorAll(${JSON.stringify(selector)})].map(element => element.value)`);
+    const noteField = `#model-health li:has(input[value="${a}"]) .model-note`;
+    const setValue = (selector: string, value: string) => evaluate(`{
+      const field = document.querySelector(${JSON.stringify(selector)});
+      field.value = ${JSON.stringify(value)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }`);
+    const visible = (selector: string) => ready(`document.querySelector(${JSON.stringify(selector)})?.checkVisibility()`);
+    async function assertPicker(selector: string, annotation: string) {
+      await visible(selector);
+      const shown = await evaluate(`(() => {
+        const picker = document.querySelector(${JSON.stringify(selector)});
+        const option = [...picker.options].find(option => option.value === ${JSON.stringify(a)});
+        const hint = option.querySelector('.model-annotation');
+        return { name: option.textContent.includes(${JSON.stringify(a)}), note: hint?.textContent.trim(),
+          muted: Boolean(hint && getComputedStyle(hint).color !== getComputedStyle(option).color),
+          appearance: getComputedStyle(picker).appearance,
+          identity: picker.querySelector('option[value="${b}"] .model-annotation') === null };
+      })()`);
+      assert.deepEqual(shown, { name: true, note: annotation, muted: true, appearance: 'base-select', identity: true });
+    }
+    async function checkPickers(annotation: string, prefill: string) {
+      for (const locale of ['zh-TW', 'en'] as const) {
+        const label = locale === 'zh-TW' ? '模型備註' : 'Model note';
+        await selectLocale(browser, locale);
+        await settings();
+        assert.deepEqual(await evaluate(`(() => {
+          const note = document.querySelector(${JSON.stringify(noteField)});
+          return { value: note.value, placeholder: note.placeholder, label: note.getAttribute('aria-label'),
+            model: document.getElementById(note.getAttribute('aria-describedby')).textContent };
+        })()`), { value: prefill, placeholder: label, label, model: a });
+        await assertPicker('#default-alias', annotation);
+        await click('#open-chat');
+        await assertPicker('#session-alias', annotation);
+        await click('[data-agent="main"] .agent-row-open');
+        await visible('#agent-tab-model');
+        await click('#agent-tab-model');
+        await assertPicker('#agent-model', annotation);
+        await click('#close-agent');
+        await click('#new-agent');
+        await visible('#assistant-name');
+        await setValue('#assistant-name', 'Synthetic model note assistant');
+        await click('#agent-next');
+        await assertPicker('#agent-model', annotation);
+        await click('#close-agent');
+        await ready("document.querySelector('#agent-view').hidden");
+      }
+      await selectLocale(browser, 'zh-TW');
+    }
     const composerModels = async (aliases: string[]) => {
       assert.deepEqual(await values('#session-alias optgroup:first-child option'), aliases);
       assert.deepEqual(await values('#session-alias option'), [...aliases, 'external:codex_cli', 'external:claude_code']);
@@ -101,10 +160,11 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
       .then(response => response.json()).then(value => value.session.alias)`);
     await openRuntime();
     assert.equal(discoveries, 1);
-    assert.deepEqual(await values('#model-health input'), [a, b, c]);
+    assert.deepEqual(await values('#model-health input[type=checkbox]'), [a, b, c]);
     assert.deepEqual(await values('#model-health input:checked'), [a, b]);
     await click('#new-session');
     await ready("!document.querySelector('#session-alias').disabled");
+    await checkPickers('→ gpt-5.5', 'gpt-5.5');
     const oldSession = await evaluate<string>("localStorage.getItem('oep.activeSession.default')");
     assert.equal(await sessionAlias(oldSession), a);
     await evaluate(`{
@@ -121,7 +181,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     failDiscovery = true;
     await click('#refresh-models');
     await status('已保留目前的清單');
-    assert.deepEqual(await values('#model-health input'), ids);
+    assert.deepEqual(await values('#model-health input[type=checkbox]'), ids);
     assert.equal(discoveries, 3);
     await evaluate(`document.querySelector(${JSON.stringify(choice(c))}).closest('li').querySelector('button').click()`);
     await ready(`document.querySelector(${JSON.stringify(choice(c))}).closest('li').querySelector('small').textContent === '可用'`);
@@ -138,6 +198,15 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     const draftStatus = (dirty: boolean) => ready(`document.querySelector('#model-unsaved').textContent === ${JSON.stringify(dirty ? unsaved : '')} &&
       document.querySelector('#save-model').disabled === ${!dirty}`);
     await draftStatus(false);
+    const ownerNote = 'Owner alias note';
+    await setValue(noteField, ownerNote);
+    await draftStatus(true);
+    await click('#save-model');
+    await status('已儲存');
+    await draftStatus(false);
+    assert.equal(await evaluate("document.querySelector('#model-restart-bar').hidden"), true);
+    failDiscovery = false;
+    mappedModel = 'gpt-5.4';
     await selectDefault(b);
     await draftStatus(true);
     await selectDefault(a);
@@ -218,6 +287,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     assert.deepEqual(runtime!.aliases, [a, c]);
     assert.deepEqual([...runtime!.knowledge!.benchmarks.keys()], [a, c]);
     await ready("!document.querySelector('#send').disabled");
+    await checkPickers('· ' + ownerNote, ownerNote);
     await composerModels([a, c]);
     assert.match(await evaluate<string>("document.querySelector('#session-alias option:checked').textContent"), /設定預設 · synthetic-model-c/);
     assert.match(await evaluate<string>("document.querySelector('#session-model-help').textContent"), /下一則訊息/);
@@ -244,8 +314,16 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     assert.equal(await evaluate("document.querySelector('#model-restart-bar').hidden"), true);
     await status('已套用');
     assert.deepEqual(await values('#model-health input:checked'), [a, c]);
-    const visible = await evaluate<string>("fetch('/api/settings/model').then(response => response.text()).then(data => data + document.documentElement.outerHTML)");
-    assert.ok(!visible.includes(key) && !visible.includes(gateway.url));
+    const publicData = await evaluate<string>(`Promise.all(['/api/settings/model', '/api/agents'].map(path =>
+      fetch(path).then(response => response.text()))).then(data => data.join('') + document.documentElement.outerHTML)`);
+    assert.ok(!publicData.includes(key) && !publicData.includes(gateway.url));
+    using db = new DatabaseSync(join(root, 'web.sqlite'), { readOnly: true });
+    const notes = db.prepare('SELECT alias, mapped_model, note FROM web_model_notes ORDER BY alias').all();
+    assert.deepEqual(notes.map(({ alias, mapped_model, note }) => ({ alias, mapped_model, note })),
+      [{ alias: a, mapped_model: mappedModel, note: ownerNote }]);
+    for (const marker of [apiBase, new URL(apiBase).hostname, upstreamKey, 'api_base', 'api_key']) {
+      assert.equal(publicData.includes(marker) || JSON.stringify(notes).includes(marker), false);
+    }
     await click(choice(d));
     await draftStatus(true);
     assert.equal(await evaluate("document.querySelector('#model-settings-status').textContent"), '');
@@ -283,7 +361,7 @@ export async function verifyGatewayModelsInBrowser(root: string, capture: boolea
     await click('#choose-more-models');
     await ready("!document.querySelector('#settings-view').hidden && !document.querySelector('#settings-model').hidden");
     assert.deepEqual(await values('#model-health input:checked'), [c]);
-    console.log('Chromium verified model discovery, unsaved edits and confirmation, automatic and deferred apply, reload, composer hint, default and session fallback.');
+    console.log('Chromium verified model discovery, private metadata omission, alias notes in four pickers in zh-TW and en, unsaved edits and confirmation, automatic and deferred apply, reload, composer hint, default and session fallback.');
   } finally {
     releaseBusy.resolve();
     try { await page?.close(); }

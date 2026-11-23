@@ -199,6 +199,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 
 - [x] 探索並保存閘道模型清單，提供繁中及英文的模型勾選、測試、預設與閒置重啟。會話可保留紀錄並在原模型移除後改用預設模型，知識庫品質檢查沿用已套用的模型選擇。 [驗收紀錄](reviews/PHASE3A_GATEWAY_MODELS_REPORT.md)
 - [x] 模型設定顯示未儲存提示，離開前確認捨棄變更。「儲存並套用」在閒置時自動生效，對話只有預設模型時可直接前往模型設定。 [驗收紀錄](reviews/PHASE3A_MODEL_SETTINGS_UX_REPORT.md)
+- [x] 顯示 LiteLLM 別名對應與擁有者備註，涵蓋模型設定、助理模型頁籤、建立精靈與對話選單。 [驗收紀錄](reviews/UX_MODEL_ALIAS_NOTES_REPORT.md)
 - [ ] 由審核者補跑執行中 OEP 阻擋的 Web HTTP、真模型 Excel、安裝、升級及備份還原驗收。
 
 ## 2026-11-22 升級與測試強化

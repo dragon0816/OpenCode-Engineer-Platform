@@ -42,6 +42,19 @@ const loginLabel = ({ login, account }) => login === 'signedIn' && account ?
 
 export const modelChoice = (source, alias) => source === 'gateway' ? alias ?? '' : `external:${source}`;
 
+export function gatewayModelOption(alias, notes, label = alias) {
+  const option = optionText(label, alias);
+  const { note, mappedModel } = notes?.[alias] ?? {};
+  const annotation = note ?? mappedModel;
+  if (annotation && annotation !== alias) {
+    const hint = node('span', note == null ? message('model.mapped-to', { model: mappedModel }) : ' · ' + note);
+    hint.className = 'model-annotation';
+    hint.dataset.uiContent = '';
+    option.append(hint);
+  }
+  return option;
+}
+
 export function groupModelOptions(select, gatewayOptions, externalModels, selected) {
   const gateway = node('optgroup');
   setAttribute(gateway, 'label', message('externalHelpers.models.gateway'));

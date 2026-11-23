@@ -10,7 +10,7 @@ import { agentAvatar, agentIntroduction, agentName, bindAgents, workspaceName } 
 import { bindChannels, channelName } from './channels.js';
 import { bindDelegationResults } from './delegations.js';
 import { bindPlugins } from './plugins.js';
-import { classificationControl, confirmExternalTurn, externalModelBlock, groupModelOptions, loadExternalSettings, modelChoice,
+import { classificationControl, confirmExternalTurn, externalModelBlock, gatewayModelOption, groupModelOptions, loadExternalSettings, modelChoice,
   openExternalLogin } from './external-helpers.js';
 import { pastedLocalPaths } from './local-paths.js';
 
@@ -1812,12 +1812,12 @@ const modelApplyCookie = 'oep_model_apply';
 const modelTests = new Map();
 let modelSettings;
 let selectedModels = new Set();
+let modelNoteEdits = new Map();
 let modelBusy = false;
 let modelRetry;
-function aliasOptions(select, selected, aliases, configuredDefault) {
-  select.replaceChildren(...aliases.map((alias) => optionText(
-    alias === configuredDefault ? message('chat.default-in-settings-model', { model: alias }) : alias, alias)));
-  select.value = selected ?? '';
+function updateDefaultAliasOptions(preferred) {
+  defaultAlias.replaceChildren(...[...selectedModels].map((alias) => gatewayModelOption(alias, modelSettings.modelNotes)));
+  defaultAlias.value = selectedModels.has(preferred) ? preferred : [...selectedModels][0] ?? '';
 }
 function updateSessionAlias() {
   const session = current && knownSessions.get(current.id);
@@ -1825,8 +1825,8 @@ function updateSessionAlias() {
   const external = externalModels.find(({ provider }) => provider === source);
   const aliases = modelSettings?.aliases.map(({ alias }) => alias) ?? [];
   const fallback = !external && session && modelSettings && !aliases.includes(session.alias) ? modelSettings.defaultAlias : undefined;
-  groupModelOptions(sessionAlias, aliases.map((alias) => optionText(alias === modelSettings.defaultAlias ?
-    message('chat.default-in-settings-model', { model: alias }) : alias, alias)), externalModels,
+  groupModelOptions(sessionAlias, aliases.map((alias) => gatewayModelOption(alias, modelSettings.modelNotes,
+    alias === modelSettings.defaultAlias ? message('chat.default-in-settings-model', { model: alias }) : alias)), externalModels,
     modelChoice(source, fallback ?? session?.alias));
   sessionAlias.disabled = !session || !modelSettings || Boolean(current.aliasUpdating) || stopped;
   find('session-model-hint').hidden = Boolean(external) || aliases.length !== 1 || modelSettings.selected.length !== 1;
@@ -1857,14 +1857,14 @@ function modelDraftChanged() {
 function applyModel(value, draft) {
   modelSettings = value;
   selectedModels = new Set(draft?.selected.filter((id) => value.choices.includes(id)) ?? value.selected);
-  const picked = draft?.alias ?? value.configuredDefaultAlias;
-  aliasOptions(defaultAlias, selectedModels.has(picked) ? picked : [...selectedModels][0], [...selectedModels]);
+  modelNoteEdits = new Map(Object.entries(draft?.notes ?? {}).filter(([id]) => value.choices.includes(id)));
+  updateDefaultAliasOptions(draft?.alias ?? value.configuredDefaultAlias);
   setText(find('model-credentials'), value.credentialsConfigured ? message('chat.credentials-configured') : message('chat.credentials-missing'));
   setText(find('model-discovery'), value.discoveredAt === null ? message('model.built-ins') :
     message('model.last-refresh', { date: formatDate(value.discoveredAt) }));
   setText(find('model-limit'), message('model.selection-limit', { max: value.maxSelected }));
   const health = new Map(value.aliases.map(({ alias, healthy }) => [alias, healthy]));
-  modelList.replaceChildren(...value.choices.map((alias) => {
+  modelList.replaceChildren(...value.choices.map((alias, index) => {
     const row = node('li');
     const label = node('label');
     const choice = node('input');
@@ -1872,16 +1872,32 @@ function applyModel(value, draft) {
     choice.value = alias;
     choice.checked = selectedModels.has(alias);
     const name = node('span', alias);
+    name.id = 'model-note-alias-' + index;
     name.dataset.uiContent = '';
     label.append(choice, name);
+    const note = node('input');
+    note.type = 'text';
+    note.className = 'model-note';
+    note.maxLength = 160;
+    const savedNote = value.modelNotes?.[alias];
+    const prefill = savedNote?.note ?? savedNote?.mappedModel ?? '';
+    note.value = modelNoteEdits.get(alias) ?? prefill;
+    note.setAttribute('aria-describedby', name.id);
+    setAttribute(note, 'aria-label', message('model.note-placeholder'));
+    setAttribute(note, 'placeholder', message('model.note-placeholder'));
+    note.addEventListener('input', () => {
+      const text = note.value.trim();
+      if (text === prefill) modelNoteEdits.delete(alias);
+      else modelNoteEdits.set(alias, text);
+      modelDraftChanged();
+    });
     const status = node('small');
     const showHealth = (healthy) => setText(status, healthy === undefined ? '' : healthy ? message('chat.available') : message('chat.check-failed'));
     showHealth(modelTests.get(alias) ?? health.get(alias));
     choice.addEventListener('change', () => {
       if (choice.checked) selectedModels.add(alias);
       else selectedModels.delete(alias);
-      const previous = defaultAlias.value;
-      aliasOptions(defaultAlias, selectedModels.has(previous) ? previous : [...selectedModels][0], [...selectedModels]);
+      updateDefaultAliasOptions(defaultAlias.value);
       modelDraftChanged();
     });
     const test = node('button', message('model.test'));
@@ -1900,7 +1916,7 @@ function applyModel(value, draft) {
       finally { modelBusy = false; modelControls(); }
     });
     status.setAttribute('role', 'status');
-    row.append(label, status, test);
+    row.append(label, status, test, note);
     return row;
   }));
   find('model-restart-bar').hidden = !value.restartRequired;
@@ -1909,21 +1925,23 @@ function applyModel(value, draft) {
 }
 async function updateModel(action) {
   if (modelBusy) return;
-  const draft = { alias: defaultAlias.value, selected: [...selectedModels] };
+  const draft = { alias: defaultAlias.value, selected: [...selectedModels], notes: Object.fromEntries(modelNoteEdits) };
   const save = action === 'save';
+  const applySelection = save && modelSelectionDirty();
   let applySaved = false;
   if (save) {
-    cancelModelRetry();
+    if (applySelection) cancelModelRetry();
     settingsSaving = true;
   }
   modelBusy = true;
   modelControls();
   setText(modelStatus, save ? message('chat.saving') : action === 'refresh' ? message('model.refreshing') : message('chat.checking'));
   try {
-    const value = await request('/api/settings/model' + (save ? '' : '/' + action), { data: save ? draft : {} });
+    const data = save ? (applySelection ? draft : { notes: draft.notes }) : {};
+    const value = await request('/api/settings/model' + (save ? '' : '/' + action), { data });
     if (action === 'recheck') for (const { alias } of value.aliases) modelTests.delete(alias);
     applyModel(value, !save && modelDirty() ? draft : undefined);
-    applySaved = save && value.restartRequired && value.canRestart;
+    applySaved = applySelection && value.restartRequired && value.canRestart;
     const status = save ? message('chat.saved') : action === 'recheck' ? message('chat.recheck-complete') :
       value.refreshed ? message('model.refreshed') : message('model.refresh-failed');
     setText(modelStatus, status);
@@ -2078,9 +2096,12 @@ sessionAlias.addEventListener('change', async () => {
   }
 });
 find('session-external-model-settings').addEventListener('click', () => openAgentSettings('external-helpers'));
-function modelDirty() {
+function modelSelectionDirty() {
   return modelSettings && (defaultAlias.value !== modelSettings.configuredDefaultAlias ||
     selectedModels.size !== modelSettings.selected.length || modelSettings.selected.some((id) => !selectedModels.has(id)));
+}
+function modelDirty() {
+  return modelSelectionDirty() || modelNoteEdits.size > 0;
 }
 const limitLabels = {
   recentMessages: message('chat.recent-messages'), historyBytes: message('chat.history-size-limit'),

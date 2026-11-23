@@ -593,8 +593,22 @@ summary { cursor: pointer; }
 #model-health li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
 #model-health label { display: flex; align-items: baseline; gap: var(--space-2); }
 #model-health label input { flex: none; margin-inline-start: 0; }
+#model-health label span { overflow-wrap: anywhere; }
+#model-health li + li { margin-block-start: var(--space-2); }
+#model-health .model-note { grid-column: 1 / -1; min-width: 0; color: var(--muted); }
 #model-health li button { grid-column: 3; }
 #model-health li small:empty, #session-model-fallback:empty { display: none; }
+.model-annotation { color: var(--muted); }
+@supports (appearance: base-select) {
+  select:has(.model-annotation), select:has(.model-annotation)::picker(select) { appearance: base-select; }
+  select:has(.model-annotation)::picker(select) {
+    max-width: calc(100vw - var(--page-gutter) * 2);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  select:has(.model-annotation) option { display: block; overflow-wrap: anywhere; }
+}
 #limit-fields input { width: min(100%, 12ch); font: inherit; }
 #settings-integrations li { margin-bottom: var(--space-2); }
 
