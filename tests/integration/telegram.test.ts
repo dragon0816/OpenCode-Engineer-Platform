@@ -142,7 +142,7 @@ test('paired channel settings verify a third bot, route specialist sessions and 
     const post = (input: object, authorized = headers) =>
       fetch(endpoint, { method: 'POST', headers: authorized, body: JSON.stringify(input) });
     const list = async () => (await (await fetch(endpoint, { headers })).json()).accounts as {
-      accountId: string; agentId: string; credentialRef: string; bindingRevision: number; pollState: string; replyLocale: string;
+      accountId: string; agentId: string; bindingRevision: number; pollState: string; replyLocale: string;
     }[];
     const expect = async (response: Response, status: number, code: string) => {
       assert.equal(response.status, status);
@@ -160,12 +160,16 @@ test('paired channel settings verify a third bot, route specialist sessions and 
     assert.deepEqual(created.map((response) => response.status).sort(), [200, 409]);
     const account = (await list()).find(({ agentId }) => agentId === 'analysis')!;
     assert.equal(account.replyLocale, 'en');
-    const availableRef = [primaryRef, alternateRef].find((ref) => ref !== account.credentialRef)!;
+    using registry = new DatabaseSync(join(root, 'web.sqlite'), { readOnly: true });
+    const currentRef = registry.prepare('SELECT credential_ref FROM channel_accounts WHERE id=?').get(account.accountId)?.credential_ref as string;
+    assert.ok([primaryRef, alternateRef].includes(currentRef));
+    assert.equal(Object.hasOwn(account, 'credentialRef'), false);
+    const availableRef = [primaryRef, alternateRef].find((ref) => ref !== currentRef)!;
     const duplicate = await created.find((response) => response.status === 409)!.json();
     assert.equal(duplicate.errorDetail.code, 'CHANNEL_ACCOUNT_IN_USE');
     assert.deepEqual(duplicate.errorDetail.params, { accountId: account.accountId, agentId: 'analysis' });
     await expect(await post({ action: 'verify', credentialRef: availableRef }), 409, 'CHANNEL_ACCOUNT_IN_USE');
-    assert(!(await (await fetch(endpoint, { headers })).text()).includes(credentials[account.credentialRef]));
+    assert(!(await (await fetch(endpoint, { headers })).text()).includes(credentials[currentRef]));
     await ready(() => prompts.some(({ text }) => text.startsWith('Synthetic input 73 event 1')));
     const rebind = { action: 'rebind', accountId: account.accountId, agentId: 'main', credentialRef: availableRef,
       bindingRevision: account.bindingRevision, confirmed: true };

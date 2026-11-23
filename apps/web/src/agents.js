@@ -1,6 +1,7 @@
 import { bindFilePicker, message, optionText, resolveText, setAttribute, setText, t } from './i18n.js';
 import { errorText, projectLabel, request } from './api.js';
 import { classificationControl } from './external-helpers.js';
+import { cancelTelegramSetup, setupReady, telegramSetup } from './telegram-setup.js';
 
 const steps = ['basic', 'model', 'knowledge', 'ability', 'channel', 'trigger', 'confirm'];
 const detailTabs = ['basic', 'model', 'knowledge', 'channel', 'trigger', 'ability'];
@@ -68,7 +69,7 @@ async function encodeAvatar(file) {
   return btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (byte) => String.fromCharCode(byte)).join(''));
 }
 
-export function bindAgents({ onChange, close, openChannels, openMcp }) {
+export function bindAgents({ onChange, close, openChannels, openMcp, deleteAgent, restoreAgent }) {
   const view = document.getElementById('agent-view');
   const title = document.getElementById('agent-title');
   const tabs = document.getElementById('agent-tabs');
@@ -87,6 +88,7 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
   let busy = false;
   let generation = 0;
   let channel;
+  let tokenSetup;
   let connections = [];
   const controls = new Map();
   let avatarReset;
@@ -225,40 +227,41 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
   function channelFields(parent) {
     field(parent, 'replyLocale', replyLanguage(draft.replyLocale), 'agent-reply-locale');
     if (!wizard) {
-      parent.append(node('p', entry.channels.length ? entry.channels.map((item) => item.botName || item.accountId).join(', ') :
-        message('agents.no-channel')), agentButton(message('channels.title'), openChannels));
+      for (const { accountId, botName } of entry.channels) {
+        const row = node('div', undefined, 'agent-channel-token');
+        row.append(node('p', botName ? message('channels.token-configured-bot', { bot: botName }) :
+          message('channels.token-configured')), agentButton(message('channels.replace-token'), () => openChannels(accountId)));
+        parent.append(row);
+      }
+      if (!entry.channels.length) parent.append(node('p', message('agents.no-channel')));
+      parent.append(agentButton(message('channels.title'), () => openChannels()));
       return;
     }
     const select = field(parent, 'channel', node('select'), 'agent-channel', message('agents.connection'));
-    function showChoices() {
-      select.replaceChildren(optionText(message('agents.skip-channel'), ''),
-        ...connections.map((item) => optionText(item.botName || item.accountId || item.credentialRef, item.key)));
-      select.value = channel?.key ?? '';
+    select.append(optionText(message('agents.skip-channel'), ''), ...connections.map((item) =>
+      optionText(item.botName || message('channels.bot'), item.accountId)));
+    select.value = channel?.accountId ?? '';
+    const skip = agentButton(message('agents.skip-channel'), () => clearSetup());
+    skip.hidden = !tokenSetup;
+    const renderSetup = () => telegramSetup('agent-channel', { initial: tokenSetup, onChange(next) {
+      tokenSetup = next;
+      if (next) { select.value = ''; channel = undefined; }
+      skip.hidden = !next;
+    } });
+    let setupControl = renderSetup();
+    function clearSetup() {
+      cancelTelegramSetup(tokenSetup);
+      tokenSetup = undefined;
+      const next = renderSetup();
+      setupControl.replaceWith(next);
+      setupControl = next;
+      skip.hidden = true;
     }
-    select.addEventListener('change', () => { channel = connections.find((item) => item.key === select.value); });
-    showChoices();
-    const reference = node('input');
-    reference.id = 'agent-channel-reference';
-    reference.autocomplete = 'off';
-    reference.spellcheck = false;
-    const label = node('label', message('channels.reference'));
-    label.htmlFor = reference.id;
-    const verify = agentButton(message('channels.verify'), async () => {
-      verify.disabled = true;
-      const version = generation;
-      try {
-        const credentialRef = reference.value.trim();
-        const result = await request('/api/settings/channels', { data: { action: 'verify', credentialRef } });
-        if (version !== generation || !select.isConnected) return;
-        channel = { key: credentialRef, credentialRef, botName: result.botName };
-        connections = connections.filter(({ key }) => key !== credentialRef).concat(channel);
-        reference.value = '';
-        showChoices();
-        setText(status, message('channels.verified'));
-      } catch (error) { if (version === generation && select.isConnected) setText(status, errorText(error)); }
-      finally { verify.disabled = false; }
+    select.addEventListener('change', () => {
+      channel = connections.find((item) => item.accountId === select.value);
+      clearSetup();
     });
-    parent.append(node('p', message('channels.secure-help')), label, reference, verify);
+    parent.append(node('p', message('channels.wizard-help')), setupControl, skip);
   }
 
   function trigger(parent) {
@@ -273,7 +276,7 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       [fieldLabels.defaultModel, draft.defaultModel || message('agents.follow-global')],
       [message('agents.read-vaults'), lists(draft.knowledgeReads, snapshot.vaults, 'title')],
       [message('ui.external-tools'), lists(draft.mcpGrants, snapshot.tools, 'name')],
-      [message('agents.connection'), channel?.botName || channel?.accountId || channel?.credentialRef],
+      [message('agents.connection'), (tokenSetup || channel) && (tokenSetup?.botName || channel?.botName || message('channels.bot'))],
       [fieldLabels.replyLocale, draft.replyLocale === 'en' ? message('ui.english') : message('ui.traditional-chinese')],
     ]) {
       const description = node('dd', value || message('agents.none'));
@@ -347,7 +350,7 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       panes.append(heading);
       draw[steps[step]](panes);
       if (step > 0) actions.append(agentButton(message('agents.previous'), async () => {
-        try { await capture(); step--; render(); document.getElementById('agent-step-title').focus(); }
+        try { await capture(); if (tokenSetup?.checking) tokenSetup = undefined; step--; render(); document.getElementById('agent-step-title').focus(); }
         catch (error) { setText(status, error.message); }
       }));
     } else {
@@ -377,11 +380,29 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
     if (submit.disabled) for (const input of panes.querySelectorAll('input, textarea, select, .file-picker button, #avatar-reset')) {
       input.disabled = true;
     }
-    actions.append(submit);
+    if (entry?.state !== 'archived') actions.append(submit);
     if (wizard) {
       const cancel = agentButton(message('agents.cancel'), close);
       cancel.id = 'agent-cancel';
       actions.append(cancel);
+    } else if (entry.builtin) {
+      const help = node('small', message('agents.builtin-delete-help'));
+      help.id = 'builtin-agent-help';
+      actions.append(help);
+    } else if (entry.state === 'archived') {
+      const restore = agentButton(message('agents.restore'), async () => {
+        restore.disabled = true;
+        try { await restoreAgent(entry); }
+        catch (error) { setText(status, errorText(error)); }
+        finally { restore.disabled = false; }
+      });
+      restore.id = 'restore-agent';
+      actions.append(restore);
+    } else {
+      const remove = agentButton(message('agents.delete'), () => deleteAgent(entry, remove));
+      remove.id = 'delete-agent';
+      remove.className = 'danger-action';
+      actions.append(remove);
     }
   }
 
@@ -398,6 +419,10 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
     busy = true;
     for (const button of actions.querySelectorAll('button')) button.disabled = true;
     try {
+      if (wizard && steps[step] === 'channel' && tokenSetup && !setupReady(tokenSetup)) {
+        setText(status, tokenSetup.checking ? message('channels.checking-token') : message('channels.finish-owner-confirmation'));
+        return;
+      }
       await capture();
       if (wizard && step < steps.length - 1) {
         step++;
@@ -408,12 +433,14 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       setText(status, message('chat.saving'));
       const settings = Object.fromEntries(detailFields.filter((key) => draft[key] !== undefined &&
         (wizard || JSON.stringify(draft[key]) !== JSON.stringify(original[key]))).map((key) => [key, draft[key]]));
-      const update = wizard ? { ...settings, revision: snapshot.revision, ...(channel && { channel: channel.accountId ?
-        { accountId: channel.accountId, bindingRevision: channel.bindingRevision } : { credentialRef: channel.credentialRef } }) } :
+      const connection = tokenSetup ? { setupId: tokenSetup.setupId, ownerConfirmed: tokenSetup.ownerConfirmed === true } :
+        channel && { accountId: channel.accountId, bindingRevision: channel.bindingRevision };
+      const update = wizard ? { ...settings, revision: snapshot.revision, ...(connection && { channel: connection }) } :
         { ...settings, action: 'edit', revision: entry.revision };
       const detail = Object.keys(settings).length || wizard ? await request(wizard ? '/api/agents' : '/api/agents/' + entry.id,
         { data: update }) : snapshot;
       const wasWizard = wizard;
+      tokenSetup = undefined;
       applyDetail(detail, wasWizard ? 0 : tab);
       if (wasWizard) title.focus();
       else document.getElementById('save-assistant').focus();
@@ -464,6 +491,7 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
       wizard = true;
       step = 0;
       channel = undefined;
+      tokenSetup = undefined;
       connections = channels.accounts.filter(({ verified, state, handler }) => verified && state === 'disabled' && handler === 'chat')
         .map((item) => ({ ...item, key: item.accountId }));
       draft = newAgentValues();
@@ -489,10 +517,18 @@ export function bindAgents({ onChange, close, openChannels, openMcp }) {
     if (view.hidden) return true;
     if (busy || dirty() && !window.confirm(t('chat.discard-unsaved-settings'))) return false;
     generation++;
+    cancelTelegramSetup(tokenSetup);
+    tokenSetup = undefined;
     draft = undefined;
     view.hidden = true;
     return true;
   }
 
-  return { open, leave, dirty };
+  return { open, leave, dirty, lifecycle(detail) {
+    if (!view.hidden && !wizard && draft && entry?.id === detail.agent.id) {
+      applyDetail(detail, tab);
+      return true;
+    }
+    return false;
+  } };
 }

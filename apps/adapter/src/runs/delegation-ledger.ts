@@ -38,6 +38,32 @@ export const budgetFields = {
 const budgetEntries = Object.entries(budgetFields);
 export type DelegationBudgets = Record<keyof typeof budgetFields, number>;
 
+function preset(count: number, minutes: number, requests: number, queue: number): DelegationBudgets {
+  return { delegationsPerMessage: count, executionMsPerDelegation: minutes * 60_000, modelRequestsPerDelegation: requests,
+    toolCallsPerDelegation: requests * 3, modelRequestsPerMessage: requests * count, toolCallsPerMessage: requests * 3 * count,
+    queueMs: queue * 60_000 };
+}
+
+export const delegationPresets = { lean: preset(2, 3, 6, 5), standard: preset(3, 5, 10, 10), relaxed: preset(5, 10, 20, 20) };
+type BudgetChoice = keyof typeof delegationPresets | 'custom';
+export function isDelegationPreset(value: unknown): value is keyof typeof delegationPresets {
+  return typeof value === 'string' && Object.hasOwn(delegationPresets, value);
+}
+
+const budgetChoiceSchema = `CREATE TABLE delegation_budget_choice (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  choice TEXT NOT NULL CHECK(choice IN ('lean','standard','relaxed','custom'))
+) STRICT`;
+
+export function migrateBudgetChoice(db: DatabaseSync) { db.exec(budgetChoiceSchema); }
+
+export function verifyBudgetChoice(db: DatabaseSync) {
+  const sql = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='delegation_budget_choice'").get()?.sql;
+  if (String(sql).replace(/\s+/g, ' ') !== budgetChoiceSchema.replace(/\s+/g, ' ')) {
+    throw new Error('Delegation budget choice does not match the migration');
+  }
+}
+
 export function parseDelegationBudgets(input: Record<string, unknown>) {
   if (Object.keys(input).length !== budgetEntries.length || budgetEntries.some(([key, { min, max }]) => {
     const value = input[key];
@@ -83,9 +109,18 @@ export class DelegationLedger {
       FROM delegation_budget_settings WHERE id=1`).get() as DelegationBudgets;
   }
 
-  saveBudgets(input: DelegationBudgets) {
-    this.db.prepare(`UPDATE delegation_budget_settings SET ${budgetEntries.map(([, { column }]) => column + '=?').join(',')}
-      WHERE id=1`).run(...budgetEntries.map(([key]) => input[key as keyof DelegationBudgets]));
+  budgetChoice(values: DelegationBudgets): BudgetChoice {
+    const choice = this.db.prepare('SELECT choice FROM delegation_budget_choice WHERE id=1').get()?.choice ?? 'standard';
+    return isDelegationPreset(choice) && Object.entries(delegationPresets[choice])
+      .every(([key, value]) => values[key as keyof DelegationBudgets] === value) ? choice : 'custom';
+  }
+
+  saveBudgets(input: DelegationBudgets, choice: BudgetChoice = 'custom') {
+    this.atomic(() => {
+      this.db.prepare(`UPDATE delegation_budget_settings SET ${budgetEntries.map(([, { column }]) => column + '=?').join(',')}
+        WHERE id=1`).run(...budgetEntries.map(([key]) => input[key as keyof DelegationBudgets]));
+      this.db.prepare('INSERT INTO delegation_budget_choice VALUES (1,?) ON CONFLICT(id) DO UPDATE SET choice=excluded.choice').run(choice);
+    });
   }
 
   specialists(includeExternal = false) {

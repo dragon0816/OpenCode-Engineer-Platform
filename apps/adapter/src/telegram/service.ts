@@ -3,7 +3,8 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Runtime } from '../../../launcher/src/runtime.ts';
 import { BiScheduler } from '../../../../packages/knowledge/src/jobs/scheduler.ts';
 import type { Candidate } from '../../../../packages/knowledge/src/ingest.ts';
-import { ChatService } from '../http/chat.ts';
+import { ChatService, publicSession } from '../http/chat.ts';
+import { HttpError } from '../http/errors.ts';
 import { WebStore } from '../runs/web-store.ts';
 import type { Dispatcher } from '../runs/dispatcher.ts';
 import type { DelegationService } from '../runs/delegation.ts';
@@ -91,7 +92,20 @@ export function startTelegram(root: string, runtime: Runtime, enabledForLaunch: 
     runBi: (id: string, candidate?: Candidate, signal?: AbortSignal) => bi.run(id, candidate, signal),
     reviewBi: bi.review,
     channels: () => accounts.list(),
-    configureChannel: (input: Record<string, unknown>, createAgent?: () => void) => accounts.configure(input, createAgent),
+    configureChannel: (input: Record<string, unknown>, browser: string, createAgent?: () => void) => accounts.configure(input, browser, createAgent),
+    archiveAgent: (id: string, revision: number, status: string) => accounts.archiveAgent(id, revision, status),
+    async archivedHistory(agentId: string, sessionId?: string) {
+      const owned = sessions.sessions(false, sessionId).filter((session) => {
+        const owner = sessions.sessionOwner(session);
+        return owner?.origin === 'channel' && owner.agentID === agentId;
+      });
+      if (!sessionId) return { sessions: owned.map(publicSession) };
+      const session = owned[0];
+      if (!session) throw new HttpError(404, 'session-not-found');
+      const state = await chat.state(session, true);
+      if (!state.messages) throw new HttpError(503, 'session-unavailable');
+      return { messages: state.messages.map(({ role, text, createdAt }) => ({ role, text, createdAt })) };
+    },
     agentStatus(id: string) {
       const status = sessions.agentStatus(id);
       if (status === 'busy' || inbox.db.prepare("SELECT 1 FROM channel_inbound WHERE agent_id=? AND status='handed_off' LIMIT 1").get(id)) {

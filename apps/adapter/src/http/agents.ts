@@ -49,11 +49,17 @@ function parseSettings(input: Input, redact: Runtime['redact'], requireName: boo
 
 function bindInput(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
-  const { credentialRef, accountId, bindingRevision, ...extra } = value as Input;
+  const { credentialRef, accountId, bindingRevision, setupId, ownerConfirmed, ...extra } = value as Input;
+  if (setupId !== undefined) {
+    if (typeof setupId !== 'string' || typeof ownerConfirmed !== 'boolean' || credentialRef !== undefined || accountId !== undefined ||
+        bindingRevision !== undefined || Object.keys(extra).length) throw invalid();
+    return { action: 'setup-save', setupId, ownerConfirmed };
+  }
+  if (ownerConfirmed !== undefined) throw invalid();
   if (Object.keys(extra).length || (accountId === undefined ?
     bindingRevision !== undefined || typeof credentialRef !== 'string' || !telegramCredentialRef.test(credentialRef) :
     typeof accountId !== 'string' || !Number.isSafeInteger(bindingRevision) || credentialRef !== undefined)) throw invalid();
-  return { credentialRef, accountId, bindingRevision };
+  return { action: 'bind', credentialRef, accountId, bindingRevision, handler: 'chat' };
 }
 
 export function agentManagement(root: string, store: WebStore, runtime: Runtime, telegram: ReturnType<typeof startTelegram>) {
@@ -114,7 +120,7 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
     return { agent, ...choices() };
   }
 
-  async function create(input: Input) {
+  async function create(input: Input, browser: string) {
     if (typeof input.revision !== 'string' || Object.keys(input).some((field) => ![...fields, 'revision', 'channel'].includes(field))) {
       throw invalid();
     }
@@ -139,7 +145,7 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
       if (channel) {
         if (channel.accountId && !telegram.channels().some(({ accountId, verified, state }) =>
           accountId === channel.accountId && verified && state === 'disabled')) throw new HttpError(409, 'channel-binding-stale');
-        await telegram.configureChannel({ ...channel, action: 'bind', agentId: id, handler: 'chat', confirmed: true }, prepare);
+        await telegram.configureChannel({ ...channel, agentId: id, confirmed: true }, browser, prepare);
       } else store.createAgent(prepare);
     } catch (error) {
       if (!store.defaultWorkspace(id)) for (const path of created.reverse()) {
@@ -152,12 +158,20 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
 
   function update(id: string, input: Input) {
     const { revision, action, ...changes } = input;
-    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) ||
-        (action === 'archive' ? Object.keys(changes).length :
-          action !== 'edit' || !Object.keys(changes).length || Object.keys(changes).some((field) => !fields.includes(field)))) throw invalid();
-    const settings = action === 'archive' ? null : parseSettings(changes, runtime.redact, id !== 'main' && 'name' in changes);
-    if (settings) validate(settings, choices(), id);
-    store.updateAgent(id, revision, settings, telegram.agentStatus(id));
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision)) throw invalid();
+    const keys = Object.keys(changes);
+    if (action === 'edit') {
+      if (!keys.length || keys.some((field) => !fields.includes(field))) throw invalid();
+      const settings = parseSettings(changes, runtime.redact, id !== 'main' && 'name' in changes);
+      validate(settings, choices(), id);
+      store.updateAgent(id, revision, settings, telegram.agentStatus(id));
+    } else {
+      if (keys.length) throw invalid();
+      if (action === 'archive') store.updateAgent(id, revision, null, telegram.agentStatus(id));
+      else if (action === 'delete') telegram.archiveAgent(id, revision, telegram.agentStatus(id));
+      else if (action === 'restore') store.restoreAgent(id, revision);
+      else throw invalid();
+    }
     return detail(id);
   }
 

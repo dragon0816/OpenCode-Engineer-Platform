@@ -8,6 +8,7 @@ import { convertWorkbook } from '../../apps/adapter/src/runs/attachments.ts';
 import { gatewayAliases } from '../../apps/adapter/src/opencode/gateway.ts';
 import { call } from '../../apps/adapter/src/opencode/client.ts';
 import { TelegramApi } from '../../apps/adapter/src/telegram/poller.ts';
+import type { Update } from '../../apps/adapter/src/telegram/inbox.ts';
 import { verifyAgentWorkbench } from './agent-browser.ts';
 import { verifyComposerAttachments } from './composer-attachments-browser.ts';
 import { delegationExport, verifyDelegationWorkbench } from './delegation-browser.ts';
@@ -29,7 +30,8 @@ import { delegateTool, writeFileTool } from '../../apps/adapter/src/opencode/per
 const real = process.argv.includes('--real');
 const captureGallery = process.env.OEP_CAPTURE_GUI_POLISH === '1';
 const captureEnglish = process.env.OEP_CAPTURE_GUI_EN === '1';
-assert.ok(!(real && (captureGallery || captureEnglish)), 'The GUI gallery requires synthetic data');
+const captureAgentManagement = process.env.OEP_CAPTURE_AGENT_MANAGEMENT === '1';
+assert.ok(!(real && (captureGallery || captureEnglish || captureAgentManagement)), 'The GUI gallery requires synthetic data');
 const screenshotViewports = [[1440, 900, 'wide'], [390, 844, 'narrow']] as const;
 const capturePanels = captureGallery || captureEnglish || process.env.OEP_CAPTURE_RIGHT_PANEL === '1';
 const root = join(dataDirectory(), 'OEP 瀏覽器驗收');
@@ -59,7 +61,7 @@ const pinged: string[] = [];
 const aliases = ['synthetic-browser', gatewayAliases[1]] as const;
 const settingsPages = [
   ['assistant', '助理', ['#open-main-agent']],
-  ['channels', '助理與通道', ['#channel-accounts', '#channel-refresh', '#channel-reference', '#channel-agent', '#channel-verify', '#channel-bind']],
+  ['channels', '助理與通道', ['#channel-accounts', '#channel-add', '#channel-accounts button', '#delegation-budget-presets', '#delegation-budget-advanced']],
   ['appearance', '外觀', ['#theme', '#density', '#save-appearance', '#appearance-status']],
   ['model', '模型', ['#default-alias', '#save-model', '#recheck-model', '#model-settings-status', '#model-credentials', '#model-health li']],
   ['limits', '回合限制', ['#limit-recentMessages', '#limit-historyBytes', '#limit-toolCalls', '#limit-timeoutSeconds', '#limit-fields small', '#save-limits', '#limits-status']],
@@ -73,7 +75,10 @@ const settingsPages = [
 ] as const;
 const settingsRows: Record<string, Record<string, string[]>> = {
   assistant: { 'assistant-link': ['#open-main-agent'] },
-  channels: { channels: ['#channel-accounts', '#channel-refresh', '#channel-reference', '#channel-agent', '#channel-verify', '#channel-bind'] },
+  channels: {
+    channels: ['#channel-accounts', '#channel-add', '#channel-accounts button'],
+    'delegation-limit': ['#delegation-budget-presets', '#delegation-preset-standard', '#delegation-budget-advanced', '#budget-queueMs', '#save-delegation-budgets'],
+  },
   appearance: {
     'appearance-theme': ['#settings-locale','#theme [value=system]', '#theme [value=light]', '#theme [value=dark]', '#density [value=comfortable]', '#density [value=compact]'],
     'appearance-save': ['#save-appearance', '#appearance-status'],
@@ -203,17 +208,33 @@ const runtime = await startRuntime(audit, real ? undefined : {
 }, profile);
 try {
   const stopping = Promise.withResolvers<void>();
+  const syntheticBotToken = '83:' + randomUUID();
+  const secondBotToken = '84:' + randomUUID();
+  const inbox = new Map<number, Update[]>();
+  const credentials = new Map<string, string>();
+  const startTelegramSetup = (chat: string) => {
+    const updates = inbox.get(83) ?? [];
+    const id = updates.length + 1;
+    updates.push({ update_id: id, message: { date: Math.floor(Date.now() / 1000) + 1,
+      chat: { id: 17, type: chat }, from: { id: 17, is_bot: false, first_name: 'Sample Owner', username: 'SampleOwner' }, text: '/start' } });
+    inbox.set(83, updates);
+  };
   class SyntheticTelegram extends TelegramApi {
-    override async call<T>(method: string): Promise<T> {
-      if (method === 'getMe') return { id: 83, is_bot: true, username: 'SampleDataBot' } as T;
-      if (method === 'getUpdates') return [] as T;
+    private readonly id: number;
+    constructor(value: string, id: number) { super(value); this.id = id; }
+    override async call<T>(method: string, input: { offset?: number }): Promise<T> {
+      if (method === 'getMe') return { id: this.id, is_bot: true, username: this.id === 83 ? 'SampleDataBot' : 'SampleAlertsBot' } as T;
+      if (method === 'getUpdates') return (inbox.get(this.id) ?? []).filter(({ update_id }) => update_id >= (input.offset ?? 0)) as T;
       throw new Error('Unexpected synthetic Telegram request');
     }
   }
   const web = await startAdapter(root, runtime, stopping.resolve, !real, undefined, real ? undefined : {
-    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, name === 'OEP_TELEGRAM_ALLOWED_USER_ID' ? '17' :
-      ['OEP_TELEGRAM_SAMPLE_BOT_TOKEN', 'OEP_TELEGRAM_DUPLICATE_BOT_TOKEN'].includes(name) ? '83:' + randomUUID() : undefined])),
-    createApi: (value) => new SyntheticTelegram(value),
+    readCredentials: (names) => Object.fromEntries(names.map((name) => [name, credentials.get(name)])),
+    writeCredential(name, value) {
+      if (value === null) credentials.delete(name);
+      else credentials.set(name, value);
+    },
+    createApi: (value) => new SyntheticTelegram(value, Number(value.split(':', 1)[0])),
   });
   try {
     const page = await chromium(join(root, 'chromium'));
@@ -894,8 +915,11 @@ try {
           await expectSetting(section, title);
           if (section === 'channels') {
             await page.ready("document.querySelector('#budget-delegationsPerMessage')?.value === '3'");
+            assert.equal(await page.evaluate("document.querySelector('#delegation-preset-standard').checked && !document.querySelector('#delegation-budget-advanced').open"), true);
             await page.evaluate(`
+              document.querySelector('#delegation-budget-advanced').open = true;
               document.querySelector('#budget-delegationsPerMessage').value = '2';
+              document.querySelector('#budget-delegationsPerMessage').dispatchEvent(new Event('input', { bubbles:true }));
               document.querySelector('#delegation-budgets').requestSubmit();
             `);
             await page.ready("document.querySelector('#delegation-budget-status').textContent === '已儲存'");
@@ -1555,7 +1579,12 @@ try {
         await slash('/stop');
         await page.ready("document.querySelector('#command-toast').textContent.includes('已送出停止要求') && document.querySelector('#progress').textContent.includes('已停止')");
 
-        await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captures: process.env.OEP_CAPTURE_SLICE4 === '1' });
+        await verifyAgentWorkbench({ page, runtime, click, key, reload, selectSetting, captureAgentManagement,
+          syntheticBotToken, secondBotToken, startTelegramSetup, captures: process.env.OEP_CAPTURE_SLICE4 === '1',
+          seedLegacyBudget() {
+            using db = new DatabaseSync(join(root, 'web.sqlite'));
+            db.exec('DELETE FROM delegation_budget_choice; UPDATE delegation_budget_settings SET queue_ms=720123');
+          } });
         await verifyDelegationWorkbench({ page, api: await webAPI(web.pairURL()), targets: delegationTargets,
           fileId: (id) => { biAttachment = id; }, click, key, reload, captures: process.env.OEP_CAPTURE_SLICE6 === '1' });
         await verifyExternalHelpersInBrowser({ page, api: await webAPI(web.pairURL()), key, reload, selectSetting });

@@ -77,6 +77,8 @@ test('paired agent management validates revisions and grants and keeps session o
     assert.equal(list.tools.find(({ id }: { id: string }) => id === paused).paused, true);
     for (const agent of list.agents) await expect(await write('/api/agents/' + agent.id, { action: 'archive', revision: agent.revision }),
       409, 'agent-builtin');
+    for (const agent of list.agents) await expect(await write('/api/agents/' + agent.id, { action: 'delete', revision: agent.revision }),
+      409, 'agent-builtin');
     const mainRevision = list.agents[0].revision;
     assert.equal((await write(main, { action: 'edit', revision: mainRevision, name: 'Main test profile' })).status, 200);
     await expect(await write(main, { action: 'edit', revision: mainRevision, name: 'Stale profile' }), 409, 'agent-revision-conflict');
@@ -119,6 +121,15 @@ test('paired agent management validates revisions and grants and keeps session o
     const archive = { action: 'archive', revision: agent.revision };
     await expect(await write('/api/agents/' + agent.id, archive), 409, 'agent-channel-bound');
     const bound = (await (await read('/api/settings/channels')).json()).accounts.find(({ agentId }: { agentId: string }) => agentId === agent.id);
+    const telegramHistory = `/api/agents/${agent.id}/telegram-history`;
+    await expect(await read(telegramHistory), 404, 'session-not-found');
+    const telegramSession = randomUUID();
+    const channelStore = new WebStore(join(root, 'telegram-chat.sqlite'));
+    try {
+      channelStore.createSession({ id: telegramSession, upstreamID: randomUUID(), agent: 'inspector', alias: 'synthetic-specialist', createdAt: Date.now() },
+        { accountId: bound.accountId, bindingRevision: bound.bindingRevision, agentId: agent.id, workspaceID: agent.workspaces[0].id,
+          conversationKey: 'chat:17:topic:0' });
+    } finally { channelStore.close(); }
     assert.equal((await write('/api/settings/channels', { action: 'unbind', confirmed: true, accountId: bound.accountId,
       bindingRevision: bound.bindingRevision })).status, 200);
     const run = randomUUID();
@@ -126,6 +137,7 @@ test('paired agent management validates revisions and grants and keeps session o
     fixture.prepare('INSERT INTO runs VALUES (?,?,?)').run(run, record.state, JSON.stringify(record));
     fixture.prepare('INSERT INTO web_turns VALUES (?,?,?)').run(specialist.id, run, 'synthetic');
     await expect(await write('/api/agents/' + agent.id, archive), 409, 'agent-busy');
+    await expect(await write('/api/agents/' + agent.id, { ...archive, action: 'delete' }), 409, 'agent-busy');
     fixture.prepare('DELETE FROM web_turns WHERE run_id=?').run(run);
     fixture.prepare('DELETE FROM runs WHERE id=?').run(run);
     const removed = await write('/api/agents/' + agent.id, archive);
@@ -133,8 +145,26 @@ test('paired agent management validates revisions and grants and keeps session o
     assert.equal((await removed.json()).agent.state, 'archived');
     await expect(await write(scope, {}), 409, 'agent-inactive');
     assert.equal((await read(`${scope}/${specialist.id}/state`)).status, 200);
+    await expect(await write(`${scope}/${specialist.id}/rename`, { title: 'Archived title' }), 409, 'agent-inactive');
+    await expect(await read(telegramHistory, { ...headers, 'x-oep-csrf': '' }), 403, 'pairing-expired');
+    assert.deepEqual((await (await read(telegramHistory)).json()).sessions.map(({ id }: { id: string }) => id), [telegramSession]);
+    assert.deepEqual(await (await read(`${telegramHistory}/${telegramSession}`)).json(), { messages: [] });
+    await expect(await read(`${telegramHistory}/${specialist.id}`), 404, 'session-not-found');
+    await expect(await write(`${telegramHistory}/${telegramSession}`, {}), 404, 'session-not-found');
     await expect(await write('/api/agents/' + agent.id, { action: 'edit', revision: agent.revision + 1, name: 'Archived' }),
       409, 'agent-inactive');
+    const restored = await write('/api/agents/' + agent.id, { action: 'restore', revision: agent.revision + 1 });
+    assert.equal(restored.status, 200);
+    const restoredAgent = (await restored.json()).agent;
+    assert.equal(restoredAgent.state, 'active');
+    await expect(await read(telegramHistory), 404, 'session-not-found');
+    assert.equal((await write('/api/settings/channels', { action: 'bind', confirmed: true, accountId: bound.accountId,
+      bindingRevision: bound.bindingRevision + 1, agentId: agent.id })).status, 200);
+    const deleted = await write('/api/agents/' + agent.id, { action: 'delete', revision: restoredAgent.revision });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json()).agent.state, 'archived');
+    assert.deepEqual(fixture.prepare('SELECT state,binding_revision AS revision FROM channel_accounts WHERE id=?').get(bound.accountId),
+      Object.assign(Object.create(null), { state: 'disabled', revision: bound.bindingRevision + 3 }));
   } finally {
     verified.resolve();
     store.close();

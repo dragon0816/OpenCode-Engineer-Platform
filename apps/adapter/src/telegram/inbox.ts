@@ -12,7 +12,8 @@ export { telegramInboxVersion } from './channel-migration.ts';
 export type { Bot } from './channel-migration.ts';
 export type { Lane } from '../channels/transport.ts';
 export type Message = {
-  from?: { id: number; is_bot?: boolean };
+  from?: { id: number; is_bot?: boolean; first_name?: string; last_name?: string; username?: string };
+  date?: number;
   chat: { id: number; type: string };
   message_thread_id?: number;
   text?: string;

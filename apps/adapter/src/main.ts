@@ -18,7 +18,7 @@ import { call } from './opencode/client.ts';
 import { knowledgeMcpName, knowledgeToolName } from './opencode/knowledge-mcp.ts';
 import { brokerMcpName } from './opencode/permissions.ts';
 import { parseTurnLimits, turnLimitFields } from './opencode/turn-limits.ts';
-import { budgetFields, DelegationError, parseDelegationBudgets } from './runs/delegation-ledger.ts';
+import { budgetFields, DelegationError, delegationPresets, isDelegationPreset, parseDelegationBudgets } from './runs/delegation-ledger.ts';
 import { DelegationService } from './runs/delegation.ts';
 import { ExternalDelegations } from './runs/external-delegations.ts';
 import { ExternalSources } from './runs/external-sources.ts';
@@ -56,6 +56,7 @@ const assets = new Map([
   ['/app.js', ['src/app.js', 'text/javascript; charset=utf-8']],
   ['/agents.js', ['src/agents.js', 'text/javascript; charset=utf-8']],
   ['/channels.js', ['src/channels.js', 'text/javascript; charset=utf-8']],
+  ['/telegram-setup.js', ['src/telegram-setup.js', 'text/javascript; charset=utf-8']],
   ['/delegations.js', ['src/delegations.js', 'text/javascript; charset=utf-8']],
   ['/external-helpers.js', ['src/external-helpers.js', 'text/javascript; charset=utf-8']],
   ['/mcp-settings.js', ['src/mcp-settings.js', 'text/javascript; charset=utf-8']],
@@ -191,8 +192,17 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     const agentPath = /^\/api\/agents(?:\/|$)/.test(path);
     const avatarRoute = /^\/api\/agents\/([a-z\d_-]{1,80})\/avatar$/.exec(path);
     const agentControl = /^\/api\/agents(?:\/[a-z\d_-]{1,80}(?:\/workspaces\/[a-z\d_-]{1,80}\/sessions)?)?$/.test(path);
+    const telegramHistory = /^\/api\/agents\/([a-z\d_-]{1,80})\/telegram-history(?:\/([\da-f-]+))?$/.exec(path);
     const { csrf } = auth.authorize(request,
-      path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl);
+      path === '/api/settings/channels' || path === '/api/settings/delegation-budgets' || agentControl || Boolean(telegramHistory));
+    if (telegramHistory) {
+      const [, agentId, sessionId] = telegramHistory;
+      if (method !== 'GET' || sessionId && !uuid.test(sessionId) || !store.agents().some(({ id, state }) => id === agentId && state === 'archived')) {
+        throw new HttpError(404, 'session-not-found');
+      }
+      send(response, 200, await telegram.archivedHistory(agentId, sessionId));
+      return;
+    }
     if (path === '/api/bootstrap' && method === 'GET') {
       send(response, 200, { csrf, agents, alias: runtime.alias, version: runtime.version,
         knowledge: Boolean(runtime.knowledge),
@@ -201,7 +211,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/agents') {
-      send(response, method === 'GET' ? 200 : 201, method === 'GET' ? management.list() : await management.create(await body(request, 160 * 1024)));
+      send(response, method === 'GET' ? 200 : 201, method === 'GET' ? management.list() : await management.create(await body(request, 160 * 1024), csrf));
       return;
     }
     const detailRoute = /^\/api\/agents\/([a-z\d_-]{1,80})$/.exec(path);
@@ -217,17 +227,20 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
       return;
     }
     if (path === '/api/settings/channels') {
-      send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request)));
+      send(response, 200, method === 'GET' ? { accounts: telegram.channels() } : await telegram.configureChannel(await body(request), csrf));
       return;
     }
     if (path === '/api/settings/delegation-budgets') {
       if (method === 'POST') {
-        const budgets = parseDelegationBudgets(await body(request));
+        const input = await body(request);
+        const preset = Object.keys(input).length === 1 && isDelegationPreset(input.preset) ? input.preset : undefined;
+        const budgets = preset ? delegationPresets[preset] : parseDelegationBudgets(input);
         if (!budgets) throw new HttpError(400, 'invalid-delegation-budgets');
-        store.delegations.saveBudgets(budgets);
+        store.delegations.saveBudgets(budgets, preset);
       }
       const fields = Object.fromEntries(Object.entries(budgetFields).map(([key, { min, max }]) => [key, { min, max }]));
-      send(response, 200, { values: store.delegations.budgets(), fields });
+      const values = store.delegations.budgets();
+      send(response, 200, { values, fields, preset: store.delegations.budgetChoice(values), presets: delegationPresets });
       return;
     }
     if (path === '/api/settings/external-helpers') {
@@ -839,7 +852,8 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     if (!session || !sessionOwner(session, agentID, workspaceID) || (extra !== undefined && extra !== 'preview')) {
       throw new HttpError(404, 'session-route-not-found');
     }
-    if (method === 'POST' && !['rename', 'remove', 'annotation'].includes(resource) && !store.executionProfile(agentID, workspaceID)) {
+    const execution = store.executionProfile(agentID, workspaceID);
+    if (method === 'POST' && !execution) {
       throw new HttpError(409, 'agent-inactive');
     }
     if (resource === 'external-sources' && extra === undefined) {
@@ -972,7 +986,7 @@ export async function startAdapter(dataRoot: string, runtime: Runtime, requestSt
     }
     if (method === 'GET' && resource === 'action-decisions') send(response, 200, store.actionDecisions(id));
     else if (method === 'GET' && resource === 'state') {
-      const state = await chat.state(session);
+      const state = await chat.state(session, !execution);
       const cards = agentID === 'main' ? store.delegations.cards(id) : [];
       const delegations = cards.map((card) => {
         const review = 'reviewRef' in card && card.reviewRef?.reviewId;

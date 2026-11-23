@@ -118,7 +118,7 @@ function setControls() {
   prompt.disabled = !current || stopped || inactive;
   find('session-alias').disabled = !current || !modelSettings || Boolean(current.aliasUpdating) || stopped || inactive;
   voice.update();
-  find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped;
+  find('project-read').hidden = !current || !find('project-read-folder').options.length || stopped || inactive;
   find('project-read-button').disabled = uploadBusy;
   send.disabled = !current || uploadBusy || sending || stopped || inactive || Boolean(current.pendingID || current.aliasUpdating) ||
     activeStates.has(current.state?.runs.at(-1)?.state);
@@ -327,7 +327,7 @@ function render(context) {
         prompt.focus();
       }, showError, (text) => { setText(find('command-toast'), text); },
       () => { if (current === context) renderNotes(context); },
-      (trigger) => openSection('notes', trigger)));
+      (trigger) => openSection('notes', trigger), sessionAgent(id)?.state === 'archived'));
       fragment.append(entry);
       if (item.runId) anchors.set(item.runId, entry);
     }
@@ -1072,20 +1072,80 @@ function sessionButton(label, action) {
 
 const collapsedGroups = new Set();
 function renderSessions() {
-  setText(find('session-count'), knownSessions.size);
+  setText(find('session-count'), [...knownSessions.keys()].filter((id) => sessionAgent(id)?.state !== 'archived').length);
   const query = find('session-search').value.trim().toLocaleLowerCase(getLocale());
   find('clear-session-search').hidden = !find('session-search').value;
   sessions.replaceChildren();
   for (const entry of assistantEntries) {
+    if (entry.state === 'archived') {
+      const history = find('archived-agent-list').querySelector(`[data-agent-history="${CSS.escape(entry.id)}"]`);
+      if (history) {
+        history.replaceChildren(node('p', message('agents.read-only-history')));
+        for (const workspace of entry.workspaces) renderWorkspace(history, entry, workspace, '');
+        history.append(deletedTelegramHistory(entry));
+      }
+      continue;
+    }
     const group = node('section', undefined, 'agent-session-group');
     const heading = node('h2', undefined, 'agent-session-heading');
     heading.append(node('span', agentName(entry)));
     heading.firstElementChild.toggleAttribute('data-ui-content', typeof agentName(entry) === 'string');
-    if (entry.state === 'archived') heading.append(node('small', message('agents.status-disabled')));
     group.append(heading);
     sessions.append(group);
     for (const workspace of entry.workspaces) renderWorkspace(group, entry, workspace, query);
   }
+}
+
+function deletedTelegramHistory(entry) {
+  const details = node('details');
+  const summary = node('summary', message('agents.telegram-history'));
+  const body = node('div');
+  const path = '/api/agents/' + entry.id + '/telegram-history';
+  let loaded = false;
+  details.className = 'deleted-telegram-history';
+  details.append(summary, body);
+  details.addEventListener('toggle', async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    setText(body, message('chat.loading-session'));
+    try {
+      const { sessions: history } = await request(path);
+      if (!history.length) { setText(body, message('chat.no-sessions-yet')); return; }
+      const list = node('ul', undefined, 'session-list');
+      for (const session of history) {
+        const item = node('li');
+        const opener = sessionButton(session.title || formatDate(session.createdAt), async () => {
+          opener.disabled = true;
+          const transcript = find('telegram-history-dialog');
+          const abort = new AbortController();
+          try {
+            setText(find('telegram-history-title'), message('agents.telegram-history'));
+            setText(find('telegram-history-messages'), message('chat.loading-session'));
+            transcript.showModal();
+            transcript.addEventListener('close', () => { abort.abort(); opener.disabled = false; opener.focus(); }, { once: true });
+            const { messages: past } = await request(path + '/' + session.id, { signal: abort.signal });
+            if (abort.signal.aborted) return;
+            const log = find('telegram-history-messages');
+            log.replaceChildren(...past.map(({ role, text }) => {
+              const article = node('article', undefined, 'message');
+              const content = node('p', text);
+              content.setAttribute('data-ui-content', '');
+              article.append(node('strong', role === 'user' ? message('chat.you') : agentName(entry)), content);
+              return article;
+            }));
+            if (!past.length) setText(log, message('chat.no-sessions-yet'));
+          } catch (error) {
+            if (!abort.signal.aborted) setText(find('telegram-history-messages'), errorText(error));
+            if (!transcript.open) opener.disabled = false;
+          }
+        });
+        item.append(opener);
+        list.append(item);
+      }
+      body.replaceChildren(list);
+    } catch (error) { loaded = false; setText(body, errorText(error)); }
+  });
+  return details;
 }
 
 function renderWorkspace(group, entry, workspace, query) {
@@ -1101,7 +1161,8 @@ function renderWorkspace(group, entry, workspace, query) {
       if (expanded) collapsedGroups.add(workspace.id);
       else collapsedGroups.delete(workspace.id);
       renderSessions();
-      sessions.querySelector(`[data-project="${workspace.id}"]`)?.focus();
+      const scope = entry.state === 'archived' ? find('archived-agent-list') : sessions;
+      scope.querySelector(`[data-project="${workspace.id}"]`)?.focus();
     });
     projectButton.setAttribute('aria-expanded', String(expanded));
     projectButton.dataset.project = workspace.id;
@@ -1128,7 +1189,7 @@ function renderWorkspace(group, entry, workspace, query) {
         if (find('chat-view').hidden) return;
         select(session.id);
         if (narrowNavigation.matches) setSidebar(false);
-        prompt.focus();
+        (entry.state === 'archived' ? sessionTitle : prompt).focus();
       });
       setAttribute(link, 'title', label);
       const name = node('span', session.title || labels[session.agent], 'session-name');
@@ -1137,6 +1198,11 @@ function renderWorkspace(group, entry, workspace, query) {
       link.dataset.session = session.id;
       if (current?.id === session.id) link.dataset.phase = current.phase ?? '';
       if (current?.id === session.id) link.setAttribute('aria-current', 'true');
+      if (entry.state === 'archived') {
+        row.append(link);
+        list.append(row);
+        continue;
+      }
       const menu = node('details');
       const summary = node('summary', '⋯', 'menu-trigger');
       setAttribute(summary, 'aria-label', message('chat.more-options-for-session', { session: label }));
@@ -1302,8 +1368,58 @@ function updateTopAgent(id) {
 let agentOpener;
 const agentView = find('agent-view');
 const agentEditor = bindAgents({ onChange: refreshAgents, close: () => find('close-agent').click(),
-  openChannels: () => openAgentSettings('channels'), openMcp: () => openAgentSettings('mcp') });
+  openChannels: (accountId) => { if (openAgentSettings('channels') && accountId) void loadChannels(accountId); },
+  openMcp: () => openAgentSettings('mcp'), deleteAgent, restoreAgent });
 const loadChannels = bindChannels(() => assistantEntries, refreshAgents);
+const deleteAgentDialog = find('delete-agent-dialog');
+let deletion;
+
+function deleteAgent(entry, opener) {
+  if (deleteAgentDialog.open) return;
+  deletion = { entry, opener, saving: false };
+  setText(find('delete-agent-question'), message('agents.delete-question', { name: agentName(entry) }));
+  setText(find('delete-agent-status'), '');
+  deleteAgentDialog.showModal();
+}
+
+async function changeAgentState(entry, action) {
+  const detail = await request('/api/agents/' + entry.id, { data: { action, revision: entry.revision } });
+  const detailVisible = agentEditor.lifecycle(detail);
+  await refreshAgents().catch(() => {});
+  return detailVisible;
+}
+
+async function restoreAgent(entry) {
+  const detailVisible = await changeAgentState(entry, 'restore');
+  const focus = detailVisible ? find('delete-agent') : find('agent-list').querySelector(`[data-agent="${CSS.escape(entry.id)}"] .agent-row-open`);
+  focus?.focus();
+  if (detailVisible) setText(find('settings-status'), message('agents.restored'));
+}
+
+find('cancel-delete-agent').addEventListener('click', () => deleteAgentDialog.close());
+deleteAgentDialog.addEventListener('cancel', (event) => { if (deletion?.saving) event.preventDefault(); });
+deleteAgentDialog.addEventListener('close', () => {
+  if (deleteAgentDialog.open) return;
+  deletion?.opener.focus();
+  deletion = undefined;
+});
+deleteAgentDialog.querySelector('form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!deletion || deletion.saving) return;
+  const { entry } = deletion;
+  const buttons = [...deleteAgentDialog.querySelectorAll('button')];
+  deletion.saving = true;
+  for (const button of buttons) button.disabled = true;
+  try {
+    const detailVisible = await changeAgentState(entry, 'delete');
+    deletion = undefined;
+    deleteAgentDialog.close();
+    (detailVisible ? find('restore-agent') : find('archived-agents').querySelector('summary')).focus();
+  } catch (error) {
+    setText(find('delete-agent-status'), errorText(error));
+    deletion.saving = false;
+  } finally { for (const button of buttons) button.disabled = false; }
+});
 
 function openAgent(id, copy, opener) {
   if (stopped || !settingsView.hidden && !discardSettings() || !agentEditor.leave()) return;
@@ -1318,8 +1434,9 @@ function openAgent(id, copy, opener) {
 }
 
 function openAgentSettings(section) {
-  if (!agentEditor.leave()) return;
-  if (switchSettingsSection(section)) showSettings();
+  if (!agentEditor.leave() || !switchSettingsSection(section)) return false;
+  showSettings();
+  return true;
 }
 
 find('new-agent').addEventListener('click', (event) => openAgent(undefined, false, event.currentTarget));
@@ -1371,13 +1488,14 @@ function renderAgents() {
     setAttribute(trigger, 'aria-label', message('agents.more-named', { name: agentName(entry) }));
     const copy = sessionButton(message('agents.copy'), () => openAgent(entry.id, true, open));
     const actions = [copy];
-    if (!entry.builtin && entry.state === 'active') actions.push(sessionButton(message('agents.archive'), async () => {
-      if (!window.confirm(t('agents.confirm-archive', { name: resolveText(agentName(entry)) }))) return;
-      try {
-        await request('/api/agents/' + entry.id, { data: { action: 'archive', revision: entry.revision } });
-        await refreshAgents();
-        find('new-agent').focus();
-      } catch (error) { showError(error); }
+    if (!entry.builtin && entry.state === 'active') {
+      const remove = sessionButton(message('agents.delete'), () => deleteAgent(entry, trigger));
+      remove.className = 'danger-action';
+      remove.dataset.deleteAgent = '';
+      actions.push(remove);
+    }
+    if (entry.state === 'archived') actions.push(sessionButton(message('agents.restore'), async () => {
+      try { await restoreAgent(entry); } catch (error) { showError(error); }
     }));
     const options = node('div', undefined, 'menu-actions');
     options.append(...actions);
@@ -1387,7 +1505,13 @@ function renderAgents() {
     return row;
   };
   find('agent-list').replaceChildren(...active.map(rowFor));
-  find('archived-agent-list').replaceChildren(...archived.map(rowFor));
+  find('archived-agent-list').replaceChildren(...archived.map((entry) => {
+    const group = node('section');
+    const history = node('div', undefined, 'deleted-agent-history');
+    history.dataset.agentHistory = entry.id;
+    group.append(rowFor(entry), history);
+    return group;
+  }));
   find('archived-agents').hidden = !archived.length;
 }
 
@@ -1395,11 +1519,13 @@ async function refreshAgents() {
   const { agents: entries } = await request('/api/agents');
   if (JSON.stringify(entries) === JSON.stringify(assistantEntries)) return;
   const focused = document.activeElement.closest?.('.agent-row[data-agent]');
+  const previousState = sessionAgent(current?.id)?.state;
   assistantEntries = entries;
   renderAgents();
   updateAgentBranding();
   renderSessions();
   setControls();
+  if (current?.state && previousState !== sessionAgent(current.id)?.state) render(current);
   if (focused) find('rail-assistants').querySelector(`[data-agent="${CSS.escape(focused.dataset.agent)}"] .agent-row-open`)?.focus();
 }
 

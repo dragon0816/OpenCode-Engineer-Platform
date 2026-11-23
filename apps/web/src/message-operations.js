@@ -27,7 +27,7 @@ async function copy(text) {
   }
 }
 
-export function messageActions(context, item, content, reply, report, notify, updated, openNotes) {
+export function messageActions(context, item, content, reply, report, notify, updated, openNotes, readOnly = false) {
   const details = document.createElement('details');
   details.className = 'message-actions';
   const summary = document.createElement('summary');
@@ -54,19 +54,21 @@ export function messageActions(context, item, content, reply, report, notify, up
     await copy(item.role === 'user' ? item.text.split('\n').map((line) => '> ' + line).join('\n') : item.text);
     notify(message('messages.markdown-copied'));
   });
-  add(message('messages.reply-to-this-message'), () => reply(item));
-  for (const [value, label] of [['up', message('messages.thumbs-up')], ['down', message('messages.thumbs-down')]]) {
-    add(label, async () => {
-      const reason = window.prompt(t('messages.enter-an-optional-reason-up-to-200'), resolveText(current()?.reason ?? ''));
-      if (reason !== null) await save('rating', value, reason);
+  if (!readOnly) {
+    add(message('messages.reply-to-this-message'), () => reply(item));
+    for (const [value, label] of [['up', message('messages.thumbs-up')], ['down', message('messages.thumbs-down')]]) {
+      add(label, async () => {
+        const reason = window.prompt(t('messages.enter-an-optional-reason-up-to-200'), resolveText(current()?.reason ?? ''));
+        if (reason !== null) await save('rating', value, reason);
+      });
+    }
+    add(message('messages.remove-rating'), () => save('rating', null));
+    add(message('messages.add-or-edit-note'), async () => {
+      const value = window.prompt(t('messages.enter-a-note-up-to-500-characters'), resolveText(current()?.note ?? ''));
+      if (value !== null) await save('note', value);
     });
+    add(message('messages.delete-note'), () => save('note', null));
   }
-  add(message('messages.remove-rating'), () => save('rating', null));
-  add(message('messages.add-or-edit-note'), async () => {
-    const value = window.prompt(t('messages.enter-a-note-up-to-500-characters'), resolveText(current()?.note ?? ''));
-    if (value !== null) await save('note', value);
-  });
-  add(message('messages.delete-note'), () => save('note', null));
   add(message('messages.view-session-notes'), () => openNotes(summary));
   details.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && details.open) {

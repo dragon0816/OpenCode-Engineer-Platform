@@ -26,6 +26,10 @@ export function configuredCustomMcpCredentials(names: string[]): Set<string> {
 export function saveCustomMcpCredential(name: string, value: unknown) {
   if (!referenceName.test(name) || typeof value !== 'string' || !value || value.length > 4096 ||
       /[\u0000-\u001f\u007f]/.test(value) || !value.trim()) throw new WebMessageError('credential-value');
+  writeUserCredential(name, value);
+}
+
+export function writeUserCredential(name: string, value: string | null) {
   run(readInput + "[Environment]::SetEnvironmentVariable($inputData.name,$inputData.value,'User')", { name, value });
 }
 
