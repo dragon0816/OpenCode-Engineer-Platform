@@ -58,11 +58,12 @@ function seedV8(data: string, names = ['web', 'telegram-chat', 'knowledge', 'tel
   return join(web, 'web.sqlite');
 }
 
-test('0.7.0 and the intermediate ledgers reconcile to v11 and remain stable on the second run', (t) => {
+test('0.7.0 and the intermediate ledgers reconcile to v12 and remain stable on the second run', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'oep-integration-upgrade-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [state, prior, model, references] of [
     ['base', 8, false, false], ['models', 9, true, false], ['references', 10, false, true], ['combined', 10, true, true],
+    ['integrated', 11, true, true],
   ] as const) {
     const data = join(root, state, 'data');
     const copy = join(root, state, 'backup');
@@ -84,7 +85,7 @@ test('0.7.0 and the intermediate ledgers reconcile to v11 and remain stable on t
     backup(data, copy);
     const first = JSON.parse(migrate(data));
     const second = JSON.parse(migrate(data));
-    const versions = { web: [prior, 11], 'telegram-chat': [3, 3], knowledge: [3, 3], telegram: [2, 2], runs: [1, 1] };
+    const versions = { web: [prior, 12], 'telegram-chat': [3, 3], knowledge: [3, 3], telegram: [2, 2], runs: [1, 1] };
     for (const [store, expected] of Object.entries(versions)) {
       const name = `web/${store}.sqlite`;
       const { before, after } = first[name];
@@ -93,6 +94,10 @@ test('0.7.0 and the intermediate ledgers reconcile to v11 and remain stable on t
     }
     assert.equal(first['web/web.sqlite'].after.counts.agent_model_sources, Number(model));
     assert.equal(first['web/web.sqlite'].after.counts.local_references, Number(references));
+    for (const table of allowedEmptyTables('webV12Empty')) {
+      assert.equal(Object.hasOwn(first['web/web.sqlite'].before.counts, table), false);
+      assert.equal(first['web/web.sqlite'].after.counts[table], 0);
+    }
     run(snapshot, ['reconcile-upgrade', data, copy]);
     const store = new WebStore(file);
     try {
@@ -147,7 +152,7 @@ test('a failure in reference DDL rolls back both new Web steps and permits a cle
     assert.equal(db.prepare('SELECT note FROM web_message_annotations').get()?.note, 'Synthetic owner note');
     db.exec('DROP TABLE local_reference_audit');
   }
-  assert.equal(JSON.parse(migrate(root))['web/web.sqlite'].after.userVersion, 11);
+  assert.equal(JSON.parse(migrate(root))['web/web.sqlite'].after.userVersion, 12);
 });
 
 test('every web store table is accepted by the upgrade reconciliation allowlist', () => {
@@ -164,7 +169,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
     } finally { db.close(); }
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
       ...allowedEmptyTables('webV6Empty'), ...allowedEmptyTables('webV7Empty'), ...allowedEmptyTables('webV8Empty'),
-      ...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty'),
+      ...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty'), ...allowedEmptyTables('webV12Empty'),
       'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
@@ -188,10 +193,33 @@ test('pre-model WebStore schema migrates from an actual old snapshot and reconci
       assert.equal(Object.hasOwn(migration.before.counts, table), false);
       assert.equal(migration.after.counts[table], 0);
     }
+    for (const table of allowedEmptyTables('webV12Empty')) {
+      assert.equal(Object.hasOwn(migration.before.counts, table), false);
+      assert.equal(migration.after.counts[table], 0);
+    }
     assert.equal(migration.before.counts.runs, 1);
     assert.equal(migration.before.counts.run_events, 1);
     assert.equal(migration.before.counts.web_sessions, 1);
     run(snapshot, ['reconcile-upgrade', data, copy]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('upgrade reconciliation compares plugin archive bytes and rejects unexpected plugin paths', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oep-plugin-upgrade-'));
+  try {
+    const data = join(root, 'data');
+    const copy = join(root, 'backup');
+    const packages = join(data, 'plugins', 'packages', 'oep.synthetic', '1.0.0');
+    mkdirSync(packages, { recursive: true });
+    const archive = join(packages, 'fixture.oepplugin');
+    writeFileSync(archive, 'original archive bytes');
+    backup(data, copy);
+    run(snapshot, ['reconcile-upgrade', data, copy]);
+    writeFileSync(archive, 'modified archive bytes');
+    run(snapshot, ['reconcile-upgrade', data, copy], /fixture\.oepplugin.*SHA-256/);
+    writeFileSync(archive, 'original archive bytes');
+    writeFileSync(join(packages, 'unexpected.oepplugin'), 'extra archive bytes');
+    run(snapshot, ['reconcile-upgrade', data, copy], /unexpected\.oepplugin.*未預期/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -214,7 +242,7 @@ test('the slice 3b central fixture upgrades from v4 without changing accounts or
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
     assert.equal(result.before.userVersion, 4);
     assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
-    assert.equal(result.after.userVersion, 11);
+    assert.equal(result.after.userVersion, 12);
     assert.equal(result.after.counts.agent_work_items, 0);
     run(snapshot, ['reconcile-upgrade', data, copy]);
     using db = new DatabaseSync(file);
@@ -239,7 +267,7 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
     }
     backup(data, copy);
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 11]);
+    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 12]);
     assert.deepEqual([result.before.counts.agent_work_items, result.after.counts.agent_work_items], [1, 1]);
     for (const table of allowedEmptyTables('webV6Empty')) {
       assert.equal(Object.hasOwn(result.before.counts, table), false);
@@ -272,7 +300,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
     }
     backup(data, copy);
     const { before, after } = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([before.userVersion, after.userVersion], [6, 11]);
+    assert.deepEqual([before.userVersion, after.userVersion], [6, 12]);
     assert.deepEqual([before.counts.delegations, after.counts.delegations], [1, 1]);
     for (const table of allowedEmptyTables('webV7Empty')) {
       assert.equal(Object.hasOwn(before.counts, table), false);
@@ -313,7 +341,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 11], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 12], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);
@@ -479,7 +507,7 @@ test('same-version repair reconciles the historical candidate schema and rejects
     const data = join(root, 'data');
     const copy = join(root, 'backup');
     const release = join(root, 'candidate');
-    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0']) {
+    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0', 'node_modules/semver']) {
       cpSync(path, join(release, path), { recursive: true });
     }
     const store = join(release, knowledgeStorePath);

@@ -70,43 +70,53 @@ export function stageReviewProposal(store: Pick<KnowledgeStore, 'reviewBase' | '
 
 export async function proposeReview(store: Pick<KnowledgeStore, 'reviewBase' | 'reviewSource' | 'stage'>, input: Record<string, unknown>,
   complete: (prompt: string, input: unknown, signal: AbortSignal) => ReturnType<typeof knowledgeCompletion>, signal: AbortSignal,
-  provenance?: BiProvenance) {
+  provenance?: BiProvenance, unpublishedVault?: ChangeSet['vault']) {
   const id = key(input.id);
   const vault = key(input.vault);
   const base = store.reviewBase(vault);
   const hash = String(input.sha256);
-  if (base.vault?.kind !== 'bi' || input.parent !== base.parent || input.schema !== base.schema.sha256) {
+  const target = base.vault ?? (base.parent === null && unpublishedVault?.id === vault ? unpublishedVault : undefined);
+  if (target?.kind !== 'bi' || input.parent !== base.parent || input.schema !== base.schema.sha256) {
     throw new Error('Expected the active BI vault and schema');
   }
   const fields = base.schema.document.fields as string[];
   const source = store.reviewSource(hash);
   // Keep a separate model context budget below the upload ceiling.
-  if (!fields.length || Buffer.byteLength(source) > 24_000) throw new Error('Proposal input exceeds model limits');
+  // Worker output was generated before verification, so its source never enters this model context.
+  if (!fields.length || Buffer.byteLength(source) > (unpublishedVault ? sourceUploadLimit : 24_000)) {
+    throw new Error('Proposal input exceeds model limits');
+  }
   const result = await complete(proposalInstructions, { source, fields }, signal);
   signal.throwIfAborted();
   if (!('content' in result)) throw new Error('Proposal model unavailable');
-  const response = JSON.parse(result.content.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i, '$1'));
+  type Proposal = { title?: string; fields?: Record<string, { value?: string; quote?: string }>; cards?: Proposal[] };
+  const response = JSON.parse(result.content.trim().replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i, '$1')) as Proposal;
   const sourceId = 'source-' + id;
-  const cardId = 'card-' + id;
-  const values: [string, string][] = [];
+  const proposals = unpublishedVault && Array.isArray(response?.cards) ? response.cards : [response];
+  if (!proposals.length || proposals.length > 24) throw new Error('Invalid proposal card count');
   const evidence: ChangeSet['evidence'] = [];
   const rejected: string[] = [];
-  for (const field of fields) {
-    const entry = response?.fields && Object.hasOwn(response.fields, field) ? response.fields[field] : undefined;
-    const quote = entry?.quote;
-    const start = typeof quote === 'string' && quote.trim() && quote.length <= 4000 ? source.indexOf(quote) : -1;
-    if (start < 0 || typeof entry?.value !== 'string' || !entry.value.trim()) {
-      rejected.push(field);
-      continue;
+  const addCards = proposals.map((proposal, index) => {
+    const cardId = 'card-' + id + (index ? '-' + (index + 1) : '');
+    const values: [string, string][] = [];
+    for (const field of fields) {
+      const entry = proposal?.fields && Object.hasOwn(proposal.fields, field) ? proposal.fields[field] : undefined;
+      const quote = entry?.quote;
+      const start = typeof quote === 'string' && quote.trim() && quote.length <= 4000 ? source.indexOf(quote) : -1;
+      if (start < 0 || typeof entry?.value !== 'string' || !entry.value.trim()) {
+        rejected.push(field);
+        continue;
+      }
+      values.push([field, entry.value]);
+      evidence.push({ sourceId, cardId, field, start, end: start + quote!.length });
     }
-    values.push([field, entry.value]);
-    evidence.push({ sourceId, cardId, field, start, end: start + quote.length });
-  }
+    return { id: cardId, type: 'record' as const, key: cardId, title: proposal?.title ?? '', version: '1', fields: Object.fromEntries(values) };
+  });
   if (rejected.length) return { rejected };
-  if (typeof response.title !== 'string' || !response.title.trim()) throw new Error('Proposal title missing');
+  if (addCards.some(({ title }) => typeof title !== 'string' || !title.trim())) throw new Error('Proposal title missing');
   return stageReviewProposal(store, id, {
-    vault: base.vault, parent: base.parent, schema: base.schema.sha256, allowModel: base.allowModel,
-    addCards: [{ id: cardId, type: 'record', key: cardId, title: response.title, version: '1', fields: Object.fromEntries(values) }],
+    vault: target, parent: base.parent, schema: base.schema.sha256, allowModel: base.allowModel,
+    addCards,
     updateCards: [], removeCards: [], sources: [{ id: sourceId, ref: String(input.ref), sha256: hash }],
     evidence, relationships: [],
   }, provenance);

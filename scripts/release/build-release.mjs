@@ -23,6 +23,7 @@ const exact = new Set([
   'LICENSE', 'package.json', 'package-lock.json',
   'config/opencode.pin.json', 'config/opencode.example.jsonc',
   'scripts/phase0/probe-http.ts', 'scripts/phase0/probe-listeners.ts', 'scripts/phase0/probe-redaction.ts',
+  'workers/plugins/bootstrap.py',
   'scripts/phase0/windows-job.cs', 'scripts/knowledge/migrate.ts', 'scripts/knowledge/verify-aep-bi.py',
   'tests/oracles/verify_xlsx.py', 'tests/oracles/requirements.txt', 'tests/fixtures/d08/oracle.json',
   'tests/fixtures/knowledge/gold.ts', 'tests/fixtures/knowledge/gold.v1.json', 'tests/fixtures/knowledge/gold.v2.json',

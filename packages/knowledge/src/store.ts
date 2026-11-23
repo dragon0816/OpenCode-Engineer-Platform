@@ -508,6 +508,11 @@ const schema = this.reviewSchema(input.vault.id, base);
     return review;
   }
 
+  reviewStatus(id: string) {
+    const row = this.db.prepare('SELECT id,vault,status,edit,publication FROM reviews WHERE id=?').get(key(id));
+    return row && { id: row.id, vault: row.vault, status: row.status, edit: row.edit, publication: row.publication };
+  }
+
   compareReview(id: string) {
     const review = this.review(id);
     const vault = String(review.vault);

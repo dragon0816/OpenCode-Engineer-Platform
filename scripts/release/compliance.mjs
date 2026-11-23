@@ -48,7 +48,7 @@ export function openCodeComponent(component, pin) {
 }
 
 const categories = new Map(Object.entries({
-  MIT: 'permissive', 'Apache-2.0': 'permissive', 'BSD-2-Clause': 'permissive', 'BSD-3-Clause': 'permissive',
+  MIT: 'permissive', ISC: 'permissive', 'Apache-2.0': 'permissive', 'BSD-2-Clause': 'permissive', 'BSD-3-Clause': 'permissive',
   'PSF-2.0': 'permissive', 'Python-2.0.1': 'permissive', '0BSD': 'permissive',
   'MPL-2.0': 'weak copyleft', 'LGPL-2.1-only': 'weak copyleft', 'LGPL-3.0-only': 'weak copyleft',
 }));

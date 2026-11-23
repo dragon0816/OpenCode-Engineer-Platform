@@ -334,3 +334,13 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 讀取 BI export 的 schema 結構，分段呼叫 Gateway，逐欄驗證原文引文並檢查與發布卡片的重複。
 - [x] 將通過驗證的卡片送交既有審核及發布，助理依知識庫讀取權限引用來源定位。 [擷取與展示紀錄](reviews/PHASE3G_BI_EXTRACTION_REPORT.md)
 - [ ] 擁有者以候選版驗收實際公開網頁及本機樣本，審核者補跑 Web HTTP、Excel、安裝、升級、備份關卡。
+
+## Phase 3G 切片 1 本機外掛安裝
+
+- [x] 在能力頁選檔安裝，驗證 manifest 與 SHA-256，確認權限及相容性警告，支援啟用、停用、升級、回退與移除。
+- [x] 啟動時重新驗證套件，停用發生變更的外掛並提供信任或重新安裝入口。工作台主功能與中央頁面支援繁中、英文和窄版鍵盤操作。
+- [x] 加入空清冊遷移與升級對帳，使用合成外掛驗證安裝至移除。 [切片 1 報告](reviews/PHASE3G_SLICE1_REPORT.md)
+- [x] 切片 1B 接通 Windows AppContainer、ACL、網路隔離及 Job 監督，驗證工作程序的取消、逾時和宿主異常退出。
+- [x] 接通外掛資料、明確選取來源、Gateway、即時進度及擁有者審核，啟用時掛載頁面、右側面板、工作程序、審核類型和資料集宣告。 [切片 1B 合約](reviews/PHASE3G_SLICE1B_REPORT.md)
+- [ ] 接通 BI 建置外掛、文件格式的可驗證轉檔、資料移轉計畫、3E 能力、`.oepkb` 成品流通及 Share Platform。
+- [ ] 由審核者整合 `integration/0.8`，補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

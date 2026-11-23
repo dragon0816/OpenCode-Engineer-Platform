@@ -23,6 +23,7 @@
         <button id="open-knowledge" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h7v16H4zM13 4h7v16h-7z"/></svg><span data-i18n="ui.knowledge-base"></span></button>
         <button id="open-jobs" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 4v4m8-4v4"/></svg><span data-i18n="ui.schedules-jobs"></span></button>
         <button id="open-review" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16H6zm3 8 2 2 4-4"/></svg><span data-i18n="ui.review"></span></button>
+        <button id="open-capabilities" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg><span data-i18n="plugins.capabilities"></span></button>
         <button id="open-settings" type="button" aria-keyshortcuts="Control+,"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/></svg><span data-i18n="ui.settings"></span></button>
       </nav>
       </details>
@@ -678,6 +679,24 @@
         </details>
       </div>
     </section>
+    <section class="conversation knowledge" id="capabilities-view" aria-labelledby="capabilities-title" hidden>
+      <header class="page-header"><h1 id="capabilities-title" tabindex="-1" data-i18n="plugins.capabilities"></h1></header>
+      <div class="knowledge-body">
+        <section aria-labelledby="plugins-title">
+          <h2 id="plugins-title" data-i18n="plugins.heading"></h2>
+          <input id="plugin-file" type="file" accept=".oepplugin" hidden>
+          <button id="install-plugin" type="button" data-i18n="plugins.install-file"></button>
+          <p id="plugins-status" role="status"></p>
+          <ul id="plugins-list" class="feature-list"></ul>
+        </section>
+      </div>
+    </section>
+    <section class="conversation knowledge" id="plugin-page-view" aria-labelledby="plugin-page-title" hidden>
+      <header class="page-header"><h1 id="plugin-page-title" tabindex="-1"></h1></header>
+      <div id="plugin-page-content" class="knowledge-body" aria-live="polite"></div>
+      <div id="plugin-page-actions" class="knowledge-body"></div>
+    </section>
+    <dialog id="plugin-dialog" class="settings-dialog" aria-labelledby="plugin-dialog-title"></dialog>
     <dialog id="channel-dialog" class="settings-dialog" aria-labelledby="channel-dialog-title"></dialog>
     <dialog id="delete-agent-dialog" class="settings-dialog" aria-labelledby="delete-agent-question" aria-describedby="delete-agent-help">
       <form>

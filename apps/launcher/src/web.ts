@@ -56,7 +56,8 @@ async function launch() {
         if (stopping) break;
         const external = process.env.NODE_TEST_CONTEXT ? undefined :
           { executor: new ExternalExecutor(root, windowsExternalIsolation(dirname(root))) };
-        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve, undefined, external);
+        const service = adapter = await startAdapter(root, runtime, requestStop, !process.env.NODE_TEST_CONTEXT, restart.resolve,
+          undefined, external, undefined, undefined, { dataRoot: dirname(root) });
         requestedReopen(root);
         await openBrowser(service.pairURL());
         reopen = setInterval(() => {
