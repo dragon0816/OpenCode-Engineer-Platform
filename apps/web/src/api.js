@@ -75,7 +75,7 @@ export async function uploadAttachment(sessionPath, file) {
       throw new LocalizedError(message('api.upload-file-unreadable'));
     }
     void report('upload-client-unexpected');
-    throw new LocalizedError(message('api.could-not-complete-the-operation-try-again'));
+    throw new LocalizedError(message('server.unavailable'));
   }
   try {
     const result = await request(sessionPath + '/attachments', { file: { name: file.name, type: file.type, content } });
@@ -88,7 +88,7 @@ export async function uploadAttachment(sessionPath, file) {
       throw error;
     }
     void report('upload-client-unexpected');
-    throw new LocalizedError(message('api.could-not-complete-the-operation-try-again'));
+    throw new LocalizedError(message('server.unavailable'));
   }
 }
 
