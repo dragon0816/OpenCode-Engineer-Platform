@@ -290,6 +290,7 @@ Owner 已核准開始。從 `e616e6a` 開 `phase-2/web-gui`，完成或具體受
 - [x] 在能力頁選檔安裝，驗證 manifest 與 SHA-256，確認權限及相容性警告，支援啟用、停用、升級、回退與移除。
 - [x] 啟動時重新驗證套件，停用發生變更的外掛並提供信任或重新安裝入口。工作台主功能與中央頁面支援繁中、英文和窄版鍵盤操作。
 - [x] 加入空清冊遷移與升級對帳，使用合成外掛驗證安裝至移除。 [切片 1 報告](reviews/PHASE3G_SLICE1_REPORT.md)
-- [ ] 補上 Windows 程序身分、ACL、網路隔離實證及 Job 路徑。接通工作資料、審核／發布與進度 API，再實測 Python 無法讀取範圍外的檔案。
-- [ ] 接通附加資料面板、領域審核及資料集註冊、資料遷移計畫和 3E 能力。BI 建置外掛、`.oepkb` 成品流通及 Share Platform 依後續切片處理。
+- [x] 切片 1B 接通 Windows AppContainer、ACL、網路隔離及 Job 監督，驗證工作程序的取消、逾時和宿主異常退出。
+- [x] 接通外掛資料、明確選取來源、Gateway、即時進度及擁有者審核，啟用時掛載頁面、右側面板、工作程序、審核類型和資料集宣告。 [切片 1B 合約](reviews/PHASE3G_SLICE1B_REPORT.md)
+- [ ] 接通 BI 建置外掛、文件格式的可驗證轉檔、資料移轉計畫、3E 能力、`.oepkb` 成品流通及 Share Platform。
 - [ ] 由審核者整合 `integration/0.8`，補跑 `test:e2e:web`、`test:e2e:excel`、`test:install`、`test:upgrade` 和 `test:backup`。

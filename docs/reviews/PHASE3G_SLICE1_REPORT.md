@@ -26,6 +26,8 @@ The branch started from `c70d957`. Web ledger v12 adds three empty plugin tables
 
 The fixture contains one bilingual page and one inert Python worker declaration. The worker is packaged and validated as a payload reference. Execution remains deferred pending OS-enforced Windows identity, ACL and network confinement. The workspace data, review, publish and progress APIs, panels, schema migration plans, and runtime registration of review types, collections, Skills and Workflows also remain open. BI Knowledge, `.oepkb` distribution and Share Platform are later slices.
 
+Slice 1B follows this checkpoint with isolated workers, a page and stdio API, registered components and an owner review hand-off. [Slice 1B contract and verification](PHASE3G_SLICE1B_REPORT.md)
+
 ## Assertion changes
 
 Signature validity, unknown-key rejection and test-key fixtures were removed from the requested acceptance scope when the owner removed the signing requirement. The suite tests unsigned admission, optional envelope neutrality, payload and full-archive digests, compatibility consent and tamper recovery. Existing upgrade tests retain exact version assertions with their expected central Web version advanced from 8 to 12. The historical repair fixture copies the pinned SemVer dependency as a release would. The allowlist coverage still enumerates every Web table and now includes the three plugin tables. Existing assertions retain their original coverage.
