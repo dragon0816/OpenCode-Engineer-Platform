@@ -386,7 +386,7 @@ test('same-version repair reconciles the historical candidate schema and rejects
     const data = join(root, 'data');
     const copy = join(root, 'backup');
     const release = join(root, 'candidate');
-    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0']) {
+    for (const path of ['package.json', 'apps/adapter', 'apps/launcher/src/paths.ts', 'packages', 'scripts/windows', 'scripts/phase0', 'node_modules/semver']) {
       cpSync(path, join(release, path), { recursive: true });
     }
     const store = join(release, knowledgeStorePath);

@@ -3,6 +3,32 @@ import { getLocale, message, setText } from './i18n.js';
 
 const find = (id) => document.getElementById(id);
 const localized = (text) => () => text[getLocale()];
+const actionLabels = {
+  install: message('plugins.install'),
+  'update-file': message('plugins.update-file'),
+  'reinstall-file': message('plugins.reinstall-file'),
+  'trust-current': message('plugins.trust-current'),
+  enable: message('plugins.enable'),
+  disable: message('plugins.disable'),
+  rollback: message('plugins.rollback'),
+  uninstall: message('plugins.uninstall'),
+};
+const statusLabels = {
+  enabled: message('plugins.status.enabled'),
+  disabled: message('plugins.status.disabled'),
+  'integrity-failed': message('plugins.status.integrity-failed'),
+};
+const operations = {
+  'data.read': message('plugins.permission.data.read'),
+  'data.write': message('plugins.permission.data.write'),
+  'worker.run': message('plugins.permission.worker.run'),
+  'review.submit': message('plugins.permission.review.submit'),
+  'publish.request': message('plugins.permission.publish.request'),
+  'progress.emit': message('plugins.permission.progress.emit'),
+};
+const scopes = { none: message('plugins.scope.none'), 'plugin-workspace': message('plugins.scope.plugin-workspace') };
+const models = { none: message('plugins.model.none'), 'approved-gateway': message('plugins.model.approved-gateway') };
+const sources = { none: message('plugins.source.none'), 'approved-sources': message('plugins.source.approved-sources') };
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -28,10 +54,10 @@ function checkbox(text) {
 
 function permissionRows(permissions) {
   return [
-    ...permissions.operations.map((operation) => ['operation:' + operation, message('plugins.permission.' + operation)]),
-    ['scope:' + permissions.dataScope, message('plugins.scope.' + permissions.dataScope)],
-    ['model:' + permissions.modelBroker, message('plugins.model.' + permissions.modelBroker)],
-    ['source:' + permissions.sourceBroker, message('plugins.source.' + permissions.sourceBroker)],
+    ...permissions.operations.map((operation) => ['operation:' + operation, operations[operation]]),
+    ['scope:' + permissions.dataScope, scopes[permissions.dataScope]],
+    ['model:' + permissions.modelBroker, models[permissions.modelBroker]],
+    ['source:' + permissions.sourceBroker, sources[permissions.sourceBroker]],
     ...permissions.workers.map((id) => ['worker:' + id, message('plugins.worker', { id })]),
   ];
 }
@@ -98,18 +124,18 @@ export function bindPlugins(showView) {
       const info = element('div');
       info.append(element('strong', localized(plugin.name)),
         element('span', message('plugins.list-info', { version: plugin.version, publisher: plugin.publisher })),
-        element('span', message('plugins.status.' + plugin.status)));
+        element('span', statusLabels[plugin.status]));
       if (!plugin.compatible) info.append(element('span', message('plugins.compatibility', { range: plugin.oepCompatibility, version: plugin.oepVersion })));
       const actions = element('div', undefined, 'plugin-actions');
       if (plugin.status === 'integrity-failed') {
-        actions.append(button(message('plugins.trust-current'), () => void change(plugin, 'trust-current')));
+        actions.append(button(actionLabels['trust-current'], () => void change(plugin, 'trust-current')));
       } else {
         const action = plugin.status === 'enabled' ? 'disable' : 'enable';
-        actions.append(button(message('plugins.' + action), () => confirmChange(plugin, action)));
+        actions.append(button(actionLabels[action], () => confirmChange(plugin, action)));
       }
-      actions.append(button(message('plugins.' + (plugin.status === 'integrity-failed' ? 'reinstall-file' : 'update-file')), () => chooseFile(plugin.id)));
-      if (plugin.previousVersion) actions.append(button(message('plugins.rollback'), () => confirmChange(plugin, 'rollback')));
-      actions.append(button(message('plugins.uninstall'), () => confirmChange(plugin, 'uninstall')));
+      actions.append(button(actionLabels[plugin.status === 'integrity-failed' ? 'reinstall-file' : 'update-file'], () => chooseFile(plugin.id)));
+      if (plugin.previousVersion) actions.append(button(actionLabels.rollback, () => confirmChange(plugin, 'rollback')));
+      actions.append(button(actionLabels.uninstall, () => confirmChange(plugin, 'uninstall')));
       row.append(info, actions);
       return row;
     }));
@@ -157,7 +183,7 @@ export function bindPlugins(showView) {
   function apply(result) {
     installed = result.plugins;
     render();
-    setText(status, message(result.cleanupPending ? 'plugins.cleanup-pending' : 'plugins.saved'));
+    setText(status, result.cleanupPending ? message('plugins.cleanup-pending') : message('plugins.saved'));
   }
 
   function review(preview) {
@@ -178,7 +204,7 @@ export function bindPlugins(showView) {
     })), override.label);
     const action = preview.trustCurrent ? 'trust-current' : preview.currentVersion === preview.version ? 'reinstall-file' :
       preview.currentVersion ? 'update-file' : 'install';
-    openDialog(message('plugins.review-install'), sections, message('plugins.' + action),
+    openDialog(message('plugins.review-install'), sections, actionLabels[action],
       preview.compatible ? [consent.box] : [consent.box, override.box], async () => {
         apply(await request('/api/plugins/install', { data: { token: preview.token, consent: consent.box.checked,
           allowIncompatible: override.box.checked } }));
@@ -214,7 +240,7 @@ export function bindPlugins(showView) {
       copy.push(element('p', message('plugins.selection-incompatible')), override.label);
       required.push(override.box);
     }
-    openDialog(message('plugins.' + action), copy, message('plugins.' + action), required, () => change(plugin, action, incompatible));
+    openDialog(actionLabels[action], copy, actionLabels[action], required, () => change(plugin, action, incompatible));
   }
 
   rail.addEventListener('click', () => {
