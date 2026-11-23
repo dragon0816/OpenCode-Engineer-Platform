@@ -8,8 +8,8 @@ type Controls = { selectors?: string[]; labels?: string[] };
 const layout = readFileSync(new URL('../../docs/GUI_LAYOUT.md', import.meta.url), 'utf8');
 const ids = [...layout.matchAll(/<!-- ui:([\w-]+) -->$/gm)].map((match) => match[1]);
 
-export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature' | 'agent' | 'delegation') {
-  const servers = /^settings-mcp-(?!knowledge$)/;
+export function mappingChecks(page: Page, group: 'settings' | 'servers' | 'feature' | 'agent' | 'delegation' | 'capabilities') {
+  const servers = /^settings-mcp-(?!(?:knowledge|link)$)/;
   const expected = ids.filter((id) => group === 'servers' ? servers.test(id) :
     id.startsWith(group + '-') && !servers.test(id));
   const covered = new Set<string>();

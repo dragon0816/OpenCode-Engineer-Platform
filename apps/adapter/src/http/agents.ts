@@ -77,7 +77,7 @@ export function agentManagement(root: string, store: WebStore, runtime: Runtime,
     const definitions = store.customMcpServers();
     const tools = definitions.map(({ createdAt: _createdAt, updatedAt: _updatedAt, ...server }) => ({
       id: server.id, name: runtime.redact(server.name),
-      paused: assistantMcpPaused(server) || server.transport !== 'remote' || URL.parse(server.url)?.protocol !== 'https:', enabled: server.enabled,
+      paused: assistantMcpPaused(server), enabled: server.enabled,
       projects: server.appliesToProjects, pending: !runtime.customMcp?.some((applied) => canonical(applied) === canonical(server)),
     }));
     const externalModels = (Object.keys(helpers) as Provider[]).map((provider) => {

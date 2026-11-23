@@ -115,6 +115,7 @@ async function settings() {
   await page.ready("!document.querySelector('#new-session')?.disabled && location.hash === ''");
   await click('#open-settings');
   await click('[data-section="mcp"]');
+  await click('#settings-open-mcp');
   await page.ready("document.querySelector('#mcp-servers').children.length > 0");
 }
 async function screenshots(state: string) {
@@ -210,9 +211,9 @@ try {
   await page.ready("!document.querySelector('#mcp-editor').open && !document.querySelector('#mcp-restart-bar').hidden");
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('#mcp-servers .settings-actions button')].map(button => button.textContent)`),
     ['編輯', '停用', '測試連線', '移除']);
-  assert.equal(await evaluate("document.querySelector('#settings-mcp #mcp-restart-bar #mcp-restart').checkVisibility()"), true);
+  assert.equal(await evaluate("document.querySelector('#capability-mcp-panel #mcp-restart-bar #mcp-restart').checkVisibility()"), true);
   await mapping.check('settings-mcp-restart', '#mcp-restart-bar', { selectors: ['p', '#mcp-restart'] });
-  await mapping.check('settings-mcp-list', '#settings-mcp', {
+  await mapping.check('settings-mcp-list', '#capability-mcp-panel', {
     selectors: ['#mcp-add', '.mcp-card h4', '.mcp-badges span', '.mcp-card > p:nth-of-type(2)', '.mcp-result', '#mcp-status'],
     labels: ['編輯', '停用', '測試連線', '移除'],
   });
@@ -230,7 +231,7 @@ try {
   await screenshots('restart');
   await click('#mcp-servers .settings-actions button:nth-child(3)');
   await page.ready("document.querySelector('.mcp-result').textContent.includes('synthetic_catalog')", 22_000);
-  await assertUiTextInThemes(page, '#settings-mcp');
+  await assertUiTextInThemes(page, '#capability-mcp-panel');
   if (marker) {
     assert.ok(existsSync(pidFile), 'Credential reached the child environment');
     probePid = readFileSync(pidFile, 'utf8');

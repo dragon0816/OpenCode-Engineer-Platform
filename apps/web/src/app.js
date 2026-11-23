@@ -14,6 +14,8 @@ import { classificationControl, confirmExternalTurn, externalModelBlock, groupMo
   openExternalLogin } from './external-helpers.js';
 import { pastedLocalPaths } from './local-paths.js';
 
+document.getElementById('capability-mcp-panel').append(document.getElementById('capability-mcp-content').content);
+document.getElementById('settings-mcp').append(document.getElementById('mcp-knowledge-group'));
 initializeLocale();
 
 const find = (id) => document.getElementById(id);
@@ -1586,7 +1588,7 @@ const agentEditor = bindAgents({ onChange: refreshAgents, close: () => find('clo
     if (accountId) void channelSettings.replace(accountId, options.opener, options.onSaved);
     else channelSettings.open(options);
   },
-  openMcp: () => openAgentSettings('mcp'), deleteAgent, restoreAgent });
+  openMcp: () => plugins.open('mcp'), openSkills: () => plugins.open('skills'), deleteAgent, restoreAgent });
 const channelSettings = bindChannels(() => assistantEntries, refreshAgents);
 const deleteAgentDialog = find('delete-agent-dialog');
 let deletion;
@@ -2222,7 +2224,6 @@ renderSettingsSection();
 const loadCustomMcp = bindMcpSettings(() => projects);
 
 async function loadMcpSettings() {
-  void loadCustomMcp();
   const status = find('mcp-knowledge-status');
   setText(status, message('chat.checking-connection'));
   find('mcp-knowledge-tools').hidden = true;
@@ -2256,7 +2257,7 @@ function switchSettingsSection(section) {
 }
 
 find('mcp-open-knowledge-settings').addEventListener('click', () => {
-  if (switchSettingsSection('integrations')) find('knowledge-toolbox').focus();
+  if (openAgentSettings('integrations')) find('knowledge-toolbox').focus();
 });
 
 function showSettings() {
@@ -2331,7 +2332,7 @@ sidebarToggle.closest('.navigation').addEventListener('keydown', (event) => {
   setSidebar(false);
   sidebarToggle.focus();
 });
-for (const section of document.querySelectorAll('.rail-section')) {
+for (const section of document.querySelectorAll('details.rail-section, #rail-functions')) {
   const key = `oep.${section.id}.open`;
   section.open = localStorage.getItem(key) !== 'false';
   section.addEventListener('toggle', () => localStorage.setItem(key, String(section.open)));
@@ -2355,7 +2356,8 @@ const plugins = bindPlugins((view, title, entry) => {
   closePanel(false);
   plugins.hide();
   for (const id of ['chat-view', 'knowledge-view', 'jobs-view', 'review-view', 'settings-view']) find(id).hidden = true;
-  for (const button of find('rail-functions').querySelectorAll('[aria-current]')) button.removeAttribute('aria-current');
+  agentView.hidden = true;
+  for (const button of find('main-features').querySelectorAll('[aria-current]')) button.removeAttribute('aria-current');
   view.hidden = false;
   entry.setAttribute('aria-current', 'page');
   if (narrowNavigation.matches) setSidebar(false);
@@ -2366,7 +2368,8 @@ const plugins = bindPlugins((view, title, entry) => {
   opener.click();
   try { await knowledge?.openBiReview(id, opener, new AbortController().signal); }
   catch (error) { setText(find('review-status'), errorText(error)); }
-});
+}, loadCustomMcp);
+find('settings-open-mcp').addEventListener('click', () => plugins.open('mcp'));
 for (const id of ['open-chat', 'open-knowledge', 'open-jobs']) {
   find(id).addEventListener('click', () => { find('review-view').hidden = true; });
 }
@@ -2723,6 +2726,8 @@ stop.addEventListener('click', async () => {
 try {
   const pairedLaunch = new URLSearchParams(location.hash.slice(1)).has('pair');
   const bootstrap = await connect();
+  projects = bootstrap.projects;
+  plugins.connect();
   setText(connection, message('chat.connected'));
   setText(model, bootstrap.alias);
   request('/api/settings/limits').then(applyLimits).catch(() => { setText(limitsStatus, message('chat.could-not-load-the-turn-limits-refresh')); });
@@ -2777,7 +2782,6 @@ try {
     applyAppearance(appearance);
     appearanceSave.disabled = stopped;
   }).catch(() => { setText(appearanceStatus, message('chat.could-not-load-appearance-settings-refresh-the')); });
-  projects = bootstrap.projects;
   const savedProject = localStorage.getItem('oep.activeProject');
   if (projects.some(({ id }) => id === savedProject)) project = savedProject;
   await refreshAgents();
@@ -2802,7 +2806,6 @@ try {
     find('chat-view').hidden = false;
   });
   for (const id of ['open-chat', 'open-knowledge', 'open-jobs', 'open-review']) find(id).addEventListener('click', syncNavigation);
-  plugins.connect();
   window.setInterval(() => {
     if (!stopped && !document.hidden) void refreshAgents().catch(() => {});
   }, 10_000);

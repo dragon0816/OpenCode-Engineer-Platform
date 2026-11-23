@@ -85,7 +85,7 @@ test('0.7.0 and the intermediate ledgers reconcile to v12 and remain stable on t
     backup(data, copy);
     const first = JSON.parse(migrate(data));
     const second = JSON.parse(migrate(data));
-    const versions = { web: [prior, 12], 'telegram-chat': [3, 3], knowledge: [3, 3], telegram: [2, 2], runs: [1, 1] };
+    const versions = { web: [prior, 13], 'telegram-chat': [3, 3], knowledge: [4, 4], telegram: [2, 2], runs: [1, 1] };
     for (const [store, expected] of Object.entries(versions)) {
       const name = `web/${store}.sqlite`;
       const { before, after } = first[name];
@@ -94,7 +94,7 @@ test('0.7.0 and the intermediate ledgers reconcile to v12 and remain stable on t
     }
     assert.equal(first['web/web.sqlite'].after.counts.agent_model_sources, Number(model));
     assert.equal(first['web/web.sqlite'].after.counts.local_references, Number(references));
-    for (const table of allowedEmptyTables('webV12Empty')) {
+    for (const table of [...allowedEmptyTables('webV12Empty'), ...allowedEmptyTables('webV13Empty')]) {
       assert.equal(Object.hasOwn(first['web/web.sqlite'].before.counts, table), false);
       assert.equal(first['web/web.sqlite'].after.counts[table], 0);
     }
@@ -152,7 +152,7 @@ test('a failure in reference DDL rolls back both new Web steps and permits a cle
     assert.equal(db.prepare('SELECT note FROM web_message_annotations').get()?.note, 'Synthetic owner note');
     db.exec('DROP TABLE local_reference_audit');
   }
-  assert.equal(JSON.parse(migrate(root))['web/web.sqlite'].after.userVersion, 12);
+  assert.equal(JSON.parse(migrate(root))['web/web.sqlite'].after.userVersion, 13);
 });
 
 test('every web store table is accepted by the upgrade reconciliation allowlist', () => {
@@ -170,6 +170,7 @@ test('every web store table is accepted by the upgrade reconciliation allowlist'
     const allowed = new Set([...allowedEmptyTables('webAdditions'), ...allowedEmptyTables('webV3Empty'), ...allowedEmptyTables('webV5Empty'),
       ...allowedEmptyTables('webV6Empty'), ...allowedEmptyTables('webV7Empty'), ...allowedEmptyTables('webV8Empty'),
       ...allowedEmptyTables('webV9Empty'), ...allowedEmptyTables('webV10Empty'), ...allowedEmptyTables('webV12Empty'),
+      ...allowedEmptyTables('webV13Empty'),
       'channel_accounts', ...Object.keys(legacyAgentRows(undefined, root, false))]);
     const missing = tables.filter((name) => !original.has(name) && !allowed.has(name));
     assert.deepEqual(missing, [], 'Register new Web tables for empty-table or seeded-data reconciliation');
@@ -193,7 +194,7 @@ test('pre-model WebStore schema migrates from an actual old snapshot and reconci
       assert.equal(Object.hasOwn(migration.before.counts, table), false);
       assert.equal(migration.after.counts[table], 0);
     }
-    for (const table of allowedEmptyTables('webV12Empty')) {
+    for (const table of [...allowedEmptyTables('webV12Empty'), ...allowedEmptyTables('webV13Empty')]) {
       assert.equal(Object.hasOwn(migration.before.counts, table), false);
       assert.equal(migration.after.counts[table], 0);
     }
@@ -242,7 +243,7 @@ test('the slice 3b central fixture upgrades from v4 without changing accounts or
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
     assert.equal(result.before.userVersion, 4);
     assert.equal(Object.hasOwn(result.before.counts, 'agent_work_items'), false);
-    assert.equal(result.after.userVersion, 12);
+    assert.equal(result.after.userVersion, 13);
     assert.equal(result.after.counts.agent_work_items, 0);
     run(snapshot, ['reconcile-upgrade', data, copy]);
     using db = new DatabaseSync(file);
@@ -267,7 +268,7 @@ test('the v5 dispatcher fixture keeps historical work and owner budgets when add
     }
     backup(data, copy);
     const result = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 12]);
+    assert.deepEqual([result.before.userVersion, result.after.userVersion], [5, 13]);
     assert.deepEqual([result.before.counts.agent_work_items, result.after.counts.agent_work_items], [1, 1]);
     for (const table of allowedEmptyTables('webV6Empty')) {
       assert.equal(Object.hasOwn(result.before.counts, table), false);
@@ -300,7 +301,7 @@ test('the v6 delegation fixture preserves internal receipts and starts external 
     }
     backup(data, copy);
     const { before, after } = JSON.parse(migrate(data))['web/web.sqlite'];
-    assert.deepEqual([before.userVersion, after.userVersion], [6, 12]);
+    assert.deepEqual([before.userVersion, after.userVersion], [6, 13]);
     assert.deepEqual([before.counts.delegations, after.counts.delegations], [1, 1]);
     for (const table of allowedEmptyTables('webV7Empty')) {
       assert.equal(Object.hasOwn(before.counts, table), false);
@@ -341,7 +342,7 @@ test('Phase 3B reconciles all pre-slice ledgers twice and rejects changed data',
     backup(data, copy);
     const result = JSON.parse(migrate(data));
     const reconcile = (failure?: RegExp) => run(snapshot, ['reconcile-upgrade', data, copy], failure);
-    const expectedVersions = { web: [2, 12], 'telegram-chat': [2, 3], knowledge: [1, 3], telegram: [1, 2] };
+    const expectedVersions = { web: [2, 13], 'telegram-chat': [2, 3], knowledge: [1, 4], telegram: [1, 2] };
     for (const [name, versions] of Object.entries(expectedVersions)) {
       const { before, after } = result['web/' + name + '.sqlite'];
       assert.deepEqual([before.userVersion, after.userVersion], versions);

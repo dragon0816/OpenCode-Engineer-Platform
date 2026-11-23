@@ -9,7 +9,7 @@ export const listSpecialistsTool = 'oep_list_specialists';
 export const delegateTool = 'oep_delegate_to_specialist';
 
 type PermissionScope = { origin: SessionOrigin; agentID: string; status?: boolean;
-  files?: boolean; knowledge?: boolean; delegation?: boolean; custom?: readonly string[] };
+  files?: boolean; knowledge?: boolean; delegation?: boolean; custom?: readonly string[]; skills?: readonly string[] };
 
 // The separate Phase 1 acceptance runner still exercises the pinned native Workbook template.
 export function nativeContractPermissions(workbook: boolean): Permission[] {
@@ -31,6 +31,7 @@ export function sessionPermissions(scope?: PermissionScope): Permission[] {
     allow(writeFileTool);
   }
   if (scope.knowledge) allow(knowledgeTool);
+  for (const name of scope.skills ?? []) allow('skill', name);
   if (scope.delegation && scope.agentID === 'main' && (scope.origin === 'web' || scope.origin === 'channel')) {
     allow(listSpecialistsTool);
     allow(delegateTool);

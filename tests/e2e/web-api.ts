@@ -21,5 +21,9 @@ export async function webAPI(pairURL: string) {
       method: 'POST', headers: { cookie, origin, 'content-type': 'text/plain', 'x-oep-csrf': csrf,
         'x-oep-filename': encodeURIComponent(name) }, body: data,
     }),
+    bytes: (path: string, name: string, data: Uint8Array<ArrayBuffer>) => fetch(origin + path, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/octet-stream', 'x-oep-csrf': csrf,
+        'x-oep-filename': encodeURIComponent(name) }, body: data,
+    }),
   };
 }
